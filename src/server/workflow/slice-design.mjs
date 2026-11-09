@@ -142,6 +142,13 @@ export async function verifiedCode(projectRoot, initiative, slice) {
   return entries.filter((item) => item.entry?.kind === "verification" && item.entry.passed === true).at(-1)?.entry.checkout ?? null;
 }
 
+/** When the latest passing verification run of a slice finished, in milliseconds, or null when no passing run records a finish time. */
+export async function verifiedAt(projectRoot, initiative, slice) {
+  const entries = await listRecordEntries(projectRoot, { kind: "runs", initiative, slice });
+  const finished = Date.parse(entries.filter((item) => item.entry?.kind === "verification" && item.entry.passed === true).at(-1)?.entry.finishedAt ?? "");
+  return Number.isNaN(finished) ? null : finished;
+}
+
 /** The latest dependents' run recorded on a scope, as { entry, path } with the run's project-relative record path, or null when none is recorded. */
 export async function latestDependentsRun(projectRoot, initiative, scope) {
   const key = { kind: "runs", initiative, slice: scope };

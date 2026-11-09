@@ -229,6 +229,7 @@ A run whose commands change project files fails with reason `tracked_files_chang
 
 `update_roadmap` refuses to `ship` the initiative with `dependents_blocked` while a scope has dependents, by the current declaration, whose latest dependents' run did not pass or did not run each of them.
 Its `scopes` lists each such scope as `{ scope, blocked, reason }`, where `reason` is `failed` when that run failed or declined one of them and `not_run` when none ran or a dependent was declared after it.
+When that latest run started before a leaf of the scope last passed `verify_slice`, as after a fix slice changed the scope, `reason` is `stale` for every dependent and `run` names the stale run's record path, so run the dependents again.
 A later passing run of those dependents lets it ship, and an initiative of a repository that declares no components ships as before.
 A leaf that is not done still refuses `ship` with `gate_blocked` first, and an invalid declaration refuses it with its own code.
 `get_roadmap` reports such an initiative with `readyToShip` `false` and a `diagnostics` entry, `dependents_blocked` with the same `scopes`, or the code and message of the invalid declaration, so the review browser shows an initiative as ready to ship only once `ship` would succeed.
