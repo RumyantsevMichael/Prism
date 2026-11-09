@@ -37,6 +37,7 @@ import { checkpointPause, readCoordinationState, updateCoordinationState, valida
 import { INITIATIVE_TOOLS, InitiativeError, getInitiative, initiativeAcknowledgement, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
 import { ARTIFACT_TOOLS, artifactAtLocation, getArtifact, updateArtifact } from "./workflow/store-artifacts.mjs";
+import { savedComment } from "./workflow/artifact-comments.mjs";
 import { keptExplanation, shownPath } from "./workflow/artifact-migration.mjs";
 import { ARTIFACT_MIGRATIONS } from "./workflow/artifact-paths.mjs";
 import { forgetAskedGates, recordAskedGates } from "./workflow/approval-deliveries.mjs";
@@ -1196,12 +1197,13 @@ async function savedArtifactWhere(store, location, argumentsValue) {
 // Whether the store at storeBase holds an artifact at a location below artifacts/.
 const holdsArtifact = (storeBase, location) => readFile(path.join(storeBase, "artifacts", ...location.split("/"))).then(() => true, () => false);
 
-// A saved status record or comment named by the artifact it belongs to, and a comment also by its line and text, which the saved copy holds.
+// A saved status record or comment named by the artifact it belongs to, and a comment also by its line and text, quoted only from a comment of the exact form Prism writes,
+// since the saved copy may be any file that another machine's store brought, and any other file is named by its path, scope, and saved copy alone.
 async function savedDerivedLine(item, argumentsValue) {
   const line = await savedArtifactWhere(item.store, item.statusOf ?? item.commentOn, argumentsValue);
   if (item.statusOf) return `${line}, its status record (saved copy: ${item.savedAs})`;
-  const comment = await readFile(item.savedAs, "utf8").then(JSON.parse).catch(() => null);
-  const said = comment && Number.isSafeInteger(comment.line) && typeof comment.text === "string" ? `, a comment on line ${comment.line}: ${JSON.stringify(comment.text)}` : ", a comment";
+  const comment = await savedComment(item.savedAs, item.commentOn).catch(() => null);
+  const said = comment ? `, a comment on line ${comment.line}: ${JSON.stringify(comment.text)}` : ", a file in its comment folder that is no comment of the form Prism writes, so its bytes are not shown";
   return `${line}${said} (saved copy: ${item.savedAs})`;
 }
 
@@ -1275,18 +1277,18 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
     conflictLines.push(`Store sync found ${plural(saved.length, "record")} that someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each record again and redo the change through Prism's tools if it still matters.`, ...saved.map((item) => `- ${item.record} (this machine's version: ${item.savedAs})`));
   }
   if (artifacts.length) {
-    conflictLines.push(`Store sync found ${plural(artifacts.length, "artifact")} whose same lines someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each artifact again with get_artifact and redo the change with update_artifact if it still matters.`);
+    conflictLines.push(`Store sync found ${plural(artifacts.length, "artifact")} that this machine changed while another machine changed the same lines, or removed the file and wrote or moved another one to its path; the store kept the other machine's version and saved this machine's version. Read each artifact again with get_artifact and redo the change with update_artifact if it still matters.`);
     for (const item of artifacts) conflictLines.push(await savedArtifactLine(item, argumentsValue));
   }
   const records = derived.filter((entry) => entry.kept);
   if (records.length) {
-    conflictLines.push(`Store sync found ${plural(records.length, "status record")} of an artifact that someone else changed before this machine's change was pushed; the store kept their record and saved this machine's. Read each artifact again with get_artifact, and ask its approval again with ask_approval if this machine's answer still matters.`);
+    conflictLines.push(`Store sync found ${plural(records.length, "status record")} of an artifact that this machine changed while another machine changed the same record, or removed the artifact and wrote or moved another one to its path; the store kept the other machine's record and saved this machine's. Read each artifact again with get_artifact, and ask its approval again with ask_approval if this machine's answer still matters for the file the store now holds.`);
     for (const { item } of records) conflictLines.push(`- ${await savedDerivedLine(item, argumentsValue)}`);
   }
   const stranded = derived.filter((entry) => !entry.kept);
   if (stranded.length) {
     const counted = [[stranded.filter((entry) => entry.item.statusOf).length, "status record"], [stranded.filter((entry) => entry.item.commentOn).length, "comment"]].filter(([count]) => count).map(([count, noun]) => plural(count, noun)).join(" and ");
-    conflictLines.push(`Store sync took ${counted} out of the store because the store no longer holds the artifact at ${stranded.length === 1 ? "its" : "their"} location, as when one machine changed an artifact while another removed it, and saved ${stranded.length === 1 ? "it" : "them"} beside the store. Tell the person, and redo what still matters on an artifact the store holds.`);
+    conflictLines.push(`Store sync took ${counted} out of the store because the store no longer holds the artifact ${stranded.length === 1 ? "it was" : "they were"} made on, as when one machine changed an artifact while another removed it, also when that machine then wrote another file at its path, or because the place it would take holds a path too long for a store to share, and saved ${stranded.length === 1 ? "it" : "them"} beside the store. Tell the person, and redo what still matters on an artifact the store holds.`);
     for (const { item } of stranded) conflictLines.push(`- ${await savedDerivedLine(item, argumentsValue)}`);
   }
   if (files.length) {

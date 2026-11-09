@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir, rm } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { addComment, aheadOfClock, appliedComments, commentFolderOf, listComments, movedComment, movedForward, storedAuthor, storedTime } from "./artifact-comments.mjs";
+import { addComment, aheadOfClock, appliedComments, commentFolderOf, listComments, movedComment, storedAuthor, storedTime } from "./artifact-comments.mjs";
 import { writeAtomically } from "./artifact-store.mjs";
 import { assertInput } from "./artifact-schema.mjs";
-import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_FORWARD, ARTIFACT_NAME_FORM, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, kindInScope, letterCaseKey, locationArtifact, malformedArtifactName, normalizeArtifactPath, repositoryScope, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
+import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_NAME_FORM, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, IDENTITY_FILE_MAX, identityContent, identityOf, kindInScope, letterCaseKey, locationArtifact, locationIdentity, malformedArtifactName, newIdentity, normalizeArtifactPath, repositoryScope, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
 import { acceptedLocation, answerApproval, askApproval, hasStatus, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion } from "./artifact-status.mjs";
 import { ComponentError, readComponents } from "./components.mjs";
 import { checkArtifactFolders, noteToolCallWrite, recordStoreOf, resolveArtifactFile, resolveStatusFile, seenScopes, withArtifactStoreLock } from "./record-store.mjs";
@@ -297,9 +297,9 @@ async function listing(seen, folder, given) {
   return { artifacts, truncated: found.length > LIST_MAX };
 }
 
-/** The folder whose entries a store file's names are matched against: artifacts/, or the status, accepted, or comments folder beside it that holds the file. */
+/** The folder whose entries a store file's names are matched against: artifacts/, or the status, accepted, comments, or identity folder beside it that holds the file. */
 function baseFor(seen, target) {
-  for (const folder of [ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS]) {
+  for (const folder of [ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY]) {
     const base = path.join(seen.store.base, folder);
     if (target.startsWith(`${base}${path.sep}`)) return base;
   }
@@ -617,13 +617,30 @@ async function applyOperations(seen, checked, { held = null, noteWrites = false 
       entries.push({ name: comment.name, target: moved.target, comment: JSON.parse(moved.bytes.toString("utf8")) });
     }
   };
-  const leaveForward = async (scope, address, file, location) => {
-    const { entries } = await commentsAt(scope, address);
-    const forward = await movedForward(seen, scope, address, location);
-    if (!original.has(forward.target)) original.set(forward.target, null);
-    state.set(forward.target, stored(forward.bytes));
-    names.set(forward.target, file);
-    entries.push({ name: ARTIFACT_FORWARD, target: forward.target, comment: null });
+  // Each artifact's identity changes with it in the same update: a create writes a new one, a move carries it, a removal removes it, and every other write keeps it.
+  // An identity file is a short line, so a larger file someone placed there is replaced or removed unread.
+  const identityAt = async (scope, address) => {
+    const location = artifactLocation(scope, address);
+    const target = await resolveStatusFile(seen, `${ARTIFACT_IDENTITY}/${location}`);
+    if (!state.has(target)) {
+      const info = await lstat(target).catch(() => null);
+      const bytes = info?.isFile() && info.size <= IDENTITY_FILE_MAX ? await readFile(target).catch(() => null) : null;
+      const record = info === null ? null : bytes === null ? { bytes: null, version: "held" } : stored(bytes);
+      original.set(target, record);
+      state.set(target, record);
+    }
+    return { target, location, record: state.get(target) };
+  };
+  const setIdentity = async (scope, address, file, id) => {
+    const { target } = await identityAt(scope, address);
+    state.set(target, id === null ? null : stored(Buffer.from(identityContent(id), "utf8")));
+    names.set(target, file);
+  };
+  // The identity an artifact has: the one its identity file holds, unless that file is of another form or another artifact's file holds the same id, and else the one its location gives.
+  const identityHeld = async (scope, address) => {
+    const { location, record } = await identityAt(scope, address);
+    const id = identityOf(record?.bytes ?? null);
+    return id !== null && !(await identityElsewhere(seen, id, location)) ? id : locationIdentity(location);
   };
   const counted = (entry, removed) => removed.length ? Object.assign(entry, { removedComments: removed.length }) : entry;
   // A requirement's or ADR's entry reports a written status that differs from the recorded one once every operation has run.
@@ -658,6 +675,8 @@ async function applyOperations(seen, checked, { held = null, noteWrites = false 
         const status = await statusOf(scope, address);
         if (hasStatus(address.kind)) setStatus(status.target, file, newRecord(address.kind, operation.writtenStatus ?? null));
         else if (status.exists) setStatus(status.target, file, null);
+        // A created artifact is a new one, whatever an earlier artifact at its location was, so a sync never merges a change made on that earlier one into it.
+        await setIdentity(scope, address, file, newIdentity());
       }
       // A created artifact never shows a comment made on an earlier artifact at its path, such as one a sync brought after another machine removed that artifact.
       const removed = current === null ? await takeComments(scope, address, file) : [];
@@ -687,6 +706,7 @@ async function applyOperations(seen, checked, { held = null, noteWrites = false 
       state.set(source.target, null);
       const status = await statusOf(source.scope, address);
       if (status.exists) setStatus(status.target, file, null);
+      await setIdentity(source.scope, address, file, null);
       // A removed artifact has no page that could show its comments, so they go with it, and the result counts them for the agent.
       artifacts.push(counted({ path: file, scope: source.scope, removed: true }, await takeComments(source.scope, address, file)));
     } else if (operation.op === "ask_approval") {
@@ -737,8 +757,10 @@ async function applyOperations(seen, checked, { held = null, noteWrites = false 
         // The comments move with it too, each with its own file name and its location rewritten, and whatever the new location's folder held before goes, as a create removes it.
         removed = await takeComments(scope, address, file);
         await putComments(scope, address, file, await takeComments(source.scope, address, file));
-        // The old location keeps a forward to the new one, so a sync places a change that another machine made there on the moved artifact.
-        await leaveForward(source.scope, address, file, artifactLocation(scope, address));
+        // The identity moves with it and leaves nothing at the old location, so a sync places a change that another machine made there on the moved artifact.
+        const id = await identityHeld(source.scope, address);
+        await setIdentity(source.scope, address, file, null);
+        await setIdentity(scope, address, file, id);
       }
       artifacts.push(counted({ path: file, scope, version: source.record.version }, removed));
     }
@@ -764,6 +786,30 @@ async function applyOperations(seen, checked, { held = null, noteWrites = false 
   // A change syncs as a record write does, so it is committed and pushed without a further call; the sync stages artifacts only once this update releases the artifact lock.
   if (changed.length && seen.store.sync) scheduleRecordSync(seen.store.base);
   return { artifacts };
+}
+
+/**
+ * Whether an identity file below artifact-identity/ other than the one at location holds id while its location holds an artifact, as a file copied by hand would,
+ * so that neither artifact keeps the shared id. Links are never followed, and a file too large to be an identity is never read.
+ */
+async function identityElsewhere(seen, id, location) {
+  const root = path.join(seen.store.base, ARTIFACT_IDENTITY);
+  const visit = async (relative) => {
+    let entries;
+    try { entries = await readdir(relative === "" ? root : path.join(root, ...relative.split("/")), { withFileTypes: true }); }
+    catch { return false; }
+    for (const entry of entries) {
+      const child = relative === "" ? entry.name : `${relative}/${entry.name}`;
+      if (entry.isDirectory()) { if (await visit(child)) return true; continue; }
+      if (!entry.isFile() || child === location) continue;
+      const target = path.join(root, ...child.split("/"));
+      const info = await lstat(target).catch(() => null);
+      if (!info?.isFile() || info.size > IDENTITY_FILE_MAX || identityOf(await readFile(target).catch(() => null)) !== id) continue;
+      if ((await lstat(path.join(seen.base, ...child.split("/"))).catch(() => null))?.isFile()) return true;
+    }
+    return false;
+  };
+  return visit("");
 }
 
 // A new artifact without a scope takes the scope that holds its nearest folder below the kind folder, when exactly one seen scope holds that folder, else the workspace scope.

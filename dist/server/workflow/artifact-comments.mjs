@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir } from "node:fs/promises";
 import path from "node:path";
 import { writeAtomically } from "./artifact-store.mjs";
-import { ARTIFACT_COMMENTS, ARTIFACT_FORWARD, artifactAddress, forwardContent, artifactLocation, artifactPathOf, locationArtifact } from "./artifact-paths.mjs";
+import { ARTIFACT_COMMENTS, artifactAddress, artifactLocation, artifactPathOf, locationArtifact } from "./artifact-paths.mjs";
 import { ARTIFACT_COMMENT_FILE, resolveStatusFile } from "./record-store.mjs";
 import { scheduleRecordSync } from "./record-store-sync.mjs";
 
@@ -69,6 +69,16 @@ function storedComment(name, bytes, location) {
   if (!storedAuthor(value.by) || value.by.name !== value.author.name) return null;
   if (typeof value.entry !== "string" || !ENTRY_ID.test(value.entry) || !storedTime(value.at)) return null;
   return value;
+}
+
+/**
+ * The line and text of a comment file that a store sync saved aside from the comment folder of a location, as { line, text },
+ * or null when the file is no comment of the exact form addComment writes, within every bound a reader checks, so a note quotes no other bytes.
+ */
+export async function savedComment(target, location) {
+  const bytes = await readCommentFile(target);
+  const value = bytes ? storedComment(path.basename(target), bytes, location) : null;
+  return value ? { line: value.line, text: value.text } : null;
 }
 
 // A comment as get_artifact and /api/artifact return it.
@@ -143,11 +153,6 @@ export async function commentFolderOf(seen, scope, address) {
 export async function movedComment(seen, scope, address, { name, comment }) {
   const target = await resolveStatusFile(seen, `${commentsFolder(scope, address)}/${name}`);
   return { target, bytes: Buffer.from(`${JSON.stringify({ ...comment, location: artifactLocation(scope, address) })}\n`, "utf8") };
-}
-
-/** The forward that a move of an artifact leaves at its old location, naming the location it moved to: { target, bytes }. */
-export async function movedForward(seen, scope, address, location) {
-  return { target: await resolveStatusFile(seen, `${commentsFolder(scope, address)}/${ARTIFACT_FORWARD}`), bytes: Buffer.from(forwardContent(location), "utf8") };
 }
 
 /**

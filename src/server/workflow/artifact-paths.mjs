@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 
 // A store keeps descriptive artifacts under artifacts/, in one folder per scope, and inside it one fixed folder or file per kind,
@@ -9,23 +10,34 @@ export const ARTIFACT_ACCEPTED = "artifact-accepted";
 export const STATUS_RECORD_NAME = "status.json";
 // Each comment on an artifact is one file of its own at artifact-comments/<the artifact's location>/<time>-<random suffix>.json, so comments from two machines never change the same file.
 export const ARTIFACT_COMMENTS = "artifact-comments";
-// A move of an artifact to another scope leaves a forward at artifact-comments/<the old location>/moved-to, one line of JSON {"location": <the new location>},
-// so a store sync places a change that another machine made at the old location on the artifact where the forwards lead.
-export const ARTIFACT_FORWARD = "moved-to";
+// Every artifact has an identity, kept beside it at artifact-identity/<location> as one line of JSON {"id": <32 lowercase hexadecimal digits>}:
+// a create writes a new one, a move to another scope carries it, a removal removes it, and every other write keeps it,
+// so a store sync merges a change made on one machine into the artifact it was made on, wherever the other machine moved it, and never into a later file at its path.
+export const ARTIFACT_IDENTITY = "artifact-identity";
+const IDENTITY_FORM = /^[0-9a-f]{32}$/;
+// An identity file is one short line; a larger file someone placed there holds no identity and is never read whole.
+export const IDENTITY_FILE_MAX = 256;
 
-/** The bytes of a forward to a location. */
-export const forwardContent = (location) => `${JSON.stringify({ location })}\n`;
+/** A new random identity. */
+export const newIdentity = () => randomBytes(16).toString("hex");
 
-/** The location a forward's bytes name, or null for bytes of any other form: one line of JSON, an object whose only key location names an artifact location. */
-export function forwardLocation(bytes) {
+/** The bytes of an identity file. */
+export const identityContent = (id) => `${JSON.stringify({ id })}\n`;
+
+/** The identity that a location gives an artifact whose identity file is missing, of another form, or shared: the first 32 hexadecimal digits of the SHA-256 of the location's UTF-8 bytes. */
+export const locationIdentity = (location) => createHash("sha256").update(location, "utf8").digest("hex").slice(0, 32);
+
+/** The id that an identity file's bytes hold, or null for bytes of any other form: one line of JSON, an object whose only key id holds 32 lowercase hexadecimal digits. */
+export function identityOf(bytes) {
+  if (!bytes || bytes.length > IDENTITY_FILE_MAX) return null;
   let value;
   try {
     const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     if (text.replace(/\n$/, "").includes("\n")) return null;
     value = JSON.parse(text);
   } catch { return null; }
-  if (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 1 || typeof value.location !== "string") return null;
-  return value.location.split("/").every(wellFormedName) && locationArtifact(value.location) ? value.location : null;
+  if (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 1 || typeof value.id !== "string") return null;
+  return IDENTITY_FORM.test(value.id) ? value.id : null;
 }
 // Each move of a checkout's existing artifacts into the store writes one ledger file of its own below artifact-migrations/, so two machines never change the same file.
 export const ARTIFACT_MIGRATIONS = "artifact-migrations";

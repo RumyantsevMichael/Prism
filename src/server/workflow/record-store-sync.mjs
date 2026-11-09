@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_FORWARD, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, forwardLocation, letterCaseKey, STATUS_RECORD_NAME, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
+import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, IDENTITY_FILE_MAX, identityContent, identityOf, letterCaseKey, locationIdentity, STATUS_RECORD_NAME, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
 import { withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { commitProblem, gitFileName, isLinkMode, LINK_TARGET_BYTES_MAX, linkTargetProblem, TREE_DEPTH_MAX, TREE_DEPTH_TEXT, tooDeepTree, treeEntries, treeProblems } from "./git-objects.mjs";
 import { canonicalJson, hasRecordMerge, recordMergeFor } from "./record-merge.mjs";
@@ -49,15 +49,13 @@ const GENERATED_VIEW = Buffer.from("This file is a generated view of ");
 const isRegistrationFile = (relative) => /^repositories\/[^/]+\.json$/.test(relative);
 const isRecordFile = (relative) => relative === "roadmap.json" || relative.startsWith("initiatives/") || isRegistrationFile(relative);
 const isClaimFile = (relative) => /^initiatives\/[^/]+\/claims\/[^/]+\.json$/.test(relative);
-// A move's forward that both sides changed differently, as when two machines moved one artifact, takes the upstream one, which names where the upstream's artifact went.
-const isForwardFile = (relative) => relative.startsWith(`${ARTIFACT_COMMENTS}/`) && relative.endsWith(`/${ARTIFACT_FORWARD}`);
 // A claim or a registration that lost a race is its holder's news, reported through the refusal or acceptance it causes, so no conflict list shows it.
-const isQuietConflict = (relative) => isClaimFile(relative) || isRegistrationFile(relative) || isForwardFile(relative);
+const isQuietConflict = (relative) => isClaimFile(relative) || isRegistrationFile(relative);
 // A person's artifact keeps the upstream version on a line conflict, as a record does, and its local version is saved and reported by its location.
 const isArtifactFile = (relative) => relative.startsWith(`${ARTIFACTS}/`);
-// An artifact's status record and its accepted bytes change with the artifact under the artifact lock, so a sync stages them with the artifacts, and a status record that changed on both sides keeps the upstream one as a record does.
+// An artifact's status record, its identity, and its accepted bytes change with the artifact under the artifact lock, so a sync stages them with the artifacts, and a status record that changed on both sides keeps the upstream one as a record does.
 // The ledger of a move of a checkout's artifacts, and each comment on an artifact, are written under the same lock, so no commit holds the ledger without the artifacts it lists.
-const STATUS_FOLDERS = [ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_MIGRATIONS];
+const STATUS_FOLDERS = [ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS];
 const isStatusFile = (relative) => STATUS_FOLDERS.some((folder) => relative.startsWith(`${folder}/`));
 const isGuardedFile = (relative) => isArtifactFile(relative) || isStatusFile(relative);
 const guardedFolder = (relative) => [ARTIFACTS, ...STATUS_FOLDERS].find((folder) => relative.startsWith(`${folder}/`)) ?? null;
@@ -1128,8 +1126,8 @@ async function merge(base, author, options, run) {
   if (!mergeBase.ok || !mergeBase.text) return { failed: "The store's branch and its upstream share no commit, so the store was left as it was.", conflicts: [] };
   // Only the entries a store shares merge; every other entry comes from the upstream alone, so no machine's commit changes one and a local one never reaches the remote.
   const [original, local, upstreamFiles] = await Promise.all([mergeBase.text, head.text, theirs].map(async (commit) => (await partition(await treeFiles(base, commit)))));
-  // A change that one side made where the other side moved the artifact away merges as if it had been made where the forwards lead.
-  const placed = await placeMovedChanges(base, original.shared, local.shared, upstreamFiles.shared);
+  // Each side's change to an artifact merges at the location that the merge gives the artifact's identity, as if both sides had made it there.
+  const placed = await placeByIdentity(base, original.shared, local.shared, upstreamFiles.shared);
   const { result, conflicts: fileConflicts } = await mergeFiles(base, placed.original, placed.local, placed.upstream);
   const merges = await structuralMerges(base, placed.original, placed.local, placed.upstream);
   const views = new Set(merges.views);
@@ -1149,6 +1147,7 @@ async function merge(base, author, options, run) {
   // A status record or comment whose artifact the merged store does not hold, as one changed on one machine while another removed the artifact, leaves the store and is saved and reported.
   const stranded = strandedFiles(result);
   for (const [file] of stranded) result.delete(file);
+  await placedIdentities(base, result, placed.identities);
   const merged = besides(result, upstreamFiles.other);
   // A file the upstream carries can still meet a local file in another letter case, which no other machine could then take.
   const clash = letterCaseClash(merged.keys());
@@ -1157,6 +1156,11 @@ async function merge(base, author, options, run) {
   const commit = (await required(base, [...author, "commit-tree", tree, "-p", head.text, "-p", theirs, "-m", `prism: merge records from ${(await git(base, ["rev-parse", "--abbrev-ref", "@{upstream}"])).text || "upstream"}`])).text;
   const copies = conflictCopies(placed.local, placed.upstream, conflicted);
   for (const [file, entry] of stranded) if (!copies.some(([candidate]) => candidate === file)) copies.push([file, entry]);
+  // A file that the merge took out of a place, as the other artifact where two met at one location or one whose placed path a store cannot hold, is saved as a conflict's local version is.
+  for (const [file, entry] of placed.saved) {
+    const at = copies.findIndex(([candidate]) => candidate === file);
+    if (at < 0) copies.push([file, entry]); else copies[at] = [file, entry];
+  }
   // A file whose local version the sync withheld keeps the branch's version in the local tree, so the merge replaces it whenever the upstream changed it, and its withheld bytes are saved as a conflict's are.
   for (const [file, entry] of heldCopies(run, local.shared, merged)) {
     const at = copies.findIndex(([candidate]) => candidate === file);
@@ -1185,86 +1189,187 @@ function heldCopies(run, before, after) {
   return [...(run.heldBack ?? [])].filter(([file]) => !sameEntry(before.get(file), after.get(file)));
 }
 
-// The paths of a location's forward and status record below the store's status folders.
-const forwardPath = (location) => `${ARTIFACT_COMMENTS}/${location}/${ARTIFACT_FORWARD}`;
+// The paths of a location's identity file and status record below the store's status folders.
+const identityPath = (location) => `${ARTIFACT_IDENTITY}/${location}`;
 const statusPath = (location) => `${ARTIFACT_STATUS}/${location}/${STATUS_RECORD_NAME}`;
+const isIdentityFile = (relative) => relative.startsWith(`${ARTIFACT_IDENTITY}/`);
 
-/** The artifact location that a status record or a comment file belongs to, or null for any other path, a forward included. */
+/** The artifact location that a status record or a comment file belongs to, or null for any other path. */
 function derivedLocation(file) {
   if (file.startsWith(`${ARTIFACT_STATUS}/`) && file.endsWith(`/${STATUS_RECORD_NAME}`)) return file.slice(ARTIFACT_STATUS.length + 1, -(STATUS_RECORD_NAME.length + 1)) || null;
-  if (!file.startsWith(`${ARTIFACT_COMMENTS}/`) || isForwardFile(file)) return null;
+  if (!file.startsWith(`${ARTIFACT_COMMENTS}/`)) return null;
   const location = file.slice(ARTIFACT_COMMENTS.length + 1, file.lastIndexOf("/"));
   return file.lastIndexOf("/") > ARTIFACT_COMMENTS.length ? location : null;
 }
 
-// The files of a tree that a location derives, other than its forward: its artifact, its status record, and its comments.
-const locationFiles = (files, location) => [...files.keys()].filter((file) => file === `${ARTIFACTS}/${location}` || derivedLocation(file) === location);
-
-// The path that a file of one location takes at another.
-function placedPath(file, from, to) {
-  if (file === `${ARTIFACTS}/${from}`) return `${ARTIFACTS}/${to}`;
-  if (file === statusPath(from)) return statusPath(to);
-  return `${ARTIFACT_COMMENTS}/${to}/${file.slice(ARTIFACT_COMMENTS.length + from.length + 2)}`;
+// What a file of a location is to its artifact, the same at every location: its bytes, its status record, or one comment by its file name.
+function roleOf(file, location) {
+  if (file === `${ARTIFACTS}/${location}`) return "artifact";
+  if (file === statusPath(location)) return "status";
+  return `comment/${file.slice(ARTIFACT_COMMENTS.length + location.length + 2)}`;
+}
+function rolePath(role, location) {
+  if (role === "artifact") return `${ARTIFACTS}/${location}`;
+  if (role === "status") return statusPath(location);
+  return `${ARTIFACT_COMMENTS}/${location}/${role.slice("comment/".length)}`;
 }
 
+// The files of a tree by the location they belong to: Map(location, Map(role, [path, entry])) for each location that holds an artifact, a status record, or a comment.
+function locationGroups(files) {
+  const groups = new Map();
+  for (const [file, entry] of files) {
+    const location = file.startsWith(`${ARTIFACTS}/`) ? file.slice(ARTIFACTS.length + 1) : derivedLocation(file);
+    if (location === null) continue;
+    if (!groups.has(location)) groups.set(location, new Map());
+    groups.get(location).set(roleOf(file, location), [file, entry]);
+  }
+  return groups;
+}
+
+/**
+ * The identity of each artifact a tree holds: ids, Map(location, id); where, Map(id, location); and written, Map(location, id) for the id each identity file holds.
+ * An artifact takes the id its identity file holds, and the id its location gives when that file is missing, of another form, larger than an identity file, or holds an id that another artifact of the tree also holds.
+ * The tree is another machine's work, so an identity file is read only when Git's object database says it is a blob small enough to be one.
+ */
+async function treeIdentities(base, files, groups) {
+  const wanted = [];
+  for (const [location, group] of groups) {
+    const entry = group.has("artifact") ? files.get(identityPath(location)) : undefined;
+    if (entry && FILE_MODES.has(entry.mode)) wanted.push([location, entry.object]);
+  }
+  const objects = [...new Set(wanted.map(([, object]) => object))];
+  const info = objects.length ? await objectInfo(base, objects) : new Map();
+  const contents = await objectContents(base, objects.filter((object) => info.get(object)?.type === "blob" && info.get(object).size <= IDENTITY_FILE_MAX));
+  const written = new Map();
+  for (const [location, object] of wanted) {
+    const id = contents.has(object) ? identityOf(contents.get(object)) : null;
+    if (id !== null) written.set(location, id);
+  }
+  const ids = new Map();
+  for (const [location, group] of groups) if (group.has("artifact")) ids.set(location, written.get(location) ?? locationIdentity(location));
+  // An id that two locations hold is no artifact's own, so each location whose file gave it takes the id the location gives instead, which no other location gives.
+  const count = new Map();
+  for (const id of ids.values()) count.set(id, (count.get(id) ?? 0) + 1);
+  for (const [location, id] of ids) if (count.get(id) > 1 && id !== locationIdentity(location)) ids.set(location, locationIdentity(location));
+  return { ids, where: new Map([...ids].map(([location, id]) => [id, location])), written };
+}
+
+// A comment file is small, so a larger blob that a tree holds there is moved with its bytes as they are and never read.
+const COMMENT_BYTES_MAX = 64 * 1024;
+
 // The entry a file of one location takes at another: a comment names its new location, as a move rewrites it, and every other file keeps its bytes.
-async function placedEntry(base, file, entry, from, to) {
-  if (!file.startsWith(`${ARTIFACT_COMMENTS}/`)) return entry;
+async function placedEntry(base, role, entry, from, to) {
+  if (!role.startsWith("comment/") || !FILE_MODES.has(entry.mode)) return entry;
+  if (!((await objectInfo(base, [entry.object])).get(entry.object)?.size <= COMMENT_BYTES_MAX)) return entry;
   let value;
-  try { value = JSON.parse((await entryBytes(base, entry))?.toString("utf8")); } catch { return entry; }
+  try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(await entryBytes(base, entry))); } catch { return entry; }
   if (value === null || typeof value !== "object" || Array.isArray(value) || value.location !== from) return entry;
   const object = (await required(base, ["hash-object", "-w", "--no-filters", "--stdin"], { input: Buffer.from(`${JSON.stringify({ ...value, location: to })}\n`, "utf8") })).text;
   return { ...entry, object };
 }
 
-// The location that the forwards of a tree lead to from a location, each forward to the location it names, stopping at a location that holds an artifact and passing no location twice.
-async function forwardsEnd(base, files, from) {
-  const passed = new Set([from]);
-  for (let at = from; ;) {
-    if (at !== from && files.has(`${ARTIFACTS}/${at}`)) return at;
-    const entry = files.get(forwardPath(at));
-    const next = entry ? forwardLocation(await entryBytes(base, entry) ?? Buffer.alloc(0)) : null;
-    if (next === null || passed.has(next)) return at;
-    passed.add(next);
-    at = next;
+/**
+ * The shared entries of the merge base and both sides with every artifact's files, its bytes, its status record, and its comments, placed in each tree at the one location that the merge gives the artifact's identity,
+ * so a path merge takes each change as if both sides had made it there: a file only one side changed takes that side's version, and one both changed merges by lines or keeps the upstream's.
+ * The merge gives an identity the location at which both sides hold it, else the one to which one side moved it while the other kept it where the base held it,
+ * else the upstream's where both moved it, else the one at which the only side that holds it holds it, unless that side holds it as the base did, so the other side's removal stands,
+ * and every other location is left as the side that moved the artifact away left it.
+ * Where two identities would take one location, it keeps the one the upstream holds there; the other goes to where the upstream holds it, or, when the upstream holds it nowhere else, leaves the merge,
+ * and each of its local files that the base does not hold alike and that differs from what the location keeps is saved.
+ * A file whose placed path would exceed the bounds of a store path is not placed: a side's version that the base does not hold alike is saved instead.
+ * Identity files take no part in the path merge; placedIdentities gives back the one of each artifact the merge keeps.
+ * Returns { original, local, upstream, saved, identities }, the trees as Map(path, entry), saved as Map(path, entry) of the files to save under their own paths, and what placedIdentities reads.
+ */
+async function placeByIdentity(base, original, local, upstream) {
+  const trees = { original, local, upstream };
+  const groups = {}, identities = {};
+  for (const [name, files] of Object.entries(trees)) {
+    groups[name] = locationGroups(files);
+    identities[name] = await treeIdentities(base, files, groups[name]);
   }
+  const at = (name, id) => identities[name].where.get(id) ?? null;
+  // Whether a side holds an artifact as the base held it, at the same location with the same files, so the other side's removal of it is the only change and it takes no location.
+  const unchanged = (name, id) => {
+    const location = at(name, id);
+    const [mine, was] = [groups[name].get(location), location === at("original", id) ? groups.original.get(location) : undefined];
+    return Boolean(mine && was) && mine.size === was.size && [...mine].every(([role, [, entry]]) => sameEntry(was.get(role)?.[1], entry));
+  };
+  const final = new Map();
+  for (const id of new Set([...identities.local.where.keys(), ...identities.upstream.where.keys()])) {
+    const [was, ours, theirs] = ["original", "local", "upstream"].map((name) => at(name, id));
+    if (ours !== null && theirs !== null) final.set(id, ours === theirs || ours === was ? theirs : theirs === was ? ours : theirs);
+    else if (!unchanged(ours !== null ? "local" : "upstream", id)) final.set(id, ours ?? theirs);
+  }
+  // Two identities meet at one location only where one side holds each there; the upstream's keeps it.
+  const dropped = new Set();
+  for (let again = true; again;) {
+    again = false;
+    const taking = new Map();
+    for (const [id, location] of final) if (!dropped.has(id)) taking.set(location, [...(taking.get(location) ?? []), id]);
+    for (const [location, held] of taking) {
+      if (held.length < 2) continue;
+      const kept = held.find((id) => identities.upstream.ids.get(location) === id) ?? held[0];
+      for (const id of held.filter((candidate) => candidate !== kept)) {
+        const theirs = at("upstream", id);
+        if (theirs !== null && theirs !== location) { final.set(id, theirs); again = true; }
+        else dropped.add(id);
+      }
+    }
+  }
+  const placed = { original: new Map(), local: new Map(), upstream: new Map() };
+  for (const [name, files] of Object.entries(trees)) {
+    for (const [file, entry] of files) if (!isIdentityFile(file) && !file.startsWith(`${ARTIFACTS}/`) && derivedLocation(file) === null) placed[name].set(file, entry);
+  }
+  // The base's version of a file of an identity's artifact, as it would read at a location.
+  const baseFile = async (id, role, location) => {
+    const from = at("original", id);
+    const found = from === null ? undefined : groups.original.get(from)?.get(role)?.[1];
+    return found && from !== location ? placedEntry(base, role, found, from, location) : found;
+  };
+  const saved = new Map();
+  const save = (file, entry) => { if (!saved.has(file)) saved.set(file, entry); };
+  const later = [];
+  for (const name of ["original", "local", "upstream"]) {
+    for (const [location, group] of groups[name]) {
+      const id = identities[name].ids.get(location);
+      // A status record or comment whose location holds no artifact in this tree stays where it is, for the merge to save if no artifact is left there.
+      if (id === undefined) { for (const [file, entry] of group.values()) if (!placed[name].has(file)) placed[name].set(file, entry); continue; }
+      const to = dropped.has(id) ? null : final.get(id) ?? location;
+      for (const [role, [file, entry]] of group) {
+        const target = to === null ? null : to === location ? file : rolePath(role, to);
+        if (target !== null && storePathFits(target)) { later.push([name, target, to === location ? entry : await placedEntry(base, role, entry, location, to)]); continue; }
+        // A file that leaves the merge is saved when it holds a change of this side's that would otherwise be lost.
+        if (name === "original" || sameEntry(await baseFile(id, role, location), entry)) continue;
+        if (to === null && name === "local") {
+          const keeps = upstream.get(file);
+          const views = role === "artifact" && keeps && [await entryBytes(base, entry), await entryBytes(base, keeps)].every((bytes) => bytes?.includes(GENERATED_VIEW));
+          if (sameEntry(keeps, entry) || views) continue;
+        }
+        if (name === "local" || to !== null) save(file, entry);
+      }
+    }
+  }
+  for (const [name, target, entry] of later) placed[name].set(target, entry);
+  const kept = new Map();
+  for (const [id, location] of final) if (!dropped.has(id)) kept.set(location, id);
+  return { ...placed, saved, identities: { trees: { local, upstream }, of: identities, kept } };
 }
 
 /**
- * The shared entries of the merge base and both sides, with each change that one side made to an artifact's bytes, its status record, or its comments at a location
- * from which the other side moved the artifact, as a forward the other side added there shows, placed at the location where that side's forwards lead, with the base's files of the old location,
- * so the merge takes each change as if it had been made there: a file only one side changed takes that side's version, and one both changed merges by lines or keeps the upstream's.
- * The old location then holds what the moving side left there. A change whose forwards lead to no artifact, or to a location either tree already uses, stays where it was made.
- * Returns { original, local, upstream } as Map(path, entry).
+ * Give each artifact of a merged result its identity file again: the file that the upstream, else the local side, holds for that identity at that location,
+ * else a new file where the identity came from another location, while an artifact whose identity its own location gives needs none.
  */
-async function placeMovedChanges(base, original, local, upstream) {
-  const sides = { local, upstream };
-  const placed = { original: new Map(original), local: new Map(local), upstream: new Map(upstream) };
-  const done = new Set();
-  for (const [mover, changer] of [["upstream", "local"], ["local", "upstream"]]) {
-    for (const [file, entry] of sides[mover]) {
-      if (!isForwardFile(file) || sameEntry(original.get(file), entry)) continue;
-      const from = file.slice(ARTIFACT_COMMENTS.length + 1, -(ARTIFACT_FORWARD.length + 1));
-      const changing = placed[changer];
-      // A location that both sides moved away from holds nothing of either side to place.
-      if (done.has(from) || sides[mover].has(`${ARTIFACTS}/${from}`) || (changing.has(file) && !sameEntry(original.get(file), changing.get(file)))) continue;
-      const files = locationFiles(changing, from);
-      if (!files.length) continue;
-      const to = await forwardsEnd(base, sides[mover], from);
-      if (to === from || !sides[mover].has(`${ARTIFACTS}/${to}`)) continue;
-      if ([placed.original, changing].some((tree) => tree.has(`${ARTIFACTS}/${to}`) || tree.has(statusPath(to)))) continue;
-      for (const tree of [placed.original, changing]) {
-        for (const moved of locationFiles(tree, from)) {
-          const target = placedPath(moved, from, to);
-          if (tree.has(target)) continue;
-          tree.set(target, await placedEntry(base, moved, tree.get(moved), from, to));
-          tree.delete(moved);
-        }
-      }
-      done.add(from);
+async function placedIdentities(base, result, { trees, of, kept }) {
+  for (const file of [...result.keys()]) {
+    if (!file.startsWith(`${ARTIFACTS}/`)) continue;
+    const location = file.slice(ARTIFACTS.length + 1);
+    const id = kept.get(location);
+    const side = ["upstream", "local"].find((name) => trees[name].has(identityPath(location)) && (id === undefined || of[name].written.get(location) === id));
+    if (side) result.set(identityPath(location), trees[side].get(identityPath(location)));
+    else if (id !== undefined && id !== locationIdentity(location)) {
+      result.set(identityPath(location), { mode: "100644", object: (await required(base, ["hash-object", "-w", "--no-filters", "--stdin"], { input: Buffer.from(identityContent(id), "utf8") })).text });
     }
   }
-  return placed;
 }
 
 /** The status records and comments of a merged result whose location holds no artifact there, as [path, entry]. */
