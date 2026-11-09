@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import readline from "node:readline";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { browserRequest, checkout, cloneOf, commitFiles, eventually, git, exists, isolateGit, notes, ok, refused, remoteFile, requirementFile, reviewBrowser, server, syncedWorkspace, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
-// Contract clauses 26-29 and the moved-file case of clause 31 of the workspace-artifacts design: existing tracked artifacts move into the store once, only in a tool call of the checkout whose result reports the move, against the store as pulled when it syncs, a checkout's roadmap view leaves only when the store's roadmap record generates the same view, files that are untracked, ignored, too large, not text, or with malformed or colliding names stay in the checkout, a configured folder that would take the source tree is refused, and the report stays bounded and one line per entry.
+// Contract clauses 26-29 and the moved-file case of clause 31 of the workspace-artifacts design: existing tracked artifacts move into the store once, only in a tool call of the checkout whose result reports the move, leave the checkout only right before a result that reports them is written, against the store as pulled when it syncs, a checkout's roadmap view leaves only when the store's roadmap record generates the same view, files that are untracked, ignored, too large, not text, or with malformed or colliding names stay in the checkout, a configured folder that would take the source tree is refused, and the report stays bounded and one line per entry.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
@@ -525,4 +529,100 @@ test("clause 26: the shared review app's project list reads another registered c
     await app.close();
   }
   await movedByNextToolCall(context, place, api);
+});
+
+test("clause 26: the review browser counts a file that the move kept for good as kept, not as waiting, until a person makes it movable again", async (context) => {
+  const place = await workspace(context);
+  const notText = Buffer.from([0x23, 0x20, 0xff, 0xfe, 0x00, 0x80, 0x0a]);
+  const api = await checkout(place, "api", { files: { "docs/plans/reports/slice.md": "# Reports\n", "docs/plans/reports/notes.md": notText } });
+  const first = await server(context, place, api);
+  assert.match(notes(await first.call("get_artifact", {})), /docs\/plans\/reports\/notes\.md[^\n]*not_text/, "the move keeps the file that is not UTF-8 text");
+  const review = await reviewBrowser(context, api);
+  const kept = await browserRequest(review, "/api/index");
+  assert.equal(kept.status, 200);
+  assert.equal(kept.body.recordStore.awaitingMove, undefined, "a file that a ledger keeps for the reason it still has does not wait for a tool call");
+  assert.equal(kept.body.recordStore.keptInCheckout.files, 1, "the browser counts the kept file apart");
+  assert.match(kept.body.recordStore.keptInCheckout.message, /person/, "the note says that a person settles the kept files");
+  assert.doesNotMatch(kept.body.recordStore.keptInCheckout.message, /notes\.md/, "the note names no file");
+  assert.equal(notes(await first.call("get_artifact", {})), "", "no later tool call of the session reports the kept file again");
+  await first.close();
+
+  // A person makes the file text again and commits it, so a move would now take it.
+  await commitFiles(api, { "docs/plans/reports/notes.md": "# Notes\n" });
+  const waiting = await browserRequest(review, "/api/index");
+  assert.equal(waiting.body.recordStore.awaitingMove.files, 1, "a file that no longer has the reason its ledger kept it for waits for a move again");
+  assert.match(waiting.body.recordStore.awaitingMove.message, /tool call/);
+  assert.match(waiting.body.recordStore.awaitingMove.message, /session/, "the notice says that a session moves the checkout's files once");
+  assert.equal(waiting.body.recordStore.keptInCheckout, undefined, "no kept note once no file is kept");
+  const next = await server(context, place, api);
+  assert.ok(notes(await next.call("get_artifact", {})).includes("docs/plans/reports/notes.md -> artifacts/repositories/api/plans/reports/notes.md"), "the next session's first tool call moves the file and reports it");
+  assert.equal(await exists(path.join(api, "docs/plans/reports/notes.md")), false);
+  assert.equal((await browserRequest(review, "/api/index")).body.recordStore.awaitingMove, undefined);
+});
+
+// Every file of WAITING went into the store and its ledger, and none left the checkout.
+async function writtenButKept(place, root) {
+  for (const [file, contents] of Object.entries(WAITING)) {
+    assert.equal(await text(path.join(root, file)), contents, `${file} stays in the checkout`);
+    assert.equal(await text(scoped(place.store, file.replace(/^docs\//, ""))), contents, `${file} is written into the store`);
+  }
+  assert.equal(git(root, "status", "--porcelain"), "", "no checkout file is removed");
+  const ledger = JSON.stringify(await ledgerFiles(place.store));
+  for (const file of Object.keys(WAITING)) assert.ok(ledger.includes(file), `the ledger names the move of ${file}`);
+}
+
+// The tool result removes every file of WAITING from the checkout and names each move.
+async function removedAndReported(root, response) {
+  const report = notes(response);
+  for (const file of Object.keys(WAITING)) {
+    assert.equal(await exists(path.join(root, file)), false, `${file} left the checkout`);
+    assert.ok(report.includes(`${file} -> artifacts/repositories/api/${file.replace(/^docs\//, "")}`), `the result that follows the removal reports the move of ${file}`);
+  }
+}
+
+test("clause 26: a refused first tool call writes the store copies and the ledger but removes no checkout file, and the session's next tool call removes and reports them", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api", { files: WAITING });
+  const prism = await server(context, place, api);
+  const refusal = refused(await prism.call("get_artifact", { path: "docs/plans/missing/slice.md" }), "artifact_not_found");
+  assert.doesNotMatch(refusal.message, / -> /, "the refusal carries no report of the move");
+  await writtenButKept(place, api);
+  await removedAndReported(api, await prism.call("get_artifact", {}));
+  assert.equal(notes(await prism.call("get_artifact", {})), "", "the move is reported once");
+});
+
+test("clause 26: a tool call that the host cancels removes no checkout file, and the next session's first tool call removes and reports them", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api", { files: WAITING });
+  const environment = isolatedEnv({ PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), PRISM_REVIEW_APP_DIR: place.app, CLAUDE_PROJECT_DIR: api });
+  const child = spawn(process.execPath, [fileURLToPath(new URL("../../dist/server/mcp.mjs", import.meta.url))], { cwd: api, env: environment, stdio: ["pipe", "pipe", "ignore"] });
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  context.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); });
+  const responses = [];
+  readline.createInterface({ input: child.stdout }).on("line", (line) => responses.push(JSON.parse(line)));
+  const message = (body) => `${JSON.stringify({ jsonrpc: "2.0", ...body })}\n`;
+  child.stdin.write(message({ id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "cancel-test", version: "1" } } }));
+  await eventually(() => responses.some((response) => response.id === 1), 30000, "the initialize response");
+  // The host cancels the call right after sending it, as a person who interrupts the agent does, so the cancel arrives before any result.
+  child.stdin.write(message({ id: 2, method: "tools/call", params: { name: "get_artifact", arguments: { projectRoot: api } } }) + message({ method: "notifications/cancelled", params: { requestId: 2, reason: "user interrupt" } }));
+  await eventually(async () => (await ledgerFiles(place.store)).length > 0, 30000, "the cancelled call's ledger");
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  assert.equal(responses.filter((response) => response.id === 2).length, 0, "a cancelled call gets no response");
+  await writtenButKept(place, api);
+  child.stdin.end();
+  await exited;
+  assert.equal(git(api, "status", "--porcelain"), "", "ending the session removes no checkout file");
+
+  await removedAndReported(api, await (await server(context, place, api)).call("get_artifact", {}));
+});
+
+test("clause 26: a first tool call that updates a moved artifact still removes its checkout file and reports the move", async (context) => {
+  const place = await workspace(context);
+  const file = "docs/plans/reports/slice.md";
+  const api = await checkout(place, "api", { files: WAITING });
+  const prism = await server(context, place, api);
+  const response = await prism.call("update_artifact", { operations: [{ op: "write", path: file, content: "# Reports, revised\n", expectedVersion: version(WAITING[file]) }] });
+  ok(response);
+  assert.equal(await text(scoped(place.store, "plans/reports/slice.md")), "# Reports, revised\n", "the update changes the moved artifact");
+  await removedAndReported(api, response);
 });
