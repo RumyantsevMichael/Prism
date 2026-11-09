@@ -2,7 +2,7 @@
 title artifact-migration
 
 component "record-store\nfirst access" as store
-component "artifact-migration\nmigrateArtifacts, reference scan" as migration
+component "artifact-migration\nmigrateArtifacts, files moved earlier, reference scan" as migration
 component "artifact-paths" as paths
 component "artifact-status\nrecorded status of moved files" as status
 component "mcp\nmigration note" as mcp

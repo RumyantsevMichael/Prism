@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { browserRequest, checkout, cloneOf, commitFiles, eventually, git, exists, isolateGit, notes, ok, refused, remoteFile, requirementFile, reviewBrowser, server, syncedWorkspace, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
-// Contract clauses 26-29 and the moved-file case of clause 31 of the workspace-artifacts design: existing tracked artifacts move into the store once, only in a tool call of the checkout whose result reports the move, leave the checkout only right before a result that reports them is written, against the store as pulled when it syncs, a checkout's roadmap view leaves only when the store's roadmap record generates the same view, files that are untracked, ignored, too large, not text, or with malformed or colliding names stay in the checkout, a configured folder that would take the source tree is refused, and the report stays bounded and one line per entry.
+// Contract clauses 26-29 and the moved-file case of clause 31 of the workspace-artifacts design: existing tracked artifacts move into the store once, only in a tool call of the checkout whose result reports the move, leave the checkout only right before a result that reports them is written, and are reported as moved earlier by each later session while their deletion is uncommitted, against the store as pulled when it syncs, a checkout's roadmap view leaves only when the store's roadmap record generates the same view, files that are untracked, ignored, too large, not text, or with malformed or colliding names stay in the checkout, a configured folder that would take the source tree is refused, and the report stays bounded and one line per entry.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
@@ -625,4 +625,75 @@ test("clause 26: a first tool call that updates a moved artifact still removes i
   ok(response);
   assert.equal(await text(scoped(place.store, "plans/reports/slice.md")), "# Reports, revised\n", "the update changes the moved artifact");
   await removedAndReported(api, response);
+});
+
+test("clauses 26 and 29: a removal whose deletion the checkout's index still lists is reported as moved earlier by the first tool call of each later session, whatever the store copy holds, until a person commits the deletion", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api", { files: { ...WAITING, "AGENTS.md": "# Agents\n\nThe reports plan is docs/plans/reports/slice.md.\n" } });
+  const first = await server(context, place, api);
+  await removedAndReported(api, await first.call("get_artifact", {}));
+  await first.close();
+  const ledgers = await ledgerFiles(place.store);
+
+  // A cancel or a host close can come between a removal and the result that names it, which leaves this state: the work tree lacks files that the index lists and a ledger moved.
+  const later = await server(context, place, api);
+  const response = await later.call("get_artifact", {});
+  await removedAndReported(api, response);
+  const report = notes(response);
+  assert.match(report, /earlier/, "the report says that the files moved earlier");
+  assert.match(report, /AGENTS\.md:3\b/, "the report names a tracked file that names a file moved earlier, with its line");
+  for (const [file, contents] of Object.entries(WAITING)) assert.equal(await text(scoped(place.store, file.replace(/^docs\//, ""))), contents, `reporting ${file} leaves its store copy as it was`);
+  assert.deepEqual(await ledgerFiles(place.store), ledgers, "reporting a file moved earlier writes no ledger");
+  assert.equal(notes(await later.call("get_artifact", {})), "", "a session reports a file moved earlier once");
+
+  // A store copy that has changed since the move still names the file as moved earlier.
+  const file = "docs/plans/reports/slice.md";
+  ok(await later.call("update_artifact", { operations: [{ op: "write", path: file, content: "# Reports, revised\n", expectedVersion: version(WAITING[file]) }] }));
+  await later.close();
+  await removedAndReported(api, await (await server(context, place, api)).call("get_artifact", {}));
+
+  // Once a person commits the deletion, no later session names the files again.
+  await commitFiles(api, {}, "remove the moved artifacts");
+  assert.doesNotMatch(notes(await (await server(context, place, api)).call("get_artifact", {})), / -> /, "a committed deletion is not reported again");
+  for (const file of Object.keys(WAITING)) assert.equal(await exists(path.join(api, file)), false, `${file} is not written back into the checkout`);
+});
+
+test("clause 26: a moved file that a cancelled first tool call updated and removed is reported as moved by the session's next result, never as differing from a checkout copy that is gone", async (context) => {
+  const place = await workspace(context);
+  const target = "docs/plans/a/slice.md";
+  const files = { [target]: "# A\n" };
+  for (let index = 0; index < 300; index++) files[`docs/plans/b${index % 10}/n${String(index).padStart(3, "0")}.md`] = `# Note ${index}\n`;
+  const api = await checkout(place, "api", { files });
+  const environment = isolatedEnv({ PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)), PRISM_REVIEW_APP_DIR: place.app, CLAUDE_PROJECT_DIR: api });
+  const child = spawn(process.execPath, [fileURLToPath(new URL("../../dist/server/mcp.mjs", import.meta.url))], { cwd: api, env: environment, stdio: ["pipe", "pipe", "ignore"] });
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  context.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); });
+  const responses = [];
+  readline.createInterface({ input: child.stdout }).on("line", (line) => responses.push(JSON.parse(line)));
+  const message = (body) => `${JSON.stringify({ jsonrpc: "2.0", ...body })}\n`;
+  child.stdin.write(message({ id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "cancel-test", version: "1" } } }));
+  await eventually(() => responses.some((response) => response.id === 1), 30000, "the initialize response");
+  child.stdin.write(message({ id: 2, method: "tools/call", params: { name: "update_artifact", arguments: { projectRoot: api, operations: [{ op: "write", path: target, content: "# A, revised\n", expectedVersion: version(files[target]) }] } } }));
+  // The host cancels the call as soon as its updated file has left the checkout, while the removal of the other files can still be running.
+  const deadline = Date.now() + 60000;
+  while (await exists(path.join(api, target))) {
+    assert.ok(Date.now() < deadline, "the updated file left the checkout");
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  child.stdin.write(message({ method: "notifications/cancelled", params: { requestId: 2, reason: "user interrupt" } }));
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  child.stdin.write(message({ id: 3, method: "tools/call", params: { name: "get_artifact", arguments: { projectRoot: api } } }));
+  await eventually(() => responses.some((response) => response.id === 3), 60000, "the next tool call's result");
+  child.stdin.end();
+  await exited;
+
+  // Whether the cancel came before the first result was written or not, the written results name every removed file as moved.
+  const written = responses.filter((response) => response.id === 2 || response.id === 3).map(notes).join("\n");
+  assert.equal(await text(scoped(place.store, "plans/a/slice.md")), "# A, revised\n", "the store keeps the update");
+  assert.ok(written.includes(`${target} -> artifacts/repositories/api/plans/a/slice.md`), "a written result reports the move of the updated file");
+  assert.equal(written.split("\n").some((line) => line.includes(target) && line.includes("differs")), false, "no result says that the gone checkout copy differs from the store");
+  for (const file of Object.keys(files)) {
+    assert.equal(await exists(path.join(api, file)), false, `${file} left the checkout`);
+    assert.ok(written.includes(`${file} -> artifacts/repositories/api/${file.replace(/^docs\//, "")}`), `a written result reports the move of ${file}`);
+  }
 });
