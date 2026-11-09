@@ -250,6 +250,9 @@ export async function getChangeMap(input) {
 }
 export async function updateChangeMap(input) {
   assertInput(UPDATE_CHANGE_MAP_SCHEMA, input);
+  // A shipped initiative's change maps are history, so a change to one is refused before any other check.
+  const { refuseShipped } = await import("../workflow/shipped-history.mjs");
+  await refuseShipped(input.projectRoot, input.initiative);
   await moveLegacyRecords(input.projectRoot);
   const resolved = await resolveChangeMap(input.projectRoot, input);
   await mkdir(path.dirname(resolved.target), { recursive: true });

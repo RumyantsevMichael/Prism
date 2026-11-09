@@ -115,7 +115,7 @@ A started slice whose start content Git has removed fails its next run with `sta
 A done slice's refs are still needed while another slice of its initiative is started and not done, because Prism leaves the done slice's verified changes out of that slice's boundary check only while Git can read the done slice's start content and its latest passing run.
 Deleting a done slice's start or passed ref before then can therefore make that other slice fail with reason `component_boundary` for the done slice's changes.
 That other slice can be in another checkout, because checkouts that share a `Store` share records, while only the refs of the checkout that ran the done slice keep its content.
-Delete an initiative's refs only after the initiative is shipped or superseded and `remove_records` has removed its records in every checkout that shares this Git repository, because until then any slice of it may still read them, a deferred slice included.
+Delete an initiative's refs only after the initiative is shipped, or after it is superseded and `remove_records` has removed its records in every checkout that shares this Git repository, because until then any slice of it may still run and read them, a deferred slice included.
 Delete a single slice's refs only when you will set that slice back to `not-started`.
 A removed checkout's refs are harmless to keep, so leave them until you can delete their initiative's refs.
 A passing run counts only while the project's source, tests, and configuration stay as they were when it ran, so a later edit needs a new run.
@@ -271,6 +271,11 @@ An initiative with no slice document in the checkout records nothing until a rea
 `documents` lists the recorded slice documents in path order.
 `changedAfterShip` lists `{ path, change }` for each recorded document whose content differs, ignoring the mark, as `changed`, for each one that no longer exists as `removed`, and for a slice document in a folder that had none recorded as `added`.
 A copy of a document without the mark, as on a branch from before the ship commit, is not a change.
+
+A shipped initiative's records stay, and every request to change its state is refused with `initiative_shipped` before any other check, naming the initiative and its ship time in `shippedAt`.
+The refusal covers every `update_initiative` operation, `remove_records` included, as well as `update_coordination_state`, `checkpoint_pause`, `update_review`, `verify_slice` with `contractDefects` or `dependents` too, `update_design_view`, and `update_change_map`, and it changes no record and no project file.
+Start new work on a shipped initiative as a new initiative that references it.
+`remove_records` still removes the records of a superseded initiative.
 
 ## Questions and answers
 

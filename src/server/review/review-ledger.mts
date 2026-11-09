@@ -7,6 +7,7 @@ import { locateRecord, moveLegacyRecords, sameRecord, sliceDocumentFolder, write
 import { regularBytes } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { acceptedDesign, latestVerification } from "../workflow/slice-design.mjs";
 import { readCoordinationState } from "../workflow/state.mjs";
+import { refuseShipped } from "../workflow/shipped-history.mjs";
 import { conservationStore, canonical, digest, conservationError, withinScope } from "../conservation/conservation-store.mjs";
 import { assessDeltaReadiness, resolveReference, COMPARISON_VERSION } from "../conservation/conservation-analysis.mjs";
 import { objectSchema as obj, arraySchema as arr, textField as str, hashField, referenceSchema, justificationSchema } from "../conservation/conservation-schema.mjs";
@@ -439,6 +440,8 @@ export async function getReview(input: SliceInput & { expectedRevision?: string 
 
 export async function updateReview(input: UpdateInput) {
   assertInput(UPDATE_REVIEW_SCHEMA, input);
+  // A review of a shipped initiative's slice is history, so a change to it is refused before any other check.
+  await refuseShipped(input.projectRoot, input.initiative);
   await moveLegacyRecords(input.projectRoot);
   const resolved = await locateRecord(input.projectRoot, { kind: "review", initiative: input.initiative, slice: input.slice });
   const deltaTarget = await locateRecord(input.projectRoot, { kind: "change-map", initiative: input.initiative, slice: input.slice });

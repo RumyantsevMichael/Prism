@@ -46,6 +46,15 @@ export async function shippedDecision(projectRoot, initiative) {
   return entryShippedDecision(entries.find((entry) => entry?.id === initiative));
 }
 
+/**
+ * Refuse a change to a shipped initiative: throws ShippedHistoryError when the roadmap records the initiative as shipped, and returns otherwise.
+ * Every writer of an initiative's state calls it after argument validation and before its other checks, so a refused change writes nothing.
+ */
+export async function refuseShipped(projectRoot, initiative) {
+  const decision = await shippedDecision(projectRoot, initiative);
+  if (decision) throw new ShippedHistoryError(initiative, decision.at);
+}
+
 async function pendingProposals(projectRoot, initiative, record) {
   if (record === undefined) {
     const { bytes } = await readRecord(projectRoot, { kind: "initiative", initiative });

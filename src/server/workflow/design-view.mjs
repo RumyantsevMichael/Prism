@@ -6,6 +6,7 @@ import { locateRecord, readRecord, sliceDocumentFolder, withRecordLock, writeRec
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 import { checkFolderDiagrams, diagramProblems } from "./diagram-check.mjs";
 import { acceptedDesign, readFrozenTestOf } from "./slice-design.mjs";
+import { refuseShipped } from "./shipped-history.mjs";
 
 const MAX_EXAMPLES = 400;
 const MAX_EXAMPLE_CHARS = 400;
@@ -155,6 +156,8 @@ export async function updateDesignView(input) {
   assertInput(UPDATE_DESIGN_VIEW_SCHEMA, input);
   const root = await realpath(input.projectRoot);
   const { initiative, slice } = input;
+  // A shipped initiative's design views are history, so a change to one is refused before any other check.
+  await refuseShipped(root, initiative);
   const own = await designSource(root, initiative, slice);
   if (own.source === null) throw fail("validation_failed", `${own.path} does not exist, so there is no contract to cite.`);
   const { design } = await governingDesign(root, initiative, slice, own);
