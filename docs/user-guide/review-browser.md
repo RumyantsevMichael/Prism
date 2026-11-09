@@ -75,6 +75,11 @@ A banner appears when the review server stops responding, and it clears when the
 When the server stays silent for about 15 seconds, the banner says that the review app stopped and the page is no longer live, and actions that need the server say so instead of failing silently.
 A restarted app uses a new link, so ask the agent to open the review browser to get one, or run `./bin/prism review` from a Prism checkout.
 The page keeps checking and recovers on its own when the same app or its upgraded successor answers.
+A check that gets no answer within 8 seconds counts as no answer, so a server that is too busy to answer shows the banner instead of a page that silently stops changing.
+
+You can keep as many review tabs open as you like, of one project or of several, in one browser.
+A browser opens at most six connections to the review app for all its tabs together, so the tabs share one live connection: one tab holds it, passes what it hears to the others, and hands it to another tab when you close it.
+A tab in the background checks nothing until you show it again, and then it catches up at once.
 
 ## Attention
 
@@ -272,6 +277,7 @@ Checkouts whose records live in one shared store form one workspace, with the na
 Choose the workspace's name to open its records through the checkout already open, else one an agent session is using, else the one you used last.
 Every checkout of a workspace shows the same roadmap, initiatives, and questions, so choose a checkout only for its own source files and index.
 Every other recent project is listed under its repository, even a repository with one checkout, with its open questions.
+The switcher's counts of open questions follow a question that an agent recorded or answered within about 15 seconds, and one answered in the browser within about 5 seconds.
 The switcher marks the projects an agent session is using now, and lists workspaces first and then repositories, each in name order, so entries never move while you look.
 When an agent presents a review for another project while a tab that can make changes is open, that tab shows a notice with a link instead of a second tab opening.
 

@@ -1,4 +1,6 @@
-// Every live and expired claim of the listed initiatives, read from the initiative records the server already returns.
+import { createPoller } from "./poller.js";
+
+// Every live and expired claim of the project's initiatives, as the server reads them from the initiative records.
 // The sidebar, the command palette, Who's working, and the views read the same index, so a claim shows the same everywhere and never offers an action.
 
 const REFRESH_MS = 10000;
@@ -7,33 +9,6 @@ const REFRESH_MS = 10000;
 export function isExpired(claim, now = Date.now()) {
   const end = Date.parse(claim?.expiresAt);
   return claim?.expired === true || (Number.isFinite(end) && end <= now);
-}
-
-/** The claims of one initiative entity's slices: each slice's own live claim, or the claim that lapsed without a release. */
-export function claimsOf(entity) {
-  const data = entity?.data ?? entity;
-  const slices = data?.record?.slices;
-  if (!slices || typeof slices !== "object") return [];
-  const title = data.roadmapItem?.title ?? data.id;
-  const claims = [];
-  for (const [slug, slice] of Object.entries(slices)) {
-    const claim = slice?.claim ?? slice?.expiredClaim;
-    if (!claim || typeof claim.label !== "string") continue;
-    claims.push({
-      ref: `slice:${data.id}/${slug}`,
-      initiative: data.id,
-      initiativeTitle: title,
-      slug,
-      sliceTitle: slice.title ?? slug,
-      label: claim.label,
-      activity: claim.activity === "design" ? "design" : "implementation",
-      claimedAt: claim.claimedAt ?? null,
-      renewedAt: claim.renewedAt ?? null,
-      expiresAt: claim.expiresAt ?? null,
-      expired: !slice.claim
-    });
-  }
-  return claims;
 }
 
 /** A read-only prism-claim for a claim in one of its variants. */
@@ -49,20 +24,15 @@ export function claimElement(claim, variant = "inline", attributes = {}) {
 }
 
 /**
- * Reads the claims of every initiative `initiatives()` lists from `/api/entity?ref=initiative:<id>`, now and every ten seconds,
- * and calls `onChange` when what it holds changes.
+ * Reads the claims of every initiative from `/api/claims` in one request, now and ten seconds after each answer while the tab is shown,
+ * and calls `onChange` when what it holds changes; a failed read keeps the claims it had.
  */
-export function createClaimIndex({ fetchJson, initiatives, onChange = () => {} }) {
+export function createClaimIndex({ fetchJson, onChange = () => {} }) {
   let claims = [];
   let snapshot = "[]";
-  let timer = 0;
-  let running = null;
 
   async function load() {
-    const ids = [...new Set(initiatives().map((item) => item.id).filter(Boolean))];
-    const read = await Promise.all(ids.map((id) => fetchJson(`./api/entity?ref=${encodeURIComponent(`initiative:${id}`)}`).then(claimsOf).catch(() => null)));
-    // An initiative that could not be read keeps the claims it had.
-    const next = ids.flatMap((id, index) => read[index] ?? claims.filter((claim) => claim.initiative === id));
+    const next = (await fetchJson("./api/claims")).claims ?? [];
     const text = JSON.stringify(next);
     if (text === snapshot) return;
     snapshot = text;
@@ -70,13 +40,12 @@ export function createClaimIndex({ fetchJson, initiatives, onChange = () => {} }
     onChange();
   }
 
+  const poller = createPoller({ run: () => load().catch(() => {}), interval: REFRESH_MS });
+  let started = false;
   function refresh() {
-    clearTimeout(timer);
-    running ??= load().catch(() => {}).finally(() => {
-      running = null;
-      timer = setTimeout(refresh, REFRESH_MS);
-    });
-    return running;
+    if (started) return poller.now();
+    started = true;
+    return poller.start();
   }
 
   const ordered = (list) => [...list].sort((left, right) => Date.parse(left.expiresAt) - Date.parse(right.expiresAt));

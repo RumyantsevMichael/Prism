@@ -206,6 +206,20 @@ async function computeRoadmapView(projectRoot) {
   };
 }
 
+// Every live and lapsed claim of the roadmap's initiatives and of the unlisted ones, in one read, for the page's claim index.
+export function loadClaims(projectRoot) {
+  return remember(`claims:${projectRoot}`, () => computeClaims(projectRoot));
+}
+
+async function computeClaims(projectRoot) {
+  const roadmap = await loadRoadmapView(projectRoot);
+  const initiatives = [
+    ...roadmap.items.map((item) => ({ id: item.id, title: item.title ?? item.id, claims: item.claims })),
+    ...await Promise.all(roadmap.unlisted.map(async (id) => ({ id, title: id, claims: sliceClaims(await claimedSlices(projectRoot, id)) })))
+  ];
+  return { claims: initiatives.flatMap(({ id, title, claims }) => claims.map((claim) => ({ ref: `slice:${id}/${claim.slug}`, initiative: id, initiativeTitle: title, ...claim }))) };
+}
+
 export function loadInitiativeView(projectRoot, id) {
   return remember(`initiative:${id}:${projectRoot}`, () => computeInitiativeView(projectRoot, id));
 }

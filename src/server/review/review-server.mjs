@@ -14,11 +14,12 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { entityContext, entityExists, forgetWorkspace, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
+import { entityContext, entityExists, forgetWorkspace, loadClaims, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 import { readPreferences, writePreferences } from "./review-preferences.mjs";
 import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
+import { createViewerHub, openEventStream, writeEvent } from "./viewer-hub.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -32,7 +33,6 @@ const TEXT_EXTENSIONS = new Set([".md", ".feature", ".puml", ".json"]);
 const EVIDENCE_ARRAY_LIMIT = 200;
 // Requests naming any other host are refused, so a DNS-rebinding page cannot reach the server.
 const TRUSTED_HOSTS = new Set(["127.0.0.1", "localhost"]);
-const VIEWER_HEARTBEAT_MS = 15 * 1000;
 const VIEWER_OPEN_RETRY_MS = 10 * 1000;
 // The stale hint runs Git in the project, so its answer is reused for this long however often the page asks.
 const FRESHNESS_CHECK_MS = 30 * 1000;
@@ -465,7 +465,8 @@ async function readJson(request) {
 // writeSessions is the write session store of the server or app that serves this page; without one, no request can write.
 // onAction(event, { shared }) receives each applied action's event, the history entry with its initiative, instead of this page's viewer streams;
 // shared is false for an index target, whose history belongs to this checkout alone. Without it, the event reaches this page's viewer streams.
-export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, onAction = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null, writeSessions = null,
+// hub holds the shared viewer streams of the origin that serves this page; the review app passes one hub to every project, and a session server keeps its own.
+export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, onAction = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null, writeSessions = null, hub = createViewerHub(),
   rebuildIndex = (root, component, options = {}) => backgroundPreparation().then((module) => module.startIndexRebuild(root, { ...(component ? { component: { identity: component.identity, folder: component.folder } } : {}), ...options })), autoRebuild = (root) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }) {
   let fingerprint = null;
   function currentFingerprint() {
@@ -502,7 +503,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   };
   let session = { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], revision: 0 };
   // Each viewer stream maps to its heartbeat and whether it carries a live write session; only writable streams count as connected tabs.
+  // The review page joins the origin's shared stream instead, as a member of the hub under this page's path, and counts the same way.
   const viewers = new Map();
+  const hubKey = `${new URL(baseUrl).pathname}/`;
   let viewerOpenLease = null;
   const canWrite = (token) => Boolean(writeSessions?.valid(token));
   const writableRequest = (request) => canWrite(request.headers["x-prism-write"]);
@@ -527,10 +530,6 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     viewerOpenLease.unref();
   }
 
-  function writeEvent(response, event, data) {
-    response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  }
-
   function removeViewer(response) {
     const viewer = viewers.get(response);
     if (!viewer) {
@@ -541,6 +540,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   function notify(event, data) {
+    hub.notify(hubKey, event, data);
     for (const response of viewers.keys()) {
       try {
         writeEvent(response, event, data);
@@ -552,33 +552,25 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   function openViewerStream(response, writable) {
-    response.writeHead(200, {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-store",
-      Connection: "keep-alive",
-      "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
-      "X-Content-Type-Options": "nosniff",
-      "Referrer-Policy": "no-referrer"
-    });
-    response.flushHeaders();
-    const heartbeat = setInterval(() => {
-      try {
-        response.write(": keep-alive\n\n");
-      } catch {
-        removeViewer(response);
-        response.destroy();
-      }
-    }, VIEWER_HEARTBEAT_MS);
-    heartbeat.unref();
+    const heartbeat = openEventStream(response, () => removeViewer(response));
     viewers.set(response, { heartbeat, writable });
-    response.once("close", () => removeViewer(response));
     if (writable) clearViewerOpenLease();
     writeEvent(response, "session", sessionSnapshot());
     onViewer?.((event, data) => writeEvent(response, event, data));
   }
 
+  // A tab joins the shared stream with its own write session, which decides whether it counts as a writable tab, exactly as its own stream would.
+  // It starts from the session snapshot and the pending notices, sent on the shared stream for this page only.
+  function joinHub(stream, tab, writable) {
+    if (!hub.join(stream, tab, hubKey, writable)) return false;
+    if (writable) clearViewerOpenLease();
+    hub.send(stream, hubKey, "session", sessionSnapshot());
+    onViewer?.((event, data) => hub.send(stream, hubKey, event, data));
+    return true;
+  }
+
   function writableViewerCount() {
-    let count = 0;
+    let count = hub.count(hubKey, { writable: true });
     for (const viewer of viewers.values()) if (viewer.writable) count += 1;
     return count;
   }
@@ -690,6 +682,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
 
   function closeViewerStreams() {
     clearViewerOpenLease();
+    hub.close();
     for (const response of viewers.keys()) {
       removeViewer(response);
       response.end();
@@ -738,6 +731,22 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       await serveFile(response, path.join(VIEWS_DIR, route.slice("/views/".length)), "text/javascript; charset=utf-8");
     } else if (route === "/api/events" && request.method === "GET") {
       openViewerStream(response, canWrite(url.searchParams.get("write")));
+    } else if (route === "/api/events/shared" && request.method === "GET") {
+      hub.open(response);
+    } else if ((route === "/api/events/join" || route === "/api/events/leave") && request.method === "POST") {
+      if (!fromPage(request)) {
+        sendJson(response, 403, { code: "origin_refused", message: "A tab joins the event stream from the review page as JSON." });
+        return;
+      }
+      const body = await readJson(request);
+      if (route === "/api/events/leave") {
+        hub.leave(body?.stream, body?.tab);
+        sendJson(response, 200, {});
+      } else if (joinHub(body?.stream, body?.tab, writableRequest(request))) {
+        sendJson(response, 200, { project: hubKey });
+      } else {
+        sendJson(response, 404, { code: "stream_gone", message: "The event stream closed; join the stream that replaced it." });
+      }
     } else if (route === "/api/index") {
       const artifacts = await listArtifacts(projectRoot), sources = await listSourceFiles(projectRoot);
       const available = new Set([...artifacts, ...sources]);
@@ -818,6 +827,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         return;
       }
       send(response, 200, JSON.stringify(await loadEntity(projectRoot, ref, { intelligenceDirectories: intelligenceDirectories() })), "application/json; charset=utf-8");
+    } else if (route === "/api/claims" && request.method === "GET") {
+      send(response, 200, JSON.stringify(await loadClaims(projectRoot)), "application/json; charset=utf-8");
     } else if (route === "/api/evidence") {
       send(response, 200, JSON.stringify(await loadEvidence(projectRoot, url.searchParams.get("id"), evidenceStore())), "application/json; charset=utf-8");
     } else if (route === "/api/indexing" && request.method === "GET") {
@@ -862,7 +873,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     },
     currentSession,
     viewerCount() {
-      return viewers.size;
+      return viewers.size + hub.count(hubKey);
     },
     writableViewerCount,
     notify,

@@ -564,7 +564,8 @@ test("the served review page carries the project switcher and the notice banner"
   assert.match(page, /id="notice"/);
   const client = (await request(new URL("review.js", url))).body;
   assert.match(client, /\.\/api\/projects/);
-  assert.match(client, /addEventListener\("notice"/);
+  // The page handles notices that reach it over the shared event stream.
+  assert.match(client, /name === "notice"/);
 });
 
 test("reading the review URL without tabs leaves the session unchanged", async (context) => {
@@ -1120,4 +1121,24 @@ test("a session does not trust a state directory that others can read", { skip: 
   const url = new URL(await (await pool(context, { app: { directory } }).get(root, "task")).reviewUrl([]));
   assert.ok(!url.pathname.includes("/p/"));
   await assert.rejects(readFile(path.join(directory, "review-app.json")), { code: "ENOENT" }, "nothing is written to an untrusted directory");
+});
+
+// Every open tab lists the projects every few seconds, so the list keeps each project's gate count rather than reading every project's records each time.
+test("the project list keeps a gate count until a session registers the project again", async (context) => {
+  const directory = await appDirectory(context);
+  const current = await project(context, "lister");
+  const currentUrl = await (await pool(context, { app: { directory } }).get(current, "task")).reviewUrl([]);
+  const gated = await gateProject(context, "kept", 1);
+  await registerRecent(directory, gated);
+  const gates = async () => JSON.parse((await request(new URL("api/projects", currentUrl))).body).projects.find((entry) => entry.projectRoot === gated).gates;
+  assert.equal(await gates(), 1);
+  const state = path.join(gated, "docs", "plans", "work", "state.json");
+  const record = JSON.parse(await readFile(state, "utf8"));
+  record.pending.push({ ...record.pending[0], id: "gate-00000001", question: "Another question?" });
+  await writeFile(state, JSON.stringify(record));
+  // The records themselves are shared for a second within the process, so the test waits that long to see the list read them again.
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.equal(await gates(), 1, "a list within the keep time answers the kept count without reading the records");
+  await registerRecent(directory, gated);
+  assert.equal(await gates(), 2, "a session that registers the project renews its count at once");
 });

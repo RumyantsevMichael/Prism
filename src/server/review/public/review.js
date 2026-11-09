@@ -19,6 +19,8 @@ import { DENSITIES, savePreferences, THEMES } from "./kit/preferences.js";
 import { shownActionEntries } from "./views/actions.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
 import { currentPhase } from "./views/slice.js";
+import { createPoller, deadline, POLL_DEADLINE_MS } from "./views/poller.js";
+import { createEventRelay } from "./views/event-relay.js";
 
 const project = document.getElementById("project");
 const navRoot = document.getElementById("nav");
@@ -56,7 +58,8 @@ let sessionInstance = null;
 // A page that reconnects to an app of another plugin version reloads, so it never runs old page code against a newer app.
 let appVersion = null;
 let sessionConnected = false;
-let sessionStream;
+// The origin's shared event stream, which one tab holds for every tab of the review app.
+let relay = null;
 let saveQueue = Promise.resolve();
 let lastSnapshot = "";
 // The path whose view the workspace shows, and each visited page's scroll position, so a refresh or a return keeps the reader's place.
@@ -87,6 +90,12 @@ let claimIndex;
 let presence;
 const viewStates = new Map();
 const treeToggles = new Map();
+
+// Every request has a deadline, so a request the browser holds back for want of a free connection fails and shows the connection banner instead of freezing the page.
+function appFetch(url, options = {}) {
+  const { deadlineMs, ...rest } = options;
+  return fetch(url, { signal: deadline(deadlineMs), ...rest });
+}
 
 function samePaths(left, right) {
   return left.length === right.length && left.every((path, index) => path === right[index]);
@@ -199,14 +208,14 @@ function writeHeaders() {
 const actionApi = {
   async list(target) {
     if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
-    const response = await fetch(`./api/actions?target=${encodeURIComponent(target)}`, { cache: "no-store", headers: writeHeaders() });
+    const response = await appFetch(`./api/actions?target=${encodeURIComponent(target)}`, { cache: "no-store", headers: writeHeaders() });
     const listing = await response.json().catch(() => ({}));
     if (!response.ok) throw Object.assign(new Error(listing.message ?? "The actions could not be read."), { code: listing.code });
     return listing;
   },
   async apply(request) {
     if (connection === "stopped") return { status: 0, json: { message: STOPPED_MESSAGE } };
-    const response = await fetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify(request) })
+    const response = await appFetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify(request) })
       .catch(() => null);
     if (!response) return { status: 0, json: { message: "The review app did not answer, so the change was not applied. Try again in a moment." } };
     return { status: response.status, json: await response.json().catch(() => ({ message: "The server returned an unreadable response." })) };
@@ -247,7 +256,7 @@ async function takeWriteGrant() {
   if (!grant) return;
   history.replaceState(history.state, "", `${location.pathname}${location.search}`);
   try {
-    const response = await fetch("./api/write-session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ grant }) });
+    const response = await appFetch("./api/write-session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ grant }) });
     const answer = await response.json().catch(() => ({}));
     if (response.ok && typeof answer.token === "string") sessionStorage.setItem(WRITE_SESSION_KEY, answer.token);
   } catch {
@@ -280,7 +289,7 @@ function setBusy(busy) {
 function saveSession() {
   const payload = { openTabs: [...openTabs], activeTab: selectedPath, previewTab, agentTabs: agentTabs.filter((tab) => openTabs.includes(tab)) };
   const request = async () => {
-    const response = await fetch("./api/session", {
+    const response = await appFetch("./api/session", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -568,11 +577,14 @@ function showOneProject() {
   projectButton.removeAttribute("disabled");
 }
 
-// The review app lists its projects.
+// The review app lists its projects; a session server has no list, so its page stops asking.
+let projectPoller = null;
+
 async function refreshProjects() {
   let listing;
   try {
-    const response = await fetch("./api/projects", { cache: "no-store" });
+    const response = await appFetch("./api/projects", { cache: "no-store", deadlineMs: POLL_DEADLINE_MS });
+    if (response.status === 404) projectPoller?.stop();
     if (!response.ok) {
       showOneProject();
       return;
@@ -669,7 +681,7 @@ async function updateAttentionSignals(count) {
   document.title = signalTitle(baseTitle(), count);
   if (signals.icon && signals.plainIcon) {
     if (count > 0) {
-      signals.badged ??= await fetch(signals.plainIcon).then((response) => response.ok ? response.text() : null).then((svg) => svg && `data:image/svg+xml,${encodeURIComponent(badgedIcon(svg))}`).catch(() => null);
+      signals.badged ??= await appFetch(signals.plainIcon).then((response) => response.ok ? response.text() : null).then((svg) => svg && `data:image/svg+xml,${encodeURIComponent(badgedIcon(svg))}`).catch(() => null);
       if (signals.badged && signals.count > 0) signals.icon.setAttribute("href", signals.badged);
     } else {
       signals.icon.setAttribute("href", signals.plainIcon);
@@ -711,39 +723,48 @@ function renderNotices() {
   }));
 }
 
-function connectSessionEvents() {
-  const token = writeSession();
-  sessionStream = new EventSource(token ? `./api/events?write=${encodeURIComponent(token)}` : "./api/events");
-  sessionStream.onopen = () => {
-    sessionConnected = true;
-    reportRefresh(true);
-  };
-  sessionStream.onerror = () => {
-    sessionConnected = false;
-  };
-  sessionStream.addEventListener("notice", (event) => {
-    try {
-      const notice = JSON.parse(event.data);
-      notices.delete(notice.projectId);
-      notices.set(notice.projectId, notice);
-      renderNotices();
-    } catch {
-    }
-  });
-  // An applied action of this page or of another checkout's page on the same records: views that show it update without a reload.
-  sessionStream.addEventListener("action", (event) => {
-    try {
-      document.dispatchEvent(new CustomEvent("prism:action", { detail: JSON.parse(event.data) }));
-    } catch {
-    }
-  });
-  sessionStream.addEventListener("session", (event) => {
+// A tab joins and leaves the shared stream itself, with its own write session, so the server counts it as a writable tab exactly when it holds one.
+async function joinStream(stream, tab) {
+  const response = await appFetch("./api/events/join", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ stream, tab }), deadlineMs: POLL_DEADLINE_MS });
+  return response.ok;
+}
+
+function leaveStream(stream, tab, { keepalive = false } = {}) {
+  return appFetch("./api/events/leave", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stream, tab }), keepalive, deadlineMs: POLL_DEADLINE_MS });
+}
+
+function onStreamEvent(name, data) {
+  if (name === "notice") {
+    notices.delete(data.projectId);
+    notices.set(data.projectId, data);
+    renderNotices();
+  } else if (name === "action") {
+    // An applied action of this page or of another checkout's page on the same records: views that show it update without a reload.
+    document.dispatchEvent(new CustomEvent("prism:action", { detail: data }));
+  } else if (name === "session") {
     sessionConnected = true;
     try {
-      synchronizeSession(JSON.parse(event.data));
+      synchronizeSession(data);
     } catch (error) {
       showToast(error.message);
     }
+  }
+}
+
+function connectSessionEvents() {
+  relay = createEventRelay({
+    join: joinStream,
+    leave: leaveStream,
+    onEvent: onStreamEvent,
+    onStatus: ({ open, joined }) => {
+      sessionConnected = joined;
+      if (open) reportRefresh(true);
+    }
+  });
+  window.addEventListener("pagehide", () => relay.close());
+  // A page restored from the back-forward cache left the stream as it went, so it loads again to rejoin it.
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) location.reload();
   });
 }
 
@@ -758,7 +779,7 @@ function markdownOptions(basePath) {
 // A short outage shows the retrying banner; one that outlasts the grace period shows the stopped banner, and any answer clears both.
 function reportRefresh(ok) {
   probes = recordProbe(probes, ok, Date.now());
-  const next = connectionState({ ...probes, now: Date.now(), streamOpen: sessionStream?.readyState === EventSource.OPEN });
+  const next = connectionState({ ...probes, now: Date.now(), streamOpen: Boolean(relay?.open) });
   if (next === connection) return;
   const recovered = connection === "stopped" && next === "live";
   connection = next;
@@ -766,9 +787,9 @@ function reportRefresh(ok) {
   appGoneBanner.hidden = next !== "stopped";
   if (!recovered) return;
   // A stream that met another listener on the port gave up, so a returning app needs a new one; the next poll redraws the open view.
-  if (sessionStream?.readyState === EventSource.CLOSED) connectSessionEvents();
+  relay?.reconnect();
   lastSnapshot = "";
-  void refreshProjects();
+  void projectPoller?.now();
 }
 
 // A session that could not reach the shared app serves this page itself, so the page says why another link may show the same project.
@@ -1470,7 +1491,7 @@ function modeButtons(state, path) {
 }
 
 async function showEntity(path) {
-  const response = await fetch(`./api/entity?ref=${encodeURIComponent(path)}`, { cache: "no-store" });
+  const response = await appFetch(`./api/entity?ref=${encodeURIComponent(path)}`, { cache: "no-store" });
   if (response.status === 404) {
     showMissing(path);
     return;
@@ -1525,7 +1546,7 @@ async function showArtifact(path) {
     await showEntity(path);
     return;
   }
-  const response = await fetch(`./api/artifact?path=${encodeURIComponent(path)}`, { cache: "no-store" });
+  const response = await appFetch(`./api/artifact?path=${encodeURIComponent(path)}`, { cache: "no-store" });
   if (response.status === 404) {
     showMissing(path);
     return;
@@ -1602,7 +1623,7 @@ function viewState(path) {
 
 async function fetchJson(url) {
   if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
-  const response = await fetch(url, { cache: "no-store" });
+  const response = await appFetch(url, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(await response.text());
   }
@@ -1659,13 +1680,13 @@ function viewContext(path, state) {
       const unanswered = () => {
         throw new Error("The review app did not answer, so the answer was not recorded. Try again in a moment.");
       };
-      const listed = await fetch(`./api/actions?target=${encodeURIComponent(target)}`, { headers: writeHeaders() }).catch(unanswered);
+      const listed = await appFetch(`./api/actions?target=${encodeURIComponent(target)}`, { headers: writeHeaders() }).catch(unanswered);
       const listing = await listed.json().catch(() => ({}));
       if (!listed.ok) throw Object.assign(new Error(listing.message ?? "The answer was not recorded."), { code: listing.code === "unknown_target" ? "unknown_gate" : listing.code });
       const action = (listing.actions ?? []).find((item) => item.id === "gate.answer");
       const names = new Set((action?.fields ?? []).map((field) => field.name));
       const input = Object.fromEntries([["choice", choice], ["note", note]].filter(([name, value]) => names.has(name) && value !== null && value !== undefined && value !== ""));
-      const response = await fetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ action: "gate.answer", target, input, revision: action?.revision ?? null }) }).catch(unanswered);
+      const response = await appFetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ action: "gate.answer", target, input, revision: action?.revision ?? null }) }).catch(unanswered);
       const result = await response.json().catch(() => ({ message: "The server returned an unreadable response." }));
       if (!response.ok) {
         // The answer form names an answered or withdrawn question as it always has.
@@ -1841,13 +1862,13 @@ async function initialize() {
     sectionFrame = requestAnimationFrame(() => markCurrentSection(artifact, workspace.getBoundingClientRect().top));
   }, { passive: true });
   // Choosing another project opens its review page; opening the menu refreshes the list first.
-  projectButton.addEventListener("click", () => void refreshProjects());
+  projectPoller = createPoller({ run: refreshProjects, interval: 5000 });
+  projectButton.addEventListener("click", () => void projectPoller.now());
   projectMenu.addEventListener("prism-select", (event) => {
     const url = event.detail?.value;
     if (url && url !== location.href) location.href = url;
   });
-  void refreshProjects();
-  setInterval(refreshProjects, 5000);
+  void projectPoller.start();
   createIndexingStatus({
     root: document.getElementById("indexing"),
     button: document.getElementById("indexing-button"),
@@ -1865,7 +1886,6 @@ async function initialize() {
   navigation = data.navigation;
   claimIndex = createClaimIndex({
     fetchJson,
-    initiatives: () => navigation.initiatives ?? [],
     onChange: () => {
       navigationKey = "";
       renderNavigation();
@@ -2067,23 +2087,27 @@ async function initialize() {
     await showArtifact(selectedPath);
   }
   let polls = 0;
-  setInterval(async () => {
+  // The page checks its project every 1.5 s, one check at a time, and only while the tab is shown; a check without an answer within its deadline counts as failed.
+  const indexPoller = createPoller({ interval: 1500, run: async () => {
     // Shown action lists check their listing every few seconds, so a change an agent made shows without a reload.
     if (++polls % 3 === 0 && connection !== "stopped") document.dispatchEvent(new CustomEvent("prism:poll"));
     try {
-      const refreshed = await fetch("./api/index", { cache: "no-store" }).catch(() => null);
-      reportRefresh(Boolean(refreshed?.ok));
-      if (refreshed?.ok) {
-        const snapshot = await refreshed.json();
+      const refreshed = await appFetch("./api/index", { cache: "no-store", deadlineMs: POLL_DEADLINE_MS }).catch(() => null);
+      const snapshot = refreshed?.ok ? await refreshed.json().catch(() => null) : null;
+      reportRefresh(Boolean(snapshot));
+      if (snapshot) {
         renderStoreSync(snapshot);
         prismRecords = new Set(snapshot.artifacts);
         availableArtifacts = new Set([...snapshot.artifacts, ...(snapshot.sources ?? [])]);
         updateMissingTabs(snapshot.missingTabs);
         if (JSON.stringify(snapshot.navigation) !== JSON.stringify(navigation)) {
+          // Claims are read on their own schedule, so only a new or removed initiative reads them again at once.
+          const initiatives = (list) => JSON.stringify((list ?? []).map((item) => item.id));
+          const added = initiatives(snapshot.navigation?.initiatives) !== initiatives(navigation.initiatives);
           navigation = snapshot.navigation;
           renderNavigation();
           renderTabs();
-          void claimIndex.refresh().catch(() => {});
+          if (added) void claimIndex.refresh().catch(() => {});
         }
         if (!sessionConnected) {
           synchronizeSession(snapshot);
@@ -2096,7 +2120,9 @@ async function initialize() {
       }
     } catch {
     }
-  }, 1500);
+  } });
+  // The first check waits one interval, since the page has just drawn from a fresh index.
+  setTimeout(() => void indexPoller.start(), 1500);
 }
 
 initialize().catch((error) => {
