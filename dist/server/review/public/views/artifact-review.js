@@ -79,7 +79,7 @@ function keepLinesInView(box, state) {
 function commentHtml(comment, version) {
   const host = comment.author?.host ? `<span class="muted">${escapeHtml(comment.author.host)}</span>` : "";
   const older = comment.version && comment.version !== version ? chip("On an earlier version") : "";
-  return `<li class="artifact-comment">
+  return `<li class="artifact-comment" data-comment-id="${escapeHtml(String(comment.id))}">
     <div class="artifact-comment-head">
       <span class="artifact-comment-author">${escapeHtml(comment.author?.name ?? "An unknown person")}</span>${host}
       ${chip(`Line ${escapeHtml(String(comment.line))}`)}${older}
@@ -89,65 +89,107 @@ function commentHtml(comment, version) {
   </li>`;
 }
 
-// A read carries at most 20 comments, so the card lists the first read's and then those the person read further through More comments, each once, oldest first.
-// The further comments belong to the file in its scope; a read whose first page already holds every comment needs none.
+// A read carries at most 20 comments, so the card lists the comments of as many reads as the person asked for, the first one and one more for each press of More comments.
+// state.commentReads counts them, and every redraw and every press reads them all again from the first comment,
+// so the list is always the file's first comments in their current order, also after a sync brings a comment that sorts among the listed ones or one of them goes.
 const scopeLabel = (review) => review.scope?.label ?? "workspace";
-function shownComments(review, state) {
-  const first = review.comments ?? [];
-  const more = state.moreComments?.scope === scopeLabel(review) && (review.totalComments ?? first.length) > first.length ? state.moreComments.comments : [];
-  const seen = new Set();
-  return [...first, ...more].filter((comment) => !seen.has(comment.id) && Boolean(seen.add(comment.id)));
-}
-const totalOf = (review, shown) => Math.max(review.totalComments ?? shown.length, shown.length);
+const readsOf = (state) => Number.isSafeInteger(state.commentReads) && state.commentReads > 1 ? state.commentReads : 1;
+const READ_TRIES = 3;
 
-// The listed comments and, while more follow, the More comments button that reads the next ones.
-function commentListHtml(review, state) {
-  const comments = shownComments(review, state);
+/**
+ * The artifact of a first read with the comments of state's further reads added, each read from the last one's nextCommentOffset, and that last read's nextCommentOffset;
+ * readPage(commentOffset) reads /api/artifact from that comment. Reads that a change between them made disagree, by count, scope, or a comment listed twice,
+ * are made again from a new first read, and after three tries the result is null, so the page keeps what it shows until its next redraw.
+ */
+export async function readListedComments(first, state, readPage) {
+  let head = first;
+  for (let attempt = 1; ; attempt += 1) {
+    const listed = await readFurther(head, readsOf(state), readPage);
+    if (listed || attempt === READ_TRIES) return listed;
+    head = (await readPage(1)).artifact;
+    if (!head) return null;
+  }
+}
+
+async function readFurther(head, reads, readPage) {
+  const comments = [...(head.comments ?? [])];
+  const ids = new Set(comments.map((comment) => comment.id));
+  let next = head.nextCommentOffset ?? null;
+  for (let count = 1; count < reads && next !== null; count += 1) {
+    const read = (await readPage(next)).artifact;
+    if (!read || scopeLabel(read) !== scopeLabel(head) || read.totalComments !== head.totalComments) return null;
+    for (const comment of read.comments ?? []) {
+      if (ids.has(comment.id)) return null;
+      ids.add(comment.id);
+      comments.push(comment);
+    }
+    next = read.nextCommentOffset ?? null;
+  }
+  return { ...head, comments, nextCommentOffset: next };
+}
+
+// The listed comments and, while the last read left comments out, the More comments button that reads the next ones.
+function commentListHtml(review) {
+  const comments = review.comments ?? [];
   const list = comments.length ? `<ol class="artifact-comments">${comments.map((comment) => commentHtml(comment, review.version)).join("")}</ol>` : emptyNote("No comments yet.");
-  const more = comments.length < totalOf(review, comments) ? '<div class="artifact-comments-more"><prism-button size="sm" data-more-comments>More comments</prism-button></div>' : "";
+  const more = review.nextCommentOffset != null ? '<div class="artifact-comments-more"><prism-button size="sm" data-more-comments data-focus-key="more-comments">More comments</prism-button></div>' : "";
   return `${list}${more}`;
 }
+const totalOf = (review) => Math.max(review.totalComments ?? 0, review.comments?.length ?? 0);
 
-/** The review view's markup for an artifact the record store serves, or "" for any other file; state is the page's view state of the file, which keeps the numbered lines open or closed and the comments read further. */
+/** The review view's markup for an artifact the record store serves, or "" for any other file; state is the page's view state of the file, which keeps the numbered lines open or closed and how many comment reads the card lists. */
 export function artifactReviewHtml(data, state = {}) {
   const review = data.artifact;
   if (!review) return "";
-  const total = totalOf(review, shownComments(review, state));
   return `<prism-panel class="view-section artifact-review" heading="Review">
     ${keyValues([["Scope", chip(escapeHtml(review.scope?.label ?? "workspace"))], ["Accepted", acceptance(review)]])}
     <div class="artifact-review-changes">${changes(data)}</div>
     ${numberedLines(data, state.artifactLinesOpen === true)}
     <section class="artifact-review-comments" aria-labelledby="artifact-comments-heading">
-      <h3 class="artifact-review-subheading" id="artifact-comments-heading">${escapeHtml(plural(total, "comment"))}</h3>
-      <div class="artifact-comment-list" data-comment-list>${commentListHtml(review, state)}</div>
+      <h3 class="artifact-review-subheading" id="artifact-comments-heading">${escapeHtml(plural(totalOf(review), "comment"))}</h3>
+      <div class="artifact-comment-list" data-comment-list>${commentListHtml(review)}</div>
       <div data-comment-form></div>
     </section>
   </prism-panel>`;
 }
 
 /**
- * More comments reads the comments after the ones the card lists, at most 20 in one read, and adds them to the list in place,
- * keeping them in the view state so a redraw for a changed file or an arriving comment still lists them.
+ * More comments asks for one more read and reads every listed read again with it, then lists them in place.
+ * Focus moves to the More comments button that follows the added comments, or to the first added comment when none follows, so a keyboard reader goes on from where the list grew.
+ * A redraw that replaced the card meanwhile already lists as many reads, as state counts them before the reads start; onListed hands the page what the card now lists.
  */
-function bindMoreComments(root, review, state, fetchComments) {
+function bindMoreComments(root, data, state, { readPage, onListed }) {
   const button = root.querySelector("[data-more-comments]");
   if (!button) return;
+  let reading = false;
   button.addEventListener("click", async () => {
-    if (button.disabled) return;
-    button.disabled = true;
-    let read;
-    try { read = (await fetchComments(shownComments(review, state).length + 1)).artifact; }
-    catch { button.disabled = false; return; }
-    if (!read || (read.scope?.label ?? "workspace") !== scopeLabel(review)) { button.disabled = false; return; }
-    const kept = state.moreComments?.scope === scopeLabel(review) ? state.moreComments.comments : [];
-    state.moreComments = { scope: scopeLabel(review), comments: [...kept, ...(read.comments ?? [])] };
-    review.totalComments = read.totalComments ?? review.totalComments;
+    // The button stays enabled while it reads, as a disabled one would drop its focus to the page.
+    if (reading) return;
+    reading = true;
+    const before = new Set((data.artifact.comments ?? []).map((comment) => comment.id));
+    state.commentReads = readsOf(state) + 1;
+    let listed = null;
+    try {
+      const first = (await readPage(1)).artifact;
+      listed = first ? await readListedComments(first, state, readPage) : null;
+    } catch { /* A failed read leaves the list as it is, and the person can press again. */ }
+    reading = false;
     const list = root.querySelector("[data-comment-list]");
-    if (!list?.isConnected) return;
-    list.innerHTML = commentListHtml(review, state);
+    if (!button.isConnected || !list?.isConnected) return;
+    if (!listed || scopeLabel(listed) !== scopeLabel(data.artifact)) {
+      if (!listed) state.commentReads = readsOf(state) - 1;
+      return;
+    }
+    data.artifact = { ...data.artifact, ...listed };
+    list.innerHTML = commentListHtml(data.artifact);
     const heading = root.querySelector("#artifact-comments-heading");
-    if (heading) heading.textContent = plural(totalOf(review, shownComments(review, state)), "comment");
-    bindMoreComments(root, review, state, fetchComments);
+    if (heading) heading.textContent = plural(totalOf(data.artifact), "comment");
+    onListed?.(data);
+    bindMoreComments(root, data, state, { readPage, onListed });
+    const next = list.querySelector("[data-more-comments]");
+    const added = [...list.querySelectorAll("[data-comment-id]")].find((item) => !before.has(item.dataset.commentId));
+    if (next) next.focus({ preventScroll: true });
+    else if (added) { added.tabIndex = -1; added.focus(); }
   });
 }
 
@@ -156,11 +198,11 @@ function bindMoreComments(root, review, state, fetchComments) {
  * The page redraws the view when the file or its comments change, so the form's element is kept in state and moved into the new view,
  * which keeps an unsent comment, its focus, and its cursor while other people's comments arrive.
  */
-export function mountArtifactReview(root, data, { actionApi, state, fetchComments }) {
+export function mountArtifactReview(root, data, { actionApi, state, readPage, onListed }) {
   // The page redraws the card for a changed file or an arriving comment, so the numbered lines stay open or closed as the person left them.
   root.querySelector("[data-artifact-lines]")?.addEventListener("toggle", (event) => { state.artifactLinesOpen = event.detail.open === true; });
   keepLinesInView(root.querySelector(".artifact-lines-scroll"), state);
-  if (data.artifact && fetchComments) bindMoreComments(root, data.artifact, state, fetchComments);
+  if (data.artifact && readPage) bindMoreComments(root, data, state, { readPage, onListed });
   const slot = root.querySelector("[data-comment-form]");
   if (!slot || !data.artifact || !actionApi) return null;
   const target = commentTarget(data);

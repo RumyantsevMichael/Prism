@@ -17,7 +17,7 @@ import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createPresence } from "./views/presence.js";
 import { DENSITIES, savePreferences, THEMES } from "./kit/preferences.js";
 import { shownActionEntries } from "./views/actions.js";
-import { artifactReviewHtml, mountArtifactReview } from "./views/artifact-review.js";
+import { artifactReviewHtml, mountArtifactReview, readListedComments } from "./views/artifact-review.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
 
 const project = document.getElementById("project");
@@ -1082,10 +1082,12 @@ function controlsOf(root) {
 // and then the scroll position, open sections, and focus come back; a newly opened path starts where its tab was left, or at the top.
 function beginRebuild(path) {
   const same = renderedPath === path;
-  const memory = { path, top: same ? workspace.scrollTop : scrollPositions.get(path) ?? 0, open: null, focus: -1 };
+  const memory = { path, top: same ? workspace.scrollTop : scrollPositions.get(path) ?? 0, open: null, focus: -1, focusKey: null };
   if (same) {
     memory.open = [...artifact.querySelectorAll("prism-disclosure")].map((disclosure) => [disclosure.getAttribute("summary") ?? "", disclosure.open]);
     memory.focus = artifact.contains(document.activeElement) ? controlsOf(artifact).indexOf(document.activeElement) : -1;
+    // A control whose view names it with data-focus-key, such as a kit button whose own control sits in its shadow, gets its focus back by that name.
+    memory.focusKey = artifact.contains(document.activeElement) ? document.activeElement.closest("[data-focus-key]")?.dataset.focusKey ?? null : null;
     artifact.style.minHeight = `${artifact.offsetHeight}px`;
   } else {
     artifact.style.minHeight = "";
@@ -1201,6 +1203,7 @@ function endRebuild(memory) {
       if (sections[index] && (sections[index].getAttribute("summary") ?? "") === summary) sections[index].open = open;
     });
   }
+  if (memory.focusKey && !artifact.contains(document.activeElement)) [...artifact.querySelectorAll("[data-focus-key]")].find((control) => control.dataset.focusKey === memory.focusKey)?.focus({ preventScroll: true });
   if (memory.focus >= 0 && !artifact.contains(document.activeElement)) controlsOf(artifact)[memory.focus]?.focus({ preventScroll: true });
   workspace.scrollTop = memory.top;
   if (pendingAnchor?.path === memory.path) {
@@ -1327,6 +1330,16 @@ async function showArtifact(path) {
     return;
   }
   const data = await response.json();
+  const state = viewState(data.path);
+  // A Review card that lists further comment reads reads them all again with the first, so its list stays the file's first comments as they now are.
+  const readPage = (commentOffset) => fetchJson(`./api/artifact?path=${encodeURIComponent(data.path)}&commentOffset=${commentOffset}`);
+  if (data.artifact && (state.commentReads ?? 1) > 1) {
+    const listed = await readListedComments(data.artifact, state, readPage).catch(() => null);
+    if (path !== selectedPath) return;
+    // Reads that never agreed, or failed, leave the card as it is until the next redraw; a card not shown yet lists the first read alone.
+    if (listed) data.artifact = listed;
+    else if (renderedPath === path) { setBusy(false); return; }
+  }
   const snapshot = JSON.stringify(data);
   if (path !== selectedPath) return;
   if (snapshot === lastSnapshot) {
@@ -1342,7 +1355,6 @@ async function showArtifact(path) {
     : structured || data.path.toLowerCase().endsWith(".puml")
       ? ""
       : `<section class="document-sheet"><prism-doc class="document-content">${renderText(data.path, data.content, markdownOptions(data.path))}</prism-doc></section>`;
-  const state = viewState(data.path);
   const memory = beginRebuild(path);
   // A repository file is named by its path; a record of Prism's by its title and kind, never its file name.
   const named = describe(data.path);
@@ -1363,7 +1375,8 @@ async function showArtifact(path) {
     ${artifactReviewHtml(data, state)}
     ${documentCard}`;
   // A store artifact shows its review view above its content, and its comment form keeps an unsent comment across the page's live updates.
-  mountArtifactReview(artifact, data, { actionApi, state, fetchComments: (commentOffset) => fetchJson(`./api/artifact?path=${encodeURIComponent(data.path)}&commentOffset=${commentOffset}`) });
+  // More comments lists further comments in place, so the page takes what the card now lists as what it shows and redraws only when that changes.
+  mountArtifactReview(artifact, data, { actionApi, state, readPage, onListed: (listed) => { if (listed.path === selectedPath) lastSnapshot = JSON.stringify(listed); } });
   pageBar.setActions(structured ? modeButtons(state, path) : []);
   if (structured) {
     const container = document.createElement("div");
