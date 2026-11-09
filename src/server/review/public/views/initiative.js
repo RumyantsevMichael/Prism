@@ -7,6 +7,7 @@ import { codeChip } from "./code-location.js";
 import { claimChip, claimOf } from "./claims.js";
 import { componentChip } from "./components.js";
 import { mountInitiativeSettings } from "./actions.js";
+import { shippedHistoryHtml } from "./shipped-history.js";
 
 const MODES = [["board", "Board"], ["list", "List"], ["graph", "Graph"]];
 // These columns always show; another status, such as deferred, gets a column only while a slice has it.
@@ -104,7 +105,7 @@ export async function render(container, entity, ctx) {
   const item = data.roadmapItem;
   ctx.state.mode ??= "board";
   const modes = data.exists && data.valid ? `<div class="segmented" role="group" aria-label="Initiative view">${MODES.map(([mode, label]) => `<button type="button" data-initiative-mode="${mode}" aria-pressed="${ctx.state.mode === mode}">${label}</button>`).join("")}</div>` : "";
-  const head = `
+  const head = `${shippedHistoryHtml(data.shippedHistory)}
     <section class="view-card summary-card">
       <div class="summary-row">
         <div class="summary-status">${item ? stateBadge(item.state) : stateBadge("unlisted")}${item ? `<span class="meta-pill">${escapeHtml(item.band)}</span>` : ""}${item?.readyToShip && item.state !== "shipped" ? '<span class="status-pill is-good">ready to ship</span>' : ""}</div>

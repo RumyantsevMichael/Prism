@@ -342,5 +342,11 @@ export async function shippedHistory(projectRoot, initiative) {
   };
 }
 
+/** The label that the review browser shows on a page of a shipped initiative. */
+export const shippedHistoryLabel = (initiative, decision) => `Shipped history: ${initiative} shipped on ${shipDate(decision)}; this page records finished work.`;
+
+/** The reason that the review browser gives for every action on a shipped initiative, its slices, and its gates. */
+export const shippedActionReason = (decision) => `The initiative shipped on ${shipDate(decision)}, so its state is history.`;
+
 /** The text line of an MCP read that marked slice documents, asking to commit them apart from the task's changes. */
 export const historyMarksText = (initiative, marked) => `Prism marked these slice documents of shipped initiative ${initiative} as history: ${marked.join(", ")}. Commit them in a commit of their own, apart from this task's changes.`;

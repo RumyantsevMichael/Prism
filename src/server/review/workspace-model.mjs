@@ -13,6 +13,7 @@ import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
 import { loadDesignView } from "../workflow/design-view.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
+import { shippedHistory, shippedHistoryLabel } from "../workflow/shipped-history.mjs";
 
 const LIBRARY_LIMIT = 500;
 const RECENT_CHANGES_LIMIT = 20;
@@ -591,6 +592,24 @@ async function libraryScope(projectRoot, section) {
   return { kind: "library", section, entries: library.entries.map((entry) => ({ path: entry.path, title: entry.title, status: entry.status, topic: entry.topic })) };
 }
 
+// A page of a shipped initiative carries its shipped history with the label the page shows, or null when the initiative has not shipped.
+async function pageHistory(projectRoot, initiative) {
+  const history = await shippedHistory(projectRoot, initiative).catch(() => null);
+  return history ? { ...history, label: shippedHistoryLabel(initiative, { at: history.shippedAt }) } : null;
+}
+
+// A slice document of a shipped initiative carries the page's shipped history, with changedAfterShip saying whether this document changed after ship.
+async function documentHistory(projectRoot, plans, ref) {
+  if (!under(plans, ref) || path.posix.basename(ref) !== "slice.md") return null;
+  const id = ref.slice(plans.length + 1).split("/")[0];
+  if (!SLUG_PATTERN.test(id ?? "")) return null;
+  const history = await pageHistory(projectRoot, id);
+  if (!history) return null;
+  const changed = history.changedAfterShip.some((item) => item.path === ref);
+  if (!changed && !history.documents.includes(ref)) return null;
+  return { ...history, changedAfterShip: changed };
+}
+
 // Context gives every tab, including plain files, a breadcrumb trail and the sidebar scope it belongs to.
 export async function entityContext(projectRoot, ref) {
   const parsed = parseEntityRef(ref);
@@ -607,6 +626,15 @@ export async function entityContext(projectRoot, ref) {
   }
   if (typeof ref !== "string" || !ref) throw new Error("A tab reference is required.");
   const config = await readWorkflowConfig(projectRoot);
+  const history = await documentHistory(projectRoot, config.paths.plans, ref);
+  if (history) return { ...(await fileContext(projectRoot, config, ref)), shippedHistory: history };
+  return fileContext(projectRoot, config, ref);
+}
+
+// The trail and scope of a file tab.
+async function fileContext(projectRoot, config, ref) {
+  const roadmapCrumb = { ref: "roadmap", label: "Roadmap" };
+  const libraryCrumb = { ref: null, label: "Library" };
   const fileCrumb = { ref, label: path.posix.basename(ref) };
   const plans = config.paths.plans;
   const record = await keyOfPath(projectRoot, ref).catch(() => null);
@@ -683,7 +711,10 @@ export async function loadEntity(projectRoot, ref, options = {}) {
   if (parsed.kind === "glossary") return { ref, kind: "glossary", data: await loadGlossary(projectRoot) };
   if (parsed.kind === "initiative") {
     const view = await loadInitiativeView(projectRoot, parsed.id);
-    return { ref, kind: "initiative", data: { ...view, runTotals: await loadInitiativeRunTotals(projectRoot, view), code: await initiativeCode(projectRoot, view) } };
+    const history = await pageHistory(projectRoot, parsed.id);
+    return { ref, kind: "initiative", data: { ...view, runTotals: await loadInitiativeRunTotals(projectRoot, view), code: await initiativeCode(projectRoot, view), ...(history ? { shippedHistory: history } : {}) } };
   }
-  return { ref, kind: "slice", data: await loadSliceView(projectRoot, parsed.id, parsed.slug, options) };
+  const history = await pageHistory(projectRoot, parsed.id);
+  const slice = await loadSliceView(projectRoot, parsed.id, parsed.slug, options);
+  return { ref, kind: "slice", data: history ? { ...slice, shippedHistory: history } : slice };
 }

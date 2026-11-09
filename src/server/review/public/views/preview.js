@@ -2,6 +2,7 @@ import { entityLabel, parseEntityRef, progressBar, stateBadge } from "./entities
 import { highlight, highlightLines, languageOf } from "./highlight.js";
 import { anchorTarget, LINE_RANGE } from "./markdown.js";
 import { escapeHtml } from "./util.js";
+import { shippedHistoryHtml } from "./shipped-history.js";
 
 const SHOW_DELAY_MS = 400;
 const HIDE_DELAY_MS = 200;
@@ -46,7 +47,7 @@ function entitySummary(entity) {
   } else if (Array.isArray(data.entries)) {
     body = `<p class="muted">${data.entries.length} documents in ${escapeHtml(data.directory ?? "")}</p>`;
   }
-  return `<p class="eyebrow">${escapeHtml(label.eyebrow ?? entity.kind)}</p><h3>${escapeHtml(label.title)}</h3>${body}`;
+  return `${shippedHistoryHtml(data.shippedHistory)}<p class="eyebrow">${escapeHtml(label.eyebrow ?? entity.kind)}</p><h3>${escapeHtml(label.title)}</h3>${body}`;
 }
 
 // A line range previews those lines with their numbers, up to a cap, so a planned change shows the code it touches.

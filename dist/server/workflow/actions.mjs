@@ -6,6 +6,7 @@ import { SLUG_PATTERN } from "./initiative-graph.mjs";
 import { runGit } from "./record-store-sync.mjs";
 import { REPOSITORY_NAME } from "./repository-names.mjs";
 import { readRoadmap } from "./roadmap.mjs";
+import { shippedActionReason, shippedDecision } from "./shipped-history.mjs";
 import { INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction } from "./state.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
@@ -88,7 +89,9 @@ async function readTarget(projectRoot, parsed, indexer, state = undefined) {
   const coordination = state ?? await readCoordinationState({ projectRoot, initiative: parsed.initiative }).then((read) => ({ exists: read.exists, revision: read.revision, state: read.state, valid: read.valid }));
   const { loaded } = await readInitiativeWithClaims(projectRoot, parsed.initiative).catch(() => ({ loaded: { exists: false, record: null } }));
   const record = loaded.exists ? loaded.record : null;
-  const context = { ...parsed, coordination, record, initiativeTarget: `initiative:${parsed.initiative}` };
+  // A shipped initiative's state is history, so its decision makes every action on it unavailable.
+  const shipped = await shippedDecision(projectRoot, parsed.initiative).catch(() => null);
+  const context = { ...parsed, coordination, record, shipped, initiativeTarget: `initiative:${parsed.initiative}` };
   if (parsed.kind === "initiative" && !(await initiativeExists(projectRoot, parsed.initiative, record))) throw unknownTarget(parsed.reference);
   if (parsed.kind === "slice" && !(record?.slices && Object.hasOwn(record.slices, parsed.slice))) throw unknownTarget(parsed.reference);
   if (parsed.kind === "gate") {
@@ -256,7 +259,7 @@ const ACTIONS = [...SETTING_ACTIONS, GATE_ANSWER, INDEX_REBUILD];
 export const actionEffect = (id) => ACTIONS.find((definition) => definition.id === id)?.effect ?? null;
 
 function view(definition, context) {
-  const reason = definition.unavailable(context);
+  const reason = context.shipped ? shippedActionReason(context.shipped) : definition.unavailable(context);
   return {
     id: definition.id,
     label: definition.label,

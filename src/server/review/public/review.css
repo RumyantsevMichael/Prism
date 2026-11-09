@@ -3770,6 +3770,26 @@ th {
   padding: 0.4rem 0.6rem;
 }
 
+/* A shipped initiative's pages record finished work, so the label reads as a notice above the content. */
+.shipped-history {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border-left: 3px solid var(--warn);
+  border-radius: 0.45rem;
+  font-size: 0.84rem;
+  margin: 0 0 0.75rem;
+  padding: 0.45rem 0.7rem;
+}
+
+.shipped-history p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.shipped-history .shipped-history-changed {
+  color: var(--ink-muted);
+  margin-top: 0.25rem;
+}
+
 .chart-legend {
   color: var(--ink-muted);
   display: flex;

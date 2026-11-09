@@ -13,6 +13,7 @@ import { connectionState, recordProbe, STOPPED_MESSAGE } from "./views/connectio
 import { badgedIcon, notificationText, shouldNotify, signalTitle } from "./views/attention-signal.js";
 import { missingNotice, nextMissingTabs, renderMissing } from "./views/missing-tab.js";
 import { shownActionEntries } from "./views/actions.js";
+import { shippedHistoryHtml } from "./views/shipped-history.js";
 
 const project = document.getElementById("project");
 const artifacts = document.getElementById("artifacts");
@@ -1037,7 +1038,16 @@ async function refreshContext(path) {
   if (crumbs) {
     crumbs.innerHTML = breadcrumbHtml(path);
   }
+  const history = artifact.querySelector("[data-shipped-history]");
+  if (history) {
+    history.innerHTML = documentHistoryHtml(path);
+  }
   renderTabs();
+}
+
+// A slice document of a shipped initiative carries the shipped history label from its context.
+function documentHistoryHtml(path) {
+  return shippedHistoryHtml(currentContext?.ref === path ? currentContext.value.shippedHistory : null);
 }
 
 function tabLabel(path) {
@@ -1299,6 +1309,7 @@ async function showArtifact(path) {
         <nav class="breadcrumbs" aria-label="Location" data-breadcrumbs>${breadcrumbHtml(path)}</nav>
         <h1>${escapeHtml(fileName(data.path))}</h1>
         <p class="artifact-path">${escapeHtml(data.path)}</p>
+        <div data-shipped-history>${documentHistoryHtml(path)}</div>
       </div>
       <div class="artifact-meta">
         ${structured ? `<div class="segmented" role="group" aria-label="View mode">
