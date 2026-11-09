@@ -16,6 +16,7 @@ import { mergeHistory, mergeKeyed, mergeOrder, mergeScalars, MergeConflict, pars
 import { ComponentError, listComponents, listsComponents, readComponents } from "./components.mjs";
 import { latestDependentsRun } from "./slice-design.mjs";
 import { proposeComponents } from "./workspace-manifests.mjs";
+import { entryShippedDecision, hasOpenWork, openWork, openWorkMessage, ShippedHistoryError } from "./shipped-history.mjs";
 
 export const BANDS = Object.freeze(["Now", "Next", "Later", "Parked"]);
 export const DISPLAY_BANDS = Object.freeze([...BANDS, "Shipped"]);
@@ -242,14 +243,23 @@ async function deriveItem(projectRoot, config, item) {
   const analysis = loaded.analysis;
   const progress = { leaves: analysis.leaves.length, ...analysis.counts };
   let active = [];
+  let state;
   try {
-    const state = await readCoordinationState({ projectRoot, initiative: item.id });
+    state = await readCoordinationState({ projectRoot, initiative: item.id });
     active = state.state?.active ?? [];
   } catch (error) {
     base.diagnostics.push({ code: error.code ?? "state_unreadable", message: error.message });
   }
   const started = analysis.leaves.some((slug) => analysis.slices[slug].status !== "not-started") || active.length > 0;
   const derived = { ...base, state: started ? "in-progress" : "planned", readyToShip: analysis.complete[analysis.root] === true, progress, active, root: analysis.root };
+  // Open work refuses ship before any leaf check, so it is reported whether or not the leaves are done.
+  if (state) {
+    const work = await openWork(projectRoot, item.id, { record: loaded.record, state }).catch(() => null);
+    if (work && hasOpenWork(work)) {
+      const diagnostic = { code: "open_work", message: openWorkMessage(item.id, work), ...work };
+      return { derived: { ...derived, readyToShip: false, diagnostics: [...derived.diagnostics, diagnostic] }, blocker: derived.readyToShip ? { open: work } : leaves };
+    }
+  }
   if (!derived.readyToShip) return { derived, blocker: leaves };
   // A finished initiative is ready to ship only once ship would succeed: its declaration is valid and every finished scope's dependents passed.
   const found = await dependentsBlockers(projectRoot, config, item.id, loaded.record);
@@ -381,6 +391,11 @@ function roadmapRequirements(resolved, references) {
 }
 
 async function applyOperation(resolved, record, operation, actor, at) {
+  // A shipped entry keeps its content as history, so a change to it is refused before its arguments are normalized.
+  if (operation.op === "update_initiative" || operation.op === "set_requires") {
+    const shipped = entryShippedDecision(record.initiatives.find((candidate) => candidate.id === operation.id));
+    if (shipped) throw new ShippedHistoryError(operation.id, shipped.at);
+  }
   if (operation.requirements !== undefined && (operation.op === "add_initiative" || operation.op === "update_initiative")) operation = { ...operation, requirements: roadmapRequirements(resolved, operation.requirements) };
   switch (operation.op) {
     case "set_serves":
@@ -421,7 +436,11 @@ async function applyOperation(resolved, record, operation, actor, at) {
     case "ship": {
       const item = findInitiative(record, operation.id);
       if (item.decision) throw fail("validation_failed", `Initiative ${item.id} already has a ${item.decision.kind} decision.`);
+      // Work still open when an initiative ships could never be finished, because its state is then history.
+      const work = await openWork(resolved.root, item.id);
+      if (hasOpenWork(work)) throw fail("open_work", openWorkMessage(item.id, work), work);
       const { derived, blocker } = await deriveItem(resolved.root, resolved.config, item);
+      if (blocker?.open) throw fail("open_work", openWorkMessage(item.id, blocker.open), blocker.open);
       if (blocker?.leaves) throw fail("gate_blocked", "Every leaf slice in the initiative record must be done before the initiative ships.", { state: derived.state, progress: derived.progress, diagnostics: derived.diagnostics });
       // Shipping reads the components after the leaf check: an invalid declaration refuses with its own code and fields, and a red or unproven dependent blocks it.
       if (blocker?.problem) throw blocker.problem;
@@ -499,7 +518,7 @@ export const ROADMAP_TOOLS = [
   },
   {
     name: "update_roadmap",
-    description: "Apply revision-checked roadmap operations: set what the roadmap serves, set the workspace name that every checkout sharing the record store shows (one line of at most 64 characters, an empty name clears it), add or update initiatives, place them in Now, Next, Later, or Parked, set required initiatives, record ship or supersede decisions, and set open questions. Ship requires every leaf slice to be done, refusing with gate_blocked first; it then reads the ## Components declaration, refusing an invalid one with its own code, and refuses with dependents_blocked, listing each scope with its blocked dependents and reason failed or not_run, while a finished scope has dependents without a passing dependents' run of every one of them; readyToShip in get_roadmap is true only when ship would succeed, with a diagnostic saying why otherwise. Every write regenerates the roadmap Markdown without overwriting a hand-written file.",
+    description: "Apply revision-checked roadmap operations: set what the roadmap serves, set the workspace name that every checkout sharing the record store shows (one line of at most 64 characters, an empty name clears it), add or update initiatives, place them in Now, Next, Later, or Parked, set required initiatives, record ship or supersede decisions, and set open questions. A shipped initiative's entry keeps its title, intent, requirements, and required initiatives: update_initiative and set_requires naming it refuse with initiative_shipped, with its initiative and shippedAt. Ship refuses an existing decision with validation_failed, then refuses with open_work, listing gates ({ id, slice, question, answered }), claims ({ slice, label, activity, expiresAt }), and proposals (scope slugs), while the initiative has a pending user gate, answered or not, a live slice claim, or a pending design proposal. Ship then requires every leaf slice to be done, refusing with gate_blocked first; it then reads the ## Components declaration, refusing an invalid one with its own code, and refuses with dependents_blocked, listing each scope with its blocked dependents and reason failed or not_run, while a finished scope has dependents without a passing dependents' run of every one of them; readyToShip in get_roadmap is true only when ship would succeed, with a diagnostic saying why otherwise. Every write regenerates the roadmap Markdown without overwriting a hand-written file.",
     inputSchema: UPDATE_ROADMAP_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

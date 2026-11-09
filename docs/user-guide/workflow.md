@@ -233,6 +233,20 @@ A later passing run of those dependents lets it ship, and an initiative of a rep
 A leaf that is not done still refuses `ship` with `gate_blocked` first, and an invalid declaration refuses it with its own code.
 `get_roadmap` reports such an initiative with `readyToShip` `false` and a `diagnostics` entry, `dependents_blocked` with the same `scopes`, or the code and message of the invalid declaration, so the review browser shows an initiative as ready to ship only once `ship` would succeed.
 
+## Shipping
+
+`update_roadmap` refuses to `ship` an initiative that already has a decision with `validation_failed`, and then refuses with `open_work` while any of its work is still open.
+Open work is a pending question in the initiative's coordination state, answered or not, a slice with a live claim, or a pending design proposal.
+An answered question counts because no agent can resolve it once the initiative is history.
+The refusal lists `gates` as `{ id, slice, question, answered }`, `claims` as `{ slice, label, activity, expiresAt }`, and `proposals` as scope names, and its message names each one.
+This check runs before the leaf and [dependents](#dependents) checks, so `gate_blocked` and `dependents_blocked` come after it.
+`get_roadmap` reports such an initiative with `readyToShip` `false` and an `open_work` diagnostic with the same `gates`, `claims`, and `proposals`.
+
+A shipped initiative's roadmap entry keeps its title, intent, requirements, and required initiatives.
+`update_initiative` and `set_requires` naming it refuse with `initiative_shipped`, with its `initiative` and its ship time in `shippedAt`, and change nothing.
+`place` still refuses because a shipped initiative keeps its place in history, and another initiative may still require it.
+Start new work on a shipped initiative as a new initiative that references it.
+
 ## Questions and answers
 
 Each question that waits on you is recorded, and the review browser's Attention page lists it with the artifacts to inspect.
