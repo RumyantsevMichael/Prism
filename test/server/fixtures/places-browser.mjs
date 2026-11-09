@@ -48,6 +48,8 @@ export const drawer = (page) => page.getByRole("dialog", { name: "Navigation" })
 export const placeTitle = (scope) => scope.getByRole("heading", { level: 2 }).first();
 export const groupHeadings = async (scope) => (await scope.getByRole("heading", { level: 3 }).allInnerTexts()).map((text) => text.replace(/\s+\d+\s*$/, "").replace(/\s+/g, " ").trim());
 export const item = (scope, name) => scope.getByRole("treeitem", { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) }).first();
+/** The row of a tree item, its own link without its children, so a click lands on it even while it is expanded. */
+export const row = (scope, name) => item(scope, name).locator(":scope > a").first();
 /** The visible treeitems' names in document order, read through the accessibility tree. */
 export const itemNames = (scope) => scope.getByRole("treeitem").evaluateAll((items) => items.filter((node) => node.getClientRects().length).map((node) => {
   const ids = (node.getAttribute("aria-labelledby") ?? "").split(/\s+/).filter(Boolean);
@@ -66,9 +68,10 @@ export async function settledOn(page, ref) {
   await page.waitForTimeout(200);
 }
 
-export async function choosePlace(page, name) {
-  await placeButton(page, name).click();
-  await page.waitForTimeout(200);
+/** Chooses a place on the rail of `scope`, a page or the drawer, and waits until the rail marks it current. */
+export async function choosePlace(scope, name) {
+  await placeButton(scope, name).click();
+  await rail(scope).getByRole("button", { name: new RegExp(`^${name}\\b`), pressed: true }).waitFor({ timeout: 10000 });
 }
 
 /** The tabs of the strip as their refs, with * on the selected tab and (p) on the preview tab. */

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { escapes, shownTooltip, skip, stateFileNames } from "./fixtures/kit-browser.mjs";
-import { buttonNames, choosePlace, comparePlaces, drawer, item, open, PLACES, placeButton, placeTitle, placesDemo, rail, reviewUrl, settledOn, shownRef, sidebar, SLICE, tabs } from "./fixtures/places-browser.mjs";
+import { buttonNames, choosePlace, comparePlaces, drawer, item, open, placeButton, PLACES, placesDemo, placeTitle, rail, reviewUrl, row as rowOf, settledOn, shownRef, sidebar, SLICE, tabs } from "./fixtures/places-browser.mjs";
 
 // The rail of places and the sidebar that shows only the current place, on the real review page over the demo project.
 // The demo records three questions that wait for an answer: two on Harden request retries and one on Export activity reports.
@@ -258,10 +258,10 @@ test("clause 17: a sidebar entry is a link: Shift and middle click open the brow
   await row.click({ modifiers: ["Control"] });
   await settledOn(page, "initiative:activity-reports");
   assert.deepEqual(await tabs(page), ["attention(p)", "initiative:activity-reports*"], "Ctrl-click opened a kept tab");
-  await item(sidebar(page), "Harden request retries").click();
+  await rowOf(sidebar(page), "Harden request retries").click();
   await settledOn(page, "initiative:retry-hardening");
   assert.ok((await tabs(page)).includes("initiative:retry-hardening*(p)"), "a click opened the preview tab");
-  await item(sidebar(page), "Harden request retries").dispatchEvent("dblclick");
+  await rowOf(sidebar(page), "Harden request retries").dblclick();
   await page.waitForTimeout(400);
   assert.ok((await tabs(page)).includes("initiative:retry-hardening*"), "a double click kept it");
   assert.deepEqual(page.errors, []);

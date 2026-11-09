@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { skip } from "./fixtures/kit-browser.mjs";
-import { choosePlace, item, open, placesDemo, reviewUrl, settledOn, shownRef, sidebar, SLICE, tabs } from "./fixtures/places-browser.mjs";
+import { choosePlace, item, open, placesDemo, reviewUrl, row as rowOf, settledOn, shownRef, sidebar, SLICE, tabs } from "./fixtures/places-browser.mjs";
 
 // What the review app did before the places must keep working with them: shortcuts, tabs, banners, and every page within reach without the palette.
 
@@ -33,7 +33,7 @@ test("clause 27: the strip of tabs keeps its preview, Keep, close, middle-click 
   const { base, browser } = await placesDemo(context);
   const page = await open(browser, base, "attention");
   await choosePlace(page, "Work");
-  await item(sidebar(page), "Harden request retries").click();
+  await rowOf(sidebar(page), "Harden request retries").click();
   await settledOn(page, "initiative:retry-hardening");
   await item(sidebar(page), "Export activity reports").click();
   await settledOn(page, "initiative:activity-reports");
@@ -87,7 +87,7 @@ test("clause 28: every page the app served before is reachable from the rail, a 
   const page = await open(browser, base, "roadmap");
   const via = async (place, row) => {
     await choosePlace(page, place);
-    await item(sidebar(page), row).click();
+    await rowOf(sidebar(page), row).click();
   };
   const follow = async (selector) => page.locator("#artifact").locator(selector).first().click();
   const reached = [];
