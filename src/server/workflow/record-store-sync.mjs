@@ -4,7 +4,7 @@ import path from "node:path";
 import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, IDENTITY_FILE_MAX, identityContent, identityOf, letterCaseKey, locationIdentity, STATUS_RECORD_NAME, uniqueIdentities, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
 import { withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { commitProblem, gitFileName, isLinkMode, LINK_TARGET_BYTES_MAX, linkTargetProblem, TREE_DEPTH_MAX, TREE_DEPTH_TEXT, tooDeepTree, treeEntries, treeProblems } from "./git-objects.mjs";
-import { canonicalJson, hasRecordMerge, recordMergeFor } from "./record-merge.mjs";
+import { canonicalJson, hasRecordMerge, nestedDeeperThan, recordMergeFor } from "./record-merge.mjs";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { localRepository, localTransport, UnresolvableLocalRemote } from "./git-local-repository.mjs";
 import { withoutCredentials } from "./remote-url.mjs";
@@ -1666,15 +1666,20 @@ async function structuralMerges(base, original, local, upstream) {
 }
 
 // Whether two registrations' bytes hold the same registration apart from the time each machine registered it.
+// A registration that does not parse, nests deeper than a registration does, or cannot be compared for any other reason differs, so the merge keeps the upstream file and saves this machine's.
 function sameRegistration(left, right) {
-  const parsed = [left, right].map((bytes) => {
-    let value;
-    try { value = JSON.parse(bytes.toString("utf8")); } catch { return null; }
-    if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
-    const { registeredAt, ...rest } = value;
-    return canonicalJson(rest);
-  });
-  return parsed[0] !== null && parsed[0] === parsed[1];
+  try {
+    const parsed = [left, right].map((bytes) => {
+      let value;
+      try { value = JSON.parse(bytes.toString("utf8")); } catch { return null; }
+      if (value === null || typeof value !== "object" || Array.isArray(value) || nestedDeeperThan(value)) return null;
+      const { registeredAt, ...rest } = value;
+      return canonicalJson(rest);
+    });
+    return parsed[0] !== null && parsed[0] === parsed[1];
+  } catch {
+    return false;
+  }
 }
 
 // The bytes of a tree entry's blob exactly as Git holds them, or null for no entry or one that is no regular file.

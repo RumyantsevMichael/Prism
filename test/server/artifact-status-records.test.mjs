@@ -76,6 +76,13 @@ test("a stored gate that no ask_approval could record is dropped, and answering 
   assert.equal(parseRecord("adrs", recordOf([gateOf({ status: "Superseded" })])).pending.length, 1);
   assert.deepEqual(parseRecord("requirements", recordOf([], [gateOf({ answer: { choice: "approve-all", note: null } })])).closed, []);
   assert.equal(parseRecord("requirements", JSON.stringify({ status: "Approved\nInjected" })).status, "Draft");
+  // A synced record may nest its approval or a history item however deep, and Prism serializes what it keeps, so it keeps neither.
+  const nested = `${"[".repeat(6000)}${"]".repeat(6000)}`;
+  const deep = parseRecord("requirements", `{"status":"Approved","approval":{"at":"2026-11-09T00:00:00.000Z","nested":${nested}},"history":[{"event":"approved","nested":${nested}},{"event":"approved","at":"2026-11-09T00:00:00.000Z"}]}`);
+  assert.equal(deep.status, "Approved");
+  assert.equal(deep.approval, null);
+  assert.deepEqual(deep.history, [{ event: "approved", at: "2026-11-09T00:00:00.000Z" }]);
+  assert.doesNotThrow(() => JSON.stringify(deep));
 
   const record = { status: "Proposed", acceptedVersion: null, approval: null, pending: [gateOf({ status: "Accepted" })], closed: [], history: [] };
   assert.throws(() => answerApproval("adrs", "docs/ADRs/x.md", record, { id: "approval-feedfacecafe", choice: "approve", by: { name: "Ada", host: "h" }, version: version(BYTES), text: BYTES }), { code: "gate_invalid" });

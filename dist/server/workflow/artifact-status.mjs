@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { ARTIFACT_ACCEPTED, ARTIFACT_STATUS, artifactLocation, STATUS_RECORD_NAME } from "./artifact-paths.mjs";
+import { nestedDeeperThan } from "./record-merge.mjs";
 
 // A requirement's and an ADR's status is recorded in the store beside the artifact, and only a person's answer at a gate changes it.
 // The status record of an artifact lives at artifact-status/<its location>/status.json, so it moves and goes with the artifact,
@@ -82,11 +83,12 @@ export function parseRecord(kind, bytes) {
   return {
     status: hasStatus(kind) ? (typeof value.status === "string" && value.status.trim() && !/[\r\n]/.test(value.status) ? value.status : fresh.status) : null,
     acceptedVersion: typeof value.acceptedVersion === "string" && VERSION.test(value.acceptedVersion) ? value.acceptedVersion : null,
-    approval: isRecord(value.approval) ? value.approval : null,
+    // The approval and history keep values a synced file gives, so one nested deeper than Prism writes is left out and serializing the record never exhausts the call stack.
+    approval: isRecord(value.approval) && !nestedDeeperThan(value.approval) ? value.approval : null,
     // A gate that ask_approval could not have recorded is dropped, so Attention never offers it and no answer can apply it.
     pending: list(value.pending).filter((gate) => wellFormedGate(kind, gate)),
     closed: list(value.closed).filter((gate) => wellFormedGate(kind, gate)),
-    history: list(value.history)
+    history: list(value.history).filter((item) => !nestedDeeperThan(item))
   };
 }
 

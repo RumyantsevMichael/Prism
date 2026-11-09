@@ -8,6 +8,7 @@ import { windowsDeviceName } from "./artifact-paths.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { recordCheckout } from "./machine-checkouts.mjs";
 import { scheduleRecordSync, SYNC_DIRECTORY, syncRecordStoreNow } from "./record-store-sync.mjs";
+import { nestedDeeperThan } from "./record-merge.mjs";
 import { publicRemote } from "./remote-url.mjs";
 
 // A checkout names its repository to its record store, which registers each name with the remotes and root commit that prove which repository it is.
@@ -130,7 +131,8 @@ async function readRegistrations(base, fail) {
       const bytes = await registrationBytes(path.join(folder, file));
       if (bytes) parsed = JSON.parse(bytes.toString("utf8"));
     } catch { /* An unreadable registration keeps its name taken. */ }
-    const valid = parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) && Array.isArray(parsed.remotes);
+    // A registration nested deeper than Prism writes one is unreadable too, so comparing the registrations read never exhausts the call stack.
+    const valid = parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) && Array.isArray(parsed.remotes) && !nestedDeeperThan(parsed);
     registrations.push(valid
       ? { name, remotes: parsed.remotes.filter((remote) => typeof remote === "string"), root: typeof parsed.root === "string" ? parsed.root : null, document: parsed }
       : { name, remotes: [], root: null, unreadable: true });

@@ -19,11 +19,51 @@ export async function recordMergeFor(relative) {
   return entry ? entry.load() : null;
 }
 
-/** JSON with object keys sorted, so two values compare equal exactly when they hold the same content. */
+/**
+ * JSON with object keys sorted, so two values compare equal exactly when they hold the same content.
+ * It walks the value with a stack of its own rather than by recursion, so a value that a synced file nests however deep never exhausts the call stack.
+ */
 export function canonicalJson(value) {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
-  return JSON.stringify(value ?? null);
+  const parts = [];
+  const pending = [value];
+  while (pending.length) {
+    const item = pending.pop();
+    if (item instanceof Text) { parts.push(item.text); continue; }
+    if (Array.isArray(item)) {
+      parts.push("[");
+      pending.push(new Text("]"));
+      for (let index = item.length - 1; index >= 0; index -= 1) {
+        pending.push(item[index]);
+        if (index > 0) pending.push(new Text(","));
+      }
+    } else if (item && typeof item === "object") {
+      parts.push("{");
+      pending.push(new Text("}"));
+      const keys = Object.keys(item).sort();
+      for (let index = keys.length - 1; index >= 0; index -= 1) {
+        pending.push(item[keys[index]], new Text(`${index > 0 ? "," : ""}${JSON.stringify(keys[index])}:`));
+      }
+    } else parts.push(JSON.stringify(item ?? null));
+  }
+  return parts.join("");
+}
+
+// A piece of canonicalJson's output that its walk places between values.
+class Text { constructor(text) { this.text = text; } }
+
+/** The deepest nesting of arrays and objects that a JSON value read from the store may hold; Prism's own records stay far below it. */
+export const JSON_DEPTH_MAX = 64;
+
+/** Whether a JSON value nests arrays and objects deeper than max, found without recursion, so a caller can set aside a value that serializing would exhaust the call stack on. */
+export function nestedDeeperThan(value, max = JSON_DEPTH_MAX) {
+  const pending = [[value, 0]];
+  while (pending.length) {
+    const [item, depth] = pending.pop();
+    if (!item || typeof item !== "object") continue;
+    if (depth >= max) return true;
+    for (const child of Array.isArray(item) ? item : Object.values(item)) if (child && typeof child === "object") pending.push([child, depth + 1]);
+  }
+  return false;
 }
 
 export class MergeConflict extends Error {}
@@ -113,9 +153,12 @@ export function mergeOrder(label, base, local, upstream, survivors, { upstreamFi
 
 /** Parse the three versions of a record, or throw a conflict; a file new on both sides merges against the kind's empty record. */
 export function parseVersions({ base, local, upstream }, empty) {
+  let versions;
   try {
-    return { base: base === null ? empty() : JSON.parse(base), local: JSON.parse(local), upstream: JSON.parse(upstream) };
+    versions = { base: base === null ? empty() : JSON.parse(base), local: JSON.parse(local), upstream: JSON.parse(upstream) };
   } catch {
     throw new MergeConflict("A version of the record is not valid JSON.");
   }
+  if (Object.values(versions).some((version) => nestedDeeperThan(version))) throw new MergeConflict(`A version of the record nests deeper than ${JSON_DEPTH_MAX} levels.`);
+  return versions;
 }
