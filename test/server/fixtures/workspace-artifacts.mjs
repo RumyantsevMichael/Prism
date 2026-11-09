@@ -54,7 +54,13 @@ export async function workspace(context) {
  */
 export async function syncedWorkspace(context) {
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-artifacts-sync-")));
-  context.after(async () => { await closeServers(); await rm(parent, { recursive: true, force: true }); });
+  // A review browser in this process schedules store syncs of its own, which can still write a saved copy under .prism-sync while the folder is removed,
+  // so its pending syncs are cancelled and the removal retries a folder that a running one just wrote into, rather than fail the test after its assertions passed.
+  context.after(async () => {
+    await closeServers();
+    (await import("../../../dist/server/workflow/record-store-sync.mjs")).cancelRecordSyncs();
+    await rm(parent, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  });
   git(parent, "init", "-q", "--bare", "-b", "main", "store-remote.git");
   const remote = path.join(parent, "store-remote.git");
   git(parent, "clone", "-q", remote, "store-a");
