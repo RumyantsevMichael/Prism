@@ -12,29 +12,27 @@ Serves: Reliable planning and resumable work in Prism's spec-driven engineering 
 - **Shared record store** (`shared-record-store`): Let every checkout and machine of a project share one set of Prism records through an ordinary Git repository, without losing bytes or colliding on unrelated changes.
 - **Single review app** (`single-review-app`): Run one review app per user that every agent session and project shares, with a project switcher that shows which project waits on the user.
 - **Repository intelligence** (`repository-intelligence`): Give workflow agents deterministic repository evidence: providers, context planning, session capacity, structural analysis, and duplication gates.
-- **Initiative settings from the review app** (`initiative-settings-actions`): Let the person change an initiative's orchestration settings from the review app through a generic, revision-checked action mechanism that only the person's page can write and that later actions reuse unchanged.
+- **Shipped work as history** (`shipped-work-history`): Treat a shipped initiative's state as immutable history that tools and skills recognise, and let fixes to done work ship inside the initiative that has not shipped yet.
 
 ### Next
 
 - **Agent execution evidence and continuity** (`agent-execution-evidence`): Report observed context ranges, keep pause checkpoints current and recoverable, and assess diagram readability.
 - **Workspace artifacts in the store** (`workspace-artifacts`): Keep a workspace's requirements, ADRs and plans in its shared store, reviewed in Prism and changed in status only at gates, while executable artifacts stay with the code.
-- **Review app UI kit** (`review-app-ui-kit`): Give the review app one set of design values, one shared component per kind of control, theme and density choices, and a served catalog with checks, so every screen stays consistent as it moves toward an IDE-like tool.
 
 ### Shipped
 
 - **Initiative settings from the review app** (`initiative-settings-actions`): Let the person change an initiative's orchestration settings from the review app through a generic, revision-checked action mechanism that only the person's page can write and that later actions reuse unchanged. Shipped 2026-11-08.
 - **Components in one repository** (`components`): Let a repository declare components with their own test commands and dependencies, keep each leaf slice inside one component, run dependents' tests when a spanning scope finishes, and prepare the native index per component so a large monorepo fits its limits. Shipped 2026-11-07.
 - **Repository names in a shared store** (`repository-names`): Name each repository that shares a record store by a committed name the store registers with its remote, and let each machine know where its checkouts of each repository are. Shipped 2026-11-03.
+- **Review app UI kit** (`review-app-ui-kit`): Give the review app one set of design values, one shared component per kind of control, theme and density choices, and a served catalog with checks, so every screen stays consistent as it moves toward an IDE-like tool. Shipped 2026-11-09.
 
 ## Sequencing rationale
 
 - **Shared record store**: Now, because Michael made shared state outside working repositories milestone M1 on 2026-10-31: his colleagues use Prism across many repositories and give the best feedback. Increments 1 and 2 shipped in PR #57; code links, the migration ledger, the saved-conflict notice, and the structural merge are in PR #72; slice claims come next. Requirements and ADRs stay Proposed while they are adjusted.
 - **Single review app**: Now, because Michael asked for it on 2026-10-17 and approved the design direction in the project thread; it builds on the plain-HTTP review server from PR #25.
 - **Repository intelligence**: Kept in Now while repository-intelligence work continues on main.
-- **Initiative settings from the review app**: Now, because Michael agreed the scope and approved the requirements on 2026-11-05; it builds on the single review app and moves gate answers and index rebuild onto one write path.
 - **Agent execution evidence and continuity**: Next, because observed-range reporting consumes verified ranges from repository context planning, while pause checkpoints and diagram-readability assessment can proceed independently after design. The new work stays together until design shows that its outcomes need separate sequencing.
 - **Workspace artifacts in the store**: Next, because Michael decided on 7 November 2026 that descriptive artifacts move to the store so every session's progress is visible in one place, and that Prism's own documents leave its public repository.
-- **Review app UI kit**: Next, because Michael asked on 2026-11-07 for a UI kit that keeps the app consistent as it becomes a professional tool and later a desktop app; he chose an own kit over an external library, an IDE-like look with the current palette, and approved the requirements the same day.
 
 ## Open questions
 
