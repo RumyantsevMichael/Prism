@@ -1,8 +1,5 @@
-import { execFile } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import { readInitiativeRecordRunTotals } from "../session/run-totals.mjs";
 import { readInitiative, readInitiativeWithClaims, sliceFolder } from "../workflow/initiative.mjs";
 import { isLive, parseClaim } from "../workflow/slice-claims.mjs";
@@ -15,7 +12,7 @@ import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-co
 import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
 import { contractClauses, loadDesignView } from "../workflow/design-view.mjs";
-import { answerArtifactApproval, pendingApprovalGates, storeArtifactStatuses } from "../workflow/store-artifacts.mjs";
+import { pendingApprovalGates, storeArtifactStatuses } from "../workflow/store-artifacts.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 
 const LIBRARY_LIMIT = 500;
@@ -603,35 +600,6 @@ async function approvalGates(projectRoot) {
     type: "gate", id: gate.id, kind: "approval", status: gate.status, recorded: gate.recorded, question: gate.question, context: gate.context ?? null, options: null, recommended: null,
     askedAt: gate.askedAt, answer: null, initiative: null, slice: null, artifacts: [], artifact: { path: gate.artifact.path, scope: gate.artifact.scope }, changed: gate.changed
   }));
-}
-
-const execFileAsync = promisify(execFile);
-
-// Who answers in the browser: the checkout's Git user name and the machine's host name, or null when Git names no user, which an approval refuses rather than record an anonymous one.
-async function answeringPerson(projectRoot) {
-  const name = await execFileAsync("git", ["config", "user.name"], { cwd: projectRoot, timeout: 10000 }).then(({ stdout }) => stdout.trim(), () => "");
-  return name ? { name, host: os.hostname() } : null;
-}
-
-// An approval gate's answer names the artifact by its path and scope, and the answer is applied to the store's artifact, never to a client path.
-async function answerApprovalGate(projectRoot, body) {
-  if (typeof body.artifact !== "string" || !body.artifact || typeof body.id !== "string" || !body.id) {
-    throw Object.assign(new Error("An artifact path and a gate id are required."), { code: "invalid_answer" });
-  }
-  const scope = body.scope === undefined || body.scope === null || typeof body.scope === "string" || (typeof body.scope === "object" && !Array.isArray(body.scope)) ? body.scope : undefined;
-  const component = typeof body.component === "string" ? body.component : undefined;
-  const by = await answeringPerson(projectRoot);
-  if (!by) throw Object.assign(new Error("Git names no user.name for this checkout, so the answer cannot record who approved; set one with git config user.name and answer again."), { code: "author_unknown" });
-  const choice = typeof body.choice === "string" && body.choice ? body.choice : null;
-  const note = typeof body.note === "string" ? body.note : null;
-  const entry = await answerArtifactApproval(projectRoot, { path: body.artifact, scope, component, id: body.id, choice, note, by });
-  return { gate: { ...entry.gate, kind: "approval" }, artifact: { path: entry.path, scope: entry.scope, version: entry.version } };
-}
-
-// The browser answers an approval gate by its artifact and scope; every other question is answered through the review app's actions.
-export async function answerGate(projectRoot, body) {
-  if (body && typeof body === "object" && body.artifact !== undefined) return answerApprovalGate(projectRoot, body);
-  throw Object.assign(new Error("An artifact path and a gate id are required."), { code: "invalid_answer" });
 }
 
 // What a gate's attached record is, so the page names it by title and kind with the counts that matter for the answer.

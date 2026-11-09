@@ -67,7 +67,7 @@ const SCOPE_TEXT = "scope is \"workspace\", \"repository\" for this checkout's r
 export const ARTIFACT_TOOLS = Object.freeze([
   {
     name: "get_artifact",
-    description: `In a project whose .prism/workflow.md names a record store, read a descriptive artifact the store holds: a requirement, an ADR, a plan file such as slice.md, the glossary, or the roadmap view. Address it by the project-relative path that the configured Requirements, ADRs, Plans, Glossary, and Roadmap paths give it; feature files, the user guide, tests, and code stay in the checkout and are refused with not_an_artifact. Every name below a configured folder, and the configured Glossary and Roadmap file names, must begin with an ASCII letter or digit, hold only ASCII letters, digits, ".", "_", and "-", not end in "." or ".lock", and be no Windows device name such as con, aux, nul, com1, or lpt1 before its first "."; any other is refused with artifact_name_invalid, data.invalidName holding the first such name, and listings leave such files out. A file read returns path, scope, kind, version (sha256 of its bytes, which update_artifact takes as expectedVersion), bytes, totalLines, offset, content, and nextOffset: content is whole lines from offset (1-based) up to limit lines (default 2000) and 64 KiB, at least one line, so read again from nextOffset until it is null. A requirement or ADR also returns status, its recorded status, which only a person's answer at a gate changes, and statusMismatch with written, recorded, and a message when its Status: line says otherwise; every file returns acceptedVersion and changedSinceAccepted against the bytes a person last accepted, approval once one is recorded, latestAnswer with the gate, status, choice (approve or request-changes), note, answeredAt, and by of the person's latest answer at an approval gate, so requested changes reach an agent that no longer waits, and accepted true reads those accepted bytes. Without path, or with a folder, it lists the artifacts this checkout sees below it with path, scope, kind, version, and bytes, at most 2000 with truncated true when more exist. The checkout sees the workspace scope, its repository's scope, and its repository's component scopes the store holds; a path that two of them hold is refused with artifact_ambiguous, listing their labels, until ${SCOPE_TEXT}. Refusals: artifact_not_found, artifact_not_text, scope_invalid, component_unknown, store_not_configured when the project has no store, and the store's own refusal, such as store_unavailable or a repository name refusal, when it cannot be used. Reads never change a checkout file.`,
+    description: `In a project whose .prism/workflow.md names a record store, read a descriptive artifact the store holds: a requirement, an ADR, a plan file such as slice.md, the glossary, or the roadmap view. Address it by the project-relative path that the configured Requirements, ADRs, Plans, Glossary, and Roadmap paths give it; feature files, the user guide, tests, and code stay in the checkout and are refused with not_an_artifact. Every name below a configured folder, and the configured Glossary and Roadmap file names, must begin with an ASCII letter or digit, hold only ASCII letters, digits, ".", "_", and "-", not end in "." or ".lock", and be no Windows device name such as con, aux, nul, com1, or lpt1 before its first "."; any other is refused with artifact_name_invalid, data.invalidName holding the first such name, and listings leave such files out. A file read returns path, scope, kind, version (sha256 of its bytes, which update_artifact takes as expectedVersion), bytes, totalLines, offset, content, and nextOffset: content is whole lines from offset (1-based) up to limit lines (default 2000) and 64 KiB, at least one line, so read again from nextOffset until it is null. A requirement or ADR also returns status, its recorded status, which only a person's answer at a gate changes, and statusMismatch with written, recorded, and a message when its Status: line says otherwise; every file returns acceptedVersion and changedSinceAccepted against the bytes a person last accepted, approval once one is recorded, latestAnswer with the gate, status, choice (approve or request-changes), note, answeredAt, by, and entry (the id of the review app's history entry that applied it) of the person's latest answer at an approval gate, so requested changes reach an agent that no longer waits, and accepted true reads those accepted bytes. Without path, or with a folder, it lists the artifacts this checkout sees below it with path, scope, kind, version, and bytes, at most 2000 with truncated true when more exist. The checkout sees the workspace scope, its repository's scope, and its repository's component scopes the store holds; a path that two of them hold is refused with artifact_ambiguous, listing their labels, until ${SCOPE_TEXT}. Refusals: artifact_not_found, artifact_not_text, scope_invalid, component_unknown, store_not_configured when the project has no store, and the store's own refusal, such as store_unavailable or a repository name refusal, when it cannot be used. Reads never change a checkout file.`,
     inputSchema: GET_ARTIFACT_SCHEMA,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
@@ -967,14 +967,15 @@ function namedScope(seen, scope, component) {
 
 /**
  * Apply a person's answer to an approval gate of a requirement or ADR, refused with artifact_changed when the artifact changed since the gate was asked.
- * Approving rewrites its Status: and Approved: lines and records the status, the accepted version, and the approval with by, who answered.
+ * Approving rewrites its Status: and Approved: lines and records the status, the accepted version, and the approval with by, who answered,
+ * and the status record keeps entry, the review app's history entry of the action that applied the answer.
  * Returns the artifact's entry: { path, scope, version, gate } with the answered gate.
  */
-export async function answerArtifactApproval(projectRoot, { path: file, scope, component, id, choice, note = null, by }) {
+export async function answerArtifactApproval(projectRoot, { path: file, scope, component, id, choice, note = null, by, entry = null }) {
   return refusing(async () => {
     const { config, kinds } = await configuration(projectRoot);
     const seen = await seenScopes(projectRoot);
-    const item = checkOperation(config, kinds, { op: "answer_approval", path: file, ...namedScope(seen, scope, component), answer: { id, choice, note, by } });
+    const item = checkOperation(config, kinds, { op: "answer_approval", path: file, ...namedScope(seen, scope, component), answer: { id, choice, note, by, entry } });
     return withArtifactStoreLock(seen, async () => (await applyOperations(seen, [item])).artifacts[0]);
   });
 }
@@ -987,8 +988,8 @@ async function statusHoldings(seen) {
 }
 
 /**
- * Every pending approval gate of the requirements and ADRs that the checkout sees, as { id, status, version, question, context, askedAt, artifact: { path, scope }, recorded, changed },
- * where recorded is the artifact's recorded status and changed whether its bytes changed since the gate was asked, so that an answer is refused with artifact_changed.
+ * Every pending approval gate of the requirements and ADRs that the checkout sees, as { id, status, version, question, context, askedAt, artifact: { path, scope }, recorded, current, changed },
+ * where recorded is the artifact's recorded status, current the version of its bytes now, and changed whether they changed since the gate was asked, so that an answer is refused with artifact_changed.
  */
 export async function pendingApprovalGates(projectRoot) {
   return refusing(async () => {
@@ -999,7 +1000,7 @@ export async function pendingApprovalGates(projectRoot) {
       const record = await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path));
       if (!record.pending.length) continue;
       const current = await readStored(entry.target).catch(() => null);
-      for (const gate of record.pending) gates.push({ ...gate, artifact: { path: entry.path, scope: entry.scope }, recorded: record.status, changed: current?.version !== gate.version });
+      for (const gate of record.pending) gates.push({ ...gate, artifact: { path: entry.path, scope: entry.scope }, recorded: record.status, current: current?.version ?? null, changed: current?.version !== gate.version });
     }
     return gates;
   });

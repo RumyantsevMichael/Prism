@@ -98,8 +98,8 @@ const keep = (entries, count) => entries.slice(-count);
 /** The latest answered approval gate of a record, or null. */
 export const latestAnsweredGate = (record) => record.closed.findLast((gate) => gate.answer) ?? null;
 
-/** A person's answer to an approval gate as get_artifact returns it: { gate, status, choice, note, answeredAt, by }. */
-export const answerFields = (gate) => ({ gate: gate.id, status: gate.status, choice: gate.answer.choice, note: gate.answer.note ?? null, answeredAt: gate.answer.answeredAt ?? null, by: gate.answer.by ?? null });
+/** A person's answer to an approval gate as get_artifact returns it: { gate, status, choice, note, answeredAt, by, entry }, where entry is the id of the review app's history entry that applied it. */
+export const answerFields = (gate) => ({ gate: gate.id, status: gate.status, choice: gate.answer.choice, note: gate.answer.note ?? null, answeredAt: gate.answer.answeredAt ?? null, by: gate.answer.by ?? null, entry: typeof gate.answer.entry === "string" ? gate.answer.entry : null });
 
 /** The fields that get_artifact returns from a status record for an artifact whose bytes have version. */
 export function statusFields(kind, record, version) {
@@ -219,8 +219,9 @@ export function rewriteStatusLines(text, status, date) {
  * Apply a person's answer to a pending approval gate: { record, text }, where text is the artifact's new text, or null when the answer leaves the artifact as it is.
  * Approving rewrites the status lines, records the status, the accepted version of the new bytes, and the approval with the gate, the time, and who approved;
  * a request for changes keeps the recorded status. version is the artifact's current version, which must be the one the gate asked about.
+ * entry is the review app's history entry of the gate.answer action that applies the answer: the record keeps it, since an approval belongs to no initiative's history, and the answer names its id.
  */
-export function answerApproval(kind, file, record, { id, choice, note = null, by, version, text, now = new Date() }) {
+export function answerApproval(kind, file, record, { id, choice, note = null, by, version, text, entry = null, now = entry?.at ? new Date(entry.at) : new Date() }) {
   const gate = record.pending.find((item) => item.id === id);
   if (!gate) {
     const closed = record.closed.find((item) => item.id === id);
@@ -238,15 +239,16 @@ export function answerApproval(kind, file, record, { id, choice, note = null, by
     throw fail("artifact_changed", `${file} changed since this approval was asked, so the answer would approve a version nobody asked about; nothing changed. The agent asks again for the current version.`);
   }
   const at = now.toISOString();
-  const answer = { choice, note: normalizedNote, via: "browser", answeredAt: at, by };
+  const answer = { choice, note: normalizedNote, via: "browser", answeredAt: at, by, ...(entry ? { entry: entry.id } : {}) };
+  const applied = entry ? { entry } : {};
   const closed = keep([...record.closed, { ...gate, answer }], CLOSED_KEPT);
   const pending = record.pending.filter((item) => item.id !== id);
   if (choice === "request-changes") {
-    return { record: { ...record, pending, closed, history: keep([...record.history, { event: "changes_requested", gate: gate.id, at, by }], HISTORY_KEPT) }, text: null, gate: { ...gate, answer } };
+    return { record: { ...record, pending, closed, history: keep([...record.history, { event: "changes_requested", gate: gate.id, at, by, ...applied }], HISTORY_KEPT) }, text: null, gate: { ...gate, answer } };
   }
   const next = rewriteStatusLines(text, gate.status, at.slice(0, 10));
   return {
-    record: { ...record, status: gate.status, pending, closed, approval: { gate: gate.id, status: gate.status, at, by }, history: keep([...record.history, { event: "approved", gate: gate.id, status: gate.status, at, by }], HISTORY_KEPT) },
+    record: { ...record, status: gate.status, pending, closed, approval: { gate: gate.id, status: gate.status, at, by }, history: keep([...record.history, { event: "approved", gate: gate.id, status: gate.status, at, by, ...applied }], HISTORY_KEPT) },
     text: next,
     gate: { ...gate, answer }
   };

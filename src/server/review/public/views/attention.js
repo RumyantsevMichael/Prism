@@ -139,10 +139,8 @@ function answerForm(item, draft) {
   const choice = options.length
     ? `<div class="gate-choices"><prism-choice label="Your answer" data-choice${state.choice ? ` value="${escapeHtml(state.choice)}"` : ""}>${options.map(([id, label]) => `<prism-choice-option value="${escapeHtml(id)}"${id === "request-changes" ? ' tone="danger"' : ""}>${escapeHtml(label)}${id === item.recommended?.option ? ` ${badge("Recommended", "accent")}` : ""}${consequences.get(id) ? `<span slot="detail">${escapeHtml(consequences.get(id))}</span>` : ""}</prism-choice-option>`).join("")}</prism-choice>${optional ? `<prism-button size="sm" variant="ghost" data-clear-choice${state.choice ? "" : " disabled"}>Clear the choice</prism-button>` : ""}</div>`
     : "";
-  // An approval gate is answered by its artifact and scope, every other gate by its initiative; data-artifact would make the form a link to the file.
-  const target = item.kind === "approval"
-    ? ` data-gate-artifact="${escapeHtml(item.artifact.path)}" data-scope="${escapeHtml(item.artifact.scope?.kind ?? "workspace")}"${item.artifact.scope?.component ? ` data-component="${escapeHtml(item.artifact.scope.component)}"` : ""}`
-    : ` data-initiative="${escapeHtml(item.initiative.id)}"`;
+  // An approval gate is the target approval:<id> of the review app's actions, every other gate the target gate:<initiative>/<id>.
+  const target = item.kind === "approval" ? " data-approval" : ` data-initiative="${escapeHtml(item.initiative.id)}"`;
   return `<div class="gate-answer" data-gate="${key}"${target}>
     ${choice}
     <prism-field class="gate-note" type="textarea" data-note label="${escapeHtml(state.noteLabel)}" hint="${state.noteRequired ? "Required" : "Optional"}" placeholder="${escapeHtml(state.notePlaceholder)}"${state.noteRequired ? " required" : ""} value="${escapeHtml(draft.note ?? "")}"></prism-field>
@@ -272,9 +270,7 @@ function bindAnswers(container, ctx, gates) {
       clearFailure();
       refresh();
       try {
-        const target = form.dataset.gateArtifact
-          ? { artifact: form.dataset.gateArtifact, scope: form.dataset.scope, ...(form.dataset.component ? { component: form.dataset.component } : {}) }
-          : { initiative: form.dataset.initiative };
+        const target = form.hasAttribute("data-approval") ? { approval: true } : { initiative: form.dataset.initiative };
         await ctx.answerGate({ ...target, id, choice: state.choice, note: draft.note });
         delete drafts[id];
         ctx.state.focus = null;

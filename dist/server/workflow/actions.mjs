@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import os from "node:os";
 import { listComponents } from "./components.mjs";
 import { appendIndexHistory } from "./index-history.mjs";
 import { readInitiativeWithClaims } from "./initiative.mjs";
@@ -7,6 +8,7 @@ import { runGit } from "./record-store-sync.mjs";
 import { REPOSITORY_NAME } from "./repository-names.mjs";
 import { readRoadmap } from "./roadmap.mjs";
 import { INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction } from "./state.mjs";
+import { answerArtifactApproval, pendingApprovalGates } from "./store-artifacts.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
 
@@ -14,6 +16,7 @@ import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identi
 // The module needs no HTTP, so any transport serves the same registry, and a new action joins by adding a definition below.
 
 const GATE_ID = /^gate-[0-9a-f]{8,32}$/;
+const APPROVAL_ID = /^approval-[0-9a-f]{8,32}$/;
 const TEXT_LIMIT = 200;
 const NOTE_LIMIT = 4000;
 
@@ -49,6 +52,8 @@ export function parseTarget(reference) {
   if (match && SLUG_PATTERN.test(match[1]) && SLUG_PATTERN.test(match[2])) return { kind: "slice", reference, initiative: match[1], slice: match[2] };
   match = /^gate:([^/]+)\/([^/]+)$/.exec(reference);
   if (match && SLUG_PATTERN.test(match[1]) && GATE_ID.test(match[2])) return { kind: "gate", reference, initiative: match[1], gate: match[2] };
+  match = /^approval:(.+)$/.exec(reference);
+  if (match && APPROVAL_ID.test(match[1])) return { kind: "approval", reference, gate: match[1] };
   match = /^index:([^/]+)\/([^/]+)$/.exec(reference);
   if (match && REPOSITORY_NAME.test(match[1]) && REPOSITORY_NAME.test(match[2])) return { kind: "index", reference, identity: `${match[1]}/${match[2]}` };
   return null;
@@ -77,8 +82,25 @@ async function initiativeExists(projectRoot, initiative, record) {
   return Boolean(roadmap?.loaded?.record?.initiatives?.some((item) => item.id === initiative));
 }
 
-// Reads what a target's actions need: the initiative's coordination state and record, or the index component, and refuses a target that does not exist.
+// The pending approval gate of a requirement or ADR that the checkout sees, or null; a project without a store has none.
+async function pendingApproval(projectRoot, id) {
+  const config = await readWorkflowConfig(projectRoot);
+  if ((config.workspace?.store ?? null) === null) return null;
+  const gates = await pendingApprovalGates(projectRoot).catch((error) => {
+    if (error?.code === "store_not_configured") return [];
+    throw error;
+  });
+  return gates.find((gate) => gate.id === id) ?? null;
+}
+
+// Reads what a target's actions need: the initiative's coordination state and record, the index component, or the approval gate, and refuses a target that does not exist.
 async function readTarget(projectRoot, parsed, indexer, state = undefined) {
+  if (parsed.kind === "approval") {
+    // An approval gate lives in its artifact's status record in the store, so an answered or replaced one is no target.
+    const gate = await pendingApproval(projectRoot, parsed.gate);
+    if (!gate) throw unknownTarget(parsed.reference);
+    return { ...parsed, gateRecord: gate };
+  }
   if (parsed.kind === "index") {
     const component = (await indexComponents(projectRoot)).find((item) => item.identity === parsed.identity);
     if (!component) throw unknownTarget(parsed.reference);
@@ -197,7 +219,7 @@ const SETTING_ACTIONS = SETTING_DEFINITIONS.filter((definition) => INITIATIVE_SE
 // A gate's answer fields follow its kind: a review approves or asks for changes with a reason, a decision picks an option or explains, and assistance is done.
 function gateFields(gate) {
   const note = (extra) => text("note", "Note", NOTE_LIMIT, { multiline: true, ...extra });
-  if (gate.kind === "visual-review" || gate.kind === "correctness") {
+  if (gate.kind === "visual-review" || gate.kind === "correctness" || gate.kind === "approval") {
     return [choice("choice", "Answer", [option("approve", "Approve"), option("request-changes", "Request changes")], { required: true }), note({ requiredWhen: { field: "choice", values: ["request-changes"] } })];
   }
   if (gate.kind === "decision" && Array.isArray(gate.options) && gate.options.length) {
@@ -232,6 +254,21 @@ const GATE_ANSWER = {
   change: (context, after) => ({ answer: { id: context.gate, choice: after.choice, note: after.note } })
 };
 
+// A requirement's or ADR's approval gate is answered as a review is, against the artifact's current version, and refused while the artifact differs from the version the gate asked about.
+const APPROVAL_CHANGED = "The file changed since this approval was asked, so approving it would approve a version nobody asked about. The agent asks again for the current version.";
+
+const APPROVAL_ANSWER = {
+  ...GATE_ANSWER,
+  kinds: ["approval"],
+  effect: "Records your answer; approving sets the file's status, and the agent that asked resumes with it.",
+  fields: () => gateFields({ kind: "approval" }),
+  recommended: () => null,
+  revision: (context) => context.gateRecord.current,
+  unavailable: (context) => context.gateRecord.changed ? APPROVAL_CHANGED : null,
+  unavailableCode: () => "artifact_changed",
+  change: undefined
+};
+
 const INDEX_REBUILD = {
   id: "index.rebuild",
   kinds: ["index"],
@@ -250,7 +287,7 @@ const INDEX_REBUILD = {
 };
 
 /** Every action, in listing order; a later action joins by adding its definition here. */
-const ACTIONS = [...SETTING_ACTIONS, GATE_ANSWER, INDEX_REBUILD];
+const ACTIONS = [...SETTING_ACTIONS, GATE_ANSWER, APPROVAL_ANSWER, INDEX_REBUILD];
 
 /** The sentence on when an action's change takes effect, or null for an action the registry does not define. */
 export const actionEffect = (id) => ACTIONS.find((definition) => definition.id === id)?.effect ?? null;
@@ -387,7 +424,7 @@ async function authorOf(projectRoot) {
 function check(definition, context, { revision, input, confirmed }) {
   const current = view(definition, context);
   if ((revision ?? null) !== current.revision) throw fail("stale_revision", "The record changed since the page read it.", { current });
-  if (!current.available) throw fail("action_unavailable", current.reason, { reason: current.reason, current });
+  if (!current.available) throw fail(definition.unavailableCode?.(context) ?? "action_unavailable", current.reason, { reason: current.reason, current });
   const values = readInput(current.fields, input, definition.ignores ?? (() => []));
   const after = definition.after(values, context);
   if (current.value !== null && sameValue(after, current.value)) return null;
@@ -416,7 +453,20 @@ export async function applyAction({ projectRoot, target, action, input, revision
     via: typeof via === "string" && via ? via : "review-app"
   });
   let applied = null;
-  if (parsed.kind === "index") {
+  if (parsed.kind === "approval") {
+    const checked = check(definition, read, request);
+    applied = await entryOf(checked, read);
+    // An approval records who gave it, so a checkout whose Git names no user is refused rather than recording an anonymous one.
+    if (!applied.by.name) throw fail("author_unknown", "Git names no user.name for this checkout, so the answer cannot record who approved; set one with git config user.name and answer again.");
+    const gate = read.gateRecord;
+    // The store update repeats the gate and version checks under the artifact lock, so a change that lands after the read above is refused, never overwritten.
+    await answerArtifactApproval(projectRoot, { path: gate.artifact.path, scope: gate.artifact.scope, id: gate.id, choice: checked.after.choice, note: checked.after.note, by: { name: applied.by.name, host: os.hostname() }, entry: applied }).catch((error) => {
+      if (error?.code === "unknown_gate" || error?.code === "gate_answered") throw unknownTarget(target);
+      if (error?.code === "artifact_changed") throw fail("artifact_changed", APPROVAL_CHANGED);
+      if (error?.code === "invalid_answer") throw fail("invalid_input", error.message, { field: null });
+      throw error;
+    });
+  } else if (parsed.kind === "index") {
     const checked = check(definition, read, request);
     if (checked) {
       applied = await entryOf(checked, read);
@@ -434,5 +484,6 @@ export async function applyAction({ projectRoot, target, action, input, revision
     } });
     applied = written.entry;
   }
-  return { applied, actions: (await listActions({ projectRoot, target, indexer })).actions };
+  // An answered approval gate leaves its artifact's pending gates, so its target has no actions left.
+  return { applied, actions: parsed.kind === "approval" ? [] : (await listActions({ projectRoot, target, indexer })).actions };
 }

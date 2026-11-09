@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { deliverGateAnswers } from "../../dist/hooks/deliver-gate-answers.mjs";
 import { answerApproval, parseRecord, rewriteStatusLines, writtenStatus } from "../../dist/server/workflow/artifact-status.mjs";
-import { adrFile, browserRequest, checkout, eventually, git, isolateGit, ok, remoteFile, requirementFile, reviewBrowser, server, syncedWorkspace, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { adrFile, answerGate, browserRequest, checkout, eventually, git, isolateGit, ok, remoteFile, requirementFile, reviewBrowser, server, syncedWorkspace, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
 // Status records of store artifacts: how status lines are read and rewritten, and that a record syncs with its artifact.
 const environment = await isolateGit();
@@ -88,7 +88,7 @@ test("a synced gate whose status no ask_approval allows is not offered, and an a
   const review = await reviewBrowser(context, api);
   assert.deepEqual(await pendingApprovals(review), []);
   const answered = await answer(review, { artifact: file, scope: "workspace", id: "approval-feedfacecafe", choice: "approve", note: null });
-  assert.equal(answered.status, 409);
+  assert.deepEqual([answered.status, answered.body.code], [404, "unknown_target"], "a dropped gate is no target of the answer action");
   const read = ok(await prism.call("get_artifact", { path: file }));
   assert.equal(read.status, "Proposed");
   assert.equal(read.version, written.version);
@@ -108,7 +108,8 @@ async function project(context, host = {}) {
 }
 
 const pendingApprovals = async (review) => (await browserRequest(review, "/api/entity?ref=attention")).body.data.needsYou.filter((item) => item.type === "gate" && item.kind === "approval");
-const answer = (review, body) => browserRequest(review, "/api/gates/answer", { method: "POST", body });
+// An approval gate is answered through the review app's gate.answer action of the target approval:<id>.
+const answer = (review, body) => answerGate(review, body);
 const askApproval = async (prism, file = FILE) => ok(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: file, context: "Billing." }] })).artifacts[0].gate;
 
 test("a wait on an artifact's approval gate ends as resolved when the artifact is removed", async (context) => {
@@ -144,7 +145,7 @@ test("an approval answer reaches the asking checkout with the next message once,
 
   const read = ok(await prism.call("get_artifact", { path: FILE }));
   assert.equal(read.status, "Draft");
-  assert.deepEqual({ ...read.latestAnswer, answeredAt: typeof read.latestAnswer.answeredAt }, { gate, status: "Approved", choice: "request-changes", note: "Name the currency.", answeredAt: "string", by: read.latestAnswer.by });
+  assert.deepEqual({ ...read.latestAnswer, answeredAt: typeof read.latestAnswer.answeredAt, entry: typeof read.latestAnswer.entry }, { gate, status: "Approved", choice: "request-changes", note: "Name the currency.", answeredAt: "string", by: read.latestAnswer.by, entry: "string" });
   assert.equal(read.latestAnswer.by.name, "Ada Reviewer");
 
   const again = await askApproval(prism);

@@ -16,7 +16,7 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { answerGate, entityContext, entityExists, forgetWorkspace, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
+import { entityContext, entityExists, forgetWorkspace, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 import { readPreferences, writePreferences } from "./review-preferences.mjs";
@@ -492,7 +492,8 @@ export async function readBody(request) {
 }
 
 // A refusal of the action registry answers with its status and a JSON body of its code, message, and the fields that refusal carries.
-const ACTION_STATUS = { unknown_target: 404, unknown_action: 404, stale_revision: 409, action_unavailable: 409, confirmation_required: 409, invalid_input: 400 };
+// An approval of an artifact that changed since it was asked, or by a checkout whose Git names no user, conflicts with the store as it is.
+const ACTION_STATUS = { unknown_target: 404, unknown_action: 404, stale_revision: 409, action_unavailable: 409, confirmation_required: 409, artifact_changed: 409, author_unknown: 409, invalid_input: 400 };
 const ACTION_FIELDS = ["current", "reason", "field", "accepted"];
 export const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
 
@@ -862,31 +863,6 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         }
       } catch (error) {
         sendActionError(response, error);
-      }
-    } else if (route === "/api/gates/answer" && request.method === "POST") {
-      // A requirement's or ADR's approval gate lives in the artifact's status record in the store, not in an initiative's coordination state, so it is answered here by its artifact and scope;
-      // every other question is answered through the apply route, and this route knows no other.
-      if (!fromPage(request)) {
-        sendJson(response, 403, { code: "origin_refused", message: "An answer must come from the review page as JSON." });
-        return;
-      }
-      const body = await readJson(request);
-      if (!body || typeof body !== "object" || Array.isArray(body) || body.artifact === undefined) {
-        send(response, 404, "Not found");
-        return;
-      }
-      if (!writableRequest(request)) {
-        sendJson(response, 403, { code: "write_forbidden", message: READ_ONLY_NOTICE });
-        return;
-      }
-      try {
-        const answered = await answerGate(projectRoot, body);
-        forgetWorkspace();
-        sendJson(response, 200, answered);
-      } catch (error) {
-        // An approval of an artifact that changed since it was asked, or by a checkout whose Git names no user, conflicts with the store as it is.
-        const status = { gate_answered: 409, unknown_gate: 409, gate_invalid: 409, artifact_changed: 409, author_unknown: 409, invalid_answer: 400, artifact_not_found: 404, not_a_status_artifact: 400 }[error.code] ?? (recordsUnavailable(error) ? 503 : 400);
-        sendJson(response, status, { code: error.code ?? "invalid_answer", message: error.message });
       }
     } else if (route === "/api/write-session" && request.method === "POST") {
       // A tab that Prism opened exchanges the one-time grant of its URL fragment for the write session it keeps.

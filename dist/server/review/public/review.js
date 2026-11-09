@@ -1439,20 +1439,13 @@ function viewContext(path, state) {
       }
     },
     // A gate answer is the gate's answer action, applied against the revision its listing shows.
-    // An approval gate of a requirement or ADR is answered by its artifact and scope, since the artifact's status record in the store holds it.
-    async answerGate({ initiative, artifact, scope, component, id, choice, note }) {
+    // An approval gate of a requirement or ADR is the target approval:<id>, since the artifact's status record in the store holds it, and its revision is the artifact's version.
+    async answerGate({ initiative, approval, id, choice, note }) {
       if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
-      const target = `gate:${initiative}/${id}`;
+      const target = approval ? `approval:${id}` : `gate:${initiative}/${id}`;
       const unanswered = () => {
         throw new Error("The review app did not answer, so the answer was not recorded. Try again in a moment.");
       };
-      if (artifact) {
-        const payload = { artifact, scope, ...(component ? { component } : {}), id, choice, note };
-        const response = await fetch("./api/gates/answer", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify(payload) }).catch(unanswered);
-        const result = await response.json().catch(() => ({ message: "The server returned an unreadable response." }));
-        if (!response.ok) throw Object.assign(new Error(result.message ?? "The answer was not recorded."), { code: result.code });
-        return result;
-      }
       const listed = await fetch(`./api/actions?target=${encodeURIComponent(target)}`, { headers: writeHeaders() }).catch(unanswered);
       const listing = await listed.json().catch(() => ({}));
       if (!listed.ok) throw Object.assign(new Error(listing.message ?? "The answer was not recorded."), { code: listing.code === "unknown_target" ? "unknown_gate" : listing.code });
