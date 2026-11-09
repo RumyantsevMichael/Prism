@@ -182,6 +182,20 @@ It puts the demo app into the state of each mockup scene (Attention with a gate 
 Read every pair: the layout check finds broken layouts, but only this comparison shows a screen that works and still looks nothing like the design.
 Differences that come from the demo's data, or from mockup content that is deliberately out of scope, are expected; name them in the pull request.
 
+The places mockup in `docs/plans/review-app-places/mockup/mockup.html` has its own comparison, which measures each scene instead of only picturing it:
+
+```bash
+node scripts/review-demo/places-compare.mjs --out /tmp/places-compare
+```
+
+It renders each scene of the mockup and the demo app put into the same state, at the same window width and theme, in the compact density: Work on a slice, Attention, Attention filtered to review findings, Knowledge's Touched by my work, History on a superseded initiative, the Roadmap, the collapsed sidebar at 1440, 820, and 390 pixels, and the open drawer at 820 and 390 pixels.
+For each scene, width, and theme it writes `<scene>-<width>-<theme>.png` with the mockup on the left, the app on the right, and the differences below them, `<scene>-<width>-<theme>.json` with both outlines and their differences, a `report.json` of every pair, and an `index.html` that shows each pair with its differences.
+An outline reads the rail, the place head, the sidebar's groups with their fixed rows and the parts of their first row, the top bar's buttons, the trail's first crumb, the geometry of the rail, the heads, the sidebar, and the main island, and the colors of the rail, the sidebar, the current rail button, and the selected row.
+A geometry value that differs by more than 2 pixels is a difference, and so is any other value that differs, except that the app may leave out a sidebar group that the mockup marks `data-optional`.
+`--scenes`, `--widths`, `--themes`, and `--parts` narrow the run to comma-separated values, `--mockup <file>` reads another mockup, and `--app-mockup <file>` renders that mockup in place of the app, so the comparison can check itself.
+It exits 0 when no pair differs, 1 when one does, after printing each difference, and 2 with a message for a missing `--out`, an unknown scene, part, width, or theme, an unreadable mockup, or no Playwright.
+A slice that changes a screen that a scene shows is done only when its frozen tests run this comparison for its scenes and parts at 390, 820, and 1440 pixels in both themes, it passes, and the implementer has looked at every pair it wrote and names in the pull request each difference that the outline does not measure.
+
 With both manifests present the CLI validates the marketplace one.
 To validate `plugin.json` in isolation, copy the plugin into a scratch directory without `marketplace.json` and validate that.
 
