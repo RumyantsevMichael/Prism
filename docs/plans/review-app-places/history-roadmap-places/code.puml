@@ -2,10 +2,11 @@
 title history-roadmap-places - units
 component "workspace-model.mjs\ncomputeNavigation places.history" as Model
 component "review.js\nrenderHistoryPlace, renderRoadmapPlace" as Sidebar
-component "views/roadmap.js\nrenderRoadmap" as Page
+component "views/roadmap.js\nrender" as Page
 component "roadmap.json decisions" as Roadmap
 Model --> Roadmap : shipped and superseded, newest first
 Sidebar --> Model : places.history
 Sidebar --> Page : view choice and lane links
-Page ..> Sidebar : announces its view
+component "views/initiative.js\nsuperseded by" as Initiative
+Model ..> Initiative : decision by and reason
 @enduml
