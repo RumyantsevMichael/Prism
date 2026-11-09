@@ -225,7 +225,16 @@ export async function dependentsBlockers(projectRoot, config, initiative, record
 
 const dependentsMessage = (scopes) => `The initiative cannot ship while the dependents of a finished scope are red or have not run: ${scopes.map((item) => `${item.scope} (${item.reason === "failed" ? "failed or declined" : "not run"}: ${item.blocked.join(", ")})`).join("; ")}. Run verify_slice with dependents for each scope, and fix or allow what it reports.`;
 
-// The facts of an initiative and what keeps it from shipping: blocker is null, { leaves: true } while a leaf is not done, { problem } for an invalid declaration, or { scopes } for blocked dependents.
+// Open work refuses ship before any leaf check, so it is reported whether or not the leaves are done or the initiative record is readable.
+async function withOpenWork(projectRoot, item, result, options = {}) {
+  const work = await openWork(projectRoot, item.id, options).catch(() => null);
+  if (!work || !hasOpenWork(work)) return null;
+  const { derived } = result;
+  const diagnostic = { code: "open_work", message: openWorkMessage(item.id, work), ...work };
+  return { derived: { ...derived, readyToShip: false, diagnostics: [...derived.diagnostics, diagnostic] }, blocker: derived.readyToShip ? { open: work } : result.blocker };
+}
+
+// The facts of an initiative and what keeps it from shipping: blocker is null, { leaves: true } while a leaf is not done, { open } for open work, { problem } for an invalid declaration, or { scopes } for blocked dependents.
 async function deriveItem(projectRoot, config, item) {
   const base = { id: item.id, band: item.band, state: "envisioned", readyToShip: false, progress: null, active: [], diagnostics: [] };
   const leaves = { leaves: true };
@@ -235,11 +244,18 @@ async function deriveItem(projectRoot, config, item) {
   try {
     initiative = await readInitiative(projectRoot, item.id);
   } catch (error) {
-    return { derived: { ...base, diagnostics: [{ code: error.code ?? "initiative_unreadable", message: error.message }] }, blocker: leaves };
+    const result = { derived: { ...base, diagnostics: [{ code: error.code ?? "initiative_unreadable", message: error.message }] }, blocker: leaves };
+    return await withOpenWork(projectRoot, item, result) ?? result;
   }
   const { loaded } = initiative;
-  if (!loaded.exists) return { derived: base, blocker: leaves };
-  if (!loaded.valid) return { derived: { ...base, state: "planned", diagnostics: loaded.errors.map((message) => ({ code: "invalid_initiative", message })) }, blocker: leaves };
+  if (!loaded.exists) {
+    const result = { derived: base, blocker: leaves };
+    return await withOpenWork(projectRoot, item, result) ?? result;
+  }
+  if (!loaded.valid) {
+    const result = { derived: { ...base, state: "planned", diagnostics: loaded.errors.map((message) => ({ code: "invalid_initiative", message })) }, blocker: leaves };
+    return await withOpenWork(projectRoot, item, result) ?? result;
+  }
   const analysis = loaded.analysis;
   const progress = { leaves: analysis.leaves.length, ...analysis.counts };
   let active = [];
@@ -252,13 +268,9 @@ async function deriveItem(projectRoot, config, item) {
   }
   const started = analysis.leaves.some((slug) => analysis.slices[slug].status !== "not-started") || active.length > 0;
   const derived = { ...base, state: started ? "in-progress" : "planned", readyToShip: analysis.complete[analysis.root] === true, progress, active, root: analysis.root };
-  // Open work refuses ship before any leaf check, so it is reported whether or not the leaves are done.
   if (state) {
-    const work = await openWork(projectRoot, item.id, { record: loaded.record, state }).catch(() => null);
-    if (work && hasOpenWork(work)) {
-      const diagnostic = { code: "open_work", message: openWorkMessage(item.id, work), ...work };
-      return { derived: { ...derived, readyToShip: false, diagnostics: [...derived.diagnostics, diagnostic] }, blocker: derived.readyToShip ? { open: work } : leaves };
-    }
+    const open = await withOpenWork(projectRoot, item, { derived, blocker: leaves }, { record: loaded.record, state });
+    if (open) return open;
   }
   if (!derived.readyToShip) return { derived, blocker: leaves };
   // A finished initiative is ready to ship only once ship would succeed: its declaration is valid and every finished scope's dependents passed.
