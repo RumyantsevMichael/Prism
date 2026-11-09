@@ -245,6 +245,7 @@ This check runs before the leaf and [dependents](#dependents) checks, so `gate_b
 A shipped initiative's roadmap entry keeps its title, intent, requirements, and required initiatives.
 `update_initiative` and `set_requires` naming it refuse with `initiative_shipped`, with its `initiative` and its ship time in `shippedAt`, and change nothing.
 `place` still refuses because a shipped initiative keeps its place in history, and another initiative may still require it.
+A request that would change an initiative's state while the roadmap record exists but cannot be read or parsed is refused with `invalid_roadmap`, because Prism cannot tell whether the initiative shipped.
 Start new work on a shipped initiative as a new initiative that references it.
 
 ### Shipped history
@@ -272,7 +273,7 @@ An initiative with no slice document in the checkout records nothing until a rea
 `changedAfterShip` lists `{ path, change }` for each recorded document whose content differs, ignoring the mark, as `changed`, for each one that no longer exists as `removed`, and for a slice document in a folder that had none recorded as `added`.
 A copy of a document without the mark, as on a branch from before the ship commit, is not a change.
 
-A shipped initiative's records stay, and every request to change its state is refused with `initiative_shipped` before any other check, naming the initiative and its ship time in `shippedAt`.
+A shipped initiative's records stay, and every request to change its state is refused with `initiative_shipped` before every check except argument validation, naming the initiative and its ship time in `shippedAt`.
 The refusal covers every `update_initiative` operation, `remove_records` included, as well as `update_coordination_state`, `checkpoint_pause`, `update_review`, `verify_slice` with `contractDefects` or `dependents` too, `update_design_view`, and `update_change_map`, and it changes no record and no project file.
 Start new work on a shipped initiative as a new initiative that references it.
 `remove_records` still removes the records of a superseded initiative.

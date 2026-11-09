@@ -22,11 +22,36 @@ export class ShippedHistoryError extends Error {
   }
 }
 
+/** The refusal of a change while the roadmap record exists but cannot be read or parsed, so whether the initiative shipped is unknown. */
+export class UnreadableRoadmapError extends Error {
+  constructor(initiative, reason) {
+    super(`The roadmap record cannot be read (${reason}), so Prism cannot tell whether initiative ${initiative} shipped and this change was not applied; repair the roadmap record and try again.`);
+    this.name = "UnreadableRoadmapError";
+    this.code = "invalid_roadmap";
+    this.initiative = initiative;
+  }
+}
+
 /** The ship date of a shipped decision: the first ten characters of its time. */
 export const shipDate = (decision) => String(decision.at).slice(0, 10);
 
 /** The shipped decision of a roadmap entry, or null when the entry has none. */
 export const entryShippedDecision = (entry) => entry?.decision?.kind === "shipped" && typeof entry.decision.at === "string" ? entry.decision : null;
+
+// The roadmap entry of an initiative: { entry } read from the roadmap record, with entry undefined when the record or the entry is absent,
+// or { problem, error } with why a record that exists cannot be read or parsed.
+async function roadmapEntry(projectRoot, initiative) {
+  let record;
+  try {
+    const { bytes } = await readRecord(projectRoot, { kind: "roadmap" });
+    if (!bytes) return { entry: undefined };
+    record = JSON.parse(bytes.toString("utf8"));
+  } catch (error) {
+    return { problem: error instanceof SyntaxError ? "it is not valid JSON" : error.message, error };
+  }
+  const entries = Array.isArray(record?.initiatives) ? record.initiatives : [];
+  return { entry: entries.find((entry) => entry?.id === initiative) };
+}
 
 /**
  * The shipped decision of an initiative read from the roadmap record, or null when the initiative has not shipped,
@@ -34,24 +59,25 @@ export const entryShippedDecision = (entry) => entry?.decision?.kind === "shippe
  * It reads the record directly, so modules that the roadmap module imports can use it.
  */
 export async function shippedDecision(projectRoot, initiative) {
-  let record;
-  try {
-    const { bytes } = await readRecord(projectRoot, { kind: "roadmap" });
-    if (!bytes) return null;
-    record = JSON.parse(bytes.toString("utf8"));
-  } catch {
-    return null;
-  }
-  const entries = Array.isArray(record?.initiatives) ? record.initiatives : [];
-  return entryShippedDecision(entries.find((entry) => entry?.id === initiative));
+  const { entry } = await roadmapEntry(projectRoot, initiative);
+  return entryShippedDecision(entry);
 }
 
+// The code of an operating-system or Node.js error, as opposed to a refusal that Prism names.
+const SYSTEM_CODE = /^(E[A-Z0-9]+|ERR_[A-Z0-9_]+)$/;
+
 /**
- * Refuse a change to a shipped initiative: throws ShippedHistoryError when the roadmap records the initiative as shipped, and returns otherwise.
- * Every writer of an initiative's state calls it after argument validation and before its other checks, so a refused change writes nothing.
+ * Refuse a change to a shipped initiative: throws ShippedHistoryError when the roadmap records the initiative as shipped,
+ * UnreadableRoadmapError when the roadmap record exists but cannot be read or parsed, and returns otherwise, a project without a roadmap record included.
+ * Every writer of an initiative's state calls it after argument validation and before its other checks, and again inside the lock it writes under,
+ * so a ship that lands between the two still refuses the change and a refused change writes nothing.
  */
 export async function refuseShipped(projectRoot, initiative) {
-  const decision = await shippedDecision(projectRoot, initiative);
+  const { entry, problem, error } = await roadmapEntry(projectRoot, initiative);
+  // A refusal of the record store itself, such as an unnamed checkout or a path outside the project, already refuses the change and names its own fix.
+  if (error && typeof error.code === "string" && !SYSTEM_CODE.test(error.code)) throw error;
+  if (problem) throw new UnreadableRoadmapError(initiative, problem);
+  const decision = entryShippedDecision(entry);
   if (decision) throw new ShippedHistoryError(initiative, decision.at);
 }
 

@@ -156,7 +156,7 @@ export async function updateDesignView(input) {
   assertInput(UPDATE_DESIGN_VIEW_SCHEMA, input);
   const root = await realpath(input.projectRoot);
   const { initiative, slice } = input;
-  // A shipped initiative's design views are history, so a change to one is refused before any other check.
+  // A shipped initiative's design views are history, so a change to one is refused after argument validation and before any other check.
   await refuseShipped(root, initiative);
   const own = await designSource(root, initiative, slice);
   if (own.source === null) throw fail("validation_failed", `${own.path} does not exist, so there is no contract to cite.`);
@@ -189,7 +189,11 @@ export async function updateDesignView(input) {
     examples: input.examples.map(({ clause, file, test, example }) => ({ clause, file, test, example: example.trim() }))
   };
   const key = { kind: "design-view", initiative, slice };
-  await withRecordLock(root, key, () => writeRecord(root, key, `${JSON.stringify(document, null, 2)}\n`), fail);
+  // A ship that landed after the first check refuses the write too, so the design view never changes after the initiative shipped.
+  await withRecordLock(root, key, async () => {
+    await refuseShipped(root, initiative);
+    await writeRecord(root, key, `${JSON.stringify(document, null, 2)}\n`);
+  }, fail);
   const cited = new Set(document.examples.map((item) => item.clause));
   const gaps = clauses.map((text, index) => ({ clause: index + 1, text })).filter((item) => !cited.has(item.clause));
   // The designer learns about a diagram the design gate would refuse here, before anyone accepts the design.

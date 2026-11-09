@@ -330,7 +330,7 @@ function stateErrorData(error) {
   // A refused component declaration or design names the entry, components, dependency, cycle, slice, or crossing paths it is about,
   // an unfinished scope names the leaves it waits on, a blocked ship names each scope and its blocked dependents,
   // a ship with open work names its gates, claims, and proposals, and a refused change to a shipped initiative names it and its ship time.
-  if (error instanceof InitiativeError || error instanceof RoadmapError || ["ShippedHistoryError", "InitiativeGraphError", "VerificationError", "SliceDesignError", "DesignViewError", "ComponentError"].includes(error?.name)) {
+  if (error instanceof InitiativeError || error instanceof RoadmapError || ["ShippedHistoryError", "UnreadableRoadmapError", "InitiativeGraphError", "VerificationError", "SliceDesignError", "DesignViewError", "ComponentError"].includes(error?.name)) {
     return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "state", "progress", "diagnostics", "claim", "syncState", "entry", "components", "component", "dependency", "cycle", "slice", "paths", "folder", "scope", "waiting", "scopes", "gates", "claims", "proposals", "initiative", "shippedAt"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
   }
   if (error?.name !== "CoordinationStateError") {
