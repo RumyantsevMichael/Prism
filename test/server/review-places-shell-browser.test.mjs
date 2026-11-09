@@ -13,15 +13,15 @@ const pressed = async (page) => {
 const bell = (page) => page.locator("header").getByRole("button", { name: /^Attention/ });
 const sidebarButton = (scope) => scope.getByRole("button", { name: /(Collapse|Expand) the sidebar/ });
 
-test("clauses 1, 2, 3, 4, 5, 6: a wide window shows a borderless rail of the five places with Attention's question count, no bell, and the sidebar button at its end", { skip, timeout: 60000 }, async (context) => {
+test("clauses 1, 2, 3, 4, 5, 6: a wide window shows a borderless rail of the five places with Attention's question count, no bell, and the sidebar button at its top", { skip, timeout: 60000 }, async (context) => {
   const { base, browser } = await placesDemo(context);
   const page = await open(browser, base, "attention");
   await rail(page).waitFor();
   const names = await buttonNames(rail(page));
-  assert.deepEqual(names.slice(0, 5).map((name) => name.split(",")[0]), PLACES, "the rail holds the five places in order");
-  assert.match(names[5], /^Collapse the sidebar$/, "the sidebar button follows the places");
+  assert.match(names[0], /^Collapse the sidebar$/, "the sidebar button heads the rail");
+  assert.deepEqual(names.slice(1, 6).map((name) => name.split(",")[0]), PLACES, "the five places follow in order");
   assert.equal(names.length, 6);
-  assert.equal(names[0], "Attention, 3 questions", "the Attention button is named with the question count");
+  assert.equal(names[1], "Attention, 3 questions", "the Attention button is named with the question count");
   assert.equal(await rail(page).getByText("3", { exact: true }).isVisible(), true, "the badge shows the count");
   assert.deepEqual(await pressed(page), ["Attention, 3 questions"], "the current place is pressed");
   const box = await rail(page).boundingBox();
@@ -54,6 +54,54 @@ test("clauses 1, 2, 3, 4, 5, 6: a wide window shows a borderless rail of the fiv
   assert.equal(await item(sidebar(page), "Requirements").isVisible(), true, "Knowledge leads to the requirements");
   assert.equal(await sidebar(page).getByRole("treeitem", { name: /^Harden request retries/ }).count(), 0, "Knowledge shows nothing of Work");
   assert.deepEqual(page.errors, []);
+});
+
+// The rail's head block and the place head line up with the tab strip and the page bar beside them.
+async function headGeometry(page) {
+  const box = async (locator) => {
+    const value = await locator.boundingBox();
+    assert.ok(value, `${locator} is laid out`);
+    return { ...value, bottom: value.y + value.height, middle: value.y + value.height / 2 };
+  };
+  const nav = rail(page);
+  return {
+    strip: await box(page.locator("#open-tabs")),
+    tab: await box(page.locator("#open-tabs prism-doc-tab[selected]").first()),
+    bar: await box(page.locator("#page-bar")),
+    trail: await box(page.locator("#page-bar").getByRole("navigation").first()),
+    button: await box(sidebarButton(nav)),
+    separator: await box(nav.getByRole("separator")),
+    firstPlace: await box(placeButton(page, "Attention")),
+    title: await box(placeTitle(sidebar(page)))
+  };
+}
+
+test("clauses 2, 6: the sidebar button heads the rail in a block as tall as the tabs and the page bar, a pale separator ends it level with the page bar, and the place head lines up with both", { skip, timeout: 60000 }, async (context) => {
+  const { base, browser } = await placesDemo(context);
+  for (const [place, subtitle] of [["Attention", "What waits on you"], ["Work", "Designed and not shipped"]]) {
+    const page = await open(browser, base, SLICE);
+    await choosePlace(page, place);
+    const at = await headGeometry(page);
+    assert.equal(await rail(page).getByRole("separator").count(), 1, "one separator in the rail");
+    assert.ok(Math.abs(at.separator.bottom - at.bar.bottom) <= 1, `the separator is level with the page bar's bottom edge: ${at.separator.bottom} and ${at.bar.bottom}`);
+    assert.ok(at.button.y >= at.strip.y - 2 && at.button.bottom <= at.separator.y, "the sidebar button sits inside the head block, above the separator");
+    assert.ok(at.firstPlace.y >= at.separator.bottom, "the place buttons start below the separator");
+    const color = await rail(page).getByRole("separator").evaluate((rule) => {
+      const read = getComputedStyle(rule);
+      const probe = document.createElement("span");
+      probe.style.color = "var(--prism-color-line)";
+      document.body.append(probe);
+      const line = getComputedStyle(probe).color;
+      probe.remove();
+      return { painted: [read.backgroundColor, read.borderTopColor, read.borderBottomColor, read.color], line };
+    });
+    assert.ok(color.painted.includes(color.line), "the separator is drawn in the line color");
+    assert.ok(Math.abs(at.title.middle - at.tab.middle) <= 2, `the place title is on the tab row: ${at.title.middle} and ${at.tab.middle}`);
+    const sub = await sidebar(page).getByText(subtitle, { exact: true }).boundingBox();
+    assert.ok(sub && Math.abs(sub.y + sub.height / 2 - at.trail.middle) <= 2, `the subtitle is on the trail's row: ${sub && sub.y + sub.height / 2} and ${at.trail.middle}`);
+    assert.deepEqual(page.errors, []);
+    await page.close();
+  }
 });
 
 test("clauses 7, 8, 9: only Roadmap opens a page, and the place stays while tabs, links, the palette, and Back change the page", { skip, timeout: 90000 }, async (context) => {
@@ -161,7 +209,7 @@ test("clauses 14, 15, 16: [ and the rail's sidebar button hide the sidebar and k
   assert.equal(await sidebar(page).isVisible(), false, "[ hid the sidebar");
   assert.equal(await rail(page).isVisible(), true, "the rail stays");
   const button = sidebarButton(rail(page));
-  assert.deepEqual((await buttonNames(rail(page))).slice(-1), ["Expand the sidebar"], "the button says it expands the sidebar");
+  assert.deepEqual((await buttonNames(rail(page))).slice(0, 1), ["Expand the sidebar"], "the button at the top says it expands the sidebar");
   assert.equal(await rail(page).getByRole("button", { name: "Expand the sidebar", expanded: false }).count(), 1, "it carries aria-expanded false");
   await button.hover();
   await page.waitForTimeout(700);
@@ -265,6 +313,9 @@ test("clauses 22, 23, 24, 25: a narrow window hides the rail, keeps the bell, an
   const panel = drawer(page);
   await panel.waitFor();
   assert.equal(await rail(panel).isVisible(), true, "the drawer holds the rail");
+  assert.equal(await sidebarButton(rail(panel)).count(), 0, "the drawer's rail has no sidebar button");
+  assert.equal(await rail(panel).getByRole("separator").count(), 0, "nor its head block");
+  assert.equal((await buttonNames(rail(panel)))[0].split(",")[0], "Attention", "it starts with the places");
   const railBox = await rail(panel).boundingBox();
   const head = placeTitle(panel);
   assert.ok((await head.boundingBox()).x > railBox.x + railBox.width - 1, "the place's sidebar sits right of the rail");
