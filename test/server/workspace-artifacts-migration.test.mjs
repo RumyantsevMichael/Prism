@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { browserRequest, checkout, cloneOf, commitFiles, eventually, git, exists, isolateGit, notes, ok, refused, remoteFile, requirementFile, reviewBrowser, server, syncedWorkspace, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
-// Contract clauses 26-29 and the moved-file case of clause 31 of the workspace-artifacts design: existing tracked artifacts move into the store once, only in a tool call of the checkout whose result reports the move, leave the checkout only right before a result that reports them is written, and are reported as moved earlier by each later session while their deletion is uncommitted, against the store as pulled when it syncs, a checkout's roadmap view leaves only when the store's roadmap record generates the same view, files that are untracked, ignored, too large, not text, or with malformed or colliding names stay in the checkout, a configured folder that would take the source tree is refused, and the report stays bounded and one line per entry.
+// Contract clauses 26-29 and the moved-file case of clause 31 of the workspace-artifacts design: existing tracked artifacts move into the store once, only in a tool call of the checkout whose result reports the move, leave the checkout only right before a result that reports them is written, and are reported as moved earlier by each later session while their deletion is uncommitted, against the store as pulled when it syncs, a checkout's roadmap view leaves only when the store's roadmap record generates the same view, files that are untracked, ignored, too large, not text, or with malformed or colliding names stay in the checkout, an index entry that Git keeps out of the work tree with its skip-worktree bit is passed over and never reported, a configured folder that would take the source tree is refused, and the report stays bounded and one line per entry.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
@@ -656,6 +656,57 @@ test("clauses 26 and 29: a removal whose deletion the checkout's index still lis
   await commitFiles(api, {}, "remove the moved artifacts");
   assert.doesNotMatch(notes(await (await server(context, place, api)).call("get_artifact", {})), / -> /, "a committed deletion is not reported again");
   for (const file of Object.keys(WAITING)) assert.equal(await exists(path.join(api, file)), false, `${file} is not written back into the checkout`);
+});
+
+test("clause 26: a skip-worktree entry, such as a file that a sparse checkout leaves out, never moves, is never reported as moved earlier or kept, and is counted by no browser notice, while a removal beside it is still reported as moved earlier", async (context) => {
+  const place = await workspace(context);
+  const files = { "docs/plans/a/slice.md": "# A\n", "docs/plans/b/slice.md": "# B\n", "docs/plans/c/local.md": "# Local\n", "src/x.js": "x\n" };
+  const api = await checkout(place, "api", { files });
+  git(api, "branch", "feature");
+  const first = await server(context, place, api);
+  ok(await first.call("get_artifact", {}));
+  await first.close();
+
+  // The moved checkout's sparse checkout now leaves out a moved file whose deletion nobody committed, so only the other removals stay deletions that the index lists.
+  git(api, "sparse-checkout", "set", "--no-cone", "/*", "!/docs/plans/b/");
+  const earlier = notes(await (await server(context, place, api)).call("get_artifact", {}));
+  for (const file of ["docs/plans/a/slice.md", "docs/plans/c/local.md"]) assert.ok(earlier.includes(`${file} -> artifacts/repositories/api/${file.replace(/^docs\//, "")}`), `${file}, a removal that the index still lists, is reported as moved earlier`);
+  assert.doesNotMatch(earlier, /docs\/plans\/b\//, "a file that the sparse checkout leaves out is not reported as moved earlier");
+
+  // Another clone of the repository, on a branch whose plan holds other bytes, leaves that plan out of its sparse checkout.
+  const two = await cloneOf(api, place.parent, "api-two", { remote: "https://github.com/acme/api.git" });
+  git(two, "checkout", "-q", "feature");
+  await commitFiles(two, { "docs/plans/a/slice.md": "# A, feature edits\n" }, "feature edits the plan");
+  git(two, "sparse-checkout", "set", "--no-cone", "/*", "!/docs/plans/a/");
+  let ledgers = (await ledgerFiles(place.store)).length;
+  for (let session = 1; session <= 2; session++) {
+    const report = notes(await (await server(context, place, two)).call("get_artifact", {}));
+    if (session === 1) assert.ok(report.includes("docs/plans/b/slice.md -> artifacts/repositories/api/plans/b/slice.md"), "an ordinary file beside the skip-worktree entry moves as §27 says");
+    assert.doesNotMatch(report, /docs\/plans\/a\/slice\.md/, `session ${session} does not report the left-out plan as moved, moved earlier, or kept`);
+  }
+  assert.equal(await exists(path.join(two, "docs/plans/a/slice.md")), false, "the left-out plan is not written into the work tree");
+  assert.equal(git(two, "show", "HEAD:docs/plans/a/slice.md"), "# A, feature edits", "the branch keeps its own version of the plan");
+  assert.equal(await text(scoped(place.store, "plans/a/slice.md")), "# A\n", "the store copy of the left-out plan is unchanged");
+  assert.doesNotMatch(JSON.stringify((await ledgerFiles(place.store)).slice(ledgers)), /plans\/a\//, "no new ledger names the left-out plan");
+
+  // A third clone keeps local edits of a moved file behind the skip-worktree bit, which its work tree holds.
+  const three = await cloneOf(api, place.parent, "api-three", { remote: "https://github.com/acme/api.git" });
+  git(three, "update-index", "--skip-worktree", "docs/plans/c/local.md");
+  await writeFile(path.join(three, "docs/plans/c/local.md"), "# Local, edited here\n");
+  ledgers = (await ledgerFiles(place.store)).length;
+  const review = await reviewBrowser(context, three);
+  assert.equal((await browserRequest(review, "/api/index")).body.recordStore.awaitingMove?.files, 2, "the browser counts the ordinary tracked files that the checkout still holds, not the skip-worktree file");
+  for (let session = 1; session <= 2; session++) {
+    const report = notes(await (await server(context, place, three)).call("get_artifact", {}));
+    if (session === 1) assert.ok(report.includes("docs/plans/b/slice.md -> artifacts/repositories/api/plans/b/slice.md"), "an ordinary file beside the skip-worktree file moves as §27 says");
+    assert.doesNotMatch(report, /docs\/plans\/c\/local\.md/, `session ${session} does not report the skip-worktree file as moved, moved earlier, or kept`);
+  }
+  assert.equal(await text(path.join(three, "docs/plans/c/local.md")), "# Local, edited here\n", "the skip-worktree file stays in the work tree with its bytes");
+  assert.equal(await text(scoped(place.store, "plans/c/local.md")), "# Local\n", "the store copy of the skip-worktree file is unchanged");
+  assert.doesNotMatch(JSON.stringify((await ledgerFiles(place.store)).slice(ledgers)), /plans\/c\//, "no new ledger names the skip-worktree file");
+  const index = (await browserRequest(review, "/api/index")).body;
+  assert.equal(index.recordStore.awaitingMove, undefined, "no browser notice counts the skip-worktree file as waiting");
+  assert.equal(index.recordStore.keptInCheckout, undefined, "no browser notice counts the skip-worktree file as kept");
 });
 
 test("clause 26: a moved file that a cancelled first tool call updated and removed is reported as moved by the session's next result, never as differing from a checkout copy that is gone", async (context) => {
