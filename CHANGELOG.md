@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.21.0](https://github.com/RumyantsevMichael/Prism/compare/v0.20.0...v0.21.0) (2026-11-09)
+
+
+### Added
+
+* give the plugin an icon in Claude Code and Codex ([#158](https://github.com/RumyantsevMichael/Prism/issues/158)) ([dc649e7](https://github.com/RumyantsevMichael/Prism/commit/dc649e7a1f226ea748b98fa5b894e5a6bd9edb65))
+
+
+### Fixed
+
+* **review:** match the approved mockup, restore tabs, and stop the multi-tab freeze ([#157](https://github.com/RumyantsevMichael/Prism/issues/157)) ([049aa9c](https://github.com/RumyantsevMichael/Prism/commit/049aa9ce09d404d0b8d43313a4e05bceb94d4fc4))
+
 ## [0.20.0](https://github.com/RumyantsevMichael/Prism/compare/v0.19.0...v0.20.0) (2026-11-09)
 
 
