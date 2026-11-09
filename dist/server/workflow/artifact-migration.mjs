@@ -383,7 +383,15 @@ export async function migrateArtifacts({ root, kinds, store, repository, pull = 
   if (listing === null) return await holdsArtifactPaths(root, kinds) ? { repository, store, unlisted: true } : null;
   const report = (listing, outcome) => ({ repository, store, untracked: listing.untracked, ignored: listing.ignored, references: [], moreReferences: 0, moved: [], earlier: [], kept: [], passed: [], ledger: null, ...outcome });
   const quiet = (listing, passed = []) => passed.length || listing.untracked.length || listing.ignored ? report(listing, { passed }) : null;
+  // An operation that started since the last look, such as during a pull, stops the move as well: the move looks again right before it decides and right before it writes.
+  const operation = async () => {
+    const waiting = await waitsFor(root);
+    if (waiting === undefined) return { repository, store, unlisted: true };
+    return waiting ? { repository, store, operation: waiting } : null;
+  };
   const decide = async (listing, { seen, recordSources, frozenTests }) => {
+    const stopped = await operation();
+    if (stopped) return stopped;
     const left = (file) => recordSources.has(file) || frozenTests.has(file);
     const files = listing.candidates.filter((file) => !left(file));
     const passed = await passedOver(seen, listing, left);
@@ -392,15 +400,15 @@ export async function migrateArtifacts({ root, kinds, store, repository, pull = 
     const present = files.filter((file) => !lacking.has(file));
     if (!present.length && !earlier.length) return quiet(listing, passed);
     // Files moved earlier are only reported, so a move that has nothing else to take writes nothing and takes no lock.
-    const decided = present.length ? await withArtifactStoreLock(seen, () => moveIntoStore(seen, present), MOVE_LOCK) : { moved: [], kept: [], ledger: null, real: await realpath(root) };
-    return { finish: (options) => finishMove(seen, listing, { ...decided, earlier, passed }, report, { ...options, named }) };
+    const decided = present.length ? await withArtifactStoreLock(seen, async () => await operation() ?? { into: await moveIntoStore(seen, present) }, MOVE_LOCK) : { into: { moved: [], kept: [], ledger: null, real: await realpath(root) } };
+    if (!decided.into) return decided;
+    return { finish: (options) => finishMove(seen, listing, { ...decided.into, earlier, passed }, report, { ...options, named }) };
   };
   const decides = (listing) => listing.candidates.length || listing.assumed.length || listing.unmerged.length;
   if (!decides(listing)) return quiet(listing);
   // While Git has an operation in progress, the work tree holds bytes that no commit holds yet and the operation's next commit takes every staged change, so the whole move waits, before any pull.
-  const waiting = await waitsFor(root);
-  if (waiting === undefined) return { repository, store, unlisted: true };
-  if (waiting) return { repository, store, operation: waiting };
+  const stopped = await operation();
+  if (stopped) return stopped;
   // A pull runs only when some file's decision reads the store, so files that every move keeps or passes over never make an access wait for the remote.
   if (pull && await anyDependsOnStore(root, kinds, repository, listing.candidates)) {
     // The move runs right after the pull that pull completes, and lists the checkout again, since a retry's pull can end long after this access.
