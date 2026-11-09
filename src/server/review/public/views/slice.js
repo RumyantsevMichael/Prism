@@ -391,7 +391,7 @@ export async function render(container, entity, ctx) {
   const tab = TABS.some(([value]) => value === ctx.state.tab) ? ctx.state.tab : "design";
   const panels = {
     design: artifacts.narrative
-      ? `<prism-panel class="view-section design-document" heading="Design">${designNotices(view)}${servedClauses(view, ctx, data.titles)}<div class="document-content" data-narrative><p class="rendering">Loading the design</p></div></prism-panel>${unplannedCard(view, ctx)}`
+      ? `<prism-panel class="view-section design-document" heading="Design">${designNotices(view)}${servedClauses(view, ctx, data.titles)}<prism-doc class="document-content" data-narrative><p class="rendering">Loading the design</p></prism-doc></prism-panel>${unplannedCard(view, ctx)}`
       : `${emptyState("No design yet", "The slice has no design document yet.")}${unplannedCard(view, ctx)}`,
     diagram: diagramsCard(diagrams, ctx),
     verification: verificationCard(slice.design, data.verification, data.code) + sliceRunTotalsHtml(data.runTotals, data.children.length > 0) || emptyState("No verification yet", "The slice has no accepted design or verification run yet."),

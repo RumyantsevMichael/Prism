@@ -30,11 +30,11 @@ function fileBody(data, { renderMarkdown }) {
     return `<ol class="source-lines">${lines.map((line, index) => `<li id="${HEADING_PREFIX}L${index + 1}"><code>${line || " "}</code></li>`).join("")}</ol>`;
   }
   if (data.path.toLowerCase().endsWith(".md")) {
-    return `<div class="document-content">${renderMarkdown(data.path, data.content) || '<p class="muted">The document is empty.</p>'}</div>`;
+    return `<prism-doc class="document-content">${renderMarkdown(data.path, data.content) || '<p class="muted">The document is empty.</p>'}</prism-doc>`;
   }
   if (data.path.toLowerCase().endsWith(".puml")) return "";
   const note = data.kind ? '<p class="side-panel-note">Open it as a page to see it as a structured view.</p>' : "";
-  return `${note}<pre><code>${highlight(data.content, languageOf(data.path))}</code></pre>`;
+  return `${note}<prism-code language="${escapeHtml(languageOf(data.path) ?? "")}"><pre><code>${highlight(data.content, languageOf(data.path))}</code></pre></prism-code>`;
 }
 
 const NARROW = "(max-width: 720px)";

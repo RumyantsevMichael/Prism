@@ -1,6 +1,6 @@
 import { renderToString } from "./vendor/plantuml.js";
 import { renderView } from "./views/registry.js";
-import { closeEvidence, openEvidence } from "./views/evidence.js";
+import { openEvidence } from "./views/evidence.js";
 import { ENTITY_LABELS, entityLabel, parseEntityRef, recordKind, recordLabel, renderEntity } from "./views/entities.js";
 import { createPalette } from "./views/palette.js";
 import { highlight, highlightLines, languageOf } from "./views/highlight.js";
@@ -17,6 +17,7 @@ import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createPresence } from "./views/presence.js";
 import { DENSITIES, savePreferences, THEMES } from "./kit/preferences.js";
 import { shownActionEntries } from "./views/actions.js";
+import { themeDiagram } from "./kit/diagram-theme.js";
 
 const project = document.getElementById("project");
 const navRoot = document.getElementById("nav");
@@ -748,7 +749,7 @@ function configureDiagram(section, source) {
     } else if (action === "reset") {
       setDiagramScale(section, 1);
     } else if (action === "source") {
-      const sourcePanel = section.querySelector(".source-panel");
+      const sourcePanel = section.querySelector(".diagram-source");
       sourcePanel.hidden = !sourcePanel.hidden;
       control.setAttribute("aria-expanded", String(!sourcePanel.hidden));
       control.textContent = sourcePanel.hidden ? "Show source" : "Hide source";
@@ -766,16 +767,67 @@ function configureDiagram(section, source) {
 // The PlantUML runtime draws one diagram at a time, so previews, the side panel, and the open tab take turns.
 let plantUmlQueue = Promise.resolve();
 
+// The runtime sets style attributes on the SVG it builds, which the page's style policy refuses and reports, so they are left out while it draws:
+// the stylesheet sets PlantUML's preserved text spacing, and a diagram's background color is also a rectangle the runtime draws.
+const setAttribute = Element.prototype.setAttribute;
+function holdStyleAttributes() {
+  Element.prototype.setAttribute = function setAttributeWithoutStyle(name, value) {
+    if (this instanceof SVGElement && String(name).toLowerCase() === "style") return;
+    setAttribute.call(this, name, value);
+  };
+  return () => {
+    Element.prototype.setAttribute = setAttribute;
+  };
+}
+
 function drawPlantUml(source) {
   const drawn = plantUmlQueue.then(() => new Promise((resolve) => {
-    renderToString(source.split(/\r?\n/), (svg) => {
-      // The page's style policy refuses inline style attributes, so the stylesheet sets PlantUML's preserved text spacing instead.
-      // The runtime still sets that attribute once while it renders, and the browser logs that refusal.
-      resolve(svg.includes("Syntax Error") ? { error: "PlantUML reported a syntax error." } : { svg: svg.replace(/ style="white-space: ?pre;?"/g, "") });
-    }, (message) => resolve({ error: String(message) }), { maxSvgSize: 8192 });
+    const release = holdStyleAttributes();
+    const finish = (result) => {
+      release();
+      resolve(result);
+    };
+    try {
+      renderToString(source.split(/\r?\n/), (svg) => {
+        finish(svg.includes("Syntax Error") ? { error: "PlantUML reported a syntax error." } : { svg: svg.replace(/ style="[^"]*"/g, "") });
+      }, (message) => finish({ error: String(message) }), { maxSvgSize: 8192 });
+    } catch (error) {
+      finish({ error: String(error?.message ?? error) });
+    }
   }));
   plantUmlQueue = drawn.catch(() => {});
   return drawn;
+}
+
+// Each shown diagram keeps the SVG text the runtime returned, so a theme change recolors a fresh copy rather than a recolored one.
+const shownDiagrams = new Set();
+
+/** Puts the runtime's SVG text on a sheet and recolors it for the theme computed there. */
+function placeDiagram(sheet, svgText) {
+  sheet.innerHTML = svgText;
+  themeDiagram(sheet.querySelector("svg"));
+}
+
+function retheme() {
+  for (const shown of shownDiagrams) {
+    if (!shown.sheet.isConnected) {
+      shownDiagrams.delete(shown);
+      continue;
+    }
+    placeDiagram(shown.sheet, shown.svg);
+    shown.restore?.();
+  }
+}
+
+function watchDiagramTheme() {
+  new MutationObserver(retheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+}
+
+/** Shows a drawn SVG on a sheet, recolored now and again whenever the theme changes; `restore` reapplies a zoom after each recoloring. */
+function showDiagram(sheet, svgText, restore = null) {
+  for (const shown of shownDiagrams) if (shown.sheet === sheet) shownDiagrams.delete(shown);
+  placeDiagram(sheet, svgText);
+  shownDiagrams.add({ sheet, svg: svgText, restore });
 }
 
 async function renderDiagram(source, target, section, { fit = false } = {}) {
@@ -784,7 +836,7 @@ async function renderDiagram(source, target, section, { fit = false } = {}) {
     target.innerHTML = `<p class="error">${escapeHtml(drawn.error)}</p>`;
     return;
   }
-  target.innerHTML = drawn.svg;
+  showDiagram(target, drawn.svg, () => setDiagramScale(section, Number(section.dataset.scale) || 1));
   configureDiagram(section, source);
   // A narrow place, such as the side panel, starts the diagram at the width it has, and the zoom buttons still reach every size.
   if (fit) {
@@ -794,32 +846,33 @@ async function renderDiagram(source, target, section, { fit = false } = {}) {
   }
 }
 
-// A diagram is named by its own name in words, never its file name.
-function diagramName(path) {
+// A diagram is named by the title its source gives, or by its own name in words, never its file name.
+function diagramName(path, source = "") {
+  const title = /^\s*title\s+(.+?)\s*$/im.exec(source)?.[1];
+  if (title) return title;
   const words = fileName(path).replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").trim();
   return words ? words[0].toUpperCase() + words.slice(1) : "Diagram";
 }
 
 // A compact card leaves the name to its container, such as the side panel, whose header already names the diagram.
 function diagramCard(diagram, { compact = false } = {}) {
-  const section = document.createElement("section");
-  section.className = `diagram-card${compact ? " is-compact" : ""}`;
+  const section = document.createElement("prism-panel");
+  section.className = `diagram-view${compact ? " is-compact" : ""}`;
+  section.setAttribute("variant", compact ? "plain" : "card");
+  if (!compact) {
+    section.setAttribute("heading", diagramName(diagram.path, diagram.source));
+    section.setAttribute("eyebrow", "Diagram");
+  }
   section.innerHTML = `
-    <header class="diagram-header">
-      ${compact ? "" : `<div class="diagram-title">
-        <p class="eyebrow">Diagram</p>
-        <h2>${escapeHtml(diagramName(diagram.path))}</h2>
-      </div>`}
-      <div class="diagram-tools" role="group" aria-label="Diagram controls">
-        <prism-button variant="ghost" size="sm" data-action="zoom-out" label="Zoom out" tip="Zoom out">−</prism-button>
-        <prism-button variant="ghost" size="sm" data-action="reset" data-scale-label tip="Reset zoom">100%</prism-button>
-        <prism-button variant="ghost" size="sm" data-action="zoom-in" label="Zoom in" tip="Zoom in">+</prism-button>
-        <prism-button variant="ghost" size="sm" data-action="source" aria-expanded="false">Show source</prism-button>
-        <prism-button variant="ghost" size="sm" data-action="copy" tip="Copy PlantUML source">Copy</prism-button>
-      </div>
-    </header>
-    <div class="diagram-output"><p class="rendering">Rendering diagram</p></div>
-    <div class="source-panel" hidden><pre><code>${highlight(diagram.source, "plantuml")}</code></pre></div>`;
+    <div slot="tools" class="diagram-tools" role="group" aria-label="Diagram controls">
+      <prism-button variant="ghost" size="sm" data-action="zoom-out" label="Zoom out" tip="Zoom out">−</prism-button>
+      <prism-button variant="ghost" size="sm" data-action="reset" data-scale-label tip="Reset zoom">100%</prism-button>
+      <prism-button variant="ghost" size="sm" data-action="zoom-in" label="Zoom in" tip="Zoom in">+</prism-button>
+      <prism-button variant="ghost" size="sm" data-action="source" aria-expanded="false">Show source</prism-button>
+      <prism-button variant="ghost" size="sm" data-action="copy" tip="Copy PlantUML source">Copy</prism-button>
+    </div>
+    <div class="diagram-output"><prism-spinner label="Rendering diagram"></prism-spinner></div>
+    <div class="diagram-source" hidden><prism-code language="plantuml"><pre><code>${highlight(diagram.source, "plantuml")}</code></pre></prism-code></div>`;
   return section;
 }
 
@@ -1027,7 +1080,7 @@ function beginRebuild(path) {
   const same = renderedPath === path;
   const memory = { path, top: same ? workspace.scrollTop : scrollPositions.get(path) ?? 0, open: null, focus: -1 };
   if (same) {
-    memory.open = [...artifact.querySelectorAll("details")].map((details) => [details.querySelector("summary")?.textContent ?? "", details.open]);
+    memory.open = [...artifact.querySelectorAll("prism-disclosure")].map((disclosure) => [disclosure.getAttribute("summary") ?? "", disclosure.open]);
     memory.focus = artifact.contains(document.activeElement) ? controlsOf(artifact).indexOf(document.activeElement) : -1;
     artifact.style.minHeight = `${artifact.offsetHeight}px`;
   } else {
@@ -1055,7 +1108,7 @@ function scrollToAnchor(anchor) {
   return true;
 }
 
-const MAXIMIZABLE = ".graph-card, .diagram-card, .document-card";
+const MAXIMIZABLE = ".graph-view, .diagram-view:not(.is-compact), .document-sheet";
 
 // Graphs, diagrams, and documents can fill the window. The maximized card is remembered in the view state,
 // so a refresh that rebuilds the view keeps it maximized instead of dropping out as browser fullscreen would.
@@ -1139,9 +1192,9 @@ function endRebuild(memory) {
   decorateMaximize(memory.path);
   requestAnimationFrame(() => markClippedChips(artifact));
   if (memory.open) {
-    const sections = artifact.querySelectorAll("details");
+    const sections = artifact.querySelectorAll("prism-disclosure");
     memory.open.forEach(([summary, open], index) => {
-      if (sections[index] && (sections[index].querySelector("summary")?.textContent ?? "") === summary) sections[index].open = open;
+      if (sections[index] && (sections[index].getAttribute("summary") ?? "") === summary) sections[index].open = open;
     });
   }
   if (memory.focus >= 0 && !artifact.contains(document.activeElement)) controlsOf(artifact)[memory.focus]?.focus({ preventScroll: true });
@@ -1183,7 +1236,7 @@ function updateMissingTabs(reported) {
 // A page that could not load says why in the artifact area, and the area is no longer busy.
 async function showError(response) {
   pageBar.setActions([]);
-  artifact.innerHTML = `<div class="document-card"><p class="error">${escapeHtml(await response.text())}</p></div>`;
+  artifact.innerHTML = `<div class="document-sheet"><p class="error">${escapeHtml(await response.text())}</p></div>`;
   setBusy(false);
 }
 
@@ -1281,10 +1334,10 @@ async function showArtifact(path) {
   const source = data.kind === "source";
   const structured = Boolean(data.kind) && !source;
   const documentCard = source
-    ? `<section class="document-card source-card"><ol class="source-lines">${highlightLines(data.content.replace(/\r\n/g, "\n").replace(/\n$/, ""), languageOf(data.path)).map((line, index) => `<li id="${HEADING_PREFIX}L${index + 1}"><code>${line || " "}</code></li>`).join("")}</ol></section>`
+    ? `<section class="document-sheet source-sheet" data-code-subject><ol class="source-lines">${highlightLines(data.content.replace(/\r\n/g, "\n").replace(/\n$/, ""), languageOf(data.path)).map((line, index) => `<li id="${HEADING_PREFIX}L${index + 1}"><code>${line || " "}</code></li>`).join("")}</ol></section>`
     : structured || data.path.toLowerCase().endsWith(".puml")
       ? ""
-      : `<section class="document-card"><div class="document-content">${renderText(data.path, data.content, markdownOptions(data.path))}</div></section>`;
+      : `<section class="document-sheet"><prism-doc class="document-content">${renderText(data.path, data.content, markdownOptions(data.path))}</prism-doc></section>`;
   const state = viewState(data.path);
   const memory = beginRebuild(path);
   // A repository file is named by its path; a record of Prism's by its title and kind, never its file name.
@@ -1299,8 +1352,8 @@ async function showArtifact(path) {
         ${named.code ? `<p class="artifact-path" data-code-subject>${escapeHtml(data.path)}</p>` : ""}
       </div>
       <div class="artifact-meta">
-        ${named.code || structured ? `<span class="meta-pill">${escapeHtml(kind)}</span>` : ""}
-        ${source ? '<span class="meta-pill">Read-only</span>' : structured ? "" : `<span class="meta-pill">${diagramLabel}</span>`}
+        ${named.code || structured ? `<prism-chip>${escapeHtml(kind)}</prism-chip>` : ""}
+        ${source ? "<prism-chip>Read-only</prism-chip>" : structured ? "" : `<prism-chip>${diagramLabel}</prism-chip>`}
       </div>
     </header>
     ${documentCard}`;
@@ -1444,6 +1497,7 @@ function renderStoreSync(data) {
 }
 
 startAppearanceMenu();
+watchDiagramTheme();
 
 // The sidebar moves into the drawer while the drawer is open, so one set of trees serves both.
 function focusTrees() {
@@ -1599,6 +1653,7 @@ async function initialize() {
     renderMarkdown: (path, content) => renderText(path, content, markdownOptions(path)),
     kindLabel: (kind) => KIND_LABELS[kind] ?? "Structured record",
     drawDiagram: drawPlantUml,
+    describe,
     currentPath: () => selectedPath,
     onShowInPanel: showInPanel
   });
@@ -1609,6 +1664,7 @@ async function initialize() {
     renderMarkdown: (path, content) => renderText(path, content, markdownOptions(path)),
     kindLabel: (kind) => KIND_LABELS[kind] ?? "Structured record",
     drawDiagram: drawPlantUml,
+    describe,
     currentPath: () => sidePanel.current()?.ref ?? null,
     onShowInPanel: showInPanel
   });
@@ -1640,7 +1696,6 @@ async function initialize() {
   navDrawer.addEventListener("prism-close", closeDrawer);
   watchDrawerWidth();
   document.getElementById("jump").addEventListener("click", () => palette.show());
-  document.getElementById("evidence-close").addEventListener("click", closeEvidence);
   artifact.addEventListener("click", (event) => {
     // Markdown links to repository files open as review pages, and anchors scroll within the document they name.
     const docLink = event.target.closest("a[data-doc-link], a[data-doc-anchor]");
@@ -1688,8 +1743,6 @@ async function initialize() {
       else goForward();
     } else if (event.key === "Escape" && overlayOpen()) {
       // An open dialog, popover, or menu closes on its own Escape.
-    } else if (event.key === "Escape" && !document.getElementById("evidence-drawer").hidden) {
-      closeEvidence();
     } else if (event.key === "Escape" && selectedPath && viewState(selectedPath).maximized) {
       setMaximized(selectedPath, null);
     } else if (event.key === "Escape" && sidePanel.isOpen() && !document.querySelector(".link-preview:not([hidden])")) {
@@ -1747,6 +1800,6 @@ async function initialize() {
 }
 
 initialize().catch((error) => {
-  artifact.innerHTML = `<div class="document-card"><p class="error">${escapeHtml(error.message)}</p></div>`;
+  artifact.innerHTML = `<div class="document-sheet"><p class="error">${escapeHtml(error.message)}</p></div>`;
   setBusy(false);
 });

@@ -89,6 +89,34 @@ export function artifactChip(path, ctx, label = path) {
   return `<prism-chip interactive tone="accent" data-artifact="${escapeHtml(path)}"${code}>${escapeHtml(label)}</prism-chip>`;
 }
 
+/**
+ * Names a path for the record views: one of Prism's records by its title and kind, and a repository file by its path, marked as where code is the subject.
+ * Returns { label, code }.
+ */
+export function pathName(path, ctx) {
+  const named = ctx?.describe?.(path);
+  if (!named || named.code) return { label: String(path ?? ""), code: true };
+  const title = ctx.recordTitle?.(path) ?? named.label;
+  return { label: title === named.kind ? named.kind : `${named.kind} · ${title}`, code: false };
+}
+
+/** A path as inline text: a record's title and kind, or the repository path in code marked data-code-subject. */
+export function pathText(path, ctx, selector = "") {
+  const { label, code } = pathName(path, ctx);
+  const detail = selector ? ` › ${escapeHtml(selector)}` : "";
+  return code ? `<code data-code-subject>${escapeHtml(path)}${detail}</code>` : `<span>${escapeHtml(label)}${detail}</span>`;
+}
+
+/** A link chip to a path, named as pathName names it; a path the review cannot open is static text. */
+export function recordChip(path, ctx, { selector = "", anchor = "" } = {}) {
+  if (!path) return "";
+  const { label, code } = pathName(path, ctx);
+  const text = `${escapeHtml(label)}${selector ? `<span slot="meta">${escapeHtml(selector)}</span>` : ""}`;
+  const subject = code ? " data-code-subject" : "";
+  if (!ctx?.hasArtifact?.(path)) return `<prism-chip${subject}>${text}</prism-chip>`;
+  return `<prism-chip interactive tone="accent" data-artifact="${escapeHtml(path)}"${anchor ? ` data-doc-anchor="${escapeHtml(anchor)}"` : ""}${subject}>${text}</prism-chip>`;
+}
+
 function words(name) {
   const text = name.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").trim();
   return text ? text[0].toUpperCase() + text.slice(1) : name;

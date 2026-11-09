@@ -97,7 +97,7 @@ export async function renderEntity(container, entity, ctx) {
     const view = await VIEWS[entity.kind]();
     await view.render(container, entity, ctx);
   } catch (error) {
-    container.innerHTML = `<section class="view-card"><p class="error">The ${escapeHtml(entity.kind)} view failed: ${escapeHtml(error.message)}</p></section>`;
+    container.innerHTML = `<prism-panel class="view-section"><p class="error">The ${escapeHtml(entity.kind)} view failed: ${escapeHtml(error.message)}</p></prism-panel>`;
   }
 }
 

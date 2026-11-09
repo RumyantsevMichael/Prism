@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="./styles/shell.css">
   <link rel="stylesheet" href="./styles/actions.css">
   <link rel="stylesheet" href="./styles/workflow-views.css">
+  <link rel="stylesheet" href="./styles/record-views.css">
   <script src="./vendor/viz-global.js"></script>
 </head>
 <body>
@@ -129,13 +130,10 @@
     </div>
     <p class="palette-hint">Enter opens the result · Esc closes</p>
   </prism-dialog>
-  <aside id="evidence-drawer" class="evidence-drawer" aria-label="Evidence" hidden>
-    <header class="evidence-drawer-header">
-      <div class="evidence-trail" id="evidence-trail"></div>
-      <prism-button id="evidence-close" size="sm" tip="Close evidence">Close</prism-button>
-    </header>
-    <div class="evidence-drawer-body" id="evidence-body"></div>
-  </aside>
+  <prism-dialog id="evidence-drawer" class="evidence-dialog" heading="Evidence" size="lg">
+    <nav id="evidence-trail" class="evidence-trail" aria-label="Evidence trail"></nav>
+    <div id="evidence-body" class="evidence-body"></div>
+  </prism-dialog>
   <prism-toast id="toast"></prism-toast>
   <script type="module" src="./kit/kit.js"></script>
   <script type="module" src="./review.js"></script>

@@ -25,10 +25,20 @@ export class PrismChip extends Base {
   constructor() {
     super();
     this.root = shadow(this, PrismChip.styles, "");
+    // A link or button chip that is focused as a whole, from script or a test, passes focus to its own control, which the keyboard uses.
+    // It checks again once the focusing script has run, since that script may focus the host more than once.
+    const pass = () => {
+      if (this.control && !this.root.activeElement && this.matches(":focus")) this.control.focus();
+    };
+    this.addEventListener("focus", () => {
+      pass();
+      queueMicrotask(pass);
+    });
     this.render();
   }
 
   connectedCallback() {
+    this.holdFocus();
     watchShortening(this, this.text, { focusable: () => this.mode !== "static" });
   }
 
@@ -42,7 +52,19 @@ export class PrismChip extends Base {
       return;
     }
     this.render();
+    if (this.isConnected) this.holdFocus();
     if (this.isConnected) watchShortening(this, this.text, { focusable: () => this.mode !== "static" });
+  }
+
+  // The host of a link or button chip takes focus only from script, with tabindex -1, so its control stays the one Tab stop.
+  holdFocus() {
+    if (this.mode !== "static" && !this.hasAttribute("tabindex")) {
+      this.setAttribute("tabindex", "-1");
+      this.heldFocus = true;
+    } else if (this.mode === "static" && this.heldFocus) {
+      this.removeAttribute("tabindex");
+      this.heldFocus = false;
+    }
   }
 
   get mode() {
