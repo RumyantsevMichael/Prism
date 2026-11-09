@@ -17,7 +17,8 @@ import { roadmapPaths } from "./workflow-config.mjs";
 // On a checkout's first access to its store, the files Git tracks under its artifact paths move into its repository's scope once, and every file the move cannot take stays where it is.
 // The move writes the store and its ledger first and removes a checkout file only then, right before a tool result that reports the removal is written, and only while it holds the bytes the store took,
 // so an interruption leaves a file in both places rather than in neither, and every removed file is named in the result that follows the removal,
-// or, when a cancel or a host close stops that result, by a later result of the same process or as moved earlier by each later process while the checkout's index lists it.
+// or, when a cancel or a host close stops that result, by a later result of the same process or as moved earlier by each later process while `git ls-files --deleted` lists it.
+// An index entry that Git keeps out of the work tree with its skip-worktree bit, such as a file a sparse checkout leaves out, never moves and is never reported.
 const REFERENCE_FILES_MAX = 200;
 const REFERENCE_LINES_MAX = 20;
 const REFERENCE_BYTES_MAX = 4 * 1024 * 1024;
@@ -40,9 +41,10 @@ async function gitFiles(root, args, pathspecs = []) {
 }
 
 /**
- * The checkout's files under its artifact paths as Git lists them: { tracked, candidates, untracked, ignored }, where tracked lists every tracked file of the checkout,
- * candidates the tracked ones under the artifact paths, untracked the untracked ones there that Git does not ignore, and ignored the number of ignored ones there;
- * null when Git cannot list them.
+ * The checkout's files under its artifact paths as Git lists them: { tracked, candidates, deleted, untracked, ignored }, where tracked lists every tracked file of the checkout,
+ * candidates the tracked ones under the artifact paths other than a skip-worktree entry, which `git ls-files -t` tags S and which Git keeps out of the work tree on purpose,
+ * deleted holds the ones there that `git ls-files --deleted` lists, the index entries whose file the work tree lacks other than a skip-worktree entry,
+ * untracked the untracked ones there that Git does not ignore, and ignored the number of ignored ones there; null when Git cannot list them.
  */
 async function checkoutListing(root, kinds) {
   const inArtifactPaths = (file) => {
@@ -51,10 +53,14 @@ async function checkoutListing(root, kinds) {
   };
   const pathspecs = kinds.kinds.map((entry) => `:(literal)${entry.path}`);
   try {
-    const tracked = await gitFiles(root, []);
+    // Each entry of `git ls-files -t` is its tag, a space, and its path.
+    const tagged = (await gitFiles(root, ["-t"])).map((entry) => ({ tag: entry.slice(0, entry.indexOf(" ")), file: entry.slice(entry.indexOf(" ") + 1) }));
+    const tracked = [...new Set(tagged.map((entry) => entry.file))].sort();
+    const skipped = new Set(tagged.filter((entry) => entry.tag === "S").map((entry) => entry.file));
+    const deleted = new Set((await gitFiles(root, ["--deleted"], pathspecs)).filter((file) => inArtifactPaths(file) && !skipped.has(file)));
     const untracked = (await gitFiles(root, ["--others", "--exclude-standard"], pathspecs)).filter(inArtifactPaths);
     const ignored = (await gitFiles(root, ["--others", "--ignored", "--exclude-standard"], pathspecs)).filter(inArtifactPaths).length;
-    return { tracked, candidates: tracked.filter(inArtifactPaths), untracked, ignored };
+    return { tracked, candidates: tracked.filter((file) => inArtifactPaths(file) && !skipped.has(file)), deleted, untracked, ignored };
   } catch {
     return null;
   }
@@ -324,7 +330,7 @@ export async function migrateArtifacts({ root, kinds, store, repository, pull = 
   const decide = async (listing, { seen, recordSources, frozenTests }) => {
     const files = listing.candidates.filter((file) => !recordSources.has(file) && !frozenTests.has(file));
     if (!files.length) return quiet(listing);
-    const { earlier, lacking } = await movedEarlier(seen, files, named);
+    const { earlier, lacking } = await movedEarlier(seen, files, listing.deleted, named);
     const present = files.filter((file) => !lacking.has(file));
     if (!present.length && !earlier.length) return quiet(listing);
     // Files moved earlier are only reported, so a move that has nothing else to take writes nothing and takes no lock.
@@ -347,17 +353,19 @@ export async function migrateArtifacts({ root, kinds, store, repository, pull = 
 }
 
 /**
- * The files moved earlier among a checkout's tracked files: those that the work tree lacks, that a ledger of the repository lists as moved, and whose store location holds a file,
- * other than those that named says a result of this server process names as moved, as { earlier, lacking }, where earlier lists { from, to } and lacking holds every file that the work tree lacks.
- * A removal that a cancel or a host close kept out of every result is named this way by a later process, for as long as the checkout's index lists the file; nothing is written or removed for it.
+ * The files moved earlier among a checkout's tracked files: those that the work tree lacks and that deleted, the paths `git ls-files --deleted` lists, holds,
+ * that a ledger of the repository lists as moved, and whose store location holds a file, other than those that named says a result of this server process names as moved,
+ * as { earlier, lacking }, where earlier lists { from, to } and lacking holds every file that the work tree lacks.
+ * A removal that a cancel or a host close kept out of every result is named this way by a later process, for as long as `git ls-files --deleted` lists the file; nothing is written or removed for it.
  */
-async function movedEarlier(seen, files, named) {
+async function movedEarlier(seen, files, deleted, named) {
   const lacking = new Set();
   await withCheckoutFiles(seen.root, async (access) => { for (const file of files) if (await access.lacks(file)) lacking.add(file); });
   const earlier = [];
   if (!lacking.size) return { earlier, lacking };
   const ledger = await readLedgers(seen);
   for (const file of lacking) {
+    if (!deleted.has(file)) continue;
     const to = ledger.movedTo.get(file);
     if (to !== undefined && !named?.has(file) && await storeHolds(seen, to)) earlier.push({ from: file, to });
   }
