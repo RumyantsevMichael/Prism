@@ -639,18 +639,31 @@ async function computeNavigation(projectRoot) {
   const roadmap = await loadRoadmapView(projectRoot);
   const glossary = await loadGlossary(projectRoot);
   const attention = await loadAttention(projectRoot);
+  const initiatives = await Promise.all([
+    ...roadmap.items.map((item) => ({ id: item.id, title: item.title, band: item.band, state: item.state })),
+    ...roadmap.unlisted.map((id) => ({ id, title: id, band: null, state: "unlisted" }))
+  ].map(withSliceTree(projectRoot)));
   return {
     roadmap: { exists: roadmap.exists ?? false, error: roadmap.error ?? null, valid: roadmap.valid ?? false },
     attention: { needsYou: attention.needsYou.length, gates: attention.gateCount, answered: attention.answered.length, watch: attention.watch.length },
-    initiatives: await Promise.all([
-      ...roadmap.items.map((item) => ({ id: item.id, title: item.title, band: item.band, state: item.state })),
-      ...roadmap.unlisted.map((id) => ({ id, title: id, band: null, state: "unlisted" }))
-    ].map(withSliceTree(projectRoot))),
+    initiatives: await Promise.all(initiatives.map(async (item) => ({ ...item, place: await initiativePlace(projectRoot, item.id) }))),
     glossary: { path: glossary.path, exists: glossary.exists },
     library: Object.fromEntries(await Promise.all(["requirements", "decisions"].map(async (kind) => [kind, (await loadLibrary(projectRoot, kind).catch(() => ({ entries: [] }))).entries.length]))),
     diagnostics: config.diagnostics,
-    index: await searchIndex(projectRoot, config, roadmap, glossary)
+    index: await searchIndex(projectRoot, config, roadmap, glossary),
+    // Each place's own navigation data, by the place's name, for the places that need more than the lists above.
+    places: {}
   };
+}
+
+// The place an initiative's pages belong to: History once it has a shipped or superseded decision, Work while it has an initiative record,
+// and the Roadmap while it has neither.
+async function initiativePlace(projectRoot, id) {
+  const view = await loadInitiativeView(projectRoot, id).catch(() => null);
+  const roadmap = view ? null : await loadRoadmapView(projectRoot);
+  const decision = (view?.roadmapItem ?? roadmap?.items.find((item) => item.id === id))?.decision?.kind;
+  if (decision === "shipped" || decision === "superseded") return "history";
+  return view?.exists ? "work" : "roadmap";
 }
 
 // The sidebar nests the slices of each initiative that is being worked on, so a planned, in-progress, or unlisted initiative carries its slice tree.
@@ -697,40 +710,53 @@ async function libraryScope(projectRoot, section) {
   return { kind: "library", section, entries: library.entries.map((entry) => ({ path: entry.path, title: entry.title, status: entry.status, topic: entry.topic })) };
 }
 
-// Context gives every tab, including plain files, a breadcrumb trail and the sidebar scope it belongs to.
+const PLACE_LABELS = Object.freeze({ attention: "Attention", work: "Work", roadmap: "Roadmap", knowledge: "Knowledge", history: "History" });
+// The pages of Attention's and Knowledge's own addresses, by the part after their place's prefix.
+const PLACE_PAGE_LABELS = Object.freeze({
+  attention: { questions: "Questions", findings: "Review findings", failed: "Failed verifications", blocked: "Blocked work", ready: "Ready to ship", problems: "Problems", answered: "Answered in the last 7 days" },
+  knowledge: { touched: "Touched by my work", changed: "Changed this week", diagrams: "Diagrams" }
+});
+
+// The crumb that starts the trail of a page of a place: the place's name, carrying the place, and the page itself for the place's own entry page.
+function placeCrumb(place, ref = null) {
+  return { ref, label: PLACE_LABELS[place], place };
+}
+
+// The page of an initiative or a slice, a file of its plans folder, or one of its Prism records, with the trail from its place through its slices.
+async function initiativeContext(projectRoot, id, { slug = null, file = null } = {}) {
+  const { scope, view } = await initiativeTree(projectRoot, id);
+  const place = await initiativePlace(projectRoot, id);
+  const trail = [placeCrumb(place), { ref: `initiative:${id}`, label: scope.title }];
+  const known = slug && view.record && Object.hasOwn(view.record.slices, slug) ? slug : null;
+  if (known) trail.push(...sliceTrail(view, known, id));
+  if (file) trail.push(file);
+  return { trail, scope: { ...scope, current: known }, place };
+}
+
+// Context gives every tab, including plain files, a breadcrumb trail, the sidebar scope it belongs to, and the place it belongs to:
+// the trail of a page of a place starts with the place's crumb, and a page of no place keeps its trail from Files.
 export async function entityContext(projectRoot, ref) {
   const parsed = parseEntityRef(ref);
-  const roadmapCrumb = { ref: "roadmap", label: "Roadmap" };
-  const libraryCrumb = { ref: null, label: "Library" };
-  if (parsed?.kind === "attention" || parsed?.kind === "roadmap") return { trail: [{ ref, label: SECTION_LABELS[parsed.kind] }], scope: { kind: "global" } };
-  if (parsed?.kind === "requirements" || parsed?.kind === "decisions") return { trail: [libraryCrumb, { ref, label: SECTION_LABELS[parsed.kind] }], scope: await libraryScope(projectRoot, parsed.kind) };
-  if (parsed?.kind === "glossary") return { trail: [libraryCrumb, { ref, label: "Glossary" }], scope: { kind: "global" } };
-  if (parsed?.kind === "initiative" || parsed?.kind === "slice") {
-    const { scope, view } = await initiativeTree(projectRoot, parsed.id);
-    const trail = [roadmapCrumb, { ref: `initiative:${parsed.id}`, label: scope.title }];
-    if (parsed.kind === "slice" && view.record && Object.hasOwn(view.record.slices, parsed.slug)) trail.push(...sliceTrail(view, parsed.slug, parsed.id));
-    return { trail, scope: { ...scope, current: parsed.kind === "slice" ? parsed.slug : null } };
-  }
+  if (parsed?.kind === "attention" || parsed?.kind === "roadmap") return { trail: [placeCrumb(parsed.kind, ref)], scope: { kind: "global" }, place: parsed.kind };
+  if (parsed?.kind === "requirements" || parsed?.kind === "decisions") return { trail: [placeCrumb("knowledge"), { ref, label: SECTION_LABELS[parsed.kind] }], scope: await libraryScope(projectRoot, parsed.kind), place: "knowledge" };
+  if (parsed?.kind === "glossary") return { trail: [placeCrumb("knowledge"), { ref, label: "Glossary" }], scope: { kind: "global" }, place: "knowledge" };
+  if (parsed?.kind === "initiative" || parsed?.kind === "slice") return initiativeContext(projectRoot, parsed.id, { slug: parsed.kind === "slice" ? parsed.slug : null });
   if (typeof ref !== "string" || !ref) throw new Error("A tab reference is required.");
+  const prefixed = /^(attention|knowledge):(.+)$/.exec(ref);
+  if (prefixed) {
+    const [, place, page] = prefixed;
+    const entry = place === "attention" ? placeCrumb("attention", "attention") : placeCrumb("knowledge");
+    return { trail: [entry, { ref, label: PLACE_PAGE_LABELS[place][page] ?? page }], scope: { kind: "global" }, place };
+  }
   const config = await readWorkflowConfig(projectRoot);
   const fileCrumb = { ref, label: path.posix.basename(ref) };
   const plans = config.paths.plans;
   const record = await keyOfPath(projectRoot, ref).catch(() => null);
-  if (record?.initiative && ref.startsWith(".prism/")) {
-    const { scope, view } = await initiativeTree(projectRoot, record.initiative);
-    const trail = [roadmapCrumb, { ref: `initiative:${record.initiative}`, label: scope.title }];
-    const slug = record.slice && view.record && Object.hasOwn(view.record.slices, record.slice) ? record.slice : null;
-    if (slug) trail.push(...sliceTrail(view, slug, record.initiative));
-    return { trail: [...trail, fileCrumb], scope: { ...scope, current: slug } };
-  }
+  if (record?.initiative && ref.startsWith(".prism/")) return initiativeContext(projectRoot, record.initiative, { slug: record.slice ?? null, file: fileCrumb });
   if (under(plans, ref)) {
     const [id, segment] = ref.slice(plans.length + 1).split("/");
     if (SLUG_PATTERN.test(id ?? "") && (await readText(projectRoot, await recordFile(projectRoot, { kind: "initiative", initiative: id }))) !== null) {
-      const { scope, view } = await initiativeTree(projectRoot, id);
-      const trail = [roadmapCrumb, { ref: `initiative:${id}`, label: scope.title }];
-      const slug = view.record && segment && Object.hasOwn(view.record.slices, segment) && ref !== `${plans}/${id}/${segment}` ? segment : null;
-      if (slug) trail.push(...sliceTrail(view, slug, id));
-      return { trail: [...trail, fileCrumb], scope: { ...scope, current: slug } };
+      return initiativeContext(projectRoot, id, { slug: segment && ref !== `${plans}/${id}/${segment}` ? segment : null, file: fileCrumb });
     }
   }
   for (const section of ["requirements", "decisions"]) {
@@ -738,13 +764,13 @@ export async function entityContext(projectRoot, ref) {
     if (under(directory, ref)) {
       const scope = await libraryScope(projectRoot, section);
       const entry = scope.entries.find((item) => item.path === ref);
-      return { trail: [libraryCrumb, { ref: section, label: SECTION_LABELS[section] }, { ref, label: entry?.title ?? path.posix.basename(ref) }], scope: { ...scope, current: ref } };
+      return { trail: [placeCrumb("knowledge"), { ref: section, label: SECTION_LABELS[section] }, { ref, label: entry?.title ?? path.posix.basename(ref) }], scope: { ...scope, current: ref }, place: "knowledge" };
     }
   }
-  if (ref === config.paths.glossary) return { trail: [libraryCrumb, { ref: "glossary", label: "Glossary" }, fileCrumb], scope: { kind: "global" } };
+  if (ref === config.paths.glossary) return { trail: [placeCrumb("knowledge"), { ref: "glossary", label: "Glossary" }, fileCrumb], scope: { kind: "global" }, place: "knowledge" };
   const roadmapPaths = await readRoadmap(projectRoot).then(({ resolved }) => [resolved.recordPath, resolved.projectionPath]).catch(() => []);
-  if (roadmapPaths.includes(ref)) return { trail: [roadmapCrumb, fileCrumb], scope: { kind: "global" } };
-  return { trail: [{ ref: null, label: "Files" }, { ref, label: ref }], scope: { kind: "global" } };
+  if (roadmapPaths.includes(ref)) return { trail: [placeCrumb("roadmap"), fileCrumb], scope: { kind: "global" }, place: "roadmap" };
+  return { trail: [{ ref: null, label: "Files" }, { ref, label: ref }], scope: { kind: "global" }, place: null };
 }
 
 // Entity tabs name Prism concepts rather than files, so they never collide with artifact paths, which always carry an extension.

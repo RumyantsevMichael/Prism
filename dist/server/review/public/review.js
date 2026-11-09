@@ -13,6 +13,7 @@ import { connectionState, recordProbe, STOPPED_MESSAGE } from "./views/connectio
 import { badgedIcon, notificationText, shouldNotify, signalTitle } from "./views/attention-signal.js";
 import { missingNotice, nextMissingTabs, renderMissing } from "./views/missing-tab.js";
 import { createPageBar } from "./views/page-bar.js";
+import { DEFAULT_PLACE, PLACES, placeNamed } from "./views/places.js";
 import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createPresence } from "./views/presence.js";
 import { DENSITIES, savePreferences, THEMES } from "./kit/preferences.js";
@@ -26,10 +27,13 @@ const project = document.getElementById("project");
 const navRoot = document.getElementById("nav");
 const sidebar = document.getElementById("sidebar");
 const shell = document.getElementById("shell");
-const navPlaces = document.getElementById("nav-places");
-const navScope = document.getElementById("nav-scope");
-const navLibrary = document.getElementById("nav-library");
 const navDrawer = document.getElementById("nav-drawer");
+const drawerPlaces = document.getElementById("drawer-places");
+const railDock = document.getElementById("rail-dock");
+const shellRail = document.getElementById("rail");
+const drawerRail = document.getElementById("drawer-rail");
+const placeHead = document.getElementById("place-head");
+const sidebarToggle = document.getElementById("sidebar-toggle");
 const workspace = document.getElementById("workspace");
 const appShell = document.getElementById("shell-body");
 const connectionBanner = document.getElementById("connection");
@@ -42,7 +46,6 @@ const projectMenu = document.getElementById("project-menu");
 const projectGates = document.getElementById("project-gates");
 const projectTile = document.getElementById("project-tile");
 const attentionButton = document.getElementById("attention-button");
-const attentionCount = document.getElementById("attention-count");
 const noticeBanner = document.getElementById("notice");
 // The latest notice per presenting project; a notice only links, and the page changes project only when the user follows it.
 const notices = new Map();
@@ -277,6 +280,8 @@ function updateLocation(path, push = false) {
   } else {
     url.searchParams.delete("artifact");
   }
+  // A place= address chose the place when the page loaded; the place is stored, so the address leaves it out from then on.
+  url.searchParams.delete("place");
   if (push) {
     pages.index += 1;
     pages.top = pages.index;
@@ -293,8 +298,53 @@ function setBusy(busy) {
   artifact.setAttribute("aria-busy", String(busy));
 }
 
+// A window opened from a link of another window, by a middle click or a Shift click, holds its page as a kept tab of the session
+// without selecting it for the other windows, so following the link in a new window leaves the window it came from as it was.
+// It holds the page until the person opens or closes a page here, or another window selects a tab.
+let held = null;
+
+// The review page notes a link it hands to the browser by a middle click or a Shift click, so the window that opens knows it came from a link.
+const LINK_KEY = "prism.review.link";
+
+function noteLinkOpened(event) {
+  if (!(event.button === 1 || (event.button === 0 && event.shiftKey))) return;
+  const anchor = event.composedPath().find((node) => node instanceof HTMLAnchorElement && node.href);
+  if (!anchor) return;
+  const url = new URL(anchor.href, location.href);
+  const ref = url.searchParams.get("artifact");
+  if (!ref || url.origin !== location.origin || url.pathname !== location.pathname) return;
+  try {
+    localStorage.setItem(LINK_KEY, JSON.stringify({ ref, at: Date.now() }));
+  } catch {
+    // Without storage the window that opens takes the page as any window does.
+  }
+}
+
+function openedFromLink(ref) {
+  try {
+    const note = JSON.parse(localStorage.getItem(LINK_KEY) ?? "null");
+    localStorage.removeItem(LINK_KEY);
+    return Boolean(note && note.ref === ref && Date.now() - note.at < 15000);
+  } catch {
+    return false;
+  }
+}
+
+function holdPage(path) {
+  held = { page: path, sessionTab: selectedPath };
+  if (!openTabs.includes(path)) openTabs.push(path);
+  selectedPath = path;
+  lastSnapshot = "";
+  updateLocation(path);
+  setBusy(true);
+  renderTabs();
+  renderNavigation();
+  void showArtifact(path);
+  void saveSession().catch((error) => showToast(error.message));
+}
+
 function saveSession() {
-  const payload = { openTabs: [...openTabs], activeTab: selectedPath, previewTab, agentTabs: agentTabs.filter((tab) => openTabs.includes(tab)) };
+  const payload = { openTabs: [...openTabs], activeTab: held ? held.sessionTab : selectedPath, previewTab, agentTabs: agentTabs.filter((tab) => openTabs.includes(tab)) };
   const request = async () => {
     const response = await appFetch("./api/session", {
       method: "PUT",
@@ -347,10 +397,11 @@ tabStrip.addEventListener("prism-tab-close", (event) => closeTab(event.detail?.v
 
 // Opening a page shows it in a tab and pushes it onto the browser history, so Back, Forward, and the browser's own buttons move through the same pages.
 // An ordinary open replaces the preview tab; `keep` opens a kept tab instead, or keeps the preview, and a new tab goes right after the selected one.
-function openRef(path, { keep = false, fromHistory = false } = {}) {
+function openRef(path, { keep = false, fromHistory = false, keepDrawer = false } = {}) {
   if (!path || !requireApp()) {
     return;
   }
+  held = null;
   if (openTabs.includes(path)) {
     if (keep && previewTab === path) {
       previewTab = null;
@@ -369,7 +420,7 @@ function openRef(path, { keep = false, fromHistory = false } = {}) {
   selectedPath = path;
   lastSnapshot = "";
   updateLocation(path, moved && !fromHistory);
-  if (navDrawer.isOpen) navDrawer.close();
+  if (navDrawer.isOpen && !keepDrawer) navDrawer.close();
   setBusy(true);
   renderTabs();
   renderNavigation();
@@ -400,6 +451,7 @@ function showNothing() {
 // Closing the selected tab shows the last open tab in its place, and closing the last tab leaves nothing open.
 function closeTab(path) {
   if (!path || !requireApp()) return;
+  held = null;
   scrollPositions.delete(path);
   openTabs = openTabs.filter((tab) => tab !== path);
   agentTabs = agentTabs.filter((tab) => tab !== path);
@@ -435,9 +487,12 @@ function synchronizeSession(snapshot) {
   }
   sessionInstance = nextInstance;
   const nextTabs = Array.isArray(snapshot.openTabs) ? [...snapshot.openTabs] : [];
-  const nextSelectedPath = Object.hasOwn(snapshot, "activeTab")
+  let nextSelectedPath = Object.hasOwn(snapshot, "activeTab")
     ? snapshot.activeTab
     : nextTabs.includes(selectedPath) ? selectedPath : nextTabs[0] ?? null;
+  // A held page stays shown while the session still selects the tab it held it beside; any other selection is followed.
+  if (held && nextSelectedPath === held.sessionTab && nextTabs.includes(held.page)) nextSelectedPath = held.page;
+  else held = null;
   const nextPreview = nextTabs.includes(snapshot.previewTab) ? snapshot.previewTab : null;
   const nextAgentTabs = Array.isArray(snapshot.agentTabs) ? snapshot.agentTabs.filter((tab) => nextTabs.includes(tab)) : [];
   sessionRevision = nextRevision;
@@ -681,10 +736,14 @@ signals.plainIcon = signals.icon?.getAttribute("href") ?? null;
 async function updateAttentionSignals(count) {
   const previous = signals.count;
   signals.count = count;
-  // The top bar's bell counts the same recorded questions and opens Attention.
-  attentionCount.hidden = !(count > 0);
-  attentionCount.textContent = count > 0 ? String(count) : "";
-  attentionButton.setAttribute("label", count > 0 ? `Attention, ${count} ${count === 1 ? "item" : "items"}` : "Attention");
+  // The top bar's bell, which shows while the rail is hidden, counts the same recorded questions and opens Attention.
+  if (count > 0) {
+    attentionButton.setAttribute("count", String(count));
+    attentionButton.setAttribute("count-label", `${count} ${count === 1 ? "question" : "questions"}`);
+  } else {
+    attentionButton.removeAttribute("count");
+    attentionButton.removeAttribute("count-label");
+  }
   document.title = signalTitle(baseTitle(), count);
   if (signals.icon && signals.plainIcon) {
     if (count > 0) {
@@ -1039,9 +1098,11 @@ function pageLabel(path) {
 }
 
 // The trail of the page's place, initiative, and slice by title; a record of Prism's ends with its kind, since the crumbs before it name its owner.
+// The first crumb of a page of a place names the place and carries it, so the page bar draws it as the link that chooses the place.
 function trailOf(path) {
   const trail = currentContext?.ref === path ? currentContext.value.trail : [{ ref: path, label: pageLabel(path) }];
   return trail.map((crumb, index) => {
+    if (crumb.place) return { ref: crumb.ref, label: crumb.label, place: crumb.place };
     if (!crumb.ref || parseEntityRef(crumb.ref)) return { ref: crumb.ref, label: crumb.ref === null && crumb.label === "Files" && !describe(path).code ? "Documents" : crumb.label };
     const named = describe(crumb.ref);
     if (named.code) return { ref: crumb.ref, label: crumb.ref, code: true };
@@ -1092,8 +1153,9 @@ function tree(label, items) {
   return holder;
 }
 
+// A group of a place's sidebar starts with its name as a level 3 heading, and its count when it has one.
 function section(label, count = null) {
-  const heading = element("p", "nav-section");
+  const heading = element("h3", "nav-section");
   heading.append(element("span", "", label));
   if (count !== null) heading.append(element("span", "nav-count", String(count)));
   return heading;
@@ -1187,7 +1249,7 @@ function sliceItems(id, nodes, current, entity) {
     const toggled = treeToggles.get(ref);
     const hasActive = children.length > 0 && nodes.some((other) => isBelow(bySlug, other, node.slug) && isActiveSlice(other, `slice:${id}/${other.slug}`));
     const expanded = children.length > 0 && (toggled ?? (ancestorsOfCurrent.has(node.slug) || hasActive));
-    return treeItem(ref, node.title, { selected: selectedPath === ref || (current === node.slug && !entity), expanded, start, end, children, tip });
+    return treeItem(ref, node.title, { selected: selectedPath === ref, expanded, start, end, children, tip });
   };
   return nodes.filter((node) => node.depth === 1).map(build);
 }
@@ -1207,59 +1269,85 @@ function initiativeItem(item, nodes, scope, entity) {
   const stateWord = STATE_WORDS[item.state] ?? item.state;
   const end = counts.total ? [meta(`${counts.done}/${counts.total}`)] : [];
   const tip = [item.title, stateWord, counts.total ? `${counts.done} of ${counts.total} shipped` : null].filter(Boolean).join(" · ");
-  const hasActive = nodes.some((node) => node.depth > 0 && isActiveSlice(node, `slice:${item.id}/${node.slug}`));
-  const expanded = children.length > 0 && (treeToggles.get(ref) ?? (inScope || hasActive));
-  return treeItem(ref, item.title, { selected: selectedPath === ref || (inScope && !scope.current && !entity), expanded, start: [kitElement("prism-state", { state, label: stateWord })], end, children, tip });
+  // An initiative expands when the person expanded it or its page or one of its slices' pages is open, so its own row stays where a click lands.
+  const expanded = children.length > 0 && (treeToggles.get(ref) ?? inScope);
+  return treeItem(ref, item.title, { selected: selectedPath === ref, expanded, start: [kitElement("prism-state", { state, label: stateWord })], end, children, tip });
 }
 
-// The sidebar is the only navigation: places, the initiatives being worked on with their slices, the open library section's documents, and the library.
-let navigationKey = "";
+// The current place: the one the person chose last in this browser, or the one a `place=` address names, and Attention when none was stored.
+const PLACE_KEY = "prism.review.place";
 
-function renderNavigation() {
-  const scope = currentContext?.ref === selectedPath ? currentContext.value.scope : { kind: "global" };
-  const attention = navigation.attention ?? {};
-  void updateAttentionSignals(attention.gates ?? 0);
-  const entity = Boolean(parseEntityRef(selectedPath ?? ""));
-  const claims = claimIndex ? [...claimIndex.live(), ...claimIndex.expired()].map((claim) => [claim.ref, claim.expiresAt, claim.label]) : [];
-  const key = JSON.stringify([selectedPath, scope, attention, navigation.initiatives, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles]]);
-  if (key === navigationKey) return;
-  navigationKey = key;
-  const focused = document.activeElement?.closest?.("prism-tree-item");
-  const refocus = focused && navRoot.contains(focused) ? focused.getAttribute("value") : null;
-  const others = attention.needsYou - attention.gates;
-  const attentionTip = `${attention.gates} recorded ${attention.gates === 1 ? "question" : "questions"} and ${others} other ${others === 1 ? "item" : "items"} need you`;
-  const attentionEnd = attention.needsYou ? [kitElement("prism-badge", { variant: "count", solid: true, tip: attentionTip }, String(attention.needsYou))] : [];
-  navPlaces.replaceChildren(
-    treeItem("attention", "Attention", { selected: selectedPath === "attention", start: [navIcon("bell")], end: attentionEnd }),
-    treeItem("roadmap", "Roadmap", { selected: selectedPath === "roadmap", start: [navIcon("roadmap")] })
-  );
-  const parts = [];
-  // The initiatives being worked on, and the open one whatever its state, in roadmap order.
-  const listed = (navigation.initiatives ?? []).flatMap((item) => {
-    const open = scope.kind === "initiative" && scope.id === item.id;
-    if (open) return [{ item: { ...item, title: scope.title ?? item.title }, nodes: scope.tree ?? item.tree ?? [] }];
-    return item.tree ? [{ item, nodes: item.tree }] : [];
-  });
-  if (scope.kind === "initiative" && !listed.some(({ item }) => item.id === scope.id)) listed.push({ item: { id: scope.id, title: scope.title, state: scope.state }, nodes: scope.tree ?? [] });
-  parts.push(section("Initiatives", listed.length));
-  if (listed.length) parts.push(tree("Initiatives", listed.map(({ item, nodes }) => initiativeItem(item, nodes, scope, entity))));
-  else parts.push(element("p", "nav-note", (navigation.initiatives ?? []).length ? "No initiative is planned or in progress; the roadmap lists them all." : "No initiatives yet."));
-  if (scope.kind === "initiative" && scope.valid === false) parts.push(element("p", "nav-note", "The initiative record is invalid."));
-  if (scope.kind === "library") {
-    const name = ENTITY_LABELS[scope.section] ?? scope.section;
-    const topics = new Map();
-    for (const entry of scope.entries) {
-      const topic = scope.section === "decisions" ? entry.topic ?? "General" : name;
-      if (!topics.has(topic)) topics.set(topic, []);
-      topics.get(topic).push(entry);
-    }
-    if (scope.section !== "decisions") parts.push(section(name, scope.entries.length));
-    for (const [topic, entries] of topics) {
-      if (scope.section === "decisions") parts.push(section(topic, entries.length));
-      parts.push(tree(topic, entries.map((entry) => treeItem(entry.path, entry.title, { selected: selectedPath === entry.path, end: entry.status ? [element("span", "nav-state", entry.status)] : [], tip: entry.status ? `${entry.title} · ${entry.status}` : null }))));
-    }
-    if (!scope.entries.length) parts.push(element("p", "nav-note", "No documents."));
+function readStoredPlace() {
+  try {
+    const stored = localStorage.getItem(PLACE_KEY);
+    return placeNamed(stored) ? stored : null;
+  } catch {
+    return null;
   }
+}
+
+function storePlace(name) {
+  try {
+    localStorage.setItem(PLACE_KEY, name);
+  } catch {
+    // A browser without storage keeps the place for this page only.
+  }
+}
+
+const addressedPlace = new URLSearchParams(location.search).get("place");
+let currentPlace = placeNamed(addressedPlace) ? addressedPlace : readStoredPlace() ?? DEFAULT_PLACE;
+if (placeNamed(addressedPlace)) storePlace(addressedPlace);
+
+/**
+ * Makes a place current and shows its sidebar, also when the sidebar was hidden; the open page stays.
+ * Choosing Roadmap on the rail also opens the Roadmap page, as its sidebar link would; choosing the current place again changes nothing.
+ */
+function choosePlace(name, { fromRail = false, keep = false } = {}) {
+  if (!placeNamed(name)) return;
+  if (wideWindow.matches && shell.classList.contains("sidebar-collapsed")) setSidebarCollapsed(false);
+  if (name === currentPlace) return;
+  currentPlace = name;
+  storePlace(name);
+  renderNavigation();
+  // Roadmap opens its page as its sidebar entry would, in a kept tab from a Ctrl or Cmd click, and the drawer stays open, as it does for every place.
+  if (fromRail && name === "roadmap") openRef("roadmap", { keep, keepDrawer: true });
+}
+
+// The rail's place buttons, in the order of PLACES; the Attention button counts the recorded questions that wait for an answer.
+function renderRail(rail, questions) {
+  const items = new Map([...rail.querySelectorAll("prism-rail-item[data-place]")].map((item) => [item.dataset.place, item]));
+  for (const place of PLACES) {
+    let item = items.get(place.name);
+    if (!item) {
+      item = kitElement("prism-rail-item", { "data-place": place.name, value: place.name, label: place.label, icon: place.icon });
+      rail.append(item);
+    }
+    item.setAttribute("pressed", String(place.name === currentPlace));
+    if (place.name === "attention" && questions > 0) {
+      item.setAttribute("count", String(questions));
+      item.setAttribute("count-label", `${questions} ${questions === 1 ? "question" : "questions"}`);
+    } else {
+      item.removeAttribute("count");
+      item.removeAttribute("count-label");
+    }
+  }
+}
+
+// Each place's own navigation below its head, by the place's name; a place lists only what Prism provides, and nothing disabled or planned.
+const PLACE_NAVIGATION = {
+  attention: attentionNavigation,
+  work: workNavigation,
+  roadmap: roadmapNavigation,
+  knowledge: knowledgeNavigation,
+  history: historyNavigation
+};
+
+function attentionNavigation() {
+  const attention = navigation.attention ?? {};
+  const others = (attention.needsYou ?? 0) - (attention.gates ?? 0);
+  const tip = `${attention.gates ?? 0} recorded ${attention.gates === 1 ? "question" : "questions"} and ${others} other ${others === 1 ? "item" : "items"} need you`;
+  const end = attention.needsYou ? [kitElement("prism-badge", { variant: "count", solid: true, tip }, String(attention.needsYou))] : [];
+  const parts = [tree("Attention", [treeItem("attention", "Everything", { selected: selectedPath === "attention", start: [navIcon("bell")], end })])];
   if (navigation.diagnostics?.length) {
     const warnings = document.createElement("prism-disclosure");
     warnings.className = "nav-diagnostics";
@@ -1269,16 +1357,70 @@ function renderNavigation() {
     warnings.append(list);
     parts.push(warnings);
   }
-  navScope.replaceChildren(...parts);
+  return parts;
+}
+
+// The initiatives being worked on in roadmap order, each with its slices; the open initiative expands to its open slice.
+function workNavigation({ scope, entity }) {
+  const listed = (navigation.initiatives ?? []).filter((item) => item.tree && (item.place ?? "work") === "work").map((item) => {
+    const open = scope.kind === "initiative" && scope.id === item.id;
+    return open ? { item: { ...item, title: scope.title ?? item.title }, nodes: scope.tree ?? item.tree } : { item, nodes: item.tree };
+  });
+  const parts = [section("Initiatives", listed.length)];
+  if (listed.length) parts.push(tree("Initiatives", listed.map(({ item, nodes }) => initiativeItem(item, nodes, scope, entity))));
+  else parts.push(element("p", "nav-note", (navigation.initiatives ?? []).length ? "No initiative is planned or in progress; the roadmap lists them all." : "No initiatives yet."));
+  if (scope.kind === "initiative" && scope.valid === false && listed.some(({ item }) => item.id === scope.id)) parts.push(element("p", "nav-note", "The initiative record is invalid."));
+  return parts;
+}
+
+// The Roadmap place shows its page as current on the rail and in its head, so its one entry leads to the page without a selected row.
+function roadmapNavigation() {
+  return [tree("Roadmap", [treeItem("roadmap", "Roadmap", { start: [navIcon("roadmap")] })])];
+}
+
+function knowledgeNavigation() {
   const glossary = navigation.glossary ?? {};
   const library = navigation.library ?? {};
   const count = (value) => Number.isInteger(value) ? [meta(String(value))] : [];
-  navLibrary.replaceChildren(section("Library"), tree("Library", [
+  return [section("Browse by kind"), tree("Browse by kind", [
     treeItem("requirements", ENTITY_LABELS.requirements, { selected: selectedPath === "requirements", start: [navIcon("list")], end: count(library.requirements) }),
     treeItem("decisions", ENTITY_LABELS.decisions, { selected: selectedPath === "decisions", start: [navIcon("scale")], end: count(library.decisions) }),
-    treeItem("glossary", "Glossary", { selected: selectedPath === "glossary" || (glossary.path && selectedPath === glossary.path), start: [navIcon("book")], end: glossary.exists ? count(library.terms) : [element("span", "nav-state", "missing")] })
-  ]));
-  applyRail();
+    treeItem("glossary", "Glossary", { selected: selectedPath === "glossary", start: [navIcon("book")], end: glossary.exists ? count(library.terms) : [element("span", "nav-state", "missing")] })
+  ])];
+}
+
+// The initiatives with a shipped or superseded decision, each leading to its page.
+function historyNavigation() {
+  const settled = (navigation.initiatives ?? []).filter((item) => item.place === "history");
+  if (!settled.length) return [element("p", "nav-note", "Nothing has shipped yet.")];
+  return [tree("History", settled.map((item) => {
+    const ref = `initiative:${item.id}`;
+    const stateWord = STATE_WORDS[item.state] ?? item.state;
+    return treeItem(ref, item.title, { selected: selectedPath === ref, start: [kitElement("prism-state", { state: item.state, label: stateWord })], tip: `${item.title} · ${stateWord}` });
+  }))];
+}
+
+// The rail, the current place's head, and the place's own navigation; the sidebar changes only when the person chooses a place,
+// and marks the open page only when the place lists it.
+let navigationKey = "";
+
+function renderNavigation() {
+  const scope = currentContext?.ref === selectedPath ? currentContext.value.scope : { kind: "global" };
+  const attention = navigation.attention ?? {};
+  void updateAttentionSignals(attention.gates ?? 0);
+  for (const rail of [shellRail, drawerRail]) renderRail(rail, attention.gates ?? 0);
+  const entity = Boolean(parseEntityRef(selectedPath ?? ""));
+  const claims = claimIndex ? [...claimIndex.live(), ...claimIndex.expired()].map((claim) => [claim.ref, claim.expiresAt, claim.label]) : [];
+  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles]]);
+  if (key === navigationKey) return;
+  navigationKey = key;
+  const focused = document.activeElement?.closest?.("prism-tree-item");
+  const refocus = focused && navRoot.contains(focused) ? focused.getAttribute("value") : null;
+  const place = placeNamed(currentPlace);
+  placeHead.setAttribute("heading", place.label);
+  placeHead.setAttribute("subtitle", place.subtitle);
+  sidebar.setAttribute("aria-label", place.label);
+  navRoot.replaceChildren(...PLACE_NAVIGATION[place.name]({ scope, entity }));
   if (refocus) [...navRoot.querySelectorAll("prism-tree-item")].find((item) => item.getAttribute("value") === refocus)?.focus();
   navRoot.querySelector("prism-tree-item[selected]")?.scrollIntoView?.({ block: "nearest" });
 }
@@ -1300,7 +1442,7 @@ async function refreshContext(path) {
   contextSnapshot = snapshot;
   currentContext = { ref: path, value };
   renderNavigation();
-  pageBar.setTrail(trailOf(path));
+  pageBar.setTrail(trailOf(path), path);
   // A slice's or initiative's tab takes the title its context names.
   renderTabs();
 }
@@ -1741,13 +1883,15 @@ function renderStoreSync(data) {
 startAppearanceMenu();
 watchDiagramTheme();
 
-// The sidebar moves into the drawer while the drawer is open, so one set of trees serves both.
-function focusTrees() {
-  (navRoot.querySelector("prism-tree-item[selected]") ?? navRoot.querySelector("prism-tree-item"))?.focus();
+// The drawer holds a rail of its own beside the sidebar, which moves into the drawer while the drawer is open, so one set of trees serves both.
+// Focus goes to the sidebar's selected item, or else to the current place's button of the rail beside it.
+function focusPlaces(rail) {
+  const selected = navRoot.querySelector("prism-tree-item[selected]");
+  if (selected) return selected.focus();
+  rail.querySelector(`prism-rail-item[data-place="${currentPlace}"]`)?.focus();
 }
 
-// The drawer places its children in its body a microtask after they arrive, so the trees take focus once they sit inside the open drawer.
-// Above 1100px the sidebar can collapse to a rail of the places' and the library's icons, which keeps the Attention count; the choice is remembered in this browser.
+// Above 1100px the sidebar can hide and leave the rail; the choice is remembered in this browser, and narrower windows ignore it.
 const SIDEBAR_KEY = "prism.review.sidebar";
 const wideWindow = matchMedia("(min-width: 1101px)");
 
@@ -1759,19 +1903,12 @@ function readSidebarCollapsed() {
   }
 }
 
-function applyRail() {
-  const rail = shell.classList.contains("sidebar-collapsed") && wideWindow.matches && navRoot.parentElement === sidebar;
-  for (const holder of navRoot.querySelectorAll("prism-tree")) holder.toggleAttribute("rail", rail);
-}
-
 function setSidebarCollapsed(collapsed, { remember = true } = {}) {
   shell.classList.toggle("sidebar-collapsed", collapsed);
-  const toggle = document.getElementById("sidebar-toggle");
   const action = collapsed ? "Expand the sidebar" : "Collapse the sidebar";
-  toggle.setAttribute("aria-expanded", String(!collapsed));
-  toggle.setAttribute("label", action);
-  toggle.setAttribute("tip", `${action} ([)`);
-  applyRail();
+  sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
+  sidebarToggle.setAttribute("label", action);
+  sidebarToggle.setAttribute("tip", `${action} ([)`);
   if (!remember) return;
   try {
     localStorage.setItem(SIDEBAR_KEY, collapsed ? "collapsed" : "expanded");
@@ -1780,12 +1917,12 @@ function setSidebarCollapsed(collapsed, { remember = true } = {}) {
   }
 }
 
+// The drawer places its children in its body a microtask after they arrive, so focus moves once the sidebar sits inside the open drawer.
 async function openDrawer() {
-  navDrawer.append(navRoot);
-  applyRail();
+  drawerPlaces.append(sidebar);
   navDrawer.show();
   await Promise.resolve();
-  if (navDrawer.isOpen && navDrawer.contains(navRoot)) focusTrees();
+  if (navDrawer.isOpen && drawerPlaces.contains(sidebar)) focusPlaces(drawerRail);
 }
 
 // At 720px and below the search button is a bare icon, as the other top bar tools are; its label still names it.
@@ -1798,32 +1935,37 @@ function watchSearchWidth() {
 }
 
 function closeDrawer() {
-  if (navRoot.parentElement !== sidebar) sidebar.append(navRoot);
-  applyRail();
+  if (sidebar.parentElement !== appShell) railDock.after(sidebar);
 }
 
-// Above 1100px the sidebar shows the trees, so a drawer left open as the window widens closes and gives them back.
+// Above 1100px the rail and the sidebar stand beside the page, so a drawer left open as the window widens closes and gives them back.
 function watchDrawerWidth() {
   const wide = matchMedia("(min-width: 1101px)");
-  // Focus in the sidebar would fall to the page when the sidebar becomes a closed drawer, so it moves to the Navigation button that opens the drawer.
-  const sidebar = document.getElementById("sidebar");
-  let sidebarFocused = false;
-  document.addEventListener("focusin", (event) => { sidebarFocused = sidebar.contains(event.target); });
+  // Focus in the rail or the sidebar would fall to the page when they hide, so it moves to the Navigation button that opens the drawer.
+  let navigationFocused = false;
+  document.addEventListener("focusin", (event) => { navigationFocused = sidebar.contains(event.target) || shellRail.contains(event.target); });
   wide.addEventListener("change", () => {
     if (!wide.matches) {
-      if (navDrawer.isOpen || !sidebarFocused) return;
+      if (navDrawer.isOpen || !navigationFocused) return;
       requestAnimationFrame(() => {
         const active = document.activeElement;
-        if (!active || active === document.body || sidebar.contains(active)) document.getElementById("nav-button").focus();
+        if (!active || active === document.body || sidebar.contains(active) || shellRail.contains(active)) document.getElementById("nav-button").focus();
       });
       return;
     }
     if (!navDrawer.isOpen) return closeDrawer();
+    const active = document.activeElement;
+    const item = active?.closest?.("prism-tree-item");
+    const inDrawer = Boolean(active && navDrawer.contains(active));
+    const value = item && sidebar.contains(item) ? item.getAttribute("value") : null;
     navDrawer.close();
     closeDrawer();
-    // The drawer returns focus to the Navigation button that opened it, which is hidden now, so focus moves to the trees.
-    const active = document.activeElement;
-    if (!active || active === document.body || active.closest("#nav-button, .topbar-navigation") || active.getClientRects().length === 0) focusTrees();
+    // The drawer returns focus to the Navigation button that opened it, which is hidden now, so focus moves to the rail and the sidebar beside the page.
+    const now = document.activeElement;
+    if (!inDrawer && now && now !== document.body && !now.closest("#nav-button, .topbar-navigation") && now.getClientRects().length > 0) return;
+    const again = value ? [...navRoot.querySelectorAll("prism-tree-item")].find((node) => node.getAttribute("value") === value) : null;
+    if (again) again.focus();
+    else focusPlaces(shellRail);
   });
 }
 
@@ -1836,7 +1978,8 @@ async function initialize() {
     root: document.getElementById("page-bar"),
     onBack: goBack,
     onForward: goForward,
-    onOpen: (ref, event) => openRef(ref, { keep: Boolean(event?.ctrlKey || event?.metaKey) })
+    onOpen: (ref, event) => openRef(ref, { keep: Boolean(event?.ctrlKey || event?.metaKey) }),
+    onPlace: (name) => choosePlace(name)
   });
   showHistory();
   recordStoreStatus = createRecordStoreStatus({
@@ -2000,14 +2143,20 @@ async function initialize() {
     treeToggles.set(value, Boolean(event.detail.expanded));
     renderNavigation();
   });
+  // A place button chooses its place; in the drawer the drawer stays open, so the person can look through the places before choosing a page.
+  for (const rail of [shellRail, drawerRail]) {
+    rail.addEventListener("prism-select", (event) => {
+      if (event.target === sidebarToggle) return;
+      choosePlace(event.detail?.value, { fromRail: true, keep: Boolean(event.detail?.keep) });
+    });
+  }
   document.getElementById("nav-button").addEventListener("click", openDrawer);
   setSidebarCollapsed(readSidebarCollapsed(), { remember: false });
-  document.getElementById("sidebar-toggle").addEventListener("click", () => setSidebarCollapsed(!shell.classList.contains("sidebar-collapsed")));
-  wideWindow.addEventListener("change", applyRail);
+  sidebarToggle.addEventListener("prism-select", () => setSidebarCollapsed(!shell.classList.contains("sidebar-collapsed")));
   navDrawer.addEventListener("prism-close", closeDrawer);
   watchDrawerWidth();
   document.getElementById("jump").addEventListener("click", () => palette.show());
-  attentionButton.addEventListener("click", () => openRef("attention"));
+  attentionButton.addEventListener("prism-select", () => openRef("attention"));
   watchSearchWidth();
   artifact.addEventListener("click", (event) => {
     // Markdown links to repository files open as review pages, and anchors scroll within the document they name.
@@ -2083,7 +2232,11 @@ async function initialize() {
   connectSessionEvents();
   renderNavigation();
   presence.render();
-  if (requestedPath && requestedPath !== selectedPath) {
+  document.addEventListener("click", noteLinkOpened, { capture: true });
+  document.addEventListener("auxclick", noteLinkOpened, { capture: true });
+  if (requestedPath && requestedPath !== selectedPath && selectedPath && openTabs.includes(selectedPath) && openedFromLink(requestedPath)) {
+    holdPage(requestedPath);
+  } else if (requestedPath && requestedPath !== selectedPath) {
     openRef(requestedPath, { fromHistory: true });
   } else if (!selectedPath) {
     openRef(openTabs[0] ?? "attention", { fromHistory: true });

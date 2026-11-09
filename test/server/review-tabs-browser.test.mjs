@@ -27,6 +27,12 @@ const tab = (page, ref) => page.locator(`#open-tabs prism-doc-tab[value="${ref}"
 const shownPage = (page) => page.evaluate(() => new URL(location.href).searchParams.get("artifact"));
 const session = async (base) => (await fetch(`${base}/api/session`)).json();
 const sidebarItem = (page, name) => page.locator("#sidebar").getByRole("treeitem", { name: new RegExp(`^${name}`) });
+// Each entry sits in its place's sidebar, so the place is chosen on the rail first, with the same keys, since choosing Roadmap opens its page as its entry would.
+async function openFromSidebar(page, name, options = {}) {
+  const place = page.getByRole("navigation", { name: "Places" }).getByRole("button", { name: new RegExp(`^${name === "Roadmap" ? "Roadmap" : "Knowledge"}`) });
+  if ((await place.getAttribute("aria-pressed")) !== "true") await place.click(options);
+  await sidebarItem(page, name).click(options);
+}
 const textStyle = (page, ref) => tab(page, ref).evaluate((host) => {
   const style = getComputedStyle(host.shadowRoot.querySelector(".text"));
   return { italic: style.fontStyle === "italic", struck: style.textDecorationLine.includes("line-through"), color: style.color };
@@ -50,20 +56,20 @@ test("a link opens in the one italic preview tab that the next link replaces, an
   await waitForView(page);
   assert.equal(await strip(page).isVisible(), true, "the strip of open documents shows at the top of the main island");
   assert.deepEqual(await tabs(page), ["attention*(p)"]);
-  await sidebarItem(page, "Roadmap").click();
+  await openFromSidebar(page, "Roadmap");
   await settled(page, base, "roadmap");
-  await sidebarItem(page, "Requirements").click();
+  await openFromSidebar(page, "Requirements");
   await settled(page, base, "requirements");
   assert.deepEqual(await tabs(page), ["requirements*(p)"], "each ordinary open replaced the preview tab");
   assert.equal((await textStyle(page, "requirements")).italic, true, "the preview tab's title is italic");
-  await sidebarItem(page, "Decisions").click({ modifiers: ["Control"] });
+  await openFromSidebar(page, "Decisions", { modifiers: ["Control"] });
   await settled(page, base, "decisions");
   assert.deepEqual(await tabs(page), ["requirements(p)", "decisions*"], "Ctrl-click opened a kept tab beside the preview");
   assert.equal((await textStyle(page, "decisions")).italic, false, "a kept tab's title is upright");
   await page.getByRole("tab", { name: /^Requirements/ }).dblclick();
   await settled(page, base, "requirements");
   assert.deepEqual(await tabs(page), ["requirements*", "decisions"], "a double click on the preview tab kept it");
-  await sidebarItem(page, "Glossary").click();
+  await openFromSidebar(page, "Glossary");
   await settled(page, base, "glossary");
   assert.deepEqual(await tabs(page), ["requirements", "glossary*(p)", "decisions"], "a new tab goes right after the selected tab, not at the end");
   await strip(page).getByRole("button", { name: "Keep", exact: true }).click();
@@ -99,8 +105,9 @@ test("Ctrl+Enter in the palette, a double or middle click on a content link, a C
   assert.deepEqual(await tabs(page), ["roadmap(p)", secondRef, "decisions*", first], "Ctrl+Enter in the palette opened a kept tab");
   await page.goto(reviewUrl(base, SLICE));
   await waitForView(page);
-  await page.locator("#page-bar").getByRole("link", { name: "Roadmap" }).click({ modifiers: ["Control"] });
-  await settled(page, base, "roadmap");
+  // The trail starts with the slice's place, whose crumb chooses the place, so the initiative's crumb is the one that leads to a page.
+  await page.locator("#page-bar").getByRole("link", { name: "Harden request retries" }).click({ modifiers: ["Control"] });
+  await settled(page, base, "initiative:retry-hardening");
   assert.equal((await tabs(page)).includes(`${SLICE}(p)`), true, "a Ctrl-click on a crumb kept the slice's preview tab beside the crumb's page");
   await page.getByRole("tab", { name: /^Retry timed-out/ }).click();
   await settled(page, base, SLICE);
@@ -117,9 +124,9 @@ test("a tab closes from its close button or a middle click, and closing the last
   const { base, browser } = await demo(context);
   const page = await openPage(browser, reviewUrl(base, "attention"), { viewport: { width: 1440, height: 900 } });
   await waitForView(page);
-  await sidebarItem(page, "Roadmap").click({ modifiers: ["Control"] });
+  await openFromSidebar(page, "Roadmap", { modifiers: ["Control"] });
   await settled(page, base, "roadmap");
-  await sidebarItem(page, "Decisions").click({ modifiers: ["Control"] });
+  await openFromSidebar(page, "Decisions", { modifiers: ["Control"] });
   await settled(page, base, "decisions");
   assert.deepEqual(await tabs(page), ["attention(p)", "roadmap", "decisions*"]);
   await tab(page, "roadmap").click({ button: "middle" });
@@ -195,9 +202,9 @@ test("Back and Forward move through the pages the tabs showed, and the address n
   const { base, browser } = await demo(context);
   const page = await openPage(browser, reviewUrl(base, "attention"), { viewport: { width: 1440, height: 900 } });
   await waitForView(page);
-  await sidebarItem(page, "Roadmap").click({ modifiers: ["Control"] });
+  await openFromSidebar(page, "Roadmap", { modifiers: ["Control"] });
   await settled(page, base, "roadmap");
-  await sidebarItem(page, "Decisions").click({ modifiers: ["Control"] });
+  await openFromSidebar(page, "Decisions", { modifiers: ["Control"] });
   await settled(page, base, "decisions");
   await page.getByRole("tab", { name: /^Attention/ }).click();
   await settled(page, base, "attention");
@@ -219,7 +226,7 @@ test("the strip moves focus with arrow keys, Home, and End, opens with Enter, re
   const page = await openPage(browser, reviewUrl(base, "attention"), { viewport: { width: 1440, height: 900 } });
   await waitForView(page);
   for (const name of ["Roadmap", "Requirements", "Decisions"]) {
-    await sidebarItem(page, name).click({ modifiers: ["Control"] });
+    await openFromSidebar(page, name, { modifiers: ["Control"] });
     await settled(page, base, name.toLowerCase());
   }
   await page.getByRole("tab", { name: /^Decisions/ }).focus();

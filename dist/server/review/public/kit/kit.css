@@ -910,6 +910,183 @@ prism-tree[rail] .prism-tree-end > :not(prism-badge) {
   display: none;
 }
 
+/* ---------- prism-rail: the icon rail of places at the window's start edge ---------- */
+
+/* The rail is as wide as a place button and the room for its accent bar; it draws no border and no fill of its own, so the canvas shows through. */
+prism-rail {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: calc(var(--prism-control-height) + var(--prism-space-5));
+  height: 100%;
+  min-height: 0;
+}
+
+.prism-rail-nav {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--prism-space-2);
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--prism-space-3) 0 var(--prism-space-4);
+}
+
+/* A rail with a head block starts with it, level with the top of the main island beside it. */
+.prism-rail-nav.has-head {
+  padding-top: 0;
+}
+
+/* The head block is as tall as a strip of document tabs over a page bar, and a pale rule ends it. */
+.prism-rail-head {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  align-self: stretch;
+  height: calc(var(--prism-stroke) + var(--prism-subtab-height) + var(--prism-pagebar-height));
+}
+
+.prism-rail-head[hidden],
+.prism-rail-foot[hidden] {
+  display: none;
+}
+
+.prism-rail-head-content {
+  display: grid;
+  place-items: center;
+}
+
+.prism-rail-rule {
+  position: absolute;
+  right: var(--prism-space-3);
+  bottom: 0;
+  left: var(--prism-space-3);
+  height: var(--prism-stroke);
+  background: var(--prism-color-line);
+}
+
+.prism-rail-places,
+.prism-rail-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--prism-space-2);
+}
+
+.prism-rail-foot {
+  margin-top: auto;
+}
+
+prism-rail-item {
+  display: block;
+  flex: none;
+}
+
+.prism-rail-button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: calc(var(--prism-control-height) + var(--prism-space-2));
+  height: calc(var(--prism-control-height) + var(--prism-space-2));
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--prism-radius-md);
+  background: none;
+  color: var(--prism-color-ink-muted);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--prism-duration-fast) var(--prism-easing-standard), color var(--prism-duration-fast) var(--prism-easing-standard);
+}
+
+.prism-rail-button:hover {
+  background: var(--prism-color-chrome-hover);
+  color: var(--prism-color-ink);
+}
+
+.prism-rail-button:focus-visible {
+  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
+  outline-offset: var(--prism-stroke);
+}
+
+.prism-rail-button[aria-pressed="true"] {
+  background: var(--prism-color-selected);
+  color: var(--prism-color-accent-text);
+}
+
+/* The current place carries an accent bar at its start, outside the button, as the mockup draws it. */
+.prism-rail-button[aria-pressed="true"]::before {
+  content: "";
+  position: absolute;
+  top: var(--prism-space-3);
+  bottom: var(--prism-space-3);
+  left: calc(-1 * var(--prism-space-3));
+  width: var(--prism-stroke-strong);
+  border-radius: var(--prism-radius-round);
+  background: var(--prism-color-accent);
+}
+
+.prism-rail-badge {
+  position: absolute;
+  top: calc(-1 * var(--prism-space-1));
+  right: calc(-1 * var(--prism-space-1));
+  max-width: calc(var(--prism-control-height) + var(--prism-space-2));
+  pointer-events: none;
+}
+
+.prism-rail-badge[hidden] {
+  display: none;
+}
+
+/* A small item is a top bar icon button: the control height, a small radius, and a small count. */
+prism-rail-item[size="sm"] > .prism-rail-button {
+  width: var(--prism-control-height);
+  height: var(--prism-control-height);
+  border: var(--prism-stroke) solid transparent;
+  border-radius: var(--prism-radius-sm);
+}
+
+prism-rail-item[size="sm"] .prism-rail-badge {
+  right: calc(-1 * var(--prism-space-2));
+}
+
+/* ---------- prism-place-head: a place's title on the tab strip's line and its subtitle on the page bar's line ---------- */
+
+prism-place-head {
+  display: grid;
+  grid-template-rows: calc(var(--prism-stroke) + var(--prism-subtab-height)) var(--prism-pagebar-height);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0 var(--prism-space-3);
+}
+
+.prism-place-head-title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--prism-color-ink);
+  font-size: var(--prism-font-size-lg);
+  font-weight: var(--prism-font-weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-place-head-subtitle {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-place-head-subtitle[hidden] {
+  display: none;
+}
+
 /* ---------- prism-listbox: options of one row height, the active one ringed ---------- */
 
 prism-listbox {
@@ -1076,7 +1253,7 @@ prism-list-item mark {
 }
 
 /* A drawer's surface spans --prism-drawer-width from the left edge between the top bar and the status bar, and draws nothing itself:
-   its frame is the island, inset by the island gap, on the chrome color. */
+   its frame is the island, --prism-drawer-width wide and inset by the island gap, on the chrome color. */
 .prism-dialog-surface[data-placement="start"] {
   inset: var(--prism-bar-height) auto var(--prism-status-height) 0;
   width: min(var(--prism-drawer-width), 100vw);
@@ -1092,10 +1269,13 @@ prism-list-item mark {
   box-shadow: none;
 }
 
+/* The island stands at the island gap from the edge and is --prism-drawer-width wide, as wide as the drawer the surface names. */
 .prism-dialog-surface[data-placement="start"][open] > .prism-dialog-frame {
+  position: absolute;
+  inset: 0 auto 0 var(--prism-island-gap);
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
+  width: min(var(--prism-drawer-width), calc(100vw - 2 * var(--prism-island-gap)));
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -1107,6 +1287,16 @@ prism-list-item mark {
 
 .prism-dialog-surface[data-placement="start"] .prism-dialog-body {
   padding: var(--prism-space-4);
+}
+
+/* A flush dialog's body draws no padding and does not clip, for content that lays itself out to the island's edges and scrolls itself, as the navigation drawer's rail and sidebar do; the rail's accent bar then shows on the island's edge. */
+.prism-dialog-surface[data-flush] .prism-dialog-body {
+  padding: 0;
+  overflow: visible;
+}
+
+.prism-dialog-surface[data-flush][data-placement="start"][open] > .prism-dialog-frame {
+  overflow: visible;
 }
 
 /* A drawer and a sheet fade in where they stand, so they sit on their edge from the first frame. */

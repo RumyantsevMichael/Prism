@@ -73,6 +73,10 @@ function docTabsOf(tabs, label = "Open documents") {
   return `<prism-doc-tabs label="${html(label)}">${tabs.map(([title, states = ""], index) => `<prism-doc-tab value="doc-${index}" label="${html(title)}" tip="${html(title)}" ${states}>${html(title)}</prism-doc-tab>`).join("")}</prism-doc-tabs>`;
 }
 
+// The five places of the review app as rail items, the current one pressed and Attention with its count.
+const PLACE_SPECIMENS = [["attention", "Attention", "bell"], ["work", "Work", "tree"], ["roadmap", "Roadmap", "roadmap"], ["knowledge", "Knowledge", "book"], ["history", "History", "clock"]];
+const railPlaces = ({ current = "work", count = 3 } = {}) => PLACE_SPECIMENS.map(([value, label, icon]) => `<prism-rail-item value="${value}" label="${label}" icon="${icon}" pressed="${value === current ? "true" : "false"}"${value === "attention" && count ? ` count="${count}" count-label="${count} questions"` : ""}></prism-rail-item>`).join("");
+
 // Each element's specimens by state; every entry also shows long text and an unbroken name, and an element that holds items shows many.
 const SPECIMENS = {
   "prism-button": {
@@ -283,6 +287,29 @@ const SPECIMENS = {
     glyphs: `<prism-tree label="Glyphs"><prism-tree-item label="Attention" value="attention"><prism-icon slot="start" name="bell"></prism-icon><prism-badge slot="end" variant="count" solid>5</prism-badge></prism-tree-item><prism-tree-item label="Harden request retries" value="retries" expanded tip="Harden request retries · In progress · 0 of 5 shipped"><prism-state slot="start" state="in-progress" label="In progress"></prism-state><span slot="end">0/5</span><prism-tree-item label="Retry timed-out requests until a total deadline" value="timeout" tip="Retry timed-out requests until a total deadline · Design"><prism-phase slot="start" phase="design" label="Design"></prism-phase></prism-tree-item><prism-tree-item label="Retry dropped connections" value="dropped" tip="Retry dropped connections · Blocked"><prism-phase slot="start" phase="build" label="Build"></prism-phase><prism-badge slot="end" variant="count" tone="danger">Blocked</prism-badge></prism-tree-item></prism-tree-item></prism-tree>`,
     link: `<prism-tree label="Links"><prism-tree-item label="Roadmap" value="roadmap" href="#roadmap"><prism-icon slot="start" name="roadmap"></prism-icon></prism-tree-item><prism-tree-item label="Requirements" value="requirements" href="#requirements"><prism-icon slot="start" name="list"></prism-icon><span slot="end">4</span></prism-tree-item></prism-tree>`
   },
+  "prism-rail": {
+    default: `<prism-rail label="Places">${railPlaces()}</prism-rail>`,
+    head: `<prism-rail label="Places with a head"><prism-rail-item slot="head" label="Collapse the sidebar" tip="Collapse the sidebar ([)" icon="panel-left" aria-expanded="true"></prism-rail-item>${railPlaces()}</prism-rail>`,
+    collapsed: `<prism-rail label="Places, sidebar hidden"><prism-rail-item slot="head" label="Expand the sidebar" tip="Expand the sidebar ([)" icon="panel-left" aria-expanded="false"></prism-rail-item>${railPlaces({ current: "knowledge", count: 0 })}</prism-rail>`,
+    "many-places": `<prism-rail label="Many places">${repeat(12, (index) => `<prism-rail-item value="p${index}" label="Place ${index + 1}" icon="${["bell", "tree", "roadmap", "book", "clock", "grid"][index % 6]}" pressed="${index === 3 ? "true" : "false"}"${index === 0 ? ` count="128" count-label="128 questions"` : ""}></prism-rail-item>`)}</prism-rail>`,
+    "long-text": `<prism-rail label="${LONG}"><prism-rail-item value="long" label="${LONG}" icon="book" pressed="true" count="12345" count-label="12345 questions"></prism-rail-item></prism-rail>`,
+    "unbroken-name": `<prism-rail label="${UNBROKEN}"><prism-rail-item value="unbroken" label="${UNBROKEN}" icon="tree" pressed="false"></prism-rail-item></prism-rail>`
+  },
+  "prism-rail-item": {
+    default: `<prism-rail label="One place"><prism-rail-item value="work" label="Work" icon="tree" pressed="false"></prism-rail-item></prism-rail>`,
+    pressed: `<prism-rail label="Current place"><prism-rail-item value="work" label="Work" icon="tree" pressed="true"></prism-rail-item></prism-rail>`,
+    count: `<prism-rail label="Place with a count"><prism-rail-item value="attention" label="Attention" icon="bell" pressed="false" count="3" count-label="3 questions"></prism-rail-item><prism-rail-item value="attention-many" label="Attention" icon="bell" pressed="true" count="128" count-label="128 questions"></prism-rail-item></prism-rail>`,
+    toggle: `<prism-rail label="Sidebar button"><prism-rail-item value="toggle" label="Collapse the sidebar" tip="Collapse the sidebar ([)" icon="panel-left" aria-expanded="true"></prism-rail-item></prism-rail>`,
+    small: `<prism-rail-item value="attention" label="Attention" icon="bell" size="sm" count="3" count-label="3 questions"></prism-rail-item>`,
+    "long-text": `<prism-rail label="Long place"><prism-rail-item value="long" label="${LONG}" icon="book" pressed="false" count="7" count-label="7 records"></prism-rail-item></prism-rail>`,
+    "unbroken-name": `<prism-rail label="Unbroken place"><prism-rail-item value="unbroken" label="${UNBROKEN}" icon="clock" pressed="true"></prism-rail-item></prism-rail>`
+  },
+  "prism-place-head": {
+    default: `<prism-place-head heading="Work" subtitle="Designed and not shipped"></prism-place-head>`,
+    "no-subtitle": `<prism-place-head heading="Attention"></prism-place-head>`,
+    "long-text": `<prism-place-head heading="${LONG}" subtitle="${LONG}"></prism-place-head>`,
+    "unbroken-name": `<prism-place-head heading="${UNBROKEN}" subtitle="${UNBROKEN}"></prism-place-head>`
+  },
   "prism-listbox": {
     default: `<prism-listbox label="Results"><prism-list-item value="kit">Review app UI kit<span slot="meta">Initiative</span></prism-list-item><prism-list-item value="containers">Kit containers<span slot="meta">Slice</span></prism-list-item></prism-listbox>`,
     active: `<prism-listbox label="Active result"><prism-list-item value="a" active>Roadmap<span slot="meta">Place</span></prism-list-item><prism-list-item value="b">Attention<span slot="meta">Place</span></prism-list-item></prism-listbox>`,
@@ -307,6 +334,7 @@ const SPECIMENS = {
     closed: opener("Open the record store", `<prism-dialog heading="Record store"><p>Records live in a shared store.</p><prism-field type="text" label="Filter" name="filter"></prism-field><prism-button slot="footer" variant="primary">Copy location</prism-button></prism-dialog>`),
     center: opener("Open a small dialog", `<prism-dialog heading="Switch project" size="sm"><p>Pick the project this page shows.</p></prism-dialog>`),
     start: opener("Open the navigation drawer", `<prism-dialog heading="Navigation" placement="start" bare><prism-tree label="Drawer places"><prism-tree-item label="Attention" value="attention" selected></prism-tree-item><prism-tree-item label="Roadmap" value="roadmap"></prism-tree-item></prism-tree></prism-dialog>`),
+    flush: opener("Open the places drawer", `<prism-dialog heading="Navigation" placement="start" bare flush><prism-rail label="Drawer places">${railPlaces()}</prism-rail></prism-dialog>`),
     top: opener("Open a dialog at the top", `<prism-dialog heading="Command palette" placement="top" size="lg" bare><prism-field type="search" variant="bare" label="Search or jump to" name="top"><prism-icon slot="start" name="search"></prism-icon><prism-kbd slot="end">Esc</prism-kbd></prism-field><p>Results hang below the top bar.</p></prism-dialog>`),
     bare: opener("Open a bare dialog", `<prism-dialog heading="Diagram" bare><p>The content draws its own header; Escape closes it.</p></prism-dialog>`),
     bottom: opener("Open the bottom sheet", `<prism-dialog heading="Diagram" placement="bottom"><p>The slice's diagram on a phone.</p></prism-dialog>`),
@@ -574,10 +602,11 @@ function apply() {
 
 toolbar();
 apply();
-await loadPreferences();
-apply();
+// The entries are drawn before the stored preferences arrive, so the catalog is whole once the page has loaded.
 scope.innerHTML = [designValues(), ...KIT_ELEMENTS.map(entryMarkup)].join("");
 paintSwatches(scope);
+await loadPreferences();
+apply();
 // Specimen buttons open their dialog or show a toast message.
 scope.addEventListener("click", (event) => {
   const button = event.target.closest?.("prism-button[data-opens], prism-button[data-toast]");

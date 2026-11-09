@@ -37,15 +37,23 @@ The catalog's own toolbar changes its theme, density, and width for that tab onl
 
 The top bar holds the Prism mark, the project switcher, the search button that opens the Jump palette, and **Who's working**.
 The status bar at the bottom shows where the project's records live, naming a shared store, their sync state, and the repository index.
-The sidebar is the only navigation.
-It lists Attention with its count and Roadmap, then each planned or in-progress initiative and the open initiative whatever its state, then the open library section's documents, and the Library, with Requirements and Decisions and their counts and the Glossary.
+The rail at the left edge switches between five places, and the sidebar beside it shows only the current place, under its title and a line that says what it holds.
+**Attention** shows what waits on you, and the rail's Attention button carries the number of recorded questions that wait for an answer.
+**Work** lists each initiative that has an initiative record and is neither shipped nor superseded, with its slices.
+**Roadmap** leads to the Roadmap, and choosing it on the rail also opens the Roadmap page.
+**Knowledge** lists Requirements, Decisions, and the Glossary with their counts.
+**History** lists the shipped and superseded initiatives.
+Choosing any other place leaves the open page as it is, and the place stays while you change tabs, follow links, use the palette, or go back.
+The browser remembers the current place, so a reload or a new window shows it again, and an address with `place=work`, or another place's name, chooses that place.
+The page bar's trail starts with the place of the open page, and choosing that crumb makes the place current without leaving the page.
 An initiative's row shows its state as a round glyph and its shipped leaf slices out of all, such as `0/4`, and its slices nest below it, each with a triangle in the color of its phase, its holder, and a warning mark when it is blocked.
 Hover or focus a row to see its full title with its status, its phase, and its claim; the Roadmap lists every initiative, including shipped and envisioned ones.
-An initiative or a slice that has subslices expands when you expand it, when it leads to the open page, or when one of its slices is in progress, blocked, or claimed.
+An initiative or a slice that has subslices expands when you expand it or when it leads to the open page.
 Every row is a link, so a middle-click or a Shift click opens the page in a new browser tab or window, and the browser's context menu can copy its address; a crumb of the page bar works the same way.
-Above 1100 pixels, press `[` or use the sidebar button at the left of the top bar to collapse the sidebar to a rail of icons that keeps the Attention count, and again to expand it; the browser remembers the choice.
-At a window width of 1100 pixels or less the sidebar is hidden, and the Navigation button at the left of the top bar opens it as a drawer that closes when you choose a page; the bell at the right of the top bar keeps the Attention count.
-If you narrow the window past that width while the sidebar has the focus, the focus moves to the Navigation button.
+Above 1100 pixels, press `[` or use the sidebar button at the top of the rail to hide the sidebar and keep the rail, and again to show it; the browser remembers the choice, and choosing a place shows the sidebar again.
+At a window width of 1100 pixels or less the rail and the sidebar are hidden, and the Navigation button at the left of the top bar opens a drawer that holds the rail and the current place's sidebar; choosing a place in it switches the sidebar, and choosing a page opens it and closes the drawer.
+The bell at the right of the top bar then keeps the Attention count and opens the Attention page.
+If you widen the window past that width while the drawer is open, the drawer closes and the rail and the sidebar return; if you narrow it while the sidebar has the focus, the focus moves to the Navigation button.
 
 The top of the main area holds a tab for each open page.
 A link opens in the preview tab, whose title is italic, and the next link replaces it.

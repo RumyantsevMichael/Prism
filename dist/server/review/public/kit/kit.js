@@ -26,6 +26,9 @@ import { PrismAvatar } from "./elements/prism-avatar.js";
 import { PrismPanel } from "./elements/prism-panel.js";
 import { PrismTree } from "./elements/prism-tree.js";
 import { PrismTreeItem } from "./elements/prism-tree-item.js";
+import { PrismRail } from "./elements/prism-rail.js";
+import { PrismRailItem } from "./elements/prism-rail-item.js";
+import { PrismPlaceHead } from "./elements/prism-place-head.js";
 import { PrismListbox } from "./elements/prism-listbox.js";
 import { PrismListItem } from "./elements/prism-list-item.js";
 import { PrismDialog } from "./elements/prism-dialog.js";
@@ -77,6 +80,9 @@ export const KIT_ELEMENTS = [
   PrismPanel,
   PrismTree,
   PrismTreeItem,
+  PrismRail,
+  PrismRailItem,
+  PrismPlaceHead,
   PrismListbox,
   PrismListItem,
   PrismDialog,
@@ -109,7 +115,9 @@ export function defineKit(registry = globalThis.customElements) {
 if (globalThis.document) {
   startPreferences();
   // Every shadow stylesheet is loaded before the elements are defined, so an element never draws unstyled.
-  await loadStyles(KIT_ELEMENTS.flatMap((element) => element.styles ?? []));
-  defineKit();
-  installTooltip(globalThis.document);
+  // The module does not wait for them, so a page that imports it, such as the catalog, draws its own markup before the load event.
+  loadStyles(KIT_ELEMENTS.flatMap((element) => element.styles ?? [])).then(() => {
+    defineKit();
+    installTooltip(globalThis.document);
+  });
 }

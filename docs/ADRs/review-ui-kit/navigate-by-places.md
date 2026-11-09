@@ -1,6 +1,6 @@
 # Navigate the review app by places
 
-Status: Proposed
+Status: Accepted
 Created: 2026-11-09
 
 ## Requirements

@@ -89,6 +89,14 @@ export function artifactChip(path, ctx, label = path) {
   return `<prism-chip interactive tone="accent" data-artifact="${escapeHtml(path)}"${code}>${escapeHtml(label)}</prism-chip>`;
 }
 
+/** A record's title as a link to its page, so the browser can open it in a new tab or window and copy its address; a path that is not reviewable stays text. */
+export function artifactLink(path, ctx, label = path) {
+  if (!path) return "";
+  const code = label === path && !/^(?:initiative|slice):/.test(path) ? " data-code-subject" : "";
+  if (!ctx.hasArtifact(path)) return `<span class="muted"${code}>${escapeHtml(label)}</span>`;
+  return `<a class="title-link" href="./review?artifact=${encodeURIComponent(path)}" data-artifact="${escapeHtml(path)}"${code}>${escapeHtml(label)}</a>`;
+}
+
 /**
  * Names a path for the record views: one of Prism's records by its title and kind, and a repository file by its path, marked as where code is the subject.
  * Returns { label, code }.

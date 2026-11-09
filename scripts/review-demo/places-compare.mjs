@@ -337,6 +337,12 @@ async function readApp(browser, project, { scene, width, theme }) {
       const navigation = page.locator("#nav-button");
       if (await navigation.isVisible()) await navigation.click();
       else notes.push("the Navigation button is not visible");
+      // A narrow window shows the rail only in the drawer, so the scene's place is chosen there.
+      if (!wide) {
+        await page.waitForTimeout(400);
+        const missing = await choosePlace(page, definition.place);
+        if (missing) notes.push(missing);
+      }
     }
     await page.mouse.move(0, 0);
     await page.waitForTimeout(700);

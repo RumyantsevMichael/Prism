@@ -19,10 +19,11 @@ function iconButton(id, label, icon) {
 }
 
 /**
- * Builds the bar inside `root`. `onBack` and `onForward` move through the history; `onOpen(ref, event)` opens a crumb's page.
- * Returns setHistory({ back, forward }), setTrail([{ ref, label }]), and setActions([nodes]).
+ * Builds the bar inside `root`. `onBack` and `onForward` move through the history; `onOpen(ref, event)` opens a crumb's page,
+ * and `onPlace(name)` makes the place of the trail's first crumb current.
+ * Returns setHistory({ back, forward }), setTrail([{ ref, label, place }], current), and setActions([nodes]).
  */
-export function createPageBar({ root, onBack, onForward, onOpen }) {
+export function createPageBar({ root, onBack, onForward, onOpen, onPlace = () => {} }) {
   const history = document.createElement("div");
   history.className = "page-bar-history";
   const back = iconButton("page-back", "Back", "chevron-left");
@@ -44,14 +45,31 @@ export function createPageBar({ root, onBack, onForward, onOpen }) {
     forward.toggleAttribute("disabled", !canForward);
   }
 
-  function setTrail(crumbs) {
-    const key = JSON.stringify(crumbs);
+  // The address of the open page with a place chosen, which the place's crumb links to.
+  function placeAddress(current, place) {
+    const query = new URLSearchParams();
+    if (current) query.set("artifact", current);
+    query.set("place", place);
+    return `./review?${query}`;
+  }
+
+  // A crumb that carries a place names it and chooses it without leaving the page; a Shift click or a middle-click opens the page with that place in the browser.
+  function setTrail(crumbs, current = null) {
+    const key = JSON.stringify([crumbs, current]);
     if (key === shown) return;
     shown = key;
     trail.replaceChildren(...crumbs.map((crumb) => {
       const link = document.createElement("a");
       link.textContent = crumb.label;
-      if (crumb.ref) {
+      if (crumb.place) {
+        link.href = placeAddress(current, crumb.place);
+        link.dataset.place = crumb.place;
+        link.addEventListener("click", (event) => {
+          if (event.shiftKey || event.ctrlKey || event.metaKey || event.button !== 0) return;
+          event.preventDefault();
+          onPlace(crumb.place);
+        });
+      } else if (crumb.ref) {
         link.href = `./review?artifact=${encodeURIComponent(crumb.ref)}`;
         link.addEventListener("click", (event) => {
           // A Shift click or a middle-click is the browser's: it opens the crumb in a new window or browser tab; a Ctrl or Cmd click keeps a review tab.
