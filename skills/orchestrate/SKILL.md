@@ -97,7 +97,7 @@ On resume, continue an `in-progress` slice with a fresh implementation session b
 
 - When every leaf is done:
   1. Run the dependents' run of each contract scope that has no `passed` entry in `get_initiative`'s `dependents`.
-  2. Call `update_roadmap` with a `ship` operation for the initiative; when it refuses with `dependents_blocked`, run the dependents' run again of each listed scope whose `reason` is `not_run` and call `ship` again, then report each scope whose `reason` is `failed` or whose new run did not pass to the user with its `blocked` components and stop until a later dependents' run passes.
+  2. Call `update_roadmap` with a `ship` operation for the initiative; when it refuses with `dependents_blocked`, run the dependents' run again of each listed scope whose `reason` is `not_run` or `stale` and call `ship` again, then report each scope whose `reason` is `failed` or whose new run did not pass to the user with its `blocked` components and stop until a later dependents' run passes.
   3. Move facts that later work needs from the initiative's slice folders into requirements, ADRs, or user documentation.
   4. Keep the slice folders and the initiative's records, because they are the initiative's history.
 - When work must pause, call `checkpoint_pause` with the initiative, the current revision, the active slice, recovery content that names the next action, and the state changes.
