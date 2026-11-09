@@ -1,6 +1,6 @@
 # Build the review app on its own UI kit
 
-Status: Proposed
+Status: Accepted
 Created: 2026-11-07
 
 ## Requirements
