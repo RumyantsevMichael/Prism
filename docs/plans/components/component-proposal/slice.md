@@ -1,5 +1,8 @@
 # Propose components from workspace manifests
 
+> Shipped history: initiative `components` shipped on 2026-11-07, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 `get_roadmap` shows the declared components and proposes a `## Components` block from workspace manifests, which the skills offer to the person.

@@ -1,5 +1,8 @@
 # Components in one repository
 
+> Shipped history: initiative `components` shipped on 2026-11-07, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 A repository declares components; each leaf slice stays inside one, is verified with its component's tests, dependents' tests run when a scope finishes, and the native index is prepared per component.

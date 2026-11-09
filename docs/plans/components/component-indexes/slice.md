@@ -1,5 +1,8 @@
 # Native indexes per component
 
+> Shipped history: initiative `components` shipped on 2026-11-07, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 Prism prepares a native index per component, only for the components a tool needs, keeps the others after a failure, and answers path-scoped queries from matching components and unscoped semantic queries from every prepared one, naming those it left out.

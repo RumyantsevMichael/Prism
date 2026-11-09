@@ -1,5 +1,8 @@
 # Prepare one index per component
 
+> Shipped history: initiative `components` shipped on 2026-11-07, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 Prism prepares, queues, and reports one index per component, keeps the others when one fails, and keeps a repository without components on its one index.
