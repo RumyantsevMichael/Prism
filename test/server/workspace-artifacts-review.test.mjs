@@ -719,3 +719,148 @@ test("clause 40: the user guide says where the person reads the number of a line
   assert.match(section, /Lines of the current version/, "the guide names where every line's number shows");
   assert.doesNotMatch(section, /as the changes show it/, "the guide no longer sends the person to the changes for a number they may not show");
 });
+
+// Comments of the form Prism writes, as many as a sync can bring, each of nearly the largest text a comment may hold, numbered in their file names' order.
+const MANY = 45;
+const longComment = (number, location = "requirements/billing.md") => syncedComment({ location, text: `Comment ${String(number).padStart(2, "0")}. ${"x".repeat(3980)}`, entry: entryId(1000 + number) });
+const commentNumbers = (comments) => comments.map((item) => Number(/^Comment (\d+)\./.exec(item.text)?.[1]));
+const counting = (count) => Array.from({ length: count }, (_, index) => index + 1);
+async function manyComments(context) {
+  const { place, prism, review } = await project(context);
+  const written = await writeArtifact(prism, FILE, requirementFile("Billing"));
+  for (const number of counting(MANY)) await placeComment(COMMENTS(place.store), commentName(number), longComment(number));
+  return { place, prism, review, written };
+}
+
+test("clause 42: get_artifact returns at most 20 comments in one read, with their total and the offset of the next, and reads from that offset give every comment once", async (context) => {
+  const { prism } = await manyComments(context);
+  const response = await prism.call("get_artifact", { path: FILE });
+  const first = ok(response);
+  assert.deepEqual([first.comments.length, first.totalComments, first.nextCommentOffset], [20, MANY, 21], "the first read carries the first 20 comments and says where the next begin");
+  assert.ok(JSON.stringify(response).length < 300000, `one read holds ${JSON.stringify(response).length} characters`);
+  // A page of lines carries a page of comments too, from the comment offset it names.
+  const seen = [...first.comments];
+  let next = first.nextCommentOffset;
+  while (next !== null) {
+    const read = ok(await prism.call("get_artifact", { path: FILE, offset: 1, limit: 1, commentOffset: next }));
+    assert.ok(read.comments.length <= 20, `a read carries ${read.comments.length} comments`);
+    assert.equal(read.totalComments, MANY);
+    seen.push(...read.comments);
+    next = read.nextCommentOffset;
+  }
+  assert.deepEqual(commentNumbers(seen), counting(MANY), "the reads joined in order give every comment once, oldest first");
+  const past = ok(await prism.call("get_artifact", { path: FILE, commentOffset: MANY + 1 }));
+  assert.deepEqual([past.comments, past.totalComments, past.nextCommentOffset], [[], MANY, null], "a read from past the last comment gives none");
+  for (const commentOffset of [0, -1, 1.5]) assert.ok((await prism.call("get_artifact", { path: FILE, commentOffset })).error, `commentOffset ${commentOffset} is refused`);
+  assert.ok((await prism.call("get_artifact", { path: FILE, offset: 0 })).error, "as an offset of 0 is");
+});
+
+test("clause 42: /api/artifact returns at most 20 comments in one read, takes commentOffset as a query parameter, and refuses one that is no whole number of at least 1", async (context) => {
+  const { review } = await manyComments(context);
+  const view = async (query) => browserRequest(review, `/api/artifact?path=${encodeURIComponent(FILE)}${query}`);
+  const first = (await view("")).body.artifact;
+  assert.deepEqual([first.comments.length, first.totalComments, first.nextCommentOffset], [20, MANY, 21]);
+  const seen = [...first.comments];
+  for (let next = first.nextCommentOffset; next !== null;) {
+    const page = await view(`&commentOffset=${next}`);
+    assert.equal(page.status, 200);
+    assert.ok(page.body.artifact.comments.length <= 20);
+    seen.push(...page.body.artifact.comments);
+    next = page.body.artifact.nextCommentOffset;
+  }
+  assert.deepEqual(commentNumbers(seen), counting(MANY), "the reads joined in order give every comment once");
+  const past = (await view(`&commentOffset=${MANY + 1}`)).body.artifact;
+  assert.deepEqual([past.comments, past.nextCommentOffset], [[], null]);
+  for (const value of ["0", "-1", "abc", "1.5", "%EF%BC%93", ""]) assert.equal((await view(`&commentOffset=${value}`)).status, 400, `commentOffset=${value} is refused`);
+});
+
+test("clause 42: the Review card counts every comment, lists the first 20, and reads the rest through More comments", { skip: noBrowser }, async (context) => {
+  const { review } = await manyComments(context);
+  const browser = await launch(context);
+  const page = await openPage(browser, pageUrl(review, FILE), { viewport: { width: 1000, height: 900 } });
+  await page.getByRole("heading", { name: `${MANY} comments` }).waitFor({ timeout: 10000 });
+  const shown = () => page.evaluate(() => [...document.querySelectorAll(".artifact-comment-text")].map((item) => Number(/^Comment (\d+)\./.exec(item.textContent)?.[1])));
+  assert.deepEqual(await shown(), counting(20), "the card lists the first read's comments");
+  const more = page.getByRole("button", { name: "More comments" });
+  await more.click();
+  await page.waitForFunction(() => document.querySelectorAll(".artifact-comment-text").length === 40, null, { timeout: 10000 });
+  await more.click();
+  await page.waitForFunction(() => document.querySelectorAll(".artifact-comment-text").length === 45, null, { timeout: 10000 });
+  assert.deepEqual(await shown(), counting(MANY), "the person reaches every comment, oldest first");
+  assert.equal(await more.count(), 0, "no More comments button follows the last comment");
+  assert.deepEqual(page.errors, []);
+});
+
+test("clause 25: the notes that name saved files hold at most 32 KiB, count what they leave out, and name the sync folder that holds every saved copy", { timeout: 240000 }, async (context) => {
+  const place = await syncedWorkspace(context);
+  const onA = await server(context, place.a, await checkout(place.a, "api"));
+  const onB = await server(context, place.b, await checkout(place.b, "web"));
+  const plan = "docs/plans/foo/slice.md";
+  const first = await writeArtifact(onA, plan, "# Foo\n\nLine one.\n");
+  await eventually(async () => (await onB.call("get_artifact", { path: plan })).result?.structuredContent?.version === first.version, 90000, "machine b pulling the artifact");
+  // Another clone of the store's remote plants comments of the form Prism writes at a location that holds no artifact, so a merge saves each one aside.
+  const location = "plans/gone/slice.md";
+  const planted = path.join(place.parent, "planted");
+  execFileSync("git", ["clone", "-q", place.remote, planted]);
+  for (const number of counting(MANY)) await placeComment(path.join(planted, "artifact-comments", ...location.split("/")), commentName(number), longComment(number, location));
+  git(planted, "add", ".");
+  git(planted, "commit", "-q", "-m", "plant");
+  git(planted, "push", "-q", "origin", "main");
+  ok(await onB.call("update_artifact", { operations: [{ op: "edit", path: plan, expectedVersion: first.version, edits: [{ oldText: "Line one.", newText: "Line one from b." }] }] }));
+  const said = await eventually(async () => {
+    const text = notes(await onB.call("get_artifact", {}));
+    return /Prism left \d+ more saved files? out of this note/.test(text) || text.includes(commentName(MANY)) ? text : null;
+  }, 90000, "machine b naming the saved comments");
+  assert.ok(Buffer.byteLength(said, "utf8") <= 32 * 1024, `the notes hold ${Buffer.byteLength(said, "utf8")} bytes`);
+  const named = counting(MANY).filter((number) => said.includes(commentName(number))).length;
+  const left = Number(/Prism left (\d+) more saved files? out of this note/.exec(said)?.[1] ?? 0);
+  assert.ok(left > 0, "the notes leave entries out and count them");
+  assert.equal(named + left, MANY, "every saved comment is named or counted");
+  assert.ok(said.includes(".prism-sync"), "the notes name the sync folder that holds every saved copy");
+  assert.equal((await savedCopies(place.storeB)).filter((file) => file.includes(path.join("artifact-comments", ...location.split("/")))).length, MANY, "every comment is saved");
+});
+
+test("clause 25: where this machine removed a file and wrote another at its path while the upstream only commented on the first, the location keeps the upstream's file with its comment and saves the later one", async (context) => {
+  const { syncRecordStoreNow } = await import("../../dist/server/workflow/record-store-sync.mjs");
+  const [OLD_ID, LATER_ID] = ["0123456789abcdef0123456789abcdef", "fedcba9876543210fedcba9876543210"];
+  const original = requirementFile("Billing");
+  const { remote, a, b } = await rawStores(context, { "artifacts/requirements/billing.md": original, "artifact-identity/requirements/billing.md": identityFile(OLD_ID) });
+  // The upstream comments on the file; this machine removed it and wrote other text at its path, with an identity of its own.
+  const commented = `artifact-comments/requirements/billing.md/${commentName(1)}`;
+  await put(a, { [commented]: `${JSON.stringify(syncedComment({ text: "On the first file." }))}\n` });
+  push(a, "comment");
+  await put(b, { "artifacts/requirements/billing.md": LATER, "artifact-identity/requirements/billing.md": identityFile(LATER_ID) });
+  const synced = await syncRecordStoreNow(b);
+  assert.equal(synced.state, "conflicts", synced.message);
+  const atHead = (file) => { try { return git(b, "show", `HEAD:${file}`); } catch { return null; } };
+  assert.equal(atHead("artifacts/requirements/billing.md"), original.trimEnd(), "the upstream's file keeps the location");
+  assert.equal(JSON.parse(atHead(commented) ?? "null")?.text, "On the first file.", "with its comment");
+  assert.deepEqual(JSON.parse(atHead("artifact-identity/requirements/billing.md") ?? "null"), { id: OLD_ID }, "and its identity");
+  const saved = (await savedCopies(b)).filter((file) => file.endsWith(path.join("artifacts", "requirements", "billing.md")));
+  assert.equal(saved.length, 1, "the later file is saved");
+  assert.equal(await readFile(saved[0], "utf8"), LATER);
+  assert.equal(synced.conflicts.filter((item) => JSON.stringify(item).includes("artifacts/requirements/billing.md")).length, 1, "and named once");
+  assert.equal(git(remote, "show", "main:artifacts/requirements/billing.md"), original.trimEnd(), "the remote keeps the upstream's file");
+  assert.ok(remoteTree(remote).includes(commented), "and its comment");
+});
+
+test("clause 42: a merge rewrites location only in a comment of the form Prism writes, so no bytes of a file in a comment folder stop it", async (context) => {
+  const { syncRecordStoreNow } = await import("../../dist/server/workflow/record-store-sync.mjs");
+  const ID = "0123456789abcdef0123456789abcdef";
+  const [from, to] = ["plans/foo/slice.md", "repositories/api/plans/foo/slice.md"];
+  // A file named like a comment whose JSON names the artifact's location and nests 6000 arrays deep, which JSON.parse reads and JSON.stringify cannot write.
+  const deep = `{"location":"${from}","x":${"[".repeat(6000)}${"]".repeat(6000)}}\n`;
+  const planted = `artifact-comments/${from}/${commentName(1)}`;
+  const { remote, a, b } = await rawStores(context, { [`artifacts/${from}`]: "# Foo\n", [`artifact-identity/${from}`]: identityFile(ID), "artifacts/plans/bar/slice.md": "# Bar\n", [planted]: deep });
+  // The upstream moves the artifact to the repository scope as move_scope does, and this machine comments on another artifact, so its sync merges.
+  await put(a, { [`artifacts/${from}`]: null, [`artifact-identity/${from}`]: null, [planted]: null, [`artifacts/${to}`]: "# Foo\n", [`artifact-identity/${to}`]: identityFile(ID) });
+  push(a, "move");
+  const own = `artifact-comments/plans/bar/slice.md/${commentName(2)}`;
+  await put(b, { [own]: `${JSON.stringify(syncedComment({ location: "plans/bar/slice.md", text: "On bar." }))}\n` });
+  const synced = await syncRecordStoreNow(b);
+  assert.ok(["ok", "conflicts"].includes(synced.state), `${synced.state}: ${synced.message}`);
+  assert.ok(remoteTree(remote).includes(own), "this machine's comment reaches the remote");
+  assert.equal(git(remote, "show", `main:artifacts/${to}`), "# Foo", "the moved artifact stays where the upstream moved it");
+  const again = await syncRecordStoreNow(b);
+  assert.equal(again.state, "ok", again.message);
+});

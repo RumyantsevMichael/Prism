@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -853,6 +853,138 @@ test("clause 25: a status record whose placement at a moved artifact's location 
   const second = await syncRecordStoreNow(b);
   assert.equal(second.state, "ok", second.message);
   assert.equal(git(remote, "ls-tree", "-r", "--name-only", "main").split("\n").some((file) => Buffer.byteLength(file) > 512), false, "the remote holds no path beyond the bounds");
+});
+
+const given = (location) => createHash("sha256").update(location, "utf8").digest("hex").slice(0, 32);
+
+test("clause 25: no two artifacts of a tree share an identity, also where crafted identity files name other locations' identities, so a merge removes none and keeps this machine's edit", async (context) => {
+  // b.md's identity file holds the identity that a.md's location gives, and c.md's the identity that b.md's location gives.
+  const [A, B, C] = ["requirements/a.md", "requirements/b.md", "requirements/c.md"];
+  const status = (location) => `artifact-status/${location}/status.json`;
+  const { remote, a, b } = await rawStores(context, {
+    [`artifacts/${A}`]: requirementFile("A"), [`artifacts/${B}`]: requirementFile("B"), [`artifacts/${C}`]: requirementFile("C"),
+    [`artifact-identity/${B}`]: identityFile(given(A)), [`artifact-identity/${C}`]: identityFile(given(B)),
+    [status(B)]: record({ status: "Draft", of: "B" }), [status(C)]: record({ status: "Draft", of: "C" })
+  });
+  // This machine edits b.md; the upstream adds an unrelated file, so the sync merges.
+  const edited = requirementFile("B").replace("do the thing", "do the thing that b asked");
+  await put(b, { [`artifacts/${B}`]: edited });
+  await put(a, { "artifacts/requirements/z.md": requirementFile("Z") });
+  push(a, "unrelated");
+  const synced = await syncRecordStoreNow(b);
+  assert.notEqual(synced.state, "merge_failed", synced.message);
+  for (const [location, text, of] of [[A, requirementFile("A"), null], [B, edited, "B"], [C, requirementFile("C"), "C"]]) {
+    assert.equal(atHead(b, `artifacts/${location}`), text.trimEnd(), `${location} keeps its own bytes`);
+    assert.equal(git(remote, "show", `main:artifacts/${location}`), text.trimEnd(), `and the remote holds them`);
+    if (of) assert.equal(JSON.parse(atHead(b, status(location)) ?? "null")?.of, of, `${location} keeps its own status record`);
+  }
+  assert.deepEqual(await savedBelow(b), {}, "nothing needed saving");
+});
+
+test("clause 25: a sync refuses an upstream file where Prism keeps folders of identity files, as it refuses one where it keeps folders of status records", async (context) => {
+  const { a, b } = await rawStores(context, { "artifacts/plans/foo/slice.md": "# Foo\n", "artifact-identity/plans/foo/slice.md": identityFile(OLD_ID) });
+  // The upstream drops the identity folder of plans and writes a file in its place, which a fast-forward would write to every machine's disk.
+  await rm(path.join(a, "artifact-identity", "plans"), { recursive: true, force: true });
+  await put(a, { "artifact-identity/plans": identityFile(LATER_ID) });
+  push(a, "a file where identity folders are");
+  assert.equal((await unsafeStoreEntry(a, "HEAD"))?.path, "artifact-identity/plans", "the upstream holds an entry no store may hold");
+  const synced = await syncRecordStoreNow(b);
+  assert.equal(synced.state, "merge_failed", synced.message);
+  assert.equal((await lstat(path.join(b, "artifact-identity", "plans")).catch(() => null))?.isFile() ?? false, false, "the file never reaches this machine");
+  for (const [file, removed] of [["artifact-identity/repositories/api", "artifact-identity/plans"], ["artifact-identity/requirements", "artifact-identity/repositories/api"]]) {
+    await put(a, { [removed]: null, [file]: identityFile(LATER_ID) });
+    git(a, "add", "-A");
+    git(a, "commit", "-q", "-m", `a file at ${file}`);
+    assert.equal((await unsafeStoreEntry(a, "HEAD"))?.path, file, `${file} is no artifact location`);
+  }
+});
+
+test("clause 25: an entry at an artifact's identity path that is no identity file, such as a folder a sync brought, never makes a create, move, or removal fail or half apply", async (context) => {
+  const place = await workspace(context);
+  const prism = await server(context, place, await checkout(place, "api"));
+  const identityPath = (location) => path.join(place.store, "artifact-identity", ...location.split("/"));
+  const strayFolder = async (location) => {
+    await rm(identityPath(location), { recursive: true, force: true });
+    await mkdir(identityPath(location), { recursive: true });
+    await writeFile(path.join(identityPath(location), "x"), identityFile(LATER_ID));
+  };
+  const isIdentityFile = async (location) => (await lstat(identityPath(location)).catch(() => null))?.isFile() && IDENTITY.test(JSON.parse(await readFile(identityPath(location), "utf8")).id);
+
+  // A removal over a folder at the identity path removes the artifact and leaves nothing at that path.
+  const plan = "docs/plans/foo/slice.md";
+  const written = await writeArtifact(prism, plan, "# Foo\n");
+  await strayFolder("plans/foo/slice.md");
+  ok(await prism.call("update_artifact", { operations: [{ op: "remove", path: plan, expectedVersion: written.version }] }));
+  assert.equal(await lstat(identityPath("plans/foo/slice.md")).catch(() => null), null, "the removal leaves no entry at the identity path");
+  refused(await prism.call("get_artifact", { path: plan }), "artifact_not_found");
+
+  // A create over such a folder succeeds and writes an identity file there.
+  await strayFolder("plans/foo/slice.md");
+  await writeArtifact(prism, plan, "# Foo again\n");
+  assert.ok(await isIdentityFile("plans/foo/slice.md"), "the create writes an identity file in place of the folder");
+
+  // A create below a file that stands where an identity folder belongs succeeds too.
+  await rm(identityPath("plans"), { recursive: true, force: true });
+  await writeFile(identityPath("plans"), identityFile(OLD_ID));
+  await writeArtifact(prism, "docs/plans/bar/slice.md", "# Bar\n");
+  assert.ok(await isIdentityFile("plans/bar/slice.md"), "the create writes its identity below the stray file's path");
+
+  // A move to another scope over a folder at the identity path carries a new identity and leaves nothing at the old path.
+  const requirement = await writeArtifact(prism, FILE, requirementFile("Billing"));
+  await strayFolder("requirements/billing.md");
+  const moved = ok(await prism.call("update_artifact", { operations: [{ op: "move_scope", path: FILE, expectedVersion: requirement.version, scope: "repository" }] })).artifacts[0];
+  assert.equal(moved.scope.label, "api");
+  assert.equal(await lstat(identityPath("requirements/billing.md")).catch(() => null), null, "the move leaves no entry at the old identity path");
+  assert.ok(await isIdentityFile("repositories/api/requirements/billing.md"), "and an identity file at the new one");
+  assert.equal(ok(await prism.call("get_artifact", { path: FILE })).scope.label, "api");
+});
+
+test("clause 25: where the upstream removed one artifact and moved another onto its path, this machine's change to the moved one lands on it there", async (context) => {
+  const [from, onto] = ["repositories/api/requirements/billing.md", "requirements/billing.md"];
+  const status = (location) => `artifact-status/${location}/status.json`;
+  const { remote, a, b } = await rawStores(context, {
+    [`artifacts/${from}`]: requirementFile("Moved"), [`artifact-identity/${from}`]: identityFile(OLD_ID), [status(from)]: record({ status: "Draft", of: "moved" }),
+    [`artifacts/${onto}`]: requirementFile("Removed"), [`artifact-identity/${onto}`]: identityFile(LATER_ID), [status(onto)]: record({ status: "Draft", of: "removed" })
+  });
+  // The upstream removes the workspace artifact and moves the repository's one onto its path with its identity and status record.
+  await put(a, {
+    [`artifacts/${from}`]: null, [`artifact-identity/${from}`]: null, [status(from)]: null,
+    [`artifacts/${onto}`]: requirementFile("Moved"), [`artifact-identity/${onto}`]: identityFile(OLD_ID), [status(onto)]: record({ status: "Draft", of: "moved" })
+  });
+  push(a, "remove one, move the other onto its path");
+  // This machine answers the moved artifact's approval at its old location.
+  await put(b, { [status(from)]: record({ status: "Approved", of: "moved" }) });
+  const synced = await syncRecordStoreNow(b);
+  assert.notEqual(synced.state, "merge_failed", synced.message);
+  assert.equal(atHead(b, `artifacts/${onto}`), requirementFile("Moved").trimEnd(), "the moved artifact holds the path");
+  assert.deepEqual(JSON.parse(atHead(b, status(onto)) ?? "null"), { status: "Approved", of: "moved" }, "with this machine's change to its status record");
+  assert.deepEqual(JSON.parse(atHead(b, `artifact-identity/${onto}`) ?? "null"), { id: OLD_ID }, "and its identity");
+  assert.equal(headTree(b).some((file) => file.includes(from)), false, "nothing stays at its old location");
+  assert.deepEqual(JSON.parse(git(remote, "show", `main:${status(onto)}`)), { status: "Approved", of: "moved" }, "the remote holds the change");
+});
+
+test("clause 25: where this machine removed a file and wrote another at its path while the upstream only asked the first one's approval, the location keeps the upstream's file with its pending gate and saves the later one", async (context) => {
+  const original = requirementFile("Billing");
+  const { remote, a, b } = await rawStores(context, {
+    "artifacts/requirements/billing.md": original,
+    "artifact-identity/requirements/billing.md": identityFile(OLD_ID),
+    "artifact-status/requirements/billing.md/status.json": record({ status: "Draft", by: "base" })
+  });
+  // The upstream asks the file's approval, which changes only its status record; this machine removed it and wrote other text at its path, with an identity and record of its own.
+  const asked = { status: "Draft", by: "base", gates: [{ id: "a1b2c3d4e5f6", state: "pending" }] };
+  await put(a, { "artifact-status/requirements/billing.md/status.json": record(asked) });
+  push(a, "ask approval");
+  await put(b, { "artifacts/requirements/billing.md": LATER, "artifact-identity/requirements/billing.md": identityFile(LATER_ID), "artifact-status/requirements/billing.md/status.json": record({ status: "Draft", by: "b" }) });
+  const synced = await syncRecordStoreNow(b);
+  assert.equal(synced.state, "conflicts", synced.message);
+  assert.equal(atHead(b, "artifacts/requirements/billing.md"), original.trimEnd(), "the upstream's file keeps the location");
+  assert.deepEqual(JSON.parse(atHead(b, "artifact-status/requirements/billing.md/status.json") ?? "null"), asked, "with its pending gate");
+  assert.deepEqual(JSON.parse(atHead(b, "artifact-identity/requirements/billing.md") ?? "null"), { id: OLD_ID }, "and its identity");
+  const saved = await savedBelow(b);
+  assert.equal(saved["artifacts/requirements/billing.md"], LATER, "the later file's text is saved");
+  assert.deepEqual(JSON.parse(saved["artifact-status/requirements/billing.md/status.json"] ?? "null"), { status: "Draft", by: "b" }, "and its status record");
+  assert.equal(synced.conflicts.filter((item) => JSON.stringify(item).includes("artifacts/requirements/billing.md")).length, 1, "the later file is named once");
+  assert.equal(git(remote, "show", "main:artifacts/requirements/billing.md"), original.trimEnd(), "the remote keeps the upstream's file");
 });
 
 test("clause 38: the accepted version is kept at approval and at design acceptance, and can be read", async (context) => {

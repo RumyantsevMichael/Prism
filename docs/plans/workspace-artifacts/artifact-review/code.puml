@@ -1,17 +1,17 @@
 @startuml
 title artifact-review
 
-component "artifact-comments\naddComment, listComments,\nform check, move, removal" as comments
-component "review-server\n/api/artifact, actions routes, 503 refusals" as server
+component "artifact-comments\naddComment, listComments pages,\nform check, move, removal" as comments
+component "review-server\n/api/artifact comment pages,\nactions routes, 503 refusals" as server
 component "actions\nartifact target, artifact.comment" as actions
-component "artifact-review view\nscope, diff, numbered lines, comments" as view
+component "artifact-review view\nscope, diff, numbered lines,\ncomments, More comments" as view
 component "line-diff\ndiffHtml" as diff
 component "preview view" as preview
-component "store-artifacts\nget_artifact comments,\nmove_scope and remove carry comments" as tools
+component "store-artifacts\nget_artifact comment pages,\nmove_scope and remove carry comments" as tools
 component "artifact-status\naccepted bytes" as status
 component "workspace-model\nrecent changes" as model
-component "record-store-sync\nmerge places synced comments\nby artifact identity,\nsaves the rest aside" as sync
-component "mcp\nreports saved comments,\nquotes only the comment form" as mcp
+component "record-store-sync\nmerge places synced comments\nby artifact identity,\nrewrites only comments of the form,\nsaves the rest aside" as sync
+component "mcp\nreports saved comments,\nquotes only the comment form,\nnotes within 32 KiB" as mcp
 
 server --> actions
 actions --> comments
