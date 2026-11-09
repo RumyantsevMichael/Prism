@@ -1207,6 +1207,37 @@ async function savedDerivedLine(item, argumentsValue) {
   return `${line}${said} (saved copy: ${item.savedAs})`;
 }
 
+// The notes of one tool result that name the files a store sync saved hold at most SAVED_NOTE_MAX bytes, whatever a sync brings:
+// each list's first line, which says what was saved and why, always stays, the entries past the bound are left out from the end unread,
+// and a last line counts them and names the store's sync folder, which holds every saved copy. Returns the lines.
+const SAVED_NOTE_MAX = 32 * 1024;
+const SAVED_FOLDER = `${path.sep}.prism-sync${path.sep}conflicts${path.sep}`;
+async function savedFilesNote(sections) {
+  if (!sections.length) return [];
+  const bytes = (line) => Buffer.byteLength(line, "utf8") + 1;
+  const folders = [...new Set(sections.flatMap((section) => section.items).map((item) => {
+    const at = item.savedAs.lastIndexOf(SAVED_FOLDER);
+    return at < 0 ? path.dirname(item.savedAs) : item.savedAs.slice(0, at + SAVED_FOLDER.length - 1);
+  }))];
+  const where = folders.length === 1 ? `the store's sync folder ${folders[0]} holds` : `the stores' sync folders ${folders.join(", ")} hold`;
+  const closing = (count) => `Prism left ${count} more saved ${count === 1 ? "file" : "files"} out of this note to keep it short; ${where} every saved copy.`;
+  let budget = SAVED_NOTE_MAX - bytes(closing(Number.MAX_SAFE_INTEGER)) - sections.reduce((sum, section) => sum + bytes(section.header), 0);
+  const lines = [];
+  let omitted = 0;
+  for (const section of sections) {
+    lines.push(section.header);
+    for (const [index, item] of section.items.entries()) {
+      if (omitted) { omitted += section.items.length - index; break; }
+      const entry = await section.line(item);
+      if (bytes(entry) > budget) { omitted += section.items.length - index; break; }
+      lines.push(entry);
+      budget -= bytes(entry);
+    }
+  }
+  if (omitted) lines.push(closing(omitted));
+  return lines;
+}
+
 // The move of a checkout's existing artifacts into its repository's scope says which files left the checkout, which stayed and why, and which tracked files still name them.
 // Its text holds at most ARTIFACT_MOVE_NOTE_MAX bytes: every section's header, which gives its count, always stays, list entries past that are left out from the end, and its last line counts them and names the ledger, which lists every move and kept file.
 // Every path it prints goes through shownPath, so no file name begins or ends a line of Prism's text.
@@ -1272,28 +1303,26 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
   // A status record that changed on both sides keeps the upstream one while its artifact stays; one, or a comment, whose artifact the store no longer holds left the store.
   const derived = [];
   for (const item of taken.filter((item) => item.statusOf || item.commentOn)) derived.push({ item, kept: Boolean(item.statusOf) && await holdsArtifact(item.store, item.statusOf) });
-  const conflictLines = [];
+  const sections = [];
   if (saved.length) {
-    conflictLines.push(`Store sync found ${plural(saved.length, "record")} that someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each record again and redo the change through Prism's tools if it still matters.`, ...saved.map((item) => `- ${item.record} (this machine's version: ${item.savedAs})`));
+    sections.push({ header: `Store sync found ${plural(saved.length, "record")} that someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each record again and redo the change through Prism's tools if it still matters.`, items: saved, line: async (item) => `- ${item.record} (this machine's version: ${item.savedAs})` });
   }
   if (artifacts.length) {
-    conflictLines.push(`Store sync found ${plural(artifacts.length, "artifact")} that this machine changed while another machine changed the same lines, or removed the file and wrote or moved another one to its path; the store kept the other machine's version and saved this machine's version. Read each artifact again with get_artifact and redo the change with update_artifact if it still matters.`);
-    for (const item of artifacts) conflictLines.push(await savedArtifactLine(item, argumentsValue));
+    sections.push({ header: `Store sync found ${plural(artifacts.length, "artifact")} that this machine changed while another machine changed the same lines, or removed the file and wrote or moved another one to its path; the store kept the other machine's version and saved this machine's version. Read each artifact again with get_artifact and redo the change with update_artifact if it still matters.`, items: artifacts, line: (item) => savedArtifactLine(item, argumentsValue) });
   }
-  const records = derived.filter((entry) => entry.kept);
+  const records = derived.filter((entry) => entry.kept).map((entry) => entry.item);
   if (records.length) {
-    conflictLines.push(`Store sync found ${plural(records.length, "status record")} of an artifact that this machine changed while another machine changed the same record, or removed the artifact and wrote or moved another one to its path; the store kept the other machine's record and saved this machine's. Read each artifact again with get_artifact, and ask its approval again with ask_approval if this machine's answer still matters for the file the store now holds.`);
-    for (const { item } of records) conflictLines.push(`- ${await savedDerivedLine(item, argumentsValue)}`);
+    sections.push({ header: `Store sync found ${plural(records.length, "status record")} of an artifact that this machine changed while another machine changed the same record, or removed the artifact and wrote or moved another one to its path; the store kept the other machine's record and saved this machine's. Read each artifact again with get_artifact, and ask its approval again with ask_approval if this machine's answer still matters for the file the store now holds.`, items: records, line: async (item) => `- ${await savedDerivedLine(item, argumentsValue)}` });
   }
-  const stranded = derived.filter((entry) => !entry.kept);
+  const stranded = derived.filter((entry) => !entry.kept).map((entry) => entry.item);
   if (stranded.length) {
-    const counted = [[stranded.filter((entry) => entry.item.statusOf).length, "status record"], [stranded.filter((entry) => entry.item.commentOn).length, "comment"]].filter(([count]) => count).map(([count, noun]) => plural(count, noun)).join(" and ");
-    conflictLines.push(`Store sync took ${counted} out of the store because the store no longer holds the artifact ${stranded.length === 1 ? "it was" : "they were"} made on, as when one machine changed an artifact while another removed it, also when that machine then wrote another file at its path, or because the place it would take holds a path too long for a store to share, and saved ${stranded.length === 1 ? "it" : "them"} beside the store. Tell the person, and redo what still matters on an artifact the store holds.`);
-    for (const { item } of stranded) conflictLines.push(`- ${await savedDerivedLine(item, argumentsValue)}`);
+    const counted = [[stranded.filter((item) => item.statusOf).length, "status record"], [stranded.filter((item) => item.commentOn).length, "comment"]].filter(([count]) => count).map(([count, noun]) => plural(count, noun)).join(" and ");
+    sections.push({ header: `Store sync took ${counted} out of the store because the store no longer holds the artifact ${stranded.length === 1 ? "it was" : "they were"} made on, as when one machine changed an artifact while another removed it, also when that machine then wrote another file at its path, or because the place it would take holds a path too long for a store to share, and saved ${stranded.length === 1 ? "it" : "them"} beside the store. Tell the person, and redo what still matters on an artifact the store holds.`, items: stranded, line: async (item) => `- ${await savedDerivedLine(item, argumentsValue)}` });
   }
   if (files.length) {
-    conflictLines.push(`Store sync took the upstream's version of ${plural(files.length, "store file")} whose local version this machine's sync had withheld, because another machine could not take it; the store kept the upstream's version and saved this machine's version. Fix the file from the saved copy if the change still matters.`, ...files.map((item) => `- ${item.file} in the record store at ${item.store} (this machine's version: ${item.savedAs})`));
+    sections.push({ header: `Store sync took the upstream's version of ${plural(files.length, "store file")} whose local version this machine's sync had withheld, because another machine could not take it; the store kept the upstream's version and saved this machine's version. Fix the file from the saved copy if the change still matters.`, items: files, line: async (item) => `- ${item.file} in the record store at ${item.store} (this machine's version: ${item.savedAs})` });
   }
+  const conflictLines = await savedFilesNote(sections);
   // A decided move, the call's own or one that a refused, cancelled, or background call left, removes the checkout's files only here, right before a result of a tool call of the checkout is written,
   // so the result that follows names every file it removed; a refused or cancelled call never gets here and removes nothing.
   await finishUnfinishedMoves(call.roots, { proceed, writes: call.writes }).catch(() => {});

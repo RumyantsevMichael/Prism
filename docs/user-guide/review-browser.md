@@ -239,6 +239,8 @@ A file is accepted when a person approves it, when the design of the slices whos
 Below that, the card shows the lines that changed since the accepted version, with the line numbers of both versions, or the whole file as added when no version was accepted yet.
 It then lists the comments on the file, oldest first, each with its author's Git name, the host it came from, the line it names, and its time, and marks a comment made on an earlier version of the file.
 Comments that a record store sync brings from other machines appear the next time the page checks the file, and comments from this machine's tabs appear at once.
+The heading counts every comment on the file, while the list shows the first 20; while more follow, select **More comments** under the list to show the next 20, until every comment shows.
+Agents read the comments in the same pages of at most 20, with the total and where the next page starts.
 
 To find a line's number, open **Lines of the current version** on the Review card, which lists every line of the file as it is now with its number, also when the file matches its accepted version and for lines that the changes leave out.
 The list is closed when the page opens, and it stays open or closed as you left it while comments arrive and the file changes, with the line you scrolled to still in view.
@@ -249,6 +251,8 @@ A file's comments belong to it: when an agent moves the file to another scope it
 A comment you are still typing stays in the form when the file moves to another scope, and Comment then sends it to the file in its new scope.
 A comment made on one machine while another machine moves the file follows the file once the two machines' stores have synced.
 A comment made on one machine while another machine removes the file leaves the store when they sync, also when that machine then writes or moves another file to the same path, is saved beside this machine's store, and is named with its line and text to the agent in its next Prism result, so nothing you wrote is lost and it never shows on the later file.
+When your comment reached the store first, and the other machine had removed the file and written another at its path, the file you commented on stays at the path with your comment, and the other machine's later file is saved and named to its agent instead.
+The notes that name saved files hold at most 32 KiB in one result; when a sync saves more, the note counts the files it leaves out and names the store's `.prism-sync` folder, which holds every saved copy.
 The card and Recent changes on Attention take only comments and approvals in the form Prism writes them, so a damaged file that a sync brings shows nowhere, and Recent changes lists an entry dated more than five minutes ahead of this machine's clock only once that time comes.
 
 ## Find artifacts

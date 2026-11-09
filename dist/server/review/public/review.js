@@ -1363,7 +1363,7 @@ async function showArtifact(path) {
     ${artifactReviewHtml(data, state)}
     ${documentCard}`;
   // A store artifact shows its review view above its content, and its comment form keeps an unsent comment across the page's live updates.
-  mountArtifactReview(artifact, data, { actionApi, state });
+  mountArtifactReview(artifact, data, { actionApi, state, fetchComments: (commentOffset) => fetchJson(`./api/artifact?path=${encodeURIComponent(data.path)}&commentOffset=${commentOffset}`) });
   pageBar.setActions(structured ? modeButtons(state, path) : []);
   if (structured) {
     const container = document.createElement("div");

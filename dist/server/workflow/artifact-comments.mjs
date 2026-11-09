@@ -134,10 +134,21 @@ const oldestFirst = (comments) => comments.sort((left, right) => (left.value.at 
 // The folder of an artifact's comments, or null when a link at artifact-comments/ or at a folder below it would lead a read elsewhere.
 const resolvedFolder = (seen, scope, address) => resolveStatusFile(seen, commentsFolder(scope, address)).catch(() => null);
 
-/** The comments on an artifact in a scope of a seen store, oldest first, including those a sync brought from other machines. */
-export async function listComments(seen, scope, address) {
+/** The most comments one read returns, so a sync that brings any number of them puts a bounded amount of text in one result. */
+export const COMMENT_PAGE = 20;
+
+/**
+ * One page of the comments on an artifact in a scope of a seen store, oldest first, including those a sync brought from other machines:
+ * { comments, totalComments, nextCommentOffset }, with at most COMMENT_PAGE comments from the 1-based offset, the number of all of them,
+ * and the 1-based position of the first one left out, or null when none is, so reads from 1, each from the last one's nextCommentOffset, give every comment once.
+ */
+export async function listComments(seen, scope, address, offset = 1) {
   const target = await resolvedFolder(seen, scope, address);
-  return target ? oldestFirst(await folderComments(target, artifactLocation(scope, address))).map(({ name, value }) => shown(name, value)) : [];
+  const all = target ? oldestFirst(await folderComments(target, artifactLocation(scope, address))) : [];
+  const start = Math.min(offset, all.length + 1) - 1;
+  const comments = all.slice(start, start + COMMENT_PAGE).map(({ name, value }) => shown(name, value));
+  const next = start + comments.length;
+  return { comments, totalComments: all.length, nextCommentOffset: next < all.length ? next + 1 : null };
 }
 
 /**

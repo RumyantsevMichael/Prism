@@ -154,6 +154,19 @@
   font-weight: var(--prism-font-weight-semibold);
 }
 
+/* The listed comments and the More comments button below them, which reads the next ones. */
+.artifact-comment-list {
+  display: grid;
+  gap: var(--prism-space-4);
+  min-width: 0;
+}
+
+.artifact-comments-more {
+  display: flex;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
 .artifact-comments {
   display: grid;
   gap: var(--prism-space-4);

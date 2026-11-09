@@ -49,6 +49,7 @@ export const GET_ARTIFACT_SCHEMA = object({
   ...scopeFields,
   offset: { type: "integer", minimum: 1, maximum: 9007199254740991 },
   limit: { type: "integer", minimum: 1, maximum: PAGE_LINES },
+  commentOffset: { type: "integer", minimum: 1, maximum: 9007199254740991 },
   accepted: { type: "boolean" }
 }, ["projectRoot"]);
 
@@ -68,7 +69,7 @@ const SCOPE_TEXT = "scope is \"workspace\", \"repository\" for this checkout's r
 export const ARTIFACT_TOOLS = Object.freeze([
   {
     name: "get_artifact",
-    description: `In a project whose .prism/workflow.md names a record store, read a descriptive artifact the store holds: a requirement, an ADR, a plan file such as slice.md, the glossary, or the roadmap view. Address it by the project-relative path that the configured Requirements, ADRs, Plans, Glossary, and Roadmap paths give it; feature files, the user guide, tests, and code stay in the checkout and are refused with not_an_artifact. Every name below a configured folder, and the configured Glossary and Roadmap file names, must begin with an ASCII letter or digit, hold only ASCII letters, digits, ".", "_", and "-", not end in "." or ".lock", and be no Windows device name such as con, aux, nul, com1, or lpt1 before its first "."; any other is refused with artifact_name_invalid, data.invalidName holding the first such name, and listings leave such files out. A file read returns path, scope, kind, version (sha256 of its bytes, which update_artifact takes as expectedVersion), bytes, totalLines, offset, content, and nextOffset: content is whole lines from offset (1-based) up to limit lines (default 2000) and 64 KiB, at least one line, so read again from nextOffset until it is null. A requirement or ADR also returns status, its recorded status, which only a person's answer at a gate changes, and statusMismatch with written, recorded, and a message when its Status: line says otherwise; every file returns acceptedVersion and changedSinceAccepted against the bytes a person last accepted, approval once one is recorded, latestAnswer with the gate, status, choice (approve or request-changes), note, answeredAt, by, and entry (the id of the review app's history entry that applied it) of the person's latest answer at an approval gate, so requested changes reach an agent that no longer waits, and accepted true reads those accepted bytes. Every file read also returns comments, the people's comments on the file from the review browser, oldest first and including those a store sync brought from other machines, each with id, version (the version it was made on), line, text, author (name and host), at, and entry (the id of the review app's history entry that applied it); the comments move with the file to another scope and are removed with it. Without path, or with a folder, it lists the artifacts this checkout sees below it with path, scope, kind, version, and bytes, at most 2000 with truncated true when more exist. The checkout sees the workspace scope, its repository's scope, and its repository's component scopes the store holds; a path that two of them hold is refused with artifact_ambiguous, listing their labels, until ${SCOPE_TEXT}. Refusals: artifact_not_found, artifact_not_text, scope_invalid, component_unknown, store_not_configured when the project has no store, and the store's own refusal, such as store_unavailable or a repository name refusal, when it cannot be used. Reads never change a checkout file.`,
+    description: `In a project whose .prism/workflow.md names a record store, read a descriptive artifact the store holds: a requirement, an ADR, a plan file such as slice.md, the glossary, or the roadmap view. Address it by the project-relative path that the configured Requirements, ADRs, Plans, Glossary, and Roadmap paths give it; feature files, the user guide, tests, and code stay in the checkout and are refused with not_an_artifact. Every name below a configured folder, and the configured Glossary and Roadmap file names, must begin with an ASCII letter or digit, hold only ASCII letters, digits, ".", "_", and "-", not end in "." or ".lock", and be no Windows device name such as con, aux, nul, com1, or lpt1 before its first "."; any other is refused with artifact_name_invalid, data.invalidName holding the first such name, and listings leave such files out. A file read returns path, scope, kind, version (sha256 of its bytes, which update_artifact takes as expectedVersion), bytes, totalLines, offset, content, and nextOffset: content is whole lines from offset (1-based) up to limit lines (default 2000) and 64 KiB, at least one line, so read again from nextOffset until it is null. A requirement or ADR also returns status, its recorded status, which only a person's answer at a gate changes, and statusMismatch with written, recorded, and a message when its Status: line says otherwise; every file returns acceptedVersion and changedSinceAccepted against the bytes a person last accepted, approval once one is recorded, latestAnswer with the gate, status, choice (approve or request-changes), note, answeredAt, by, and entry (the id of the review app's history entry that applied it) of the person's latest answer at an approval gate, so requested changes reach an agent that no longer waits, and accepted true reads those accepted bytes. Every file read also returns comments, the people's comments on the file from the review browser, oldest first and including those a store sync brought from other machines, each with id, version (the version it was made on), line, text, author (name and host), at, and entry (the id of the review app's history entry that applied it), at most 20 in one read, with totalComments, the number of all of them, and nextCommentOffset, the 1-based position of the first one left out, or null; read the rest with commentOffset (1-based, default 1) set to nextCommentOffset until it is null. The comments move with the file to another scope and are removed with it. Without path, or with a folder, it lists the artifacts this checkout sees below it with path, scope, kind, version, and bytes, at most 2000 with truncated true when more exist. The checkout sees the workspace scope, its repository's scope, and its repository's component scopes the store holds; a path that two of them hold is refused with artifact_ambiguous, listing their labels, until ${SCOPE_TEXT}. Refusals: artifact_not_found, artifact_not_text, scope_invalid, component_unknown, store_not_configured when the project has no store, and the store's own refusal, such as store_unavailable or a repository name refusal, when it cannot be used. Reads never change a checkout file.`,
     inputSchema: GET_ARTIFACT_SCHEMA,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
@@ -375,7 +376,7 @@ export async function getArtifact(input) {
     return {
       path: file, scope, kind: address.kind, version: artifactVersion(bytes), bytes: bytes.length, totalLines: read.totalLines, offset, content: read.content, nextOffset: read.nextOffset,
       ...statusFields(address.kind, status, record.version), ...(mismatch ? { statusMismatch: mismatch } : {}), ...(input.accepted ? { accepted: true } : {}),
-      comments: await listComments(seen, scope, address)
+      ...(await listComments(seen, scope, address, input.commentOffset ?? 1))
     };
   });
 }
@@ -940,11 +941,12 @@ export async function readStoreArtifact(projectRoot, file) {
 
 /**
  * What the review browser shows of a stored artifact at a project-relative path, or null when no seen scope holds it:
- * { path, scope, bytes, version, modifiedAt, accepted, changed, comments }, where accepted is { version, content } of the bytes a person last accepted,
- * with content null when the store lacks those bytes, or null when none was accepted, changed whether the bytes differ from them, and comments the artifact's comments, oldest first.
+ * { path, scope, bytes, version, modifiedAt, accepted, changed, comments, totalComments, nextCommentOffset }, where accepted is { version, content } of the bytes a person last accepted,
+ * with content null when the store lacks those bytes, or null when none was accepted, changed whether the bytes differ from them,
+ * and comments one page of the artifact's comments, oldest first, from the 1-based commentOffset, with their total and the offset of the next page, as get_artifact returns them.
  * Two seen scopes that hold the path are refused with artifact_ambiguous, as a read without scope is.
  */
-export async function reviewStoreArtifact(projectRoot, file) {
+export async function reviewStoreArtifact(projectRoot, file, { commentOffset = 1 } = {}) {
   return refusing(async () => {
     const { file: normalized, address } = await ownArtifact(projectRoot, file);
     const seen = await seenScopes(projectRoot);
@@ -959,7 +961,7 @@ export async function reviewStoreArtifact(projectRoot, file) {
       path: normalized, scope, bytes: contentOf(normalized, record), version: record.version, modifiedAt,
       accepted: acceptedVersion === null ? null : { version: acceptedVersion, content: acceptedText },
       changed: acceptedVersion !== record.version,
-      comments: await listComments(seen, scope, address)
+      ...(await listComments(seen, scope, address, commentOffset))
     };
   });
 }

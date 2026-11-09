@@ -295,6 +295,7 @@ The result quotes a saved comment's line and text only when the saved file is a 
 A status record or comment whose place at the moved file would need a path longer than a store can share, a name of more than 200 bytes or a path of more than 512, is saved and named in the same way, while the rest of the change is placed.
 Each file merges by itself, so a file that only one machine wrote stays, even in a folder that takes the place of a file both machines removed.
 The next tool result of each running Prism server on that machine that uses the store names the artifact's path, its scope, and the saved copy, and a server started later names it too until a tool result has carried it.
+The notes that name saved files hold at most 32 KiB in one result: each list keeps the line that says what was saved and why, entries past the bound are left out from the end, and a last line counts them and names the store's sync folder, which holds every saved copy.
 Read the artifact again with `get_artifact`, and redo the change with `update_artifact` if it still matters.
 A sync that starts while an artifact update is still writing leaves that update to the next sync, so it never merges the upstream over a change in progress.
 A sync saves the local versions that lost under `.prism-sync/saving/` before it replaces any file, so a sync that stops partway, for example because its server exits when the host closes, loses none of them.

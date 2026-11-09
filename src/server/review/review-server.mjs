@@ -344,16 +344,17 @@ async function readReviewed(projectRoot, file) {
 }
 
 // What the review view shows of a store artifact beside its content: its scope, version, the version a person last accepted with its text, whether it changed since, and its comments.
-async function reviewedStoreArtifact(projectRoot, file) {
-  const stored = await reviewStoreArtifact(projectRoot, file);
+// The comments come one page at a time, from the 1-based commentOffset, with their total and the offset of the next page.
+async function reviewedStoreArtifact(projectRoot, file, options) {
+  const stored = await reviewStoreArtifact(projectRoot, file, options);
   if (stored === null) throw Object.assign(new Error(`${file} is not in the record store.`), { code: "ENOENT" });
-  const { scope, version, accepted, changed, comments } = stored;
-  return { content: stored.bytes.toString("utf8"), modifiedAt: stored.modifiedAt, artifact: { scope, version, accepted, changed, comments } };
+  const { scope, version, accepted, changed, comments, totalComments, nextCommentOffset } = stored;
+  return { content: stored.bytes.toString("utf8"), modifiedAt: stored.modifiedAt, artifact: { scope, version, accepted, changed, comments, totalComments, nextCommentOffset } };
 }
 
-export async function loadArtifact(projectRoot, artifactPath) {
+export async function loadArtifact(projectRoot, artifactPath, { commentOffset = 1 } = {}) {
   if (await inArtifactStore(projectRoot, artifactPath)) {
-    const { content, modifiedAt, artifact } = await reviewedStoreArtifact(projectRoot, artifactPath);
+    const { content, modifiedAt, artifact } = await reviewedStoreArtifact(projectRoot, artifactPath, { commentOffset });
     if (path.extname(artifactPath).toLowerCase() === ".json") return { path: artifactPath, content, diagrams: [], modifiedAt, artifact, ...(await loadJsonArtifact(projectRoot, artifactPath, content)) };
     return { path: artifactPath, content, diagrams: await linkedDiagrams(projectRoot, artifactPath, content), modifiedAt, artifact };
   }
@@ -908,6 +909,12 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       send(response, 200, JSON.stringify(await searchArtifacts(projectRoot, url.searchParams.get("q"))), "application/json; charset=utf-8");
     } else if (route === "/api/artifact") {
       const artifactPath = url.searchParams.get("path");
+      // A store artifact's comments come one page at a time from commentOffset, which names a whole number of at least 1 in ASCII digits.
+      const commentOffset = url.searchParams.has("commentOffset") ? url.searchParams.get("commentOffset") : "1";
+      if (!/^[0-9]+$/.test(commentOffset) || Number(commentOffset) < 1) {
+        send(response, 400, "commentOffset names the 1-based position of the first comment to read, a whole number of at least 1 in ASCII digits.");
+        return;
+      }
       // Only listed documents and filtered source files are served, never an arbitrary project path such as .env.
       // A path that leaves the project still fails here, while a moved or deleted file answers 404 below.
       await resolveProjectFile(projectRoot, artifactPath).catch((error) => {
@@ -925,7 +932,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       }
       let loaded;
       try {
-        loaded = await loadArtifact(projectRoot, artifactPath);
+        loaded = await loadArtifact(projectRoot, artifactPath, { commentOffset: Number(commentOffset) });
       } catch (error) {
         if (recordsUnavailable(error)) {
           send(response, 503, await artifactStoreRefusal(projectRoot) ?? withoutCredentials(error.message));
