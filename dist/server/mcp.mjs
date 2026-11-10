@@ -12,7 +12,7 @@ import path from "node:path";
 import { recordStoreOf, restoreMigrationReports, takeMigrationReports } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
 import { confirmSavedConflicts, releaseSavedConflicts, takeSavedConflicts } from "./workflow/record-store-sync.mjs";
-import { withCallSession } from "./workflow/slice-claims.mjs";
+import { callSessionId, withCallSession } from "./workflow/slice-claims.mjs";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
 import {
   listRepositoryIntelligenceProviders,
@@ -36,7 +36,7 @@ import { opensAtStart } from "./review/open-at-start.mjs";
 import { reviewAppDirectory, reviewAppDisabled } from "./review/review-app-discovery.mjs";
 import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
 import { historyMarksText, shippedHistory } from "./workflow/shipped-history.mjs";
-import { INITIATIVE_TOOLS, InitiativeError, getInitiative, initiativeAcknowledgement, updateInitiative } from "./workflow/initiative.mjs";
+import { INITIATIVE_TOOLS, InitiativeError, claimedByUpdate, getInitiative, initiativeAcknowledgement, initiativeWork, readInitiative, requireClaimedWork, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
 import { VERIFY_SLICE_SCHEMA, cancelVerifications, verificationBrief, verifySlice } from "./workflow/verification.mjs";
 import { cancelRecordSyncs } from "./workflow/record-store-sync.mjs";
@@ -890,7 +890,7 @@ async function callGateWait(argumentsValue, metadata, requestId) {
   }
   let value;
   const unsupported = waitUnsupportedReason();
-  const hookSession = typeof metadata?.sessionId === "string" && metadata.sessionId ? metadata.sessionId : null;
+  const hookSession = callSessionId(metadata);
   // Only the initiative's coordinator when the wait starts has it end on the person's changes; one step of the session tells whether it coordinates and which entries it holds at its start.
   // Every wait that names an initiative holds its gates in the session's notice record while it runs, so their answers reach the agent once, in its result, whichever agent waited.
   const initiative = argumentsValue.initiative;
@@ -1215,7 +1215,28 @@ async function withPersonChanges(name, argumentsValue, value) {
   return { ...value, content: [...value.content, { type: "text", text: personChangesText(changes) }], structuredContent: { ...value.structuredContent, personChanges: changes } };
 }
 
+// The tools that work on one slice: each needs its caller's live claim on the slice or an ancestor.
+// A dependents' run checks a finished scope whose leaves are all done, so it works on no slice in progress and needs no claim.
+const SLICE_WORK_TOOLS = new Set(["verify_slice", "update_review", "update_change_map", "update_design_view"]);
+
+// An agent's tool call that works on slices is refused before it changes anything unless the caller holds the claim; the person's actions in the review app never come through here.
+async function requireCallClaims(name, argumentsValue) {
+  if (typeof argumentsValue?.initiative !== "string") return;
+  if (name === "update_initiative") {
+    const projectRoot = await requestedProjectRoot(argumentsValue);
+    const record = await readInitiative(projectRoot, argumentsValue.initiative).then(({ loaded }) => loaded?.record, () => null);
+    const work = initiativeWork(argumentsValue.operations, record);
+    await requireClaimedWork({ projectRoot, initiative: argumentsValue.initiative, tool: name, work, claimedHere: claimedByUpdate(argumentsValue.operations) });
+    return;
+  }
+  if (!SLICE_WORK_TOOLS.has(name) || typeof argumentsValue.slice !== "string") return;
+  if (name === "verify_slice" && argumentsValue.dependents === true) return;
+  const projectRoot = await requestedProjectRoot(argumentsValue);
+  await requireClaimedWork({ projectRoot, initiative: argumentsValue.initiative, tool: name, work: [{ slug: argumentsValue.slice, own: true }] });
+}
+
 async function callTool(name, argumentsValue = {}, metadata, requestId) {
+  await requireCallClaims(name, argumentsValue);
   if (name === "wait_for_user_gate") {
     return callGateWait(argumentsValue, metadata, requestId);
   }

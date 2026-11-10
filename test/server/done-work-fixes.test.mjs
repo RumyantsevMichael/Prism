@@ -34,6 +34,7 @@ async function acceptedFix(context, slices = finished()) {
   const setup = await finishedProject(context, "reports", slices);
   assert.equal((await reportDefect(setup.call)).error, null);
   await writeFixDesign(setup.root);
+  assert.equal((await update(setup.call, [{ op: "claim", slug: "download" }])).error, null);
   const before = await read(setup.call);
   const proposed = await update(setup.call, [fixProposal()]);
   assert.equal(proposed.error, null, proposed.error?.message);
@@ -69,6 +70,7 @@ test("§22 a done scope's proposal takes only one fix with its design, for open 
   const { root, call } = await finishedProject(context);
   assert.equal((await reportDefect(call)).error, null);
   await writeFixDesign(root);
+  assert.equal((await update(call, [{ op: "claim", slug: "download" }])).error, null);
   const refusals = [
     { op: "propose_design", slug: "download", operations: [{ op: "update_slice", slug: "download", title: "Download" }] },
     { op: "propose_design", slug: "download", operations: [fixProposal().operations[0]] },
@@ -80,6 +82,7 @@ test("§22 a done scope's proposal takes only one fix with its design, for open 
   assert.equal((await update(call, [fixProposal()])).error, null);
   assert.equal((await update(call, [{ op: "accept_proposal", slug: "download", reviewRequired: [] }])).error, null);
   await writeFixDesign(root, "fix-again");
+  assert.equal((await update(call, [{ op: "claim", slug: "download" }])).error, null);
   assert.equal((await update(call, [fixProposal(["d1"], "fix-again")])).value?.code, "validation_failed", "a defect that another fix names is not open");
 });
 
@@ -99,6 +102,7 @@ test("§24 the fix slice's design is the slice.md in its own folder", async (con
   assert.equal((await reportDefect(call)).error, null);
   await writeFixDesign(root);
   await writeFile(path.join(root, "docs/plans/reports", FIX, "slice.md"), "# Empty report downloads\n\n## Contract\n\n1. Downloading an empty report writes an empty file.\n\n## Changes\n\n- rewrite the download\n");
+  assert.equal((await update(call, [{ op: "claim", slug: "download" }])).error, null);
   const refused = await update(call, [fixProposal()]);
   assert.equal(refused.value?.code, "validation_failed", "acceptance reads Changes from the fix slice's own folder");
   assert.match(refused.error.message, /Changes line/);
