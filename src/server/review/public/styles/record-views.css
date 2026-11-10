@@ -86,6 +86,8 @@
 
 .document-sheet {
   --doc-sheet-pad: var(--prism-space-7);
+  /* The kit's contents rule reaches the sheet's edges. */
+  --prism-contents-inset: var(--doc-sheet-pad);
   position: relative;
   min-width: 0;
   padding: var(--doc-sheet-pad);
@@ -177,108 +179,6 @@ mark.find-hit {
 .source-lines .tok-title { font-weight: var(--prism-font-weight-bold); }
 .source-lines .tok-inserted { color: var(--prism-color-diff-added); }
 .source-lines .tok-deleted { color: var(--prism-color-diff-removed); }
-
-/* A long document gets its contents beside it; at 1100px and below the contents fold above the text. */
-/* Beside the text the contents column runs the full height of the sheet, so its rule meets the sheet's edges,
-   and the list inside it stays in view while the document scrolls, scrolling on its own only when it is longer than the visible part. */
-.has-toc {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) calc(var(--prism-sidebar-width) * 0.8);
-  column-gap: var(--prism-space-7);
-  align-items: start;
-}
-
-.has-toc > :not(.doc-toc) {
-  grid-column: 1;
-}
-
-.doc-toc {
-  grid-column: 2;
-  grid-row: 1 / span 40;
-  align-self: stretch;
-  min-width: 0;
-  margin-block: calc(var(--doc-sheet-pad) * -1);
-  border-inline-start: var(--prism-stroke) solid var(--prism-color-line);
-  font-size: var(--prism-font-size-sm);
-}
-
-.doc-toc-body {
-  position: sticky;
-  top: 0;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
-  max-height: var(--doc-toc-fit, 100vh);
-  padding: var(--doc-sheet-pad) 0 var(--doc-sheet-pad) var(--prism-space-5);
-}
-
-/* The header stays put and only the list scrolls, so the title and the Maximize control never scroll away. */
-.doc-toc-body > ol {
-  min-height: 0;
-  overflow: auto;
-  overscroll-behavior: contain;
-}
-
-.doc-toc-head {
-  display: flex;
-  align-items: center;
-  gap: var(--prism-space-3);
-  min-height: var(--prism-control-height-sm);
-}
-
-.doc-toc-title {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding-inline: var(--prism-space-3);
-  color: var(--prism-color-ink-muted);
-  font-weight: var(--prism-font-weight-semibold);
-}
-
-.doc-toc-toggle {
-  display: none;
-}
-
-.doc-toc-head > .maximize-control {
-  flex: none;
-  margin-inline-start: auto;
-}
-
-.doc-toc ol {
-  display: grid;
-  gap: var(--prism-space-1);
-  margin: var(--prism-space-2) 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.doc-toc a {
-  display: block;
-  padding: var(--prism-space-1) var(--prism-space-3);
-  border-radius: var(--prism-radius-sm);
-  color: var(--prism-color-ink-muted);
-  line-height: var(--prism-line-height-tight);
-  text-decoration: none;
-  overflow-wrap: anywhere;
-}
-
-.doc-toc a:hover {
-  background: var(--prism-color-hover);
-  color: var(--prism-color-ink);
-}
-
-.doc-toc a:focus-visible {
-  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
-  outline-offset: calc(var(--prism-stroke-strong) * -1);
-}
-
-.doc-toc a[aria-current="location"] {
-  background: var(--prism-color-selected);
-  color: var(--prism-color-accent-text);
-  font-weight: var(--prism-font-weight-semibold);
-}
-
-.doc-toc .toc-depth-1 { padding-inline-start: var(--prism-space-6); }
-.doc-toc .toc-depth-2 { padding-inline-start: var(--prism-space-8); }
 
 /* A foldable heading carries its toggle in the left gutter, so heading text keeps its alignment. */
 .document-content.has-folds {
@@ -396,36 +296,15 @@ body.has-maximized::after {
   position: fixed;
   inset: var(--prism-space-5);
   z-index: var(--prism-layer-drawer);
-  display: flex;
-  flex-direction: column;
   margin: 0;
   overflow: auto;
+  /* The maximized card scrolls itself, so the kit's contents stick at its top edge rather than below its padding. */
+  --prism-contents-top: calc(var(--doc-sheet-pad, 0px) * -1);
 }
 
-.is-maximized.has-toc {
-  display: grid;
-}
-
-.is-maximized.document-sheet {
-  display: block;
-}
-
-.is-maximized.document-sheet.has-toc {
-  display: grid;
-}
-
-/* A maximized sheet scrolls itself, so its contents stick at its top edge rather than below its padding. */
-.is-maximized .doc-toc-body {
-  top: calc(var(--doc-sheet-pad) * -1);
-}
-
-/* A document without contents floats its control at its top corner, and the control stays in view while the document scrolls. */
-.document-sheet > .maximize-control {
-  position: sticky;
-  top: 0;
-  z-index: var(--prism-layer-raised);
-  float: right;
-  margin: 0 0 var(--prism-space-3) var(--prism-space-4);
+.is-maximized:not(.document-sheet) {
+  display: flex;
+  flex-direction: column;
 }
 
 .is-maximized :is(.graph-viewport, .diagram-output) {
@@ -1317,50 +1196,6 @@ body.has-maximized::after {
 /* ---------- Narrow windows ---------- */
 
 @media (max-width: 1100px) {
-  .has-toc {
-    display: block;
-  }
-
-  .doc-toc {
-    margin: 0 0 var(--prism-space-5);
-    border: var(--prism-stroke) solid var(--prism-color-line);
-    border-radius: var(--prism-radius-md);
-    background: var(--prism-color-surface);
-  }
-
-  .doc-toc-body {
-    position: static;
-    max-height: none;
-    padding: var(--prism-space-2) var(--prism-space-4);
-  }
-
-  .doc-toc-title {
-    display: none;
-  }
-
-  .doc-toc-toggle {
-    display: inline-flex;
-  }
-
-  .doc-toc:not(.is-open) ol {
-    display: none;
-  }
-
-  /* A maximized document keeps its contents bar, with the Restore control, at the top while it scrolls. */
-  .is-maximized .doc-toc {
-    position: sticky;
-    top: calc(var(--doc-sheet-pad) * -1);
-    z-index: var(--prism-layer-raised);
-  }
-
-  .is-maximized .doc-toc-body {
-    max-height: var(--doc-toc-fit, 100vh);
-  }
-
-  .is-maximized.document-sheet.has-toc {
-    display: block;
-  }
-
   .split-layout {
     grid-template-columns: minmax(0, 1fr);
   }

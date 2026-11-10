@@ -44,20 +44,20 @@ function measure(page) {
     const sheet = document.querySelector("#workspace .document-sheet");
     const scroller = sheet.closest(".is-maximized") ?? document.getElementById("workspace");
     const area = box(scroller);
-    const list = sheet.querySelector(".doc-toc-body > ol");
+    const list = sheet.querySelector("prism-contents .prism-contents-list");
     const control = sheet.querySelector("[data-maximize]");
     return {
       area: { top: area.top + scroller.clientTop, bottom: area.top + scroller.clientTop + scroller.clientHeight },
       sheet: box(sheet),
-      toc: box(sheet.querySelector(".doc-toc")),
-      body: box(sheet.querySelector(".doc-toc-body")),
+      toc: box(sheet.querySelector("prism-contents")),
+      body: box(sheet.querySelector("prism-contents .prism-contents-body")),
       list: list && { box: box(list), scrollable: list.scrollHeight > list.clientHeight + 1 },
       control: box(control),
-      label: control?.getAttribute("label"),
-      icon: control?.querySelector("prism-icon")?.getAttribute("name"),
+      label: control?.querySelector("prism-button")?.getAttribute("label"),
+      icon: control?.querySelector("prism-button")?.querySelector("prism-icon")?.getAttribute("name"),
       text: control?.textContent.trim(),
-      current: sheet.querySelector(".doc-toc a[aria-current]")?.textContent,
-      currentBox: box(sheet.querySelector(".doc-toc a[aria-current]"))
+      current: sheet.querySelector("prism-contents a[aria-current]")?.textContent,
+      currentBox: box(sheet.querySelector("prism-contents a[aria-current]"))
     };
   });
 }
@@ -79,8 +79,8 @@ for (const height of [600, 900]) {
     const browser = await launch(context);
     const page = await openPage(browser, reviewUrl(base, "docs/long.md"), { viewport: { width: 1440, height } });
     await waitForView(page);
-    assert.equal(await page.locator("#workspace .doc-toc-toggle").isVisible(), false, "beside the text the contents header has no fold toggle");
-    assert.equal(await page.locator("#workspace .doc-toc-title").isVisible(), true, "beside the text the contents header is a title");
+    assert.equal(await page.locator("#workspace .prism-contents-toggle").isVisible(), false, "beside the text the contents header has no fold toggle");
+    assert.equal(await page.locator("#workspace .prism-contents-title").isVisible(), true, "beside the text the contents header is a title");
     for (const fraction of [0, 0.5, 1]) {
       await scrollTo(page, fraction);
       const shown = await measure(page);
@@ -131,11 +131,11 @@ test("in a narrow window the contents sit above the text and fold open from thei
   const browser = await launch(context);
   const page = await openPage(browser, reviewUrl(base, "docs/long.md"), { viewport: { width: 900, height: 800 } });
   await waitForView(page);
-  const toggle = page.locator("#workspace .doc-toc-toggle");
+  const toggle = page.locator("#workspace .prism-contents-toggle");
   assert.equal(await toggle.isVisible(), true);
-  assert.equal(await page.locator("#workspace .doc-toc ol").isVisible(), false, "the contents start folded");
+  assert.equal(await page.locator("#workspace prism-contents ol").isVisible(), false, "the contents start folded");
   await toggle.click();
   assert.equal(await toggle.getAttribute("aria-expanded"), "true");
-  assert.equal(await page.locator("#workspace .doc-toc ol").isVisible(), true, "the header opens the contents");
+  assert.equal(await page.locator("#workspace prism-contents ol").isVisible(), true, "the header opens the contents");
   assert.deepEqual(page.errors, []);
 });

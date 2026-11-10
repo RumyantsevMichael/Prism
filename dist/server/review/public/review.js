@@ -1364,25 +1364,28 @@ function decorateMaximize(path) {
     const key = `${card.className.split(" ")[0]}:${index}`;
     let button = card.querySelector(":scope [data-maximize]");
     if (!button) {
-      button = document.createElement("prism-button");
-      button.setAttribute("variant", "ghost");
-      button.setAttribute("size", "sm");
-      button.className = "maximize-control";
+      // The kit's maximize button; a document with contents carries it in the contents header, which stays in view while the document scrolls.
+      button = document.createElement("prism-maximize");
       button.dataset.maximize = key;
-      button.append(document.createElement("prism-icon"));
-      // The control is an icon button, as on the kit's maximizable panel; a document with contents carries it in the contents header, which stays in view.
-      const tools = card.querySelector(":scope .diagram-tools, :scope > .doc-toc .doc-toc-head");
-      if (tools) tools.appendChild(button);
-      else card.prepend(button);
-      button.addEventListener("click", () => setMaximized(path, state.maximized === key ? null : key));
+      const contents = card.querySelector(":scope > prism-contents");
+      const tools = card.querySelector(":scope .diagram-tools");
+      if (contents) {
+        button.slot = "tools";
+        contents.append(button);
+      } else if (tools) {
+        tools.appendChild(button);
+      } else {
+        button.toggleAttribute("floating", true);
+        card.prepend(button);
+      }
+      button.addEventListener("prism-maximize-request", (event) => setMaximized(path, event.detail.maximized ? key : null));
     }
     const maximized = state.maximized === key;
     found ||= maximized;
     card.classList.toggle("is-maximized", maximized);
-    button.setAttribute("label", maximized ? "Restore" : "Maximize");
-    button.firstElementChild?.setAttribute("name", maximized ? "restore" : "maximize");
-    button.setAttribute("pressed", String(maximized));
-    button.setAttribute("tip", maximized ? "Restore (Esc)" : "Fill the window");
+    button.toggleAttribute("maximized", maximized);
+    // A maximized document keeps its contents header at the top even when the contents sit above it.
+    card.querySelector(":scope > prism-contents")?.toggleAttribute("pinned", maximized);
   });
   if (!found) state.maximized = null;
   document.body.classList.toggle("has-maximized", found);
@@ -1401,7 +1404,7 @@ function highlightText(query) {
   const term = query.toLowerCase().split(/\s+/).filter(Boolean).sort((left, right) => right.length - left.length)[0];
   if (!term) return false;
   const walker = document.createTreeWalker(artifact, NodeFilter.SHOW_TEXT, {
-    acceptNode: (node) => node.parentElement?.closest(".doc-toc, [data-maximize], script, style") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
+    acceptNode: (node) => node.parentElement?.closest("prism-contents, [data-maximize], script, style") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
   });
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const index = node.data.toLowerCase().indexOf(term);
@@ -2049,11 +2052,8 @@ async function initialize() {
     const anchor = docLink.dataset.docAnchor;
     if (!target || target === selectedPath) {
       if (!scrollToAnchor(anchor)) showToast(`No heading #${anchor} in this document.`);
-      else if (docLink.closest(".doc-toc")) {
-        requestAnimationFrame(() => {
-          for (const link of docLink.closest(".doc-toc").querySelectorAll("a")) link.toggleAttribute("aria-current", link === docLink);
-          docLink.setAttribute("aria-current", "location");
-        });
+      else if (docLink.closest("prism-contents")) {
+        requestAnimationFrame(() => docLink.closest("prism-contents").markCurrent?.(docLink));
       }
       return;
     }

@@ -318,62 +318,23 @@ export function decorateDocuments(root, folds = new Map()) {
   });
   for (const content of root.querySelectorAll(".document-content")) {
     const host = content.parentElement;
-    if (!host || content.previousElementSibling?.classList.contains("doc-toc")) continue;
+    if (!host || content.previousElementSibling?.tagName === "PRISM-CONTENTS") continue;
     const headings = [...content.querySelectorAll("h1[id], h2[id], h3[id]")];
     if (headings.length < TOC_MINIMUM) continue;
     const top = Math.min(...headings.map((heading) => Number(heading.tagName[1])));
-    const toc = document.createElement("nav");
-    toc.className = "doc-toc";
-    toc.setAttribute("aria-label", "Contents");
-    // Beside the text the contents are always shown, so their header is a plain title; above the text, in a narrow window, the header folds them.
-    toc.innerHTML = `<div class="doc-toc-body"><div class="doc-toc-head"><span class="doc-toc-title">Contents</span><prism-button variant="ghost" size="sm" class="doc-toc-toggle" aria-expanded="false"><prism-icon name="chevron-right" size="xs"></prism-icon>Contents</prism-button></div>
-      <ol>${headings.map((heading) => `<li class="toc-depth-${Number(heading.tagName[1]) - top}"><a href="#${escapeHtml(heading.id.slice(HEADING_PREFIX.length))}" data-doc-anchor="${escapeHtml(heading.id.slice(HEADING_PREFIX.length))}">${escapeHtml(heading.textContent)}</a></li>`).join("")}</ol></div>`;
-    const toggle = toc.querySelector(".doc-toc-toggle");
-    toggle.addEventListener("click", () => {
-      const open = toc.classList.toggle("is-open");
-      toggle.setAttribute("aria-expanded", String(open));
-      toggle.firstElementChild?.setAttribute("name", open ? "chevron-down" : "chevron-right");
-    });
-    host.classList.add("has-toc");
+    // The kit's contents element lays itself out beside the document and folds above it in a narrow window.
+    const toc = document.createElement("prism-contents");
+    toc.innerHTML = `<ol>${headings.map((heading) => `<li class="depth-${Number(heading.tagName[1]) - top}"><a href="#${escapeHtml(heading.id.slice(HEADING_PREFIX.length))}" data-doc-anchor="${escapeHtml(heading.id.slice(HEADING_PREFIX.length))}">${escapeHtml(heading.textContent)}</a></li>`).join("")}</ol>`;
     content.before(toc);
   }
 }
 
-// Fits the contents into the part of the scrolling area that shows them, so the page scrolls the document and the contents scroll only when they are longer than that part.
-function fitContents(toc, scroller) {
-  const body = toc.querySelector(":scope > .doc-toc-body");
-  if (!body || !scroller) return;
-  const area = scroller.getBoundingClientRect();
-  const visibleTop = area.top + scroller.clientTop;
-  const visibleBottom = visibleTop + scroller.clientHeight;
-  const style = getComputedStyle(body);
-  let height;
-  if (style.position === "sticky") {
-    // Beside the text the list sticks at the scrolling area's content edge, moved by its own top offset, and ends with the sheet.
-    const box = toc.getBoundingClientRect();
-    const stuck = visibleTop + parseFloat(getComputedStyle(scroller).paddingTop) + parseFloat(style.top);
-    height = Math.min(visibleBottom, box.bottom) - Math.max(box.top, stuck);
-  } else {
-    height = visibleBottom - body.getBoundingClientRect().top;
-  }
-  body.style.setProperty("--doc-toc-fit", `${Math.max(Math.floor(height), 0)}px`);
-}
-
-// Scrolls the contents list, and only that list, so the current entry is in view.
-function revealEntry(list, anchor) {
-  if (!list || list.scrollHeight <= list.clientHeight) return;
-  const frame = list.getBoundingClientRect();
-  const entry = anchor.getBoundingClientRect();
-  if (entry.top < frame.top) list.scrollTop -= frame.top - entry.top;
-  else if (entry.bottom > frame.bottom) list.scrollTop += entry.bottom - frame.bottom;
-}
-
 export function markCurrentSection(root, viewportTop) {
-  for (const toc of root.querySelectorAll(".doc-toc")) {
+  for (const toc of root.querySelectorAll("prism-contents")) {
     const host = toc.parentElement;
-    const links = [...toc.querySelectorAll("a[data-doc-anchor]")];
     const scroller = host.closest(".is-maximized") ?? document.getElementById("workspace");
-    fitContents(toc, scroller);
+    toc.fit?.(scroller);
+    const links = [...toc.querySelectorAll("a[data-doc-anchor]")];
     const areaTop = scroller?.getBoundingClientRect().top ?? viewportTop;
     const atEnd = scroller && scroller.scrollTop > 0 && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2;
     let current = links[0];
@@ -382,13 +343,6 @@ export function markCurrentSection(root, viewportTop) {
       // At the end of the scroll the last heading on screen is current, since later headings can never reach the top.
       if (heading && heading.getBoundingClientRect().top <= (atEnd ? window.innerHeight : areaTop + 96)) current = anchor;
     }
-    for (const anchor of links) {
-      if (anchor === current) {
-        if (!anchor.hasAttribute("aria-current")) revealEntry(toc.querySelector(":scope > .doc-toc-body > ol"), anchor);
-        anchor.setAttribute("aria-current", "location");
-      } else {
-        anchor.removeAttribute("aria-current");
-      }
-    }
+    toc.markCurrent?.(current);
   }
 }
