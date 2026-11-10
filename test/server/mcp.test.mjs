@@ -326,6 +326,7 @@ test("declares the project root and read-only artifact tools", async (context) =
   assert.match(tools.present_review.description, /Omit artifact and artifacts to open Attention/);
   assert.deepEqual(tools.get_review_url.inputSchema.properties.artifacts.items, { type: "string" });
   assert.deepEqual(tools.present_review.inputSchema.properties.artifacts.items, { type: "string" });
+  assert.equal(tools.present_review.inputSchema.properties.group.type, "string");
   const settings = tools.update_coordination_state.inputSchema.properties.changes.properties.settings.properties;
   assert.deepEqual(settings.autonomy.enum, ["conservative", "broad", "full"]);
   assert.equal(settings.agentFlow, undefined);
@@ -882,6 +883,18 @@ test("opens the system browser when it presents a review", async (context) => {
   assert.match(review.result.structuredContent.url, /^http:\/\/127\.0\.0\.1:/);
   assert.equal(review.result.structuredContent.opened, true);
   assert.equal(await waitForMarker(browser.marker), "opened");
+});
+
+test("present_review gathers the presented tabs into the tab group the agent names", async (context) => {
+  const root = await projectFixture(context, "present-group", "artifact.md");
+  const browser = await browserStub(context);
+  const mcp = mcpProcess(context, root, undefined, browser.environment);
+
+  await initialize(mcp);
+  const review = await callTool(mcp, 2, "present_review", { projectRoot: root, artifact: "docs/artifact.md", group: "Retry requests" });
+  assert.deepEqual(review.result.structuredContent.groups, [{ name: "Retry requests", tabs: ["docs/artifact.md"], collapsed: false }]);
+  const refused = await callTool(mcp, 3, "present_review", { projectRoot: root, artifact: "docs/artifact.md", group: "x".repeat(61) });
+  assert.match(JSON.stringify(refused), /tab group name/);
 });
 
 test("does not reopen an existing viewer for repeated presentation calls", async (context) => {

@@ -15,13 +15,14 @@ import { missingNotice, nextMissingTabs, renderMissing } from "./views/missing-t
 import { createPageBar } from "./views/page-bar.js";
 import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createPresence } from "./views/presence.js";
-import { DENSITIES, savePreferences, THEMES } from "./kit/preferences.js";
+import { DENSITIES, onPreferencesChange, preference, preferencesReady, savePreferences, setPreference, THEMES } from "./kit/preferences.js";
 import { shownActionEntries } from "./views/actions.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
 import { currentPhase } from "./views/slice.js";
 import { createPoller, deadline, POLL_DEADLINE_MS } from "./views/poller.js";
 import { createEventRelay } from "./views/event-relay.js";
 import { shippedHistoryHtml } from "./views/shipped-history.js";
+import { arrangeGroups } from "./views/tab-groups.js";
 
 const project = document.getElementById("project");
 const navRoot = document.getElementById("nav");
@@ -60,6 +61,8 @@ if (new URLSearchParams(location.search).get("missing") === "project") {
 let openTabs = [];
 let previewTab = null;
 let agentTabs = [];
+// Named groups of open tabs, each { name, tabs, collapsed }, such as the tabs an agent presented for one piece of work.
+let tabGroups = [];
 let sessionRevision = 0;
 // A replaced review app restarts revisions, so a snapshot from a new instance is accepted whatever its revision.
 let sessionInstance = null;
@@ -121,22 +124,25 @@ function welcome() {
 }
 
 // The pages this browser tab visited sit in the browser's own history, each entry numbered, so Back and Forward know whether there is a page to go to.
+// The tab also keeps which page each numbered entry showed, so Back and Forward pass over an entry that shows the page already open,
+// such as the entry a closed tab leaves behind, and never take a click that changes nothing.
 const HISTORY_KEY = "prism.review.history";
-const pages = { index: 0, top: 0 };
+const pages = { index: 0, top: 0, refs: [] };
 
-// The highest page the tab may move forward to is kept for this tab, with the page it was on when the tab last left the app.
+// The highest page the tab may move forward to is kept for this tab, with the page it was on when the tab last left the app and the page of each entry.
 function readHistoryTop() {
   try {
     const stored = JSON.parse(sessionStorage.getItem(HISTORY_KEY) ?? "null");
-    return { top: Number(stored?.top) || 0, left: Number.isInteger(stored?.left) ? stored.left : null };
+    const refs = Array.isArray(stored?.refs) ? stored.refs.map((ref) => (typeof ref === "string" ? ref : null)) : [];
+    return { top: Number(stored?.top) || 0, left: Number.isInteger(stored?.left) ? stored.left : null, refs };
   } catch {
-    return { top: 0, left: null };
+    return { top: 0, left: null, refs: [] };
   }
 }
 
 function storeHistoryTop(left = null) {
   try {
-    sessionStorage.setItem(HISTORY_KEY, JSON.stringify({ top: pages.top, left }));
+    sessionStorage.setItem(HISTORY_KEY, JSON.stringify({ top: pages.top, left, refs: pages.refs.slice(0, pages.top + 1) }));
   } catch {
   }
 }
@@ -160,12 +166,15 @@ function settleHistoryTop(index, stored) {
 
 function startHistory() {
   const index = history.state?.index;
+  const stored = readHistoryTop();
   if (Number.isInteger(index)) {
     pages.index = index;
-    pages.top = settleHistoryTop(index, readHistoryTop());
+    pages.top = settleHistoryTop(index, stored);
+    pages.refs = stored.refs.slice(0, pages.top + 1);
   } else {
     pages.index = 0;
     pages.top = 0;
+    pages.refs = [];
   }
   storeHistoryTop();
 }
@@ -182,17 +191,27 @@ function watchHistoryLeave() {
   });
 }
 
+// The nearest entry from `from` in direction `step` that shows another page than the open one, or null; an entry whose page is not known counts as another page.
+function nextEntry(from, step) {
+  for (let index = from + step; index >= 0 && index <= pages.top; index += step) {
+    if (pages.refs[index] !== selectedPath) return index;
+  }
+  return null;
+}
+
 // Back and Forward, and Alt+arrows, move only through the pages visited in this tab, so they never leave the review app.
 function goBack() {
-  if (pages.index > 0) history.back();
+  const target = nextEntry(pages.index, -1);
+  if (target !== null) history.go(target - pages.index);
 }
 
 function goForward() {
-  if (pages.index < pages.top) history.forward();
+  const target = nextEntry(pages.index, 1);
+  if (target !== null) history.go(target - pages.index);
 }
 
 function showHistory() {
-  pageBar?.setHistory({ back: pages.index > 0, forward: pages.index < pages.top });
+  pageBar?.setHistory({ back: nextEntry(pages.index, -1) !== null, forward: nextEntry(pages.index, 1) !== null });
 }
 
 // A tab writes only with the write session it took from the one-time grant in the URL Prism opened; the tab's session storage keeps it,
@@ -281,10 +300,12 @@ function updateLocation(path, push = false) {
   if (push) {
     pages.index += 1;
     pages.top = pages.index;
+    pages.refs.length = pages.index;
     history.pushState({ ref: path, index: pages.index }, "", `${url.pathname}${url.search}`);
   } else {
     history.replaceState({ ref: path, index: pages.index }, "", `${url.pathname}${url.search}`);
   }
+  pages.refs[pages.index] = path ?? null;
   storeHistoryTop();
   showHistory();
 }
@@ -294,8 +315,29 @@ function setBusy(busy) {
   artifact.setAttribute("aria-busy", String(busy));
 }
 
+// This window's id in the session, so the session can say which window chose the active tab; a reload keeps it.
+const WINDOW_KEY = "prism.review.window";
+const windowId = (() => {
+  try {
+    const kept = sessionStorage.getItem(WINDOW_KEY);
+    if (kept) return kept;
+    const id = `w-${crypto.randomUUID()}`;
+    sessionStorage.setItem(WINDOW_KEY, id);
+    return id;
+  } catch {
+    return `w-${crypto.randomUUID()}`;
+  }
+})();
+
+// While this window's own saves are on their way, an answer or event that predates the last of them would undo what the window shows,
+// so the newest snapshot waits and applies once every save has answered.
+let pendingSaves = 0;
+let waitingSnapshot = null;
+
 function saveSession() {
-  const payload = { openTabs: [...openTabs], activeTab: selectedPath, previewTab, agentTabs: agentTabs.filter((tab) => openTabs.includes(tab)) };
+  arrangeTabs();
+  const payload = { openTabs: [...openTabs], activeTab: selectedPath, previewTab, agentTabs: agentTabs.filter((tab) => openTabs.includes(tab)), groups: tabGroups, source: windowId };
+  pendingSaves += 1;
   const request = async () => {
     const response = await appFetch("./api/session", {
       method: "PUT",
@@ -305,11 +347,26 @@ function saveSession() {
     if (!response.ok) {
       throw new Error(await response.text());
     }
-    synchronizeSession(await response.json());
+    return response.json();
   };
-  const queued = saveQueue.then(request, request);
+  const settle = (snapshot) => {
+    pendingSaves -= 1;
+    if (snapshot && (!waitingSnapshot || newerSnapshot(snapshot, waitingSnapshot))) waitingSnapshot = snapshot;
+    if (pendingSaves > 0 || !waitingSnapshot) return;
+    const latest = waitingSnapshot;
+    waitingSnapshot = null;
+    synchronizeSession(latest);
+  };
+  const queued = saveQueue.then(request, request).then((snapshot) => settle(snapshot), (error) => {
+    settle(null);
+    throw error;
+  });
   saveQueue = queued.catch(() => {});
   return queued;
+}
+
+function newerSnapshot(snapshot, than) {
+  return snapshot.instance !== than.instance || (snapshot.revision ?? 0) > (than.revision ?? 0);
 }
 
 // The strip of open documents at the top of the main island: one tab per open page, the italic preview tab, kept tabs, and the tabs an agent presented.
@@ -326,11 +383,20 @@ function tabNames(path) {
   return { title, full: title === named.kind ? title : `${named.kind} · ${title}` };
 }
 
+// Grouped tabs sit side by side, as the review app keeps them, so the strip shows each group whole before the app answers.
+function arrangeTabs() {
+  ({ openTabs, groups: tabGroups } = arrangeGroups(openTabs, tabGroups));
+  const grouped = new Set(tabGroups.flatMap((group) => group.tabs));
+  if (grouped.has(previewTab)) previewTab = null;
+}
+
 function renderTabs() {
   if (typeof tabStrip.setTabs !== "function") {
     void customElements.whenDefined("prism-doc-tabs").then(renderTabs);
     return;
   }
+  arrangeTabs();
+  const groupOf = new Map(tabGroups.flatMap((group) => group.tabs.map((tab) => [tab, group.name])));
   tabStrip.setTabs(openTabs.map((path) => {
     const entity = Boolean(parseEntityRef(path));
     const { title, full, code = false } = tabNames(path);
@@ -338,13 +404,38 @@ function renderTabs() {
     const preview = path === previewTab;
     const agent = agentTabs.includes(path);
     const tip = [missing ? missingNotice(path, { entity, label: title }).tooltip : full, preview ? PREVIEW_TIP : "", agent ? "Presented by the agent." : ""].filter(Boolean).join(" ");
-    return { value: path, label: title, tip, selected: path === selectedPath, preview, agent, missing, code };
-  }));
+    return { value: path, label: title, tip, selected: path === selectedPath, preview, agent, missing, code, group: groupOf.get(path) ?? null };
+  }), { groups: tabGroups });
 }
 
 tabStrip.addEventListener("prism-select", (event) => openRef(event.detail?.value));
 tabStrip.addEventListener("prism-tab-keep", (event) => keepTab(event.detail?.value));
 tabStrip.addEventListener("prism-tab-close", (event) => closeTab(event.detail?.value));
+tabStrip.addEventListener("prism-tab-move", (event) => moveTabs(event.detail?.order, event.detail?.groups));
+tabStrip.addEventListener("prism-group-toggle", (event) => toggleGroup(event.detail?.group, event.detail?.collapsed));
+tabStrip.addEventListener("prism-group-close", (event) => closeTabs(event.detail?.tabs ?? []));
+
+// Moving a tab or a group gives the open tabs a new order, and a tab moved into or out of a group a new group, which every window of the session then shows.
+function moveTabs(order, groups) {
+  if (!Array.isArray(order) || !requireApp()) return;
+  const known = order.filter((path) => openTabs.includes(path));
+  openTabs = [...known, ...openTabs.filter((path) => !known.includes(path))];
+  if (Array.isArray(groups)) {
+    const collapsed = new Map(tabGroups.map((group) => [group.name, group.collapsed]));
+    tabGroups = groups.filter((group) => collapsed.has(group.name)).map((group) => ({ name: group.name, tabs: group.tabs.filter((path) => openTabs.includes(path)), collapsed: collapsed.get(group.name) }));
+  }
+  renderTabs();
+  void saveSession().catch((error) => showToast(error.message));
+}
+
+// A collapsed group shows only its head and its selected tab, in every window of the session.
+function toggleGroup(name, collapsed) {
+  const group = tabGroups.find((each) => each.name === name);
+  if (!group || !requireApp()) return;
+  group.collapsed = Boolean(collapsed);
+  renderTabs();
+  void saveSession().catch((error) => showToast(error.message));
+}
 
 // Opening a page shows it in a tab and pushes it onto the browser history, so Back, Forward, and the browser's own buttons move through the same pages.
 // An ordinary open replaces the preview tab; `keep` opens a kept tab instead, or keeps the preview, and a new tab goes right after the selected one.
@@ -400,14 +491,20 @@ function showNothing() {
 
 // Closing the selected tab shows the last open tab in its place, and closing the last tab leaves nothing open.
 function closeTab(path) {
-  if (!path || !requireApp()) return;
-  scrollPositions.delete(path);
-  openTabs = openTabs.filter((tab) => tab !== path);
-  agentTabs = agentTabs.filter((tab) => tab !== path);
-  if (previewTab === path) {
+  if (path) closeTabs([path]);
+}
+
+// Closing a group closes its tabs; the selected page, when it closes too, gives way to the last tab still open.
+function closeTabs(paths) {
+  const closing = new Set(paths.filter((path) => openTabs.includes(path)));
+  if (!closing.size || !requireApp()) return;
+  for (const path of closing) scrollPositions.delete(path);
+  openTabs = openTabs.filter((tab) => !closing.has(tab));
+  agentTabs = agentTabs.filter((tab) => !closing.has(tab));
+  if (closing.has(previewTab)) {
     previewTab = null;
   }
-  if (selectedPath === path) {
+  if (closing.has(selectedPath)) {
     selectedPath = openTabs[openTabs.length - 1] ?? null;
     lastSnapshot = "";
     updateLocation(selectedPath);
@@ -423,8 +520,15 @@ function closeTab(path) {
   void saveSession().catch((error) => showToast(error.message));
 }
 
-// Every window of the session shows the same tabs; a page an agent presents, or one another window opened, becomes the next page of this tab's history.
+// Every window of the session shows the same tabs. A page an agent presents becomes the next page of every window's history,
+// while a window keeps its own page when another window picks a tab, so a window's history holds only the pages it showed.
+let lastActive = null;
+
 function synchronizeSession(snapshot) {
+  if (pendingSaves > 0) {
+    if (!waitingSnapshot || newerSnapshot(snapshot, waitingSnapshot)) waitingSnapshot = snapshot;
+    return;
+  }
   const nextRevision = Number.isInteger(snapshot.revision) ? snapshot.revision : sessionRevision;
   const nextInstance = typeof snapshot.instance === "string" ? snapshot.instance : sessionInstance;
   if (typeof snapshot.appVersion === "string" && appVersion !== null && snapshot.appVersion !== appVersion) {
@@ -434,22 +538,28 @@ function synchronizeSession(snapshot) {
   if (nextRevision <= sessionRevision && nextInstance === sessionInstance) {
     return;
   }
+  const first = sessionInstance === null && lastActive === null;
   sessionInstance = nextInstance;
   const nextTabs = Array.isArray(snapshot.openTabs) ? [...snapshot.openTabs] : [];
-  const nextSelectedPath = Object.hasOwn(snapshot, "activeTab")
-    ? snapshot.activeTab
-    : nextTabs.includes(selectedPath) ? selectedPath : nextTabs[0] ?? null;
+  const active = Object.hasOwn(snapshot, "activeTab") && nextTabs.includes(snapshot.activeTab) ? snapshot.activeTab : null;
+  // An agent's presentation is new when the active tab or its source changed since the last snapshot this window saw; the first snapshot is the session as it was.
+  const presented = !first && snapshot.activeSource === "agent" && active !== null && (lastActive?.tab !== active || lastActive?.source !== "agent");
+  lastActive = { tab: active, source: snapshot.activeSource ?? null };
   const nextPreview = nextTabs.includes(snapshot.previewTab) ? snapshot.previewTab : null;
   const nextAgentTabs = Array.isArray(snapshot.agentTabs) ? snapshot.agentTabs.filter((tab) => nextTabs.includes(tab)) : [];
   sessionRevision = nextRevision;
   openTabs = nextTabs;
   previewTab = nextPreview;
   agentTabs = nextAgentTabs;
-  const next = nextSelectedPath && nextTabs.includes(nextSelectedPath) ? nextSelectedPath : null;
+  tabGroups = Array.isArray(snapshot.groups) ? snapshot.groups : [];
+  // The window follows a presentation; otherwise it keeps its page while that page's tab stays open, and takes the session's active tab, or the last tab, when it closed.
+  const next = presented ? active : nextTabs.includes(selectedPath) ? selectedPath : active ?? nextTabs.at(-1) ?? null;
   if (next === selectedPath) {
     renderTabs();
+    showHistory();
     return;
   }
+  const hadPage = selectedPath !== null;
   selectedPath = next;
   lastSnapshot = "";
   renderTabs();
@@ -458,7 +568,7 @@ function synchronizeSession(snapshot) {
     showNothing();
     return;
   }
-  updateLocation(selectedPath, true);
+  updateLocation(selectedPath, presented && hadPage);
   setBusy(true);
   renderNavigation();
   void showArtifact(selectedPath);
@@ -1760,16 +1870,20 @@ function focusTrees() {
 }
 
 // The drawer places its children in its body a microtask after they arrive, so the trees take focus once they sit inside the open drawer.
-// Above 1100px the sidebar can collapse to a rail of the places' and the library's icons, which keeps the Attention count; the choice is remembered in this browser.
-const SIDEBAR_KEY = "prism.review.sidebar";
+// Above 1100px the sidebar can collapse to a rail of the places' and the library's icons, which keeps the Attention count; the choice is the person's preference,
+// kept by the review app for every port, and a choice an older page kept in this browser moves there once.
+const LEGACY_SIDEBAR_KEY = "prism.review.sidebar";
 const wideWindow = matchMedia("(min-width: 1101px)");
 
 function readSidebarCollapsed() {
   try {
-    return localStorage.getItem(SIDEBAR_KEY) === "collapsed";
+    const legacy = localStorage.getItem(LEGACY_SIDEBAR_KEY);
+    localStorage.removeItem(LEGACY_SIDEBAR_KEY);
+    if (legacy === "collapsed") void setPreference("sidebar.collapsed", true).catch(() => {});
   } catch {
-    return false;
+    // A browser without storage has no older choice to move.
   }
+  return preference("sidebar.collapsed");
 }
 
 function applyRail() {
@@ -1785,12 +1899,7 @@ function setSidebarCollapsed(collapsed, { remember = true } = {}) {
   toggle.setAttribute("label", action);
   toggle.setAttribute("tip", `${action} ([)`);
   applyRail();
-  if (!remember) return;
-  try {
-    localStorage.setItem(SIDEBAR_KEY, collapsed ? "collapsed" : "expanded");
-  } catch {
-    // A browser without storage keeps the choice for this page only.
-  }
+  if (remember) void setPreference("sidebar.collapsed", collapsed).catch(() => showToast("The sidebar changed here, but the review app could not store the choice."));
 }
 
 async function openDrawer() {
@@ -1842,7 +1951,8 @@ function watchDrawerWidth() {
 
 async function initialize() {
   await takeWriteGrant();
-  const data = await fetchJson("./api/index");
+  // The views start from the person's stored preferences, such as the roadmap's view, so they wait for them alongside the index.
+  const [data] = await Promise.all([fetchJson("./api/index"), preferencesReady()]);
   startHistory();
   watchHistoryLeave();
   pageBar = createPageBar({
@@ -1855,7 +1965,7 @@ async function initialize() {
   recordStoreStatus = createRecordStoreStatus({
     storeButton: document.getElementById("store-status"),
     storeLabel: document.getElementById("store-status-label"),
-    syncButton: document.getElementById("store-sync"),
+    syncPart: document.getElementById("store-sync"),
     syncLabel: document.getElementById("store-sync-label"),
     dialog: document.getElementById("store-dialog"),
     fetchJson,
@@ -1867,6 +1977,7 @@ async function initialize() {
   openTabs = data.openTabs;
   previewTab = openTabs.includes(data.previewTab) ? data.previewTab : null;
   agentTabs = (data.agentTabs ?? []).filter((tab) => openTabs.includes(tab));
+  tabGroups = Array.isArray(data.groups) ? data.groups : [];
   sessionRevision = Number.isInteger(data.revision) ? data.revision : 0;
   sessionInstance = typeof data.instance === "string" ? data.instance : null;
   appVersion = typeof data.appVersion === "string" ? data.appVersion : null;
@@ -2015,6 +2126,9 @@ async function initialize() {
   });
   document.getElementById("nav-button").addEventListener("click", openDrawer);
   setSidebarCollapsed(readSidebarCollapsed(), { remember: false });
+  onPreferencesChange((keys, preferences) => {
+    if (keys.includes("sidebar.collapsed") && preferences["sidebar.collapsed"] !== shell.classList.contains("sidebar-collapsed")) setSidebarCollapsed(preferences["sidebar.collapsed"], { remember: false });
+  });
   document.getElementById("sidebar-toggle").addEventListener("click", () => setSidebarCollapsed(!shell.classList.contains("sidebar-collapsed")));
   wideWindow.addEventListener("change", applyRail);
   navDrawer.addEventListener("prism-close", closeDrawer);
@@ -2088,9 +2202,20 @@ async function initialize() {
     }
   });
   window.addEventListener("popstate", (event) => {
+    const from = pages.index;
     if (Number.isInteger(event.state?.index)) pages.index = event.state.index;
-    showHistory();
     const ref = event.state?.ref ?? new URLSearchParams(location.search).get("artifact");
+    if (ref) pages.refs[pages.index] = ref;
+    // The browser's own buttons can land on an entry that shows the open page; the move goes on to the next entry in the same direction.
+    if (ref === selectedPath && pages.index !== from) {
+      const target = nextEntry(pages.index, pages.index < from ? -1 : 1);
+      if (target !== null) {
+        history.go(target - pages.index);
+        return;
+      }
+    }
+    storeHistoryTop();
+    showHistory();
     if (ref && ref !== selectedPath) openRef(ref, { fromHistory: true });
   });
   connectSessionEvents();

@@ -10,6 +10,7 @@ import { PrismBadge } from "./elements/prism-badge.js";
 import { PrismTab } from "./elements/prism-tab.js";
 import { PrismTabs } from "./elements/prism-tabs.js";
 import { PrismDocTab } from "./elements/prism-doc-tab.js";
+import { PrismDocTabGroup } from "./elements/prism-doc-tab-group.js";
 import { PrismDocTabs } from "./elements/prism-doc-tabs.js";
 import { PrismMenu } from "./elements/prism-menu.js";
 import { PrismMenuGroup } from "./elements/prism-menu-group.js";
@@ -46,6 +47,7 @@ import { PrismPhase } from "./elements/prism-phase.js";
 import { PrismPhaseBar } from "./elements/prism-phase-bar.js";
 import { PrismState } from "./elements/prism-state.js";
 import { PrismKbd } from "./elements/prism-kbd.js";
+import { PrismTable } from "./elements/prism-table.js";
 
 /**
  * Every kit element class; each carries a static `tag` and a static `catalog` of
@@ -58,6 +60,7 @@ export const KIT_ELEMENTS = [
   PrismChip,
   PrismBadge,
   PrismKbd,
+  PrismTable,
   PrismTab,
   PrismMenuItem,
   PrismTooltip,
@@ -67,6 +70,7 @@ export const KIT_ELEMENTS = [
   PrismAvatar,
   PrismTabs,
   PrismDocTab,
+  PrismDocTabGroup,
   PrismDocTabs,
   PrismMenu,
   PrismMenuGroup,

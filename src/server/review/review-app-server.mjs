@@ -413,7 +413,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       }
       if (body.open === true) {
         const tabs = normalizeTabs(body.tabs);
-        await review.presentTabs(tabs);
+        await review.presentTabs(tabs, Object.hasOwn(body, "group") ? { group: body.group } : {});
         await touch(project);
         const url = review.reviewUrl(tabs);
         return withGrant({ url, open: announce(project, url, workspaceLabel(await readWorkspaceIdentity(project.root)), acceptsGrant), session: review.getSession() }, acceptsGrant);
