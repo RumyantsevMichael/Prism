@@ -3,6 +3,7 @@ import { access, constants, link, readFile, rm, stat, writeFile } from "node:fs/
 import path from "node:path";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
 import { hostDefinition } from "./launch-hosts.mjs";
+import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { LaunchError, launchesDirectory, prepareLaunchesDirectory } from "./launch-records.mjs";
 
 // The confirmation of a launch outside the web page: a native dialog of the operating system, run without a shell.
@@ -16,6 +17,10 @@ export const DIALOG_MS = 120 * 1000;
 const DIALOG_BACKSTOP_MS = DIALOG_MS + 10 * 1000;
 // A pending record is held this long at most; an older one belongs to a process that ended without releasing it.
 const PENDING_STALE_MS = DIALOG_BACKSTOP_MS * 2;
+// A takeover of an abandoned pending record lasts milliseconds; a takeover lock this old belongs to a process that ended.
+const TAKEOVER_STALE_MS = 10 * 1000;
+// After a dialog program exits, its output is awaited this long at most, since a descendant may keep the pipes open.
+const OUTPUT_WAIT_MS = 1000;
 const WINDOW_FILE = "window.json";
 const COOLDOWN_FILE = "confirmation-cooldown.json";
 const PENDING_FILE = "confirmation-pending.json";
@@ -28,6 +33,17 @@ const UNIX_DIALOG_PLATFORMS = new Set(["linux", "freebsd", "openbsd"]);
 
 // The dialogs this process has open; the pending file carries the rule to other processes of this machine.
 let openHere = 0;
+
+// zenity renders its text as Pango markup, so the characters that markup reads are written as entities and shown as typed.
+function pangoText(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// kdialog lets Qt guess whether its text is rich text; a text that could read as markup is given as rich text that shows it as typed.
+function qtText(text) {
+  if (!/[<&]/.test(text)) return text;
+  return `<p style="margin:0; white-space:pre-wrap">${pangoText(text)}</p>`;
+}
 
 export function confirmationText({ label, initiative, checkout }) {
   return `Start a ${label} session on this computer that runs Prism's orchestrate skill for the initiative ${initiative} in ${checkout}? Further launches in the next 30 minutes will start without asking.`;
@@ -101,6 +117,28 @@ async function holderIsLive(file) {
   return processRuns(holder.pid) && Number.isFinite(startedAt) && Date.now() - startedAt < PENDING_STALE_MS;
 }
 
+/** Removes an abandoned pending record, under a takeover lock, so two processes never both take over and both open a dialog. */
+async function takeOverAbandoned(file) {
+  const lock = `${file}.takeover`;
+  try {
+    await writeFile(lock, `${process.pid}\n`, { mode: 0o600, flag: "wx" });
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    try {
+      if (Date.now() - (await stat(lock)).mtimeMs >= TAKEOVER_STALE_MS) await rm(lock, { force: true });
+    } catch (statError) {
+      if (statError.code !== "ENOENT") throw statError;
+    }
+    return;
+  }
+  try {
+    // Checked again under the lock: another process may have taken the slot over since.
+    if (!(await holderIsLive(file))) await rm(file, { force: true });
+  } finally {
+    await rm(lock, { force: true });
+  }
+}
+
 /** Takes this machine's one dialog slot, or returns null while another dialog is open. */
 async function takePendingSlot(env, now) {
   // Taken before any await, so two requests of this process never both pass.
@@ -112,7 +150,7 @@ async function takePendingSlot(env, now) {
   let taken = false;
   try {
     await writeFile(draft, `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), requestedAt: new Date(now).toISOString() })}\n`, { mode: 0o600, flag: "wx" });
-    for (let attempt = 0; attempt < 2 && !taken; attempt += 1) {
+    for (let attempt = 0; attempt < 3 && !taken; attempt += 1) {
       try {
         await link(draft, file);
         taken = true;
@@ -120,7 +158,7 @@ async function takePendingSlot(env, now) {
         if (error.code !== "EEXIST") throw error;
         if (await holderIsLive(file)) break;
         // The process that held the slot ended without releasing it.
-        await rm(file, { force: true });
+        await takeOverAbandoned(file);
       }
     }
   } finally {
@@ -167,14 +205,14 @@ export async function nativeDialog({ text, env = process.env, platform = process
     if (zenity) {
       return {
         command: zenity,
-        args: [...ZENITY_ARGS, `--text=${text}`],
+        args: [...ZENITY_ARGS, `--text=${pangoText(text)}`],
         env,
         killAfterMs: DIALOG_BACKSTOP_MS,
         read: ({ code, stderr, timedOut }) => {
           if (timedOut) return "unanswered";
           if (code === 0) return "confirmed";
           if (code === 5) return "unanswered";
-          if (code === 1) return /failed to open display/i.test(stderr) ? unavailable(`zenity could not open the display ${display}`) : "declined";
+          if (code === 1) return /(failed to|cannot) open display/i.test(stderr) ? unavailable(`zenity could not open the display ${display}`) : "declined";
           return "unanswered";
         }
       };
@@ -183,7 +221,7 @@ export async function nativeDialog({ text, env = process.env, platform = process
     if (kdialog) {
       return {
         command: kdialog,
-        args: ["--title", "Prism", "--yes-label", "Launch", "--no-label", "Cancel", "--warningyesno", text],
+        args: ["--title", "Prism", "--yes-label", "Launch", "--no-label", "Cancel", "--warningyesno", qtText(text)],
         env,
         killAfterMs: DIALOG_MS,
         read: ({ code, timedOut }) => {
@@ -252,13 +290,27 @@ function runDialog(dialog) {
       // A forced kill, which a dialog cannot ignore, so the one-dialog slot is always released.
       child.kill("SIGKILL");
     }, dialog.killAfterMs);
+    let settled = false;
+    let outputTimer = null;
     const done = (result) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
+      clearTimeout(outputTimer);
       resolve(result);
     };
     child.stdout.on("data", (chunk) => { if (stdout.length < 64 * 1024) stdout += chunk; });
     child.stderr.on("data", (chunk) => { if (stderr.length < 64 * 1024) stderr += chunk; });
     child.on("error", (error) => done({ code: null, stdout, stderr: stderr || error.message, timedOut, spawnError: error }));
+    // A descendant that inherited the pipes can hold them open long after the dialog ended, so its output is awaited briefly.
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      outputTimer = setTimeout(() => {
+        child.stdout.destroy();
+        child.stderr.destroy();
+        done({ code, stdout, stderr, timedOut });
+      }, OUTPUT_WAIT_MS);
+    });
     child.on("close", (code) => done({ code, stdout, stderr, timedOut }));
   });
 }
@@ -270,6 +322,8 @@ function runDialog(dialog) {
 export async function confirmLaunch({ initiative, host, checkout, env = process.env, platform = process.platform, now = Date.now() }) {
   const definition = hostDefinition(host);
   if (!definition) throw new LaunchError("unknown_host", `Prism cannot launch the host ${host}.`);
+  // The initiative is shown in the dialog, so only a slug reaches it.
+  if (typeof initiative !== "string" || !SLUG_PATTERN.test(initiative)) throw new LaunchError("unknown_initiative", `Prism cannot launch the initiative ${String(initiative)}.`);
   await prepareLaunchesDirectory(env);
   const window = await launchWindow({ env, now });
   if (window) return { asked: false, windowEndsAt: window.endsAt };
