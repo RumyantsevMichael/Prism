@@ -23,6 +23,8 @@ import {
   readLaunchRecord,
   removeLaunchFolder,
   storeLocation,
+  voidToken,
+  withRunStartLock,
   writeLaunchRecord
 } from "./launch-records.mjs";
 
@@ -77,16 +79,17 @@ async function startRun({ folder, record, env, cause }) {
   supervisor.once("error", (error) => { gone = `the supervisor could not be started: ${error.message}`; });
   supervisor.once("exit", (code, signal) => { gone = `the supervisor ended with ${signal ?? `exit code ${code}`} before the host started`; });
   supervisor.unref();
+  // The view as of the host's start, so a run that already ended still answers as the running session it was.
+  const startedView = (current, run) => {
+    const started = { ...current, runs: current.runs.map((entry) => (entry === run ? { ...entry, endedAt: null, exit: null, heartbeatAt: run.startedAt, supervisorPid: process.pid } : entry)) };
+    return launchView(started, { now: Date.parse(run.startedAt) });
+  };
   const deadline = Date.now() + START_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const current = await readLaunchRecord(folder);
     const run = current?.runs.find((entry) => entry.token === token);
     // The host counts as started once it has written its first output or ended, or a few seconds after its process started.
-    if (run && (run.outputAt || run.endedAt || Date.now() - Date.parse(run.startedAt) >= FIRST_OUTPUT_WAIT_MS)) {
-      // The view as of the host's start, so a run that already ended still answers as the running session it was.
-      const started = { ...current, runs: current.runs.map((entry) => (entry === run ? { ...entry, endedAt: null, exit: null, heartbeatAt: run.startedAt, supervisorPid: process.pid } : entry)) };
-      return launchView(started, { now: Date.parse(run.startedAt) });
-    }
+    if (run && (run.outputAt || run.endedAt || Date.now() - Date.parse(run.startedAt) >= FIRST_OUTPUT_WAIT_MS)) return startedView(current, run);
     if (current?.startFailure?.token === token) throw refuse("launch_failed", current.startFailure.message);
     if (gone) {
       const last = await readLaunchRecord(folder);
@@ -95,6 +98,22 @@ async function startRun({ folder, record, env, cause }) {
       continue;
     }
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+  }
+  // Giving up voids the token under the lock that the supervisor holds while it starts the host, so a late supervisor starts none;
+  // a host it started before that still counts as started.
+  const late = await withRunStartLock(folder, async () => {
+    const current = await readLaunchRecord(folder);
+    const run = current?.runs.find((entry) => entry.token === token);
+    if (run) return startedView(current, run);
+    if (current) {
+      voidToken(current, token);
+      await writeLaunchRecord(folder, current);
+    }
+    return null;
+  }).catch(() => null);
+  if (late) return late;
+  if (!gone && supervisor.pid) {
+    try { process.kill(supervisor.pid, "SIGTERM"); } catch {}
   }
   throw refuse("launch_failed", `${hostDefinition(record.host).label} could not be started: the supervisor did not start it within ${START_TIMEOUT_MS / 1000} seconds.`);
 }

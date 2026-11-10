@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { chmod, lstat, mkdir, readdir, readFile, realpath, rm } from "node:fs/promises";
 import path from "node:path";
-import { writeAtomically } from "../workflow/artifact-store.mjs";
+import { withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { describeRecordStore } from "../workflow/record-store.mjs";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { hostDefinition, redactSessionId, resumeCommandOf } from "./launch-hosts.mjs";
@@ -62,6 +62,24 @@ export async function createLaunchFolder(env, id) {
   await mkdir(folder, { mode: 0o700 });
   if (process.platform !== "win32") await chmod(folder, 0o700);
   return folder;
+}
+
+// A supervisor starts its host only under this lock, after checking that its starter has not given up on its token,
+// and a starter that gives up voids the token under the same lock, so a supervisor it gave up on never starts a host.
+const RUN_START_LOCK = "run-start";
+const RUN_START_LOCK_TIMEOUT_MS = 10000;
+const VOIDED_TOKENS_KEPT = 16;
+
+export function withRunStartLock(folder, action) {
+  return withFileLock(path.join(folder, RUN_START_LOCK), action, (code, message) => new LaunchError(code === "lock_timeout" ? "launch_failed" : code, message), { timeoutMs: RUN_START_LOCK_TIMEOUT_MS });
+}
+
+export function tokenVoided(record, token) {
+  return Array.isArray(record?.voidedTokens) && record.voidedTokens.includes(token);
+}
+
+export function voidToken(record, token) {
+  record.voidedTokens = [...(Array.isArray(record.voidedTokens) ? record.voidedTokens : []), token].slice(-VOIDED_TOKENS_KEPT);
 }
 
 export async function readLaunchRecord(folder) {

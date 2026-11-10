@@ -8,6 +8,7 @@ import { CODEX_THREAD, INITIATIVE, launchFixture, waitFor } from "./fixtures/lau
 import { hostArguments, resumeCommandOf, streamReader } from "../../dist/server/session/launch-hosts.mjs";
 import { RETENTION_MS, launchView, launchesDirectory } from "../../dist/server/session/launch-records.mjs";
 import { withFileLock } from "../../dist/server/workflow/artifact-store.mjs";
+import { fileURLToPath } from "node:url";
 
 // What a launched session takes from its host's output: a host session id only when it is safe on a command line,
 // and a launch view that carries that id only in its resumeCommand. Stub executables stand in for claude and codex.
@@ -117,4 +118,18 @@ test("listing removes an expired launch folder only under the launch lock", { sk
   const { launches } = await listed;
   assert.equal(launches.length, 0);
   assert.ok(!existsSync(folder));
+});
+
+test("a resume that answers launch_failed after its timeout starts no run afterwards", { skip: posixOnly, timeout: 60000 }, async (t) => {
+  const fixture = await launchFixture(t, { plans: { codex: [{}, { hold: "forever" }] } });
+  const { listLaunches, resumeLaunch, startLaunch } = await module();
+  const { launch } = await startLaunch({ projectRoot: fixture.root, initiative: INITIATIVE, host: "codex", env: fixture.env });
+  await settled(fixture, launch.id, ["finished"]);
+  const slow = fileURLToPath(new URL("./fixtures/slow-launch-supervisor.mjs", import.meta.url));
+  await assert.rejects(resumeLaunch({ id: launch.id, env: { ...fixture.env, NODE_OPTIONS: `--import ${slow}` } }), { code: "launch_failed" });
+  await new Promise((resolve) => setTimeout(resolve, 4000));
+  const { launches } = await listLaunches({ projectRoot: fixture.root, env: fixture.env });
+  const view = launches.find((entry) => entry.id === launch.id);
+  assert.equal(fixture.runs("codex").length, 1, `a run started after launch_failed; the session now shows ${view.state} with ${view.runs} runs`);
+  assert.equal(view.state, "finished");
 });
