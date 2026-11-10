@@ -7,7 +7,7 @@ import { withFileLock } from "../workflow/artifact-store.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { listInitiatives } from "../workflow/record-store.mjs";
 import { readRoadmap } from "../workflow/roadmap.mjs";
-import { hostAvailability, hostDefinition, hostEnvironment, resolveHost } from "./launch-hosts.mjs";
+import { hostAvailability, hostDefinition, hostEnvironment, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
 import {
   LAUNCH_ID_PATTERN,
   LaunchError,
@@ -142,7 +142,7 @@ export async function resumeLaunch({ id, env = process.env, cause = "person" }) 
     if (!record) throw refuse("unknown_launch", `No launched session ${id} exists on this machine.`);
     if (launchRunning(record)) throw refuse("launch_running", "The session is running.");
     if (await otherRunning(env, { initiative: record.initiative, store: record.store, except: id })) throw refuse("launch_running", runningMessage(record.initiative));
-    if (!record.hostSessionId) throw refuse("no_host_session", "The session never reported its host session id, so it cannot be resumed.");
+    if (!validHostSessionId(record.hostSessionId)) throw refuse("no_host_session", "The session never reported its host session id, so it cannot be resumed.");
     const resolved = await resolveHost(record.host, env);
     if (!resolved?.available) throw refuse("host_unavailable", resolved?.reason ?? `Unknown host ${record.host}.`);
     return startRun({ folder, record, env, cause: cause === "gate" ? "gate" : "person" });
@@ -154,14 +154,30 @@ export async function listLaunches({ projectRoot, env = process.env, now = Date.
   const at = typeof now === "number" ? now : Date.parse(now);
   const store = await storeLocation(await realpath(projectRoot));
   const launches = [];
+  const candidates = [];
   for (const { folder, record } of await listLaunchRecords(env)) {
     if (!record) continue;
     if (expired(record, at)) {
-      await removeLaunchFolder(folder);
+      candidates.push({ folder, record });
       continue;
     }
     if (record.store !== store || !record.runs.length) continue;
     launches.push(launchView(record, { now: at }));
+  }
+  // Removal re-reads each record under the lock that starts and resumes hold, so a run that a resume is starting keeps its folder.
+  // When the lock stays busy, the expired folders wait for the next list.
+  const kept = candidates.length ? await withLaunchLock(env, async () => {
+    const still = [];
+    for (const { folder } of candidates) {
+      const current = await readLaunchRecord(folder);
+      if (!current) continue;
+      if (expired(current, at)) await removeLaunchFolder(folder);
+      else still.push(current);
+    }
+    return still;
+  }).catch(() => []) : [];
+  for (const record of kept) {
+    if (record.store === store && record.runs.length) launches.push(launchView(record, { now: at }));
   }
   return { launches: launches.sort((left, right) => (right.launchedAt ?? "").localeCompare(left.launchedAt ?? "") || right.id.localeCompare(left.id)) };
 }

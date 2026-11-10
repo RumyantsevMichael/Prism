@@ -6,7 +6,7 @@
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { readLaunchRecord, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
-import { hostArguments, resolveHost, streamReader } from "./launch-hosts.mjs";
+import { hostArguments, redactSessionId, resolveHost, streamReader, validHostSessionId } from "./launch-hosts.mjs";
 
 const STDERR_KEEP = 64 * 1024;
 const OUTPUT_DRAIN_MS = 2000;
@@ -32,7 +32,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
     await failStart(resolved?.reason ?? `Unknown host ${record.host}.`);
     return;
   }
-  if (resume && !record.hostSessionId) {
+  if (resume && !validHostSessionId(record.hostSessionId)) {
     await failStart("The session never reported its host session id, so it cannot be resumed.");
     return;
   }
@@ -40,6 +40,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
   const number = record.runs.length + 1;
   let stderr = Buffer.alloc(0);
   const reader = streamReader(record.host, {
+    hostSessionId: record.hostSessionId,
     onSessionId: (id) => update((current) => { if (!current.hostSessionId) current.hostSessionId = id; })
   });
 
@@ -102,7 +103,9 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
         if (!current.hostSessionId && facts.hostSessionId) current.hostSessionId = facts.hostSessionId;
         const run = current.runs.find((entry) => entry.token === token);
         if (!run) return;
-        Object.assign(run, { endedAt, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, hostError: facts.hostError, stderr: lines.at(-1)?.slice(0, 300) ?? null });
+        // The id is replaced before the line is cut, so no cut leaves part of it behind.
+        const last = redactSessionId(lines.at(-1) ?? null, current.hostSessionId);
+        Object.assign(run, { endedAt, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, hostError: facts.hostError, stderr: last?.slice(0, 300) ?? null });
       });
       resolve();
     });

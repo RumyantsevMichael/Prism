@@ -26,6 +26,19 @@ const CLAUDE_FLAGS = Object.freeze(["--output-format", "stream-json", "--verbose
 const CODEX_POLICY = Object.freeze(["-c", "approval_policy=\"on-request\"", "-c", "approvals_reviewer=\"auto_review\"", "-c", "sandbox_mode=\"workspace-write\""]);
 export const MAX_LINE_BYTES = 1024 * 1024;
 const REFUSAL_REASON_MAX = 500;
+// A host session id that may reach a command line: letters, digits, `_`, and `-`, never first, so no host reads it as an option and no shell splits it.
+export const HOST_SESSION_ID_PATTERN = /^[0-9A-Za-z][0-9A-Za-z_-]{0,127}$/;
+export const SESSION_ID_PLACEHOLDER = "<host session id>";
+
+export function validHostSessionId(value) {
+  return typeof value === "string" && HOST_SESSION_ID_PATTERN.test(value);
+}
+
+/** The text with every occurrence of the host session id, in any letter case, replaced by a placeholder; the pattern keeps the id free of regular expression syntax. */
+export function redactSessionId(text, hostSessionId) {
+  if (typeof text !== "string" || !validHostSessionId(hostSessionId)) return text;
+  return text.replace(new RegExp(hostSessionId, "gi"), SESSION_ID_PLACEHOLDER);
+}
 
 export function hostDefinition(host) {
   return HOSTS.find((definition) => definition.host === host) ?? null;
@@ -96,6 +109,7 @@ export async function hostAvailability({ env = process.env } = {}) {
 
 /** The arguments of a run: the launch form for the first run, and the resume form with the host session id after it. */
 export function hostArguments({ host, initiative, hostSessionId, resume }) {
+  if ((resume || host === "claude-code") && !validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
   if (host === "claude-code") return ["-p", `/prism:orchestrate ${initiative}`, resume ? "--resume" : "--session-id", hostSessionId, ...CLAUDE_FLAGS];
   if (host === "codex") {
     return resume
@@ -105,8 +119,9 @@ export function hostArguments({ host, initiative, hostSessionId, resume }) {
   throw new Error(`Unknown host ${host}.`);
 }
 
-/** The command that continues a host session in a terminal. */
+/** The command that continues a host session in a terminal, or null for an id that breaks HOST_SESSION_ID_PATTERN. */
 export function resumeCommandOf(host, hostSessionId) {
+  if (!validHostSessionId(hostSessionId)) return null;
   return host === "claude-code" ? `claude --resume ${hostSessionId}` : `codex resume ${hostSessionId}`;
 }
 
@@ -177,11 +192,14 @@ function blockText(content) {
 
 /**
  * A reader of one run's standard output that collects { hostSessionId, refusals, hostError }.
- * onSessionId is called once when a Codex run names its thread.
+ * onSessionId is called once when a Codex run names its thread with a valid id; a first thread with any other id leaves the run without one.
+ * Refusal reasons and host errors have the host session id, the known one or the one the run names, replaced before they are cut.
  */
-export function streamReader(host, { onSessionId = () => {} } = {}) {
+export function streamReader(host, { onSessionId = () => {}, hostSessionId = null } = {}) {
   const facts = { hostSessionId: null, refusals: [], hostError: null };
   const toolResults = new Map();
+  let threadSeen = false;
+  const redact = (text) => redactSessionId(redactSessionId(text, hostSessionId), facts.hostSessionId);
   const handle = (event) => {
     if (host === "claude-code") {
       if (event.type === "user" && Array.isArray(event.message?.content)) {
@@ -194,22 +212,25 @@ export function streamReader(host, { onSessionId = () => {} } = {}) {
         facts.refusals = denials.filter((denial) => denial && typeof denial === "object").map((denial) => {
           const tool = typeof denial.tool_name === "string" && denial.tool_name ? denial.tool_name : "a tool";
           const text = toolResults.get(denial.tool_use_id)?.trim();
-          return { tool, reason: text ? text.slice(0, REFUSAL_REASON_MAX) : `${tool} was refused.` };
+          return { tool, reason: text ? redact(text).slice(0, REFUSAL_REASON_MAX) : `${tool} was refused.` };
         });
-        facts.hostError = event.is_error === true ? String(typeof event.result === "string" ? event.result : "") : null;
+        facts.hostError = event.is_error === true ? redact(String(typeof event.result === "string" ? event.result : "")) : null;
       }
       return;
     }
-    if (event.type === "thread.started" && facts.hostSessionId === null && typeof event.thread_id === "string" && event.thread_id) {
-      facts.hostSessionId = event.thread_id;
-      onSessionId(event.thread_id);
+    if (event.type === "thread.started" && !threadSeen) {
+      threadSeen = true;
+      if (validHostSessionId(event.thread_id)) {
+        facts.hostSessionId = event.thread_id;
+        onSessionId(event.thread_id);
+      }
     }
     if (event.type === "item.completed" && event.item?.status === "declined") {
       const tool = typeof event.item.type === "string" && event.item.type ? event.item.type : "an action";
       const command = typeof event.item.command === "string" && event.item.command ? event.item.command : tool;
-      facts.refusals.push({ tool, reason: `Codex declined: ${command}` });
+      facts.refusals.push({ tool, reason: redact(`Codex declined: ${command}`) });
     }
-    if (event.type === "turn.failed") facts.hostError = String(event.error?.message ?? "");
+    if (event.type === "turn.failed") facts.hostError = redact(String(event.error?.message ?? ""));
   };
   const splitter = lineSplitter((line) => {
     const event = parseObject(line);

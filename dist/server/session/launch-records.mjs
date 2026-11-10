@@ -4,10 +4,11 @@ import path from "node:path";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
 import { describeRecordStore } from "../workflow/record-store.mjs";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
-import { hostDefinition, resumeCommandOf } from "./launch-hosts.mjs";
+import { hostDefinition, redactSessionId, resumeCommandOf } from "./launch-hosts.mjs";
 
 // The record of each launched session lives in <review app folder>/launches/<launch id>/launch.json, private to the user.
-// The host session id lives only there. While a run runs, its supervisor is the only writer of the record.
+// The host session id lives only there, and a launch view carries it only in its resumeCommand: host text in its reason has the id replaced.
+// While a run runs, its supervisor is the only writer of the record.
 
 export const LAUNCH_ID_PATTERN = /^launch-[0-9a-f]{16}$/;
 const RECORD_FILE = "launch.json";
@@ -174,7 +175,8 @@ function stateOf(record, status, label) {
 export function launchView(record, { now = Date.now() } = {}) {
   const status = lastRunStatus(record, now);
   const label = hostDefinition(record.host)?.label ?? record.host;
-  const { state, reason } = stateOf(record, status, label);
+  const { state, reason: hostText } = stateOf(record, status, label);
+  const reason = redactSessionId(hostText, record.hostSessionId);
   const runningMs = record.runs.reduce((sum, run, index) => {
     const start = time(run.startedAt);
     if (!Number.isFinite(start)) return sum;
@@ -184,7 +186,8 @@ export function launchView(record, { now = Date.now() } = {}) {
   }, 0);
   const ended = [...record.runs].reverse().find((run) => run.endedAt);
   const exit = status === "lost" ? null : ended?.exit ? { code: ended.exit.code ?? null, signal: ended.exit.signal ?? null } : null;
-  const resumeCommand = status === "running" || !record.hostSessionId ? null : { command: resumeCommandOf(record.host, record.hostSessionId), cwd: record.checkout };
+  const command = status === "running" ? null : resumeCommandOf(record.host, record.hostSessionId);
+  const resumeCommand = command ? { command, cwd: record.checkout } : null;
   return {
     id: record.id,
     initiative: record.initiative,
