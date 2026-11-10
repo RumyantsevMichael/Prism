@@ -1,0 +1,10 @@
+@startuml
+title places-compare - units
+component "places-compare.mjs\nmain, outline, compareOutlines" as Compare
+component "mockup-compare.mjs\nframeWindow" as Frame
+component "mockup/mockup.html" as Mockup
+component "seed.mjs demo app" as Demo
+Compare --> Frame : size a frame to the window
+Compare --> Mockup : render each scene
+Compare --> Demo : put the app in the scene's state
+@enduml

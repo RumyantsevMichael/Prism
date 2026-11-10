@@ -170,6 +170,11 @@ function requestedTabs(argumentsValue) {
   return hasArtifact ? argumentsValue.artifact : undefined;
 }
 
+// An agent may name the tab group its presented tabs join, such as the piece of work they belong to.
+function requestedGroup(argumentsValue) {
+  return Object.hasOwn(argumentsValue, "group") ? { group: argumentsValue.group } : {};
+}
+
 // A session that fell back to its own review server tells the agent, so two review pages for one project reach the user as a known cause.
 function reviewContent(url, review) {
   const fallback = review.privateServer?.();
@@ -463,13 +468,14 @@ const tools = [
   },
   {
     name: "present_review",
-    description: "Open or update one local Prism review page in the system browser for the human. Use artifacts to open every listed artifact as a tab marked as presented by the agent, in the tab strip that every window of the review session shares, and to focus the first one; the human's open tabs stay open. Repeated calls update connected viewer pages without opening another tab. Omit artifact and artifacts to open Attention, which lists recorded user gates, roadmap, and library entry points. The tool returns no rendered image data.",
+    description: "Open or update one local Prism review page in the system browser for the human. Use artifacts to open every listed artifact as a tab marked as presented by the agent, in the tab strip that every window of the review session shares, and to focus the first one; the human's open tabs stay open. Use group to gather the presented tabs into a named tab group, such as the piece of work they belong to; presenting under the same name again adds to that group. Repeated calls update connected viewer pages without opening another tab. Omit artifact and artifacts to open Attention, which lists recorded user gates, roadmap, and library entry points. The tool returns no rendered image data.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
         artifact: { type: "string", description: "One project-relative artifact path, opened as one agent tab. Use artifacts to present several artifacts at once." },
-        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths, each opened as its own agent tab that stays open until the human closes it. An empty array opens Attention." }
+        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths, each opened as its own agent tab that stays open until the human closes it. An empty array opens Attention." },
+        group: { type: "string", minLength: 1, maxLength: 60, description: "A short name for the tab group the presented tabs join, such as the initiative or task they belong to. A new name makes a new group; a tab already in another group moves into this one. Omit it to leave the tabs ungrouped." }
       },
       required: ["projectRoot"],
       additionalProperties: false
@@ -1290,7 +1296,7 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
     return { content: [{ type: "text", text: reviewContent(url, review) }], structuredContent: { url, ...await reviewSessionContent(review), ...privateServerContent(review) } };
   }
   if (name === "present_review") {
-    const opened = await review.open(requestedTabs(argumentsValue));
+    const opened = await review.open(requestedTabs(argumentsValue), requestedGroup(argumentsValue));
     return { content: [{ type: "text", text: reviewContent(opened.url, review) }], structuredContent: { ...opened, ...await reviewSessionContent(review), ...privateServerContent(review) } };
   }
   if (name === "list_reviewable_artifacts") {

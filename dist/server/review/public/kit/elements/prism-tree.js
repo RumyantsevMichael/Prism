@@ -8,9 +8,11 @@ export class PrismTree extends Base {
     purpose: "A tree of items that expand and collapse and one of which is selected, such as the sidebar's places, initiatives, and library.",
     options: [
       { name: "label", values: ["text"], default: "", description: "The tree's accessible name." },
-      { name: "rail", values: ["boolean"], default: "false", description: "Shows each top item's start glyph alone, with a count badge on it and the label as its tooltip, as a collapsed sidebar does." }
+      { name: "rail", values: ["boolean"], default: "false", description: "Shows each top item's start glyph alone, with a count badge on it and the label as its tooltip, as a collapsed sidebar does." },
+      { name: "h3.prism-group-heading", values: ["kit class"], default: "", description: "A group's heading above its tree: the name in a span and, in a .prism-group-count span, its count; it reads as a quiet caption in small capitals." },
+      { name: "p.prism-foot-note", values: ["kit class"], default: "", description: "A closing note below the groups: a .prism-foot-note-glyph span with a glyph, then the note in a span, in a quiet tone." }
     ],
-    states: ["default", "nested", "selected", "rail"],
+    states: ["default", "nested", "selected", "rail", "group-heading", "foot-note"],
     keyboard: [
       "Only one item is in the Tab order.",
       "ArrowDown and ArrowUp move to the next and previous visible item; Home and End move to the first and last.",

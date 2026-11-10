@@ -115,6 +115,9 @@ test("Who's working and the sidebar name the harness a claim records, and say Ag
   await rows.first().waitFor();
   const kinds = await rows.evaluateAll((items) => Object.fromEntries(items.map((row) => [row.querySelector(".presence-name").textContent, row.querySelector(".presence-kind").textContent])));
   assert.deepEqual(kinds, { "Prism Test on build-2": "Codex", "Prism Test on ci": "Agent" });
+  await page.keyboard.press("Escape");
+  await page.getByRole("navigation", { name: "Places" }).getByRole("button", { name: /^Work/ }).click();
+  await page.locator("#sidebar prism-claim").first().waitFor({ state: "attached" });
   const tips = await page.evaluate(() => [...document.querySelectorAll("#sidebar prism-claim")].map((claim) => claim.getAttribute("tip") ?? ""));
   assert.ok(tips.some((tip) => tip.startsWith("Prism Test on build-2 · Codex ·")), `a sidebar claim's tip names the harness: ${JSON.stringify(tips)}`);
   assert.deepEqual(page.errors, []);

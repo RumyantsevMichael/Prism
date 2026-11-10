@@ -146,9 +146,9 @@ const context = () => ({
   openEvidence() {}
 });
 
-// Each run-totals block in rendered HTML, in document order, with its scope and its tiles' shown value and coverage mark.
-const BLOCK = /<(?:div|p) class="run-totals(?:-empty)?" data-run-totals="([a-z]+)">/g;
-const TILE = /<prism-stat class="run-total[^"]*" data-measure="([A-Za-z]+)" data-coverage="([a-z]+)" label="[^"]*" value="([^"]*)"/g;
+// Each run-totals scope in rendered HTML, in document order, with its scope and its cells' shown value and coverage mark.
+const BLOCK = /<(?:tr|p) class="run-totals(?:-empty)?" data-run-totals="([a-z]+)">/g;
+const TILE = /<td class="run-total[^"]*" data-measure="([A-Za-z]+)" data-coverage="([a-z]+)" data-value="([^"]*)"/g;
 function runTotalsBlocks(html) {
   const starts = [...html.matchAll(BLOCK)];
   return starts.map((match, index) => {
