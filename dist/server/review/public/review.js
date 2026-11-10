@@ -17,7 +17,7 @@ import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createPresence } from "./views/presence.js";
 import { DENSITIES, savePreferences, THEMES } from "./kit/preferences.js";
 import { shownActionEntries } from "./views/actions.js";
-import { artifactReviewHtml, mountArtifactReview, readListedComments } from "./views/artifact-review.js";
+import { artifactReviewHtml, focusAfterMore, mountArtifactReview, readListedComments } from "./views/artifact-review.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
 
 const project = document.getElementById("project");
@@ -1205,14 +1205,24 @@ function endRebuild(memory) {
   }
   // Focus that a view named with data-focus-key comes back by that name, and a comment, which is no control, takes it without entering the tab order.
   // A comment is never found again by position, since a list that grew or shrank would move focus to another control: one that is gone hands focus to the More comments button when one is listed.
+  // A More comments button that this redraw no longer lists, as when it lists the last comments that a press of it asked for, hands focus on as that press would:
+  // to the More comments button that follows the added comments, or else to the first comment that the press added, never to a control found by position.
   const keyed = (key) => [...artifact.querySelectorAll("[data-focus-key]")].find((control) => control.dataset.focusKey === key);
   const comment = memory.focusKey?.startsWith("comment:") === true;
+  const more = memory.focusKey === "more-comments";
   if (memory.focusKey && !artifact.contains(document.activeElement)) {
     const found = keyed(memory.focusKey) ?? (comment ? keyed("more-comments") : null);
     if (found?.dataset.commentId !== undefined) found.tabIndex = -1;
-    found?.focus({ preventScroll: true });
+    if (found) found.focus({ preventScroll: true });
+    else if (more) {
+      const list = artifact.querySelector("[data-comment-list]");
+      const listed = [...(list?.querySelectorAll("[data-comment-id]") ?? [])];
+      // Without a press under way, focus goes to the last listed comment, the place in the list where the button stood.
+      const before = state.moreBefore ?? new Set(listed.slice(0, -1).map((item) => item.dataset.commentId));
+      if (list) focusAfterMore(list, before);
+    }
   }
-  if (!comment && memory.focus >= 0 && !artifact.contains(document.activeElement)) controlsOf(artifact)[memory.focus]?.focus({ preventScroll: true });
+  if (!comment && !more && memory.focus >= 0 && !artifact.contains(document.activeElement)) controlsOf(artifact)[memory.focus]?.focus({ preventScroll: true });
   workspace.scrollTop = memory.top;
   if (pendingAnchor?.path === memory.path) {
     scrollToAnchor(pendingAnchor.anchor);

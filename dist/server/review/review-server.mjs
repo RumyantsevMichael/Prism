@@ -502,9 +502,10 @@ export async function readBody(request) {
 }
 
 // A refusal of the action registry answers with its status and a JSON body of its code, message, and the fields that refusal carries.
-// An approval of an artifact that changed since it was asked, of an id that more than one pending gate holds, or an approval or comment by a checkout whose Git names no user, conflicts with the store as it is,
+// An approval of an artifact that changed since it was asked, of an id that more than one pending gate holds, an approval or comment by a checkout whose Git names no user,
+// or a comment on a file that already holds the comments a file may hold, conflicts with the store as it is,
 // and a store that cannot be used answers an approval or comment target with its own refusal as unavailable, as an artifact read does.
-const ACTION_STATUS = { unknown_target: 404, unknown_action: 404, stale_revision: 409, action_unavailable: 409, confirmation_required: 409, artifact_changed: 409, approval_ambiguous: 409, author_unknown: 409, invalid_input: 400 };
+const ACTION_STATUS = { unknown_target: 404, unknown_action: 404, stale_revision: 409, action_unavailable: 409, confirmation_required: 409, artifact_changed: 409, approval_ambiguous: 409, author_unknown: 409, comment_limit: 409, invalid_input: 400 };
 const ACTION_FIELDS = ["current", "reason", "field", "accepted"];
 export const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
 

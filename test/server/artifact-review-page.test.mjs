@@ -184,4 +184,34 @@ for (const width of [390, 1440]) {
     await page.unrouteAll({ behavior: "ignoreErrors" });
     assert.deepEqual(page.errors, []);
   });
+
+  test(`at ${width} px a press of More comments whose read a poll's redraw overtakes moves focus to the first added comment, never to the page`, { skip: noBrowser, timeout: 180000 }, async (context) => {
+    const { prism, review } = await project(context);
+    const written = await writeArtifact(prism, FILE, requirementFile("Billing"));
+    for (let number = 1; number <= 25; number += 1) {
+      const posted = await browserRequest(review, "/api/actions/apply", { method: "POST", body: { action: "artifact.comment", target: `artifact:workspace:${FILE}`, input: { line: "3", text: `Comment ${number}.` }, revision: written.version } });
+      assert.equal(posted.status, 200, JSON.stringify(posted.body));
+    }
+    const page = await writableTab(context, review, width);
+    const focus = () => page.evaluate(() => {
+      const active = document.activeElement;
+      if (active?.closest?.("[data-more-comments]")) return "More";
+      return active?.matches?.("li.artifact-comment") ? active.querySelector(".artifact-comment-text")?.textContent : active?.tagName;
+    });
+    await page.locator("[data-more-comments]").waitFor({ timeout: 15000 });
+    await page.locator("[data-more-comments]").focus();
+    // The press's read of the next page answers 3.5 s late, so the page's next poll reads both pages first and redraws the card with every comment.
+    let delayed = 0;
+    await page.route(/\/api\/artifact\?.*commentOffset=21/, async (route) => {
+      if (delayed++ === 0) await new Promise((resolve) => setTimeout(resolve, 3500));
+      await route.continue().catch(() => {});
+    });
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => document.querySelectorAll(".artifact-comments > li").length === 25 && !document.querySelector("[data-more-comments]"), null, { timeout: 15000 });
+    await page.waitForTimeout(5000);
+    assert.ok(delayed >= 2, `a poll read the next page while the press's read waited: ${delayed}`);
+    assert.equal(await focus(), "Comment 21.", "focus is on the first added comment");
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    assert.deepEqual(page.errors, []);
+  });
 }

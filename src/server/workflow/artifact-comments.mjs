@@ -1,10 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir } from "node:fs/promises";
+import { lstat, mkdir, open, opendir, readdir } from "node:fs/promises";
 import path from "node:path";
 import { writeAtomically } from "./artifact-store.mjs";
 import { ARTIFACT_COMMENTS, artifactAddress, artifactLocation, artifactPathOf, locationArtifact } from "./artifact-paths.mjs";
-import { ARTIFACT_COMMENT_FILE, resolveStatusFile } from "./record-store.mjs";
+import { ARTIFACT_COMMENT_FILE, COMMENTS_PER_ARTIFACT_MAX, resolveStatusFile } from "./record-store.mjs";
 import { scheduleRecordSync } from "./record-store-sync.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 
@@ -130,6 +130,35 @@ async function folderEntries(target, location) {
 const byText = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 const oldestFirst = (comments) => comments.sort((left, right) => byText(left.at, right.at) || byText(left.name, right.name));
 
+/**
+ * The names of a comment folder's entries, other than folders, read one batch at a time and no further than one past the entries an artifact's comments may hold,
+ * as { names, over }, where over says the folder holds more entries than that, so it holds no comment that a reader takes, and names is then empty.
+ */
+async function boundedNames(target) {
+  const names = [];
+  let count = 0;
+  const folder = await opendir(target, { bufferSize: 128 });
+  try {
+    for await (const entry of folder) {
+      if (++count > COMMENTS_PER_ARTIFACT_MAX) return { names: [], over: true };
+      if (entry.isFile() && ARTIFACT_COMMENT_FILE.test(entry.name)) names.push(entry.name);
+    }
+  } finally { await folder.close().catch(() => {}); }
+  return { names, over: false };
+}
+
+/** Whether an artifact's comment folder already holds the entries that an artifact's comments may hold, so no comment is added to it; read no further than that many names. */
+async function folderFull(target) {
+  let count = 0;
+  let folder;
+  try { folder = await opendir(target, { bufferSize: 128 }); }
+  catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return false; throw error; }
+  try {
+    for await (const entry of folder) { void entry; if (++count >= COMMENTS_PER_ARTIFACT_MAX) return true; }
+  } finally { await folder.close().catch(() => {}); }
+  return false;
+}
+
 // A sync can bring any number of comment files, and every open review page reads a file's comments on each poll, so each process keeps what each comment folder held:
 // for each file named like a comment, the stamp of its entry and the time and entry id of the comment it holds, or none for a file that holds no comment.
 // A listing stands while the folder's own stamp is unchanged, for at most a few seconds, and then each file is checked by its stamp, so only a new or changed file is read again;
@@ -137,9 +166,13 @@ const oldestFirst = (comments) => comments.sort((left, right) => byText(left.at,
 const LISTING_TRUSTED_MS = 5000;
 // A change within this long before a listing may share its stamp with a later one on a file system whose clock is coarse, so such a listing is never reused.
 const RACY_MS = 1000;
+// The listings kept: never fewer than the comment folders that the last read of Attention took, so its next read finds each folder's listing again.
 const LISTINGS_KEPT = 256;
-const STAMPS_AT_ONCE = 256;
+let listingsKept = LISTINGS_KEPT;
+const STAMPS_AT_ONCE = 64;
 const listings = new Map();
+// A read of a folder that another read is already making shares that read, so concurrent pages make one check of a folder rather than one each.
+const inFlight = new Map();
 
 // What tells two states of a folder or file apart: its device, inode, size, and change and modification times, in nanoseconds where the platform has them.
 const stampOf = (info) => `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`;
@@ -161,7 +194,15 @@ const racy = (info, now) => now - Number(info.mtimeMs) < RACY_MS || now - Number
  * The comments of one folder, oldest first, as { name, at, entry }, from the listing this process keeps of it; fresh reads every file again.
  * A missing folder, or a link or other entry in its place, holds none.
  */
-async function commentOrder(target, location, { fresh = false } = {}) {
+function commentOrder(target, location, { fresh = false } = {}) {
+  const key = `${fresh ? "fresh" : "kept"}\0${location}\0${target}`;
+  if (inFlight.has(key)) return inFlight.get(key);
+  const reading = readOrder(target, location, fresh).finally(() => inFlight.delete(key));
+  inFlight.set(key, reading);
+  return reading;
+}
+
+async function readOrder(target, location, fresh) {
   // The folder's stamp is taken before its names are read, so a change during the read leaves a stamp that the next read finds changed.
   const folder = await lstatOrNull(target);
   if (!folder?.isDirectory()) { listings.delete(target); return []; }
@@ -169,10 +210,11 @@ async function commentOrder(target, location, { fresh = false } = {}) {
   const kept = listings.get(target)?.location === location ? listings.get(target) : null;
   const now = Date.now();
   if (!fresh && kept?.stamp === stamp && !kept.racy && now - kept.checked < LISTING_TRUSTED_MS) return kept.order;
-  let entries;
-  try { entries = await readdir(target, { withFileTypes: true }); }
+  let listed;
+  try { listed = await boundedNames(target); }
   catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return []; throw error; }
-  const names = entries.filter((entry) => entry.isFile() && ARTIFACT_COMMENT_FILE.test(entry.name)).map((entry) => entry.name);
+  // A folder of more entries than an artifact's comments may hold holds no comment that a reader takes, as a damaged file holds none.
+  const { names } = listed;
   const files = new Map();
   for (let index = 0; index < names.length; index += STAMPS_AT_ONCE) {
     const batch = names.slice(index, index + STAMPS_AT_ONCE);
@@ -182,7 +224,7 @@ async function commentOrder(target, location, { fresh = false } = {}) {
   const order = oldestFirst([...files].filter(([, file]) => file.at !== null).map(([name, file]) => ({ name, at: file.at, entry: file.entry })));
   listings.delete(target);
   listings.set(target, { location, stamp, racy: racy(folder, now), checked: now, files, order });
-  while (listings.size > LISTINGS_KEPT) listings.delete(listings.keys().next().value);
+  while (listings.size > listingsKept) listings.delete(listings.keys().next().value);
   return order;
 }
 
@@ -249,6 +291,8 @@ export async function movedComment(seen, scope, address, { name, comment }) {
  */
 export async function addComment(seen, scope, address, { version, line, text, author, entry }) {
   const folder = await resolveStatusFile(seen, commentsFolder(scope, address));
+  // An artifact holds at most COMMENTS_PER_ARTIFACT_MAX comments, past which no reader takes any, so a comment on a full folder is refused and stores nothing.
+  if (await folderFull(folder)) throw Object.assign(new Error(`This file already holds the ${COMMENTS_PER_ARTIFACT_MAX} comments that a file may hold, so the comment was not stored.`), { code: "comment_limit" });
   const name = commentName(entry.at);
   const target = await resolveStatusFile(seen, `${commentsFolder(scope, address)}/${name}`);
   const comment = { location: artifactLocation(scope, address), version, line, text, author: { name: author.name, host: String(author.host ?? "").slice(0, 255) }, at: entry.at, entry: entry.id, by: entry.by, via: entry.via };
@@ -261,58 +305,43 @@ export async function addComment(seen, scope, address, { version, line, text, au
   return shown(name, comment);
 }
 
-// Every folder below artifact-comments/ that holds an entry named like a comment file, as its location below the folder; a link to a folder is never followed.
-async function commentLocations(root, prefix, found) {
-  let entries;
-  try { entries = await readdir(prefix === "" ? root : path.join(root, ...prefix.split("/")), { withFileTypes: true }); }
-  catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return; throw error; }
-  let holds = false;
-  for (const entry of entries) {
-    if (entry.isDirectory()) await commentLocations(root, prefix === "" ? entry.name : `${prefix}/${entry.name}`, found);
-    else if (entry.isFile() && ARTIFACT_COMMENT_FILE.test(entry.name)) holds = true;
-  }
-  if (holds && prefix !== "") found.push(prefix);
-}
-
 /**
- * The review app's applied comments on the artifacts of the scopes a seen store's checkout sees, each as its history entry, read from the comment's file,
+ * The review app's applied comments on the artifacts that a seen store's checkout sees, given as artifacts [{ path, scope }], each as its history entry, read from the comment's file,
  * with initiative null and artifact { path, scope }, since a comment belongs to no initiative; a comment dated more than a few minutes after the reading clock waits.
- * latest, when given, keeps of each folder only its newest that many comments by time and then entry id, the order in which Recent changes lists them.
+ * Only the comment folder of each artifact's own location is read, so a folder at a location that holds no artifact is never listed.
+ * latest, when given, keeps only the newest that many comments of all the folders by time and then entry id, the order in which Recent changes lists them,
+ * chosen from the folders' listings before any comment file is read, so a read costs the listings, kept between reads, and at most latest file reads.
  */
-export async function appliedComments(seen, now = Date.now(), { latest = Infinity } = {}) {
-  const root = await resolveStatusFile(seen, `${ARTIFACT_COMMENTS}/x`).then((target) => path.dirname(target)).catch(() => null);
-  if (!root) return [];
-  const locations = [];
-  await commentLocations(root, "", locations);
-  const entries = [];
-  for (const location of locations) {
-    const found = locationArtifact(location);
-    const scope = found && seen.scopes.find((candidate) => candidate.label === found.scope.label);
-    if (!scope) continue;
-    const file = artifactPathOf(seen.kinds, found.kind, found.rest);
-    const address = file === null ? null : artifactAddress(seen.kinds, file);
-    if (address?.kind !== found.kind || address.rest !== found.rest) continue;
+export async function appliedComments(seen, now = Date.now(), { latest = Infinity, artifacts = [] } = {}) {
+  // The listing of every folder this read takes stays kept for the next one, so no read evicts a listing that the same read or the next one needs.
+  listingsKept = Math.max(LISTINGS_KEPT, artifacts.length + 64);
+  const candidates = [];
+  for (const { path: file, scope } of artifacts) {
+    const address = artifactAddress(seen.kinds, file);
+    if (address === null) continue;
+    const location = artifactLocation(scope, address);
     const target = await resolveStatusFile(seen, `${ARTIFACT_COMMENTS}/${location}`).catch(() => null);
     if (!target) continue;
-    // Recent changes lists the newest entries by time and then entry id, so only a folder's newest latest comments by the same order can be among them, and only they are read.
-    const due = (await commentOrder(target, location)).filter((item) => !aheadOfClock(item.at, now));
-    const newest = latest < due.length ? due.sort((left, right) => byText(left.at, right.at) || byText(left.entry, right.entry)).slice(-latest) : due;
-    for (const found of await readListed(target, location, newest)) {
-      if (!found) continue;
-      const { value } = found;
-      entries.push({
-        id: value.entry,
-        action: "artifact.comment",
-        target: `artifact:${scope.label}:${file}`,
-        before: null,
-        after: { version: value.version, line: value.line, text: value.text },
-        at: value.at,
-        by: value.by,
-        via: value.via,
-        initiative: null,
-        artifact: { path: file, scope }
-      });
-    }
+    for (const item of await commentOrder(target, location)) if (!aheadOfClock(item.at, now)) candidates.push({ item, target, location, file, scope });
+  }
+  const newest = latest < candidates.length ? candidates.sort((left, right) => byText(left.item.at, right.item.at) || byText(left.item.entry, right.item.entry)).slice(-latest) : candidates;
+  const entries = [];
+  for (const { item, target, location, file, scope } of newest) {
+    const [found] = await readListed(target, location, [item]);
+    if (!found) continue;
+    const { value } = found;
+    entries.push({
+      id: value.entry,
+      action: "artifact.comment",
+      target: `artifact:${scope.label}:${file}`,
+      before: null,
+      after: { version: value.version, line: value.line, text: value.text },
+      at: value.at,
+      by: value.by,
+      via: value.via,
+      initiative: null,
+      artifact: { path: file, scope }
+    });
   }
   return entries;
 }

@@ -530,6 +530,7 @@ export async function applyAction({ projectRoot, target, action, input, revision
     const { artifact } = read;
     await commentOnArtifact(projectRoot, { path: artifact.path, label: artifact.scope.label, version: checked.after.version, line: checked.after.line, text: checked.after.text, author: { name: applied.by.name, host: os.hostname().slice(0, 255) }, entry: applied }).catch((error) => {
       if (error?.code === "artifact_not_found") throw unknownTarget(target);
+      if (error?.code === "comment_limit") throw fail("comment_limit", error.message);
       if (error?.code === "version_conflict") throw fail("stale_revision", "The file changed since the page read it.", { current: view(definition, { ...read, artifact: { ...artifact, version: error.version ?? null } }) });
       throw storeRefused(error) ? storeRefusal(error) : error;
     });

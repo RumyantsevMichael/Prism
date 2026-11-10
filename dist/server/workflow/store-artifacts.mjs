@@ -1266,7 +1266,9 @@ export async function appliedArtifactActions(projectRoot, { latest = Infinity } 
         if (applied && !aheadOfClock(applied.at, now) && !listed.has(applied.id)) listed.set(applied.id, { ...applied, initiative: null, artifact: { path: entry.path, scope: entry.scope } });
       }
     }
-    for (const comment of await appliedComments(seen, now, { latest })) if (!listed.has(comment.id)) listed.set(comment.id, comment);
+    // Only the comment folders of the artifacts that the checkout sees are read, so a folder at a location that holds no artifact costs nothing.
+    const artifacts = (await holdings(seen, "", null)).map(({ path: file, scope }) => ({ path: file, scope }));
+    for (const comment of await appliedComments(seen, now, { latest, artifacts })) if (!listed.has(comment.id)) listed.set(comment.id, comment);
     return [...listed.values()];
   });
 }

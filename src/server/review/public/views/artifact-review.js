@@ -168,6 +168,8 @@ function bindMoreComments(root, data, state, { readPage, onListed }) {
     if (reading) return;
     reading = true;
     const before = new Set((data.artifact.comments ?? []).map((comment) => comment.id));
+    // A redraw that lands while this read runs lists the added comments first, so it finds where focus goes from the comments listed before the press.
+    state.moreBefore = before;
     state.commentReads = readsOf(state) + 1;
     let listed = null;
     try {
@@ -176,7 +178,13 @@ function bindMoreComments(root, data, state, { readPage, onListed }) {
     } catch { /* A failed read leaves the list as it is, and the person can press again. */ }
     reading = false;
     const list = root.querySelector("[data-comment-list]");
-    if (!button.isConnected || !list?.isConnected) return;
+    if (state.moreBefore === before) delete state.moreBefore;
+    // A redraw that replaced the card meanwhile listed the comments already; focus that it left outside the card goes where this press would have put it.
+    if (!button.isConnected) {
+      if (list?.isConnected && !list.contains(document.activeElement)) focusAfterMore(list, before);
+      return;
+    }
+    if (!list?.isConnected) return;
     if (!listed || scopeLabel(listed) !== scopeLabel(data.artifact)) {
       if (!listed) state.commentReads = readsOf(state) - 1;
       return;
@@ -187,11 +195,20 @@ function bindMoreComments(root, data, state, { readPage, onListed }) {
     if (heading) heading.textContent = plural(totalOf(data.artifact), "comment");
     onListed?.(data);
     bindMoreComments(root, data, state, { readPage, onListed });
-    const next = list.querySelector("[data-more-comments]");
-    const added = [...list.querySelectorAll("[data-comment-id]")].find((item) => !before.has(item.dataset.commentId));
-    if (next) next.focus({ preventScroll: true });
-    else if (added) { added.tabIndex = -1; added.focus(); }
+    focusAfterMore(list, before);
   });
+}
+
+/**
+ * Move focus where a press of More comments leads in a comment list: to the More comments button that follows the added comments, or else to the first comment not among those listed before,
+ * which takes focus without entering the tab order; returns whether it found either.
+ */
+export function focusAfterMore(list, before) {
+  const next = list.querySelector("[data-more-comments]");
+  const added = [...list.querySelectorAll("[data-comment-id]")].find((item) => !before.has(item.dataset.commentId));
+  if (next) next.focus({ preventScroll: true });
+  else if (added) { added.tabIndex = -1; added.focus({ preventScroll: true }); }
+  return Boolean(next || added);
 }
 
 /**
