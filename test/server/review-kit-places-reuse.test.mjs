@@ -20,7 +20,7 @@ async function files(folder) {
 }
 
 test("no screen outside the kit writes or styles a kit element's inner parts", async () => {
-  const outside = (await files(PUBLIC)).filter((file) => !path.relative(PUBLIC, file).startsWith("kit/"));
+  const outside = (await files(PUBLIC)).filter((file) => !path.relative(PUBLIC, file).split(path.sep).join("/").startsWith("kit/"));
   const inner = ["prism-inbox-tile", "prism-breadcrumbs-item", "prism-breadcrumbs-separator"];
   for (const file of outside) {
     const text = await readFile(file, "utf8");

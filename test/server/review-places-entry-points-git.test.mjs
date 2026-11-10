@@ -99,7 +99,8 @@ test("clause 62: Changed this week counts a record file a merge of this week bro
   assert.ok(Math.abs(Date.parse(result.records[0].at) - (Date.now() - DAY)) < 60 * 60 * 1000, "the merge's time");
 });
 
-test("clause 63: a Git that runs but fails after finding a repository with a commit is reported as Git that could not be run", { timeout: 60000 }, async (context) => {
+// The failing Git is a shell script on PATH, which Node does not run on Windows.
+test("clause 63: a Git that runs but fails after finding a repository with a commit is reported as Git that could not be run", { timeout: 60000, skip: process.platform === "win32" && "the failing Git is a shell script on PATH" }, async (context) => {
   const root = await scratch(context);
   const project = path.join(root, "project");
   await mkdir(project);
