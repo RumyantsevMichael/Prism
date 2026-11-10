@@ -2021,15 +2021,20 @@ function rememberSlice(path) {
 // The server's last answer for Touched by my work, kept so that one request that fails while the page polls leaves the page and its count as they were.
 let touchedKept = { slice: null, answer: null };
 
-// The server's answer for Touched by my work of one slice, as { slice, answer }, with a null answer when there is no slice,
-// and the slice's last answer, or null before it had one, when the server could not answer.
+// The server's answer for Touched by my work of one slice, as { slice, answer }, with a null answer when there is no slice
+// or the server says the slice does not exist or is not named right (a 4xx answer such as 404 unknown_slice),
+// and the slice's last answer, or null before it had one, when no answer came (a network error, a stopped connection, or a 5xx).
 async function touchedAnswer(slice) {
   if (!slice) return { slice: null, answer: null };
   try {
     const answer = await fetchJson(`./api/touched?slice=${encodeURIComponent(slice)}`);
     touchedKept = { slice, answer };
     return { slice, answer };
-  } catch {
+  } catch (error) {
+    if (error?.status >= 400 && error.status < 500) {
+      if (touchedKept.slice === slice) touchedKept = { slice: null, answer: null };
+      return { slice, answer: null };
+    }
     return { slice, answer: touchedKept.slice === slice ? touchedKept.answer : null };
   }
 }
@@ -2138,7 +2143,9 @@ async function fetchJson(url) {
   if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
   const response = await appFetch(url, { cache: "no-store" });
   if (!response.ok) {
-    throw new Error(await response.text());
+    const error = new Error(await response.text());
+    error.status = response.status;
+    throw error;
   }
   return response.json();
 }

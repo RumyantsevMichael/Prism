@@ -58,7 +58,7 @@ async function verifiedChanges(projectRoot, id, slug, slice) {
   const passed = entries.filter((item) => item.entry?.kind === "verification" && item.entry.passed === true && typeof item.entry.tree === "string").at(-1);
   if (!passed || !treeId(passed.entry.tree)) return null;
   // A moved file lists both its paths, and only its new path names a record file.
-  // The page asks while the person waits, so a Git that hangs counts as unreadable after 10 seconds.
+  // The page asks while the person waits, so Git counts as unreadable when either of its two commands does not answer within 10 seconds.
   const files = await changedPaths(projectRoot, start, passed.entry.tree, { timeoutMs: GIT_TIMEOUT_MS });
   return files ? { files } : { unreadable: true };
 }
