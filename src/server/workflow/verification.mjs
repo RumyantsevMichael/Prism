@@ -311,6 +311,8 @@ function execute(command, cwd, { signal, timeoutMs, onProgress, logPath = null }
     const ticker = onProgress ? setInterval(() => onProgress(Math.round((Date.now() - started) / 1000), tail(output, 300)), PROGRESS_MS) : null;
     const abort = () => { cancelled = true; stop(); };
     signal?.addEventListener("abort", abort, { once: true });
+    // A cancel that arrived while the run was being set up has already fired, so it stops the command now.
+    if (signal?.aborted) abort();
     const finish = (exitCode, exitSignal, spawnError) => {
       clearTimeout(timer);
       clearTimeout(forced);
@@ -535,6 +537,8 @@ async function awaitJob(jobKey, signature, start, { signal, onProgress, maxWaitM
   if (onProgress) job.listeners.add(onProgress);
   const abort = () => job.controller.abort();
   signal?.addEventListener("abort", abort, { once: true });
+  // A call cancelled while verification read the design and the approval has already fired its abort, so the run stops now.
+  if (signal?.aborted) abort();
   let timer;
   try {
     const early = Number.isFinite(maxWaitMs) ? new Promise((resolve) => { timer = setTimeout(() => resolve(null), maxWaitMs); }) : new Promise(() => {});
