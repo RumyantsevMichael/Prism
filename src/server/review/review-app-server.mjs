@@ -7,7 +7,7 @@ import { withFileLock } from "../workflow/artifact-store.mjs";
 import { useManagedStores } from "../workflow/record-store-remote.mjs";
 import { describeRecordStore, outsideToolCall } from "../workflow/record-store.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
-import { appliedArtifactActions } from "../workflow/store-artifacts.mjs";
+import { appliedArtifactAction, artifactStoreLocation } from "../workflow/store-artifacts.mjs";
 import {
   REVIEW_APP_PROTOCOL,
   lockBase,
@@ -256,7 +256,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     if (!project) {
       const baseUrl = `http://127.0.0.1:${port}${viewerPrefix()}/p/${id}`;
       const onViewer = (sendNotice) => deliverPendingNotices(id, sendNotice);
-      const onAction = (event, { shared }) => announceAction(project, event, shared);
+      const onAction = (event, { shared, comment = null }) => announceAction(project, event, shared, comment);
       // A new project starts as the most recent, so the recent limit never drops the project being registered.
       project = { id, root, leases: new Map(), lastSeen: ++sequence, evidenceDirectories: [], intelligenceDirectories: [], recordStoreDirectories: [] };
       project.review = createProjectReview({ projectRoot: root, baseUrl, instance, appVersion: pluginVersion, onViewer, onAction, evidenceStore: () => evidenceStoreOf(project),
@@ -294,19 +294,24 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
   // An applied action reaches every checkout's page whose records resolve to the same record store, since those pages show the same records;
   // an index rebuild, and any action of a page whose store cannot be resolved, reaches only the applying page.
   // An action on a store artifact, an approval or a comment, reaches only the checkouts that see that artifact, each naming it by its own path, as its own recent changes list it.
-  async function announceAction(project, event, shared) {
+  // Each such checkout reads only that artifact's status record or the one comment file the action stored, so an action costs about one entry for each open checkout, whatever the store holds.
+  async function announceAction(project, event, shared, comment) {
     project.review.notify("action", event);
     if (!shared) return;
     const storeOf = (root) => describeRecordStore(root).then((store) => store.location ?? null, () => null);
     const location = await storeOf(project.root);
     if (!location) return;
-    await Promise.all([...projects.values()].filter((other) => other !== project && other.review.viewerCount() > 0).map(async (other) => {
+    const others = [...projects.values()].filter((other) => other !== project && other.review.viewerCount() > 0);
+    if (!others.length) return;
+    const artifactLocation = event.artifact ? await artifactStoreLocation(project.root, event.artifact).catch(() => null) : null;
+    if (event.artifact && !artifactLocation) return;
+    await Promise.all(others.map(async (other) => {
       if (await storeOf(other.root) !== location) return;
       if (!event.artifact) {
         other.review.notify("action", event);
         return;
       }
-      const seen = (await appliedArtifactActions(other.root).catch(() => [])).find((entry) => entry.id === event.id);
+      const seen = await appliedArtifactAction(other.root, { location: artifactLocation, id: event.id, action: event.action, comment }).catch(() => null);
       if (seen) other.review.notify("action", seen);
     }));
   }

@@ -125,6 +125,12 @@ export function createRecordStoreStatus({ storeButton, storeLabel, syncButton, s
     try {
       const conflict = await fetchJson(`./api/store/conflict?savedAs=${encodeURIComponent(details.dataset.savedAs)}`);
       const record = `.prism/${conflict.path}`;
+      // A copy or record above its kind's bound is named by its size and never read, so no diff can show it.
+      if (conflict.tooLarge) {
+        const sizes = [["saved local copy", conflict.tooLarge.saved], ["current record", conflict.tooLarge.current]].filter(([, size]) => size !== undefined);
+        body.innerHTML = `<p class="muted">${sizes.map(([what, size]) => `The ${what} ${size === null ? "is no regular file" : `holds ${size} bytes`}, above the ${conflict.bound} bytes that a record of its kind may hold, so Prism does not read it.`).join(" ")} The saved copy stays at ${escapeHtml(details.dataset.savedAs)}.</p>`;
+        return;
+      }
       body.innerHTML = `${conflict.current === null ? '<p class="muted">The record no longer exists, so every saved line shows as added.</p>' : ""}
         ${diffHtml(conflict.current, conflict.saved, { beforeLabel: "current record", afterLabel: "saved local copy" })}
         ${conflict.current !== null && hasArtifact(record) ? `<p><prism-button size="sm" data-record="${escapeHtml(record)}">Open the current record</prism-button></p>` : ""}`;

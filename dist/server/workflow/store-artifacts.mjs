@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { addComment, aheadOfClock, appliedComments, commentFolderOf, listComments, movedComment, storedAuthor, storedTime } from "./artifact-comments.mjs";
+import { addComment, aheadOfClock, appliedComment, appliedComments, commentFolderOf, listComments, movedComment, storedAuthor, storedTime } from "./artifact-comments.mjs";
 import { writeAtomically } from "./artifact-store.mjs";
 import { assertInput } from "./artifact-schema.mjs";
 import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_NAME_FORM, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, IDENTITY_FILE_MAX, identityContent, identityOf, kindInScope, letterCaseKey, locationArtifact, locationIdentity, malformedArtifactName, newIdentity, normalizeArtifactPath, repositoryScope, uniqueIdentities, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
@@ -1261,6 +1261,7 @@ const appliedEntry = (item) => {
  * and the comments, each read from its own file, each as its history entry with initiative null and artifact { path, scope }, since such an action belongs to no initiative;
  * an entry is listed only in the form Prism writes and once its time is no more than a few minutes ahead of the clock, and an entry that two records keep is listed once.
  * latest, when given, reads of each artifact's comments only the newest that many by time and then entry id, which are all a list of the newest that many entries can show.
+ * Every caller passes latest, since without it every comment of every artifact is read; one applied action is found with appliedArtifactAction instead.
  */
 export async function appliedArtifactActions(projectRoot, { latest = Infinity } = {}) {
   return refusing(async () => {
@@ -1281,6 +1282,48 @@ export async function appliedArtifactActions(projectRoot, { latest = Infinity } 
     const artifacts = (await holdings(seen, "", null)).map(({ path: file, scope }) => ({ path: file, scope }));
     for (const comment of await appliedComments(seen, now, { latest, artifacts, resolve })) if (!listed.has(comment.id)) listed.set(comment.id, comment);
     return [...listed.values()];
+  });
+}
+
+/** The store location of an artifact that a checkout names by its project-relative path and scope, as { path, scope }, or null when the path is no artifact path there. */
+export async function artifactStoreLocation(projectRoot, { path: file, scope }) {
+  return refusing(async () => {
+    const { kinds } = await configuration(projectRoot);
+    const address = artifactAddress(kinds, file);
+    return address ? artifactLocation(scope, address) : null;
+  });
+}
+
+/**
+ * The applied action on a store artifact, given by the artifact's store location and the entry's id and action, as this checkout's Recent changes lists it, naming the artifact by this checkout's path and scope,
+ * or null when the checkout does not see the artifact, meaning that no scope it sees holds the file at that location, or does not list that entry.
+ * A gate.answer is read from that one artifact's status record, and an artifact.comment from the one comment file that comment, the stored comment's id, names,
+ * so delivering an action to another checkout costs about one entry, never a listing of every artifact's actions.
+ */
+export async function appliedArtifactAction(projectRoot, { location, id, action, comment = null }) {
+  return refusing(async () => {
+    await configuration(projectRoot);
+    const seen = await seenScopes(projectRoot);
+    const named = locationArtifact(location);
+    if (!named) return null;
+    const file = artifactPathOf(seen.kinds, named.kind, named.rest);
+    const address = file === null ? null : artifactAddress(seen.kinds, file);
+    // The checkout names the artifact by its own path only when that path leads back to the same kind and location, as a listing of its holdings finds it.
+    if (!address || address.kind !== named.kind || address.rest !== named.rest || malformedArtifactName(address) !== null) return null;
+    const scope = seen.scopes.find((candidate) => kindInScope(address.kind, candidate) && artifactLocation(candidate, address) === location);
+    if (!scope) return null;
+    const target = await resolveArtifactFile(seen, location).catch(() => null);
+    if (!target || (await locationKind(target, seen.base).catch(() => null)) !== "file") return null;
+    const now = Date.now();
+    const artifact = { path: file, scope };
+    if (action === "gate.answer") {
+      if (!hasStatus(address.kind)) return null;
+      const record = await statusRecordOf(seen, scope, address);
+      const applied = record.history.map(appliedEntry).find((entry) => entry?.id === id) ?? null;
+      return applied && !aheadOfClock(applied.at, now) ? { ...applied, initiative: null, artifact } : null;
+    }
+    if (action === "artifact.comment" && typeof comment === "string") return appliedComment(seen, artifact, address, { comment, id }, now);
+    return null;
   });
 }
 

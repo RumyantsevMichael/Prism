@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { copyFile, lstat, mkdir, open, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, IDENTITY_FILE_MAX, identityContent, identityOf, letterCaseKey, locationIdentity, STATUS_RECORD_NAME, uniqueIdentities, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
 import { withFileLock, writeAtomically } from "./artifact-store.mjs";
@@ -185,7 +186,38 @@ const stampTime = (stamp) => Date.parse(stamp.replace(STAMP, "$1:$2:$3.$4Z"));
 // A claim or a registration that lost a race is reported through its refusal, lost-claim notice, or acceptance, so the store's status shows only other saved records.
 function settled(conflicts) {
   const shown = conflicts.filter((conflict) => !isQuietConflict(conflict.path));
-  return { state: shown.length ? "conflicts" : "ok", conflicts: shown, message: shown.length ? "Concurrent changes to records or artifacts were resolved for the upstream; the local versions are saved." : "" };
+  return { state: shown.length ? "conflicts" : "ok", conflicts: shown, message: shown.length ? conflictsMessage(shown) : "" };
+}
+
+// What a sync's conflicts are, by the kinds of file they name, and whose copy each saved file holds and why:
+// this machine's version where both sides changed a file, the other machine's change where this machine's removal stands, which carries theirs true, and no copy where this machine's removal gave way;
+// a copy that carries tooLongAt, of either side, was saved because its path at its artifact's new location, which the message names, would pass a store path's bounds.
+function conflictsMessage(shown) {
+  const isComment = (file) => file.startsWith(`${ARTIFACT_COMMENTS}/`);
+  const nouns = [[isRecordFile, "records"], [isGuardedFile, "artifacts"], [isComment, "comments"], [(file) => !isSavedFile(file) && !isComment(file), "other store files"]]
+    .filter(([kind]) => shown.some((conflict) => kind(conflict.path))).map(([, noun]) => noun);
+  const named = nouns.length === 1 ? nouns[0].replace(/^other /, "") : nouns.length === 2 ? nouns.join(" and ") : `${nouns.slice(0, -1).join(", ")}, and ${nouns.at(-1)}`;
+  const count = (test) => shown.filter(test).length;
+  const mine = count((conflict) => conflict.savedAs && !conflict.theirs && !conflict.tooLongAt);
+  const theirs = count((conflict) => conflict.savedAs && conflict.theirs && !conflict.tooLongAt);
+  const removed = count((conflict) => !conflict.savedAs);
+  // A copy saved because its path would be too long where the merge keeps its artifact names that location, for each side whose copy it holds.
+  const tooLong = (other) => {
+    const copies = shown.filter((conflict) => conflict.savedAs && conflict.tooLongAt && Boolean(conflict.theirs) === other);
+    if (!copies.length) return [];
+    const locations = [...new Set(copies.map((conflict) => shownPath(`${ARTIFACTS}/${conflict.tooLongAt}`)))];
+    const whose = other ? "the other machine's" : "this machine's";
+    const what = copies.length === 1 ? `${whose} change to a file of a moved artifact is saved, because its path` : `${whose} ${copies.length} changes to files of moved artifacts are saved, because their paths`;
+    return [`${what} would hold a name of more than ${STORE_NAME_BYTES_MAX} bytes or more than ${STORE_PATH_BYTES_MAX} bytes in all, too long for a store to share, at the artifact's new location ${locations.length === 1 ? locations[0] : locations.length <= 3 ? `${locations.slice(0, -1).join(", ")} or ${locations.at(-1)}` : `${locations.slice(0, 3).join(", ")}, or one of ${locations.length - 3} more`}, where the store keeps the artifact without ${copies.length === 1 ? "that file" : "those files"}`];
+  };
+  const outcomes = [
+    ...(mine ? ["the store keeps the upstream's side, and this machine's versions are saved"] : []),
+    ...(theirs ? [`the other machine's ${theirs === 1 ? "change to a file that this machine removed is" : `${theirs} changes to files that this machine removed are`} saved, because this machine's removal stands`] : []),
+    ...tooLong(false),
+    ...tooLong(true),
+    ...(removed ? [`this machine's removal of ${removed === 1 ? "a file" : `${removed} files`} gave way to the upstream's change, so the store holds the upstream's version there again`] : [])
+  ];
+  return `Concurrent changes to ${named} were resolved; ${outcomes.join("; ")}.`;
 }
 
 async function savedFiles(directory, kept = isRecordFile) {
@@ -221,9 +253,13 @@ export async function readSavedConflict(base, savedAs) {
   const parts = typeof savedAs === "string" ? savedAs.split("/") : [];
   const file = parts.slice(3).join("/");
   if (parts[0] !== SYNC_DIRECTORY || parts[1] !== "conflicts" || !STAMP.test(parts[2] ?? "") || !isRecordFile(file) || parts.slice(3).some((part) => !part || part === "." || part === "..")) return null;
-  const text = (target) => readFile(target, "utf8").catch((error) => { if (["ENOENT", "ENOTDIR", "EISDIR"].includes(error.code)) return null; throw error; });
-  const saved = await text(path.join(base, ...parts));
-  return saved === null ? null : { path: file, saved, current: await text(path.join(base, ...file.split("/"))) };
+  // Each copy's size comes from the opened file before any byte is read, so a copy above its kind's bound, such as a withheld record that a sync moved aside, is named by its size and never read.
+  const { bound } = await storeLayout();
+  const [saved, current] = [await boundedBytes(path.join(base, ...parts), bound(file)), await boundedBytes(path.join(base, ...file.split("/")), bound(file))];
+  if (saved === null) return null;
+  const text = (bytes) => Buffer.isBuffer(bytes) ? bytes.toString("utf8") : null;
+  const over = [["saved", saved], ["current", current]].filter(([, bytes]) => overBytes(bytes)).map(([name, bytes]) => [name, bytes.size]);
+  return { path: file, saved: text(saved), current: text(current), ...(over.length ? { tooLarge: Object.fromEntries(over), bound: bound(file) } : {}) };
 }
 
 /**
@@ -231,8 +267,13 @@ export async function readSavedConflict(base, savedAs) {
  * in stores this process uses, that this process has not reported before and that a sync saved since this process started or that no tool result has carried yet:
  * { record, savedAs, at } for a record, { store, location, savedAs, at } for an artifact, whose location is its path below artifacts/ in the store at store,
  * { store, statusOf, savedAs, at } for a status record and { store, commentOn, savedAs, at } for a comment, each naming the location of the artifact it belongs to,
- * and { store, file, savedAs, at } for any other file the store shares, such as its .gitattributes; an artifact, status record, or comment that holds another machine's change, which the merge took out where this machine's removal stood, also carries theirs true.
+ * and { store, file, savedAs, at } for any other file the store shares, such as its .gitattributes; an artifact, status record, or comment that holds another machine's change, which the merge took out where this machine's removal stood, also carries theirs true,
+ * one that the merge left out because its path at the location it gave the artifact would pass a store path's bounds carries that location as tooLongAt, and theirs true when it holds the other machine's change,
+ * a comment of this machine's that the sync left out because its artifact's comment folder already held the comments that an artifact may hold carries surplus true,
+ * any copy, a record's among them, of a file that this machine's sync held back because it was above its kind's bound and that the other machine then changed or removed carries overBound true,
+ * and a file at the store's root, such as a README, that the other machine changed too carries bothChanged true, while any other such file is one whose local version this machine's sync withheld.
  * Ahead of each stamp's copies come the local changes its merge undid and no copy names: { store, undoneRemoval, folder, at } for a removal that gave way, naming the location that holds the artifact again,
+ * { store, undoneFile, folder, at } for a removal of a file at the store's root that gave way, naming its path there,
  * and { store, undoneMove, movedTo, folder, at } for a move sent elsewhere, naming the location that keeps the artifact and the one this machine moved it to, with folder the store's conflicts folder.
  * A tool result that carries them confirms them with confirmSavedConflicts, which clears their pending notices.
  */
@@ -254,16 +295,16 @@ export async function takeSavedConflicts() {
       const when = new Date(at).toISOString();
       const items = (await savedFiles(path.join(directory, stamp), (file) => isSavedFile(file) || shareable(file))).map((file) => {
         const savedAs = path.join(directory, stamp, ...file.split("/"));
-        const whose = about.theirs.has(file) ? { theirs: true } : {};
+        const whose = { ...(about.theirs.has(file) ? { theirs: true } : about.surplus.has(file) ? { surplus: true } : about.bothChanged.has(file) ? { bothChanged: true } : about.overBound.has(file) ? { overBound: true } : {}), ...(about.tooLong.has(file) ? { tooLongAt: about.tooLong.get(file) } : {}) };
         if (isArtifactFile(file)) return { store: base, location: file.slice(ARTIFACTS.length + 1), savedAs, at: when, ...whose };
-        if (isRecordFile(file)) return { record: `.prism/${file}`, savedAs, at: when };
+        if (isRecordFile(file)) return { record: `.prism/${file}`, savedAs, at: when, ...(whose.overBound ? { overBound: true } : {}) };
         // A status record or comment is named by the artifact location it belongs to, so the result names the artifact's path and scope.
         const location = derivedLocation(file);
         if (location !== null) return file.startsWith(`${ARTIFACT_STATUS}/`) ? { store: base, statusOf: location, savedAs, at: when, ...whose } : { store: base, commentOn: location, savedAs, at: when, ...whose };
-        return { store: base, file, savedAs, at: when };
+        return { store: base, file, savedAs, at: when, ...whose };
       });
       // The local changes that the stamp's merge undid come first, as the result names them first.
-      items.unshift(...about.undone.map((change) => ({ store: base, ...("removal" in change ? { undoneRemoval: change.removal } : { undoneMove: change.move, movedTo: change.movedTo }), folder: directory, at: when })));
+      items.unshift(...about.undone.map((change) => ({ store: base, ...("removal" in change ? { undoneRemoval: change.removal } : "file" in change ? { undoneFile: change.file } : { undoneMove: change.move, movedTo: change.movedTo }), folder: directory, at: when })));
       // A stamp that holds only claims and registrations, which other results report, has nothing to carry.
       if (notice && !items.length) await rm(notice, { force: true });
       for (const item of items) { if (notice) notices.set(item, notice); reportKeys.set(item, key); found.push(item); }
@@ -274,14 +315,15 @@ export async function takeSavedConflicts() {
 
 // A location as the sync folder's own notes name one: a store path below artifacts/ that leads nowhere else.
 const noteLocation = (location) => typeof location === "string" && location.length > 0 && location.split("/").every((part) => part && part !== "." && part !== "..");
-const undoneForm = (change) => change !== null && typeof change === "object" && (noteLocation(change.removal) || (noteLocation(change.move) && noteLocation(change.movedTo)));
+const undoneForm = (change) => change !== null && typeof change === "object" && (noteLocation(change.removal) || noteLocation(change.file) || (noteLocation(change.move) && noteLocation(change.movedTo)));
 
 // What a conflict stamp's copies are and which local changes its merge undid, from the note beside it, or nothing for a stamp without one or with a note of any other form.
 async function readAbout(base, stamp) {
   const value = await readFile(aboutPath(base, stamp), "utf8").then(parseStoreJson).catch(() => null);
-  const theirs = Array.isArray(value?.theirs) ? value.theirs.filter((file) => typeof file === "string") : [];
-  const undone = Array.isArray(value?.undone) ? value.undone.filter(undoneForm).map((change) => noteLocation(change.removal) ? { removal: change.removal } : { move: change.move, movedTo: change.movedTo }) : [];
-  return { theirs: new Set(theirs), undone };
+  const paths = (list) => new Set(Array.isArray(list) ? list.filter((file) => typeof file === "string") : []);
+  const undone = Array.isArray(value?.undone) ? value.undone.filter(undoneForm).map((change) => noteLocation(change.removal) ? { removal: change.removal } : noteLocation(change.file) ? { file: change.file } : { move: change.move, movedTo: change.movedTo }) : [];
+  const tooLong = new Map(Array.isArray(value?.tooLong) ? value.tooLong.filter((entry) => typeof entry?.path === "string" && noteLocation(entry.location)).map((entry) => [entry.path, entry.location]) : []);
+  return { theirs: paths(value?.theirs), tooLong, surplus: paths(value?.surplus), bothChanged: paths(value?.bothChanged), overBound: paths(value?.overBound), undone };
 }
 
 // The pending notice of each saved version that takeSavedConflicts returned, and the key that marks its stamp reported.
@@ -376,8 +418,6 @@ async function identity(base) {
 
 // The modes of the entries a store shares: a regular file, executable or not, and never a symbolic link or a submodule link.
 const FILE_MODES = new Set(["100644", "100755"]);
-// A Git host can add a README or a license to a new repository, so a store also shares these names at its root, as plain files that Prism never reads.
-const INERT_FILES = new Set(["README", "README.md", "README.txt", "LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING"]);
 // Code points that HFS+ ignores in a name, as Git's own check of its folder's name lists them.
 const IGNORED_CODE_POINTS = /[\u200c-\u200f\u202a-\u202e\u206a-\u206f\ufeff]/gu;
 const PROTECTED_NAMES = new Set([".git", SYNC_DIRECTORY]);
@@ -394,7 +434,7 @@ function unsafeName(name) {
 
 // The record store module, which owns the store's layout, imports this one, so it loads when a sync first needs that layout.
 let layout;
-const storeLayout = () => layout ??= import("./record-store.mjs").then(({ boundText, COMMENTS_PER_ARTIFACT_MAX, isStoreFile, isStoreFolder, storeFileBound }) => {
+const storeLayout = () => layout ??= import("./record-store.mjs").then(({ boundText, COMMENTS_PER_ARTIFACT_MAX, INERT_FILES, isRootStoreFile, isStoreFile, isStoreFolder, storeFileBound }) => {
   const shareable = (file) => isStoreFile(file) || INERT_FILES.has(file);
   /**
    * How a store treats a tree entry: "shared" for a regular file at a path Prism writes, or a README or license at the root, which every sync writes to disk and commits;
@@ -414,12 +454,17 @@ const storeLayout = () => layout ??= import("./record-store.mjs").then(({ boundT
   };
   // A file at a path that a store shares takes its kind's bound, and a comment file counts toward its folder's bound on comments.
   const isCommentFile = (file) => file.startsWith(`${ARTIFACT_COMMENTS}/`) && isStoreFile(file);
-  return { shareable, isStoreFolder, kind, bound: storeFileBound, boundText, commentsMax: COMMENTS_PER_ARTIFACT_MAX, isCommentFile };
+  // A README or license at the root, or the .gitattributes or .gitignore there, takes its kind's bound as every other file does, and no reader of Prism loads it,
+  // so where both sides changed one and its lines conflict, the store keeps the upstream's version and saves this machine's, as for a record or an artifact.
+  return { shareable, isStoreFolder, kind, bound: storeFileBound, boundText, commentsMax: COMMENTS_PER_ARTIFACT_MAX, isCommentFile, rootFile: isRootStoreFile };
 });
 
 // Why a file stays out of a commit, or out of a store, by its size or by its comment folder's count, as a sync's status or refusal names it.
-const overBound = (size, bound, boundText) => `it holds ${size} bytes, above the ${boundText(bound)} that a store file of its kind may hold, so no reader on another machine would read it`;
-const overComments = (max) => `its comment folder holds more than ${max} comment files, the most that an artifact's comments may hold, and the sync commits the first ${max} by file name`;
+// No reader of Prism loads a file at the store's root, so what such a file above its bound meets is another machine's sync, which refuses it.
+const OVER_BOUND = "that a store file of its kind may hold";
+const overBound = (size, bound, boundText, root = false) => `it holds ${size} bytes, above the ${boundText(bound)} ${OVER_BOUND}, so ${root ? "every other machine's sync would refuse it" : "no reader on another machine would read it"}`;
+const OVER_COMMENTS = "its comment folder holds more than";
+const overComments = (max) => `${OVER_COMMENTS} ${max} comment files, the most that an artifact's comments may hold, and the sync commits every comment that the store already shares and then this machine's others by file name, up to ${max}`;
 
 /**
  * The first file of a commit's tree that a store shares and that holds more than its kind's bound, as { path, size, bound }, or the first comment folder that holds more comment files than an artifact may,
@@ -448,11 +493,42 @@ export async function oversizedStoreEntry(base, commit) {
   return null;
 }
 
+/**
+ * The first file above its kind's bound that a commit reachable from the branch and not from the known commits adds or changes, as { path, size, bound }, or null.
+ * Each such commit's changes come from Git's tree comparison with its parents and their sizes from Git's object listing, so no blob is read.
+ */
+async function oversizedHistory(base, known) {
+  const { shareable, bound } = await storeLayout();
+  const commits = (await required(base, ["rev-list", "--stdin"], { input: `HEAD\n${known.map((commit) => `^${commit}\n`).join("")}`, maxBuffer: PACK_BYTES_MAX })).text.split("\n").filter(Boolean);
+  if (!commits.length) return null;
+  const output = (await required(base, ["diff-tree", "--stdin", "-r", "-z", "-m", "--root", "--no-commit-id", "--no-renames"], { input: `${commits.join("\n")}\n`, maxBuffer: PACK_BYTES_MAX })).stdout;
+  // Each changed entry is its metadata, ":<old mode> <new mode> <old id> <new id> <status>", and then its path, each ended by a zero byte.
+  const added = [];
+  for (let at = 0; at < output.length;) {
+    const end = output.indexOf(0, at);
+    if (end < 0) break;
+    const meta = output.subarray(at, end).toString("latin1");
+    if (!meta.startsWith(":")) { at = end + 1; continue; }
+    const pathEnd = output.indexOf(0, end + 1) < 0 ? output.length : output.indexOf(0, end + 1);
+    const [, mode, , object] = meta.slice(1).split(" ");
+    const file = pathOfBytes(output.subarray(end + 1, pathEnd));
+    at = pathEnd + 1;
+    if (FILE_MODES.has(mode) && shareable(file) && bound(file) !== null) added.push({ file, object });
+  }
+  if (!added.length) return null;
+  const sizes = await objectInfo(base, [...new Set(added.map(({ object }) => object))]);
+  for (const { file, object } of added) {
+    const size = sizes.get(object)?.size;
+    if (size !== undefined && size > bound(file)) return { path: file, size, bound: bound(file) };
+  }
+  return null;
+}
+
 /** The refusal of an upstream or a remote branch that holds a file above its kind's bound or a comment folder above its bound, in the words of a sync's message. */
 export async function describeOversizedEntry(over) {
-  const { boundText, commentsMax } = await storeLayout();
+  const { boundText, commentsMax, rootFile } = await storeLayout();
   if (over.folder) return `${over.count} comment files in ${shownPath(over.folder)}, above the ${commentsMax} that an artifact's comments may hold, which no reader takes`;
-  return `${shownPath(over.path)}, which holds ${over.size} bytes, above the ${boundText(over.bound)} that a store file of its kind may hold, which no reader takes`;
+  return `${shownPath(over.path)}, which holds ${over.size} bytes, above the ${boundText(over.bound)} that a store file of its kind may hold, which ${rootFile(over.path) ? "no store takes" : "no reader takes"}`;
 }
 
 // The entries of a tree split into the ones a store shares and every other one.
@@ -543,16 +619,22 @@ async function migrateLineEndings(base) {
   const hashed = found.length ? await required(base, ["hash-object", "--no-filters", "--stdin-paths"], { input: `${found.map(([file]) => file).join("\n")}\n` }) : { text: "" };
   const objects = hashed.text ? hashed.text.split("\n") : [];
   const echoes = [];
-  for (const [index, [file, entry]] of found.entries()) {
-    if (objects[index] === entry.object) continue;
+  const { bound } = await storeLayout();
+  const differing = found.filter(([, entry], index) => objects[index] !== entry.object);
+  const blobSizes = differing.length ? await objectInfo(base, [...new Set(differing.map(([, entry]) => entry.object))]) : new Map();
+  for (const [file, entry] of differing) {
     const target = path.join(base, ...file.split("/"));
-    const [bytes, blobBytes] = await Promise.all([fileBytes(target), entryBytes(base, entry)]);
-    if (bytes && blobBytes && lineEndingEcho(bytes, blobBytes)) echoes.push({ file, target, blobBytes });
+    // A converted copy holds one more byte for each line, so only a file at most twice its blob's size, of a blob within its kind's bound, is read, and memory stays bounded whatever a file holds.
+    const blobSize = blobSizes.get(entry.object)?.size;
+    const size = (await lstat(target).catch(() => null))?.size;
+    if (blobSize === undefined || size === undefined || size <= blobSize || size > 2 * blobSize || (bound(file) !== null && blobSize > bound(file))) continue;
+    const [bytes, blobBytes] = await Promise.all([boundedBytes(target, 2 * blobSize), entryBytes(base, entry)]);
+    if (Buffer.isBuffer(bytes) && blobBytes && lineEndingEcho(bytes, blobBytes)) echoes.push({ file, target, blobBytes });
   }
   // Each file is rewritten under the lock that a write of it takes, and only while it still holds the converted copy.
   const rewrite = async ({ target, blobBytes }) => {
-    const bytes = await fileBytes(target);
-    if (bytes && lineEndingEcho(bytes, blobBytes)) await writeAtomically(target, blobBytes);
+    const bytes = await boundedBytes(target, 2 * blobBytes.length);
+    if (Buffer.isBuffer(bytes) && lineEndingEcho(bytes, blobBytes)) await writeAtomically(target, blobBytes);
   };
   const artifacts = echoes.filter(({ file }) => isGuardedFile(file));
   if (artifacts.length) await holdLocks([path.join(base, ARTIFACTS)], async () => { for (const echo of artifacts) await rewrite(echo); });
@@ -565,9 +647,12 @@ async function migrateLineEndings(base) {
  * The store's files at the paths it shares, as Map(path, { mode, object }), each hashed from its bytes exactly as they are, so no ignore or attributes rule decides what is committed or how.
  * Only regular files count, found without following a symbolic link, and with artifacts false the branch's artifacts stand in for the ones on disk.
  * A file keeps the mode the branch gives it, and a new one is a plain file, so a file system without an executable bit changes no mode.
+ * Every file it hashes held at most its kind's bound when its size was checked, a README at the root among them, so a commit that reads them under the artifact lock holds that lock for a bounded read unless a file grows meanwhile,
+ * and one that grew past its bound by its hashing is withheld by the size of the object Git wrote.
+ * oversized takes each file it leaves out that a merge may replace, by its path, with the size it found for a file above its kind's bound and null for a comment past its folder's bound.
  */
-async function localFiles(base, artifacts, held, withheld, oversized = []) {
-  const { shareable, isStoreFolder, bound, boundText, isCommentFile, commentsMax } = await storeLayout();
+async function localFiles(base, artifacts, held, withheld, oversized = new Map()) {
+  const { shareable, isStoreFolder, bound, boundText, isCommentFile, commentsMax, rootFile } = await storeLayout();
   for (let attempt = 1; ; attempt++) {
     const found = [];
     const visit = async (relative) => {
@@ -584,20 +669,27 @@ async function localFiles(base, artifacts, held, withheld, oversized = []) {
     await visit("");
     found.sort();
     // A file above its kind's bound stays out of every commit, as a path too long for some machine does, and so does each comment file past the first ones by name of a folder above its bound.
-    const over = new Set();
+    const over = new Map();
     const comments = new Map();
     for (let start = 0; start < found.length; start += 64) {
       await Promise.all(found.slice(start, start + 64).map(async (file) => {
         const limit = bound(file);
         if (limit === null) return;
         const info = await lstat(path.join(base, ...file.split("/"))).catch(() => null);
-        if (info?.isFile() && info.size > limit) { over.add(file); withheld.set(file, overBound(info.size, limit, boundText)); }
+        if (info?.isFile() && info.size > limit) { over.set(file, info.size); withheld.set(file, overBound(info.size, limit, boundText, rootFile(file))); }
       }));
     }
     for (const file of found) if (!over.has(file) && isCommentFile(file)) comments.set(path.posix.dirname(file), [...comments.get(path.posix.dirname(file)) ?? [], file]);
-    for (const names of comments.values()) for (const file of names.slice(commentsMax)) { over.add(file); withheld.set(file, overComments(commentsMax)); }
+    // A folder past its bound commits as a merge keeps one: every comment that the branch already holds and then this machine's others by file name, up to the bound,
+    // so the sync's own commit never removes a comment that other machines share, and never holds more comments than an artifact may.
+    for (const names of comments.values()) {
+      if (names.length <= commentsMax) continue;
+      const ordered = [...names.filter((file) => held.has(file)), ...names.filter((file) => !held.has(file))];
+      for (const file of ordered.slice(commentsMax)) { over.set(file, null); withheld.set(file, overComments(commentsMax)); }
+    }
     if (over.size) {
-      for (const file of over) if (!isCommentFile(file) || held.has(file)) oversized.push(file);
+      // A comment past its folder's bound that the branch does not hold is one the merge counts as a comment of no tree, and every file above its bound is one whose path the upstream may change.
+      for (const [file, size] of over) if (size !== null || !isCommentFile(file) || held.has(file)) oversized.set(file, size);
       found.splice(0, found.length, ...found.filter((file) => !over.has(file)));
     }
     const hashed = found.length ? await git(base, ["hash-object", "-w", "--no-filters", "--stdin-paths"], { input: `${found.join("\n")}\n` }) : { ok: true, text: "" };
@@ -607,14 +699,35 @@ async function localFiles(base, artifacts, held, withheld, oversized = []) {
       if (attempt < 3) continue;
       throw Object.assign(new Error(hashed.stderr || "git hash-object failed."), { git: hashed });
     }
+    // A file written in place while the sync runs can grow past its kind's bound between its size check and its hashing, so the size of each object Git wrote, from Git's object listing without reading it,
+    // decides again: an object above its file's bound is withheld as if the size check had caught it, so the branch keeps the file's earlier version and no commit of the sync holds it.
+    const sizes = found.length ? await objectInfo(base, [...new Set(objects)]) : new Map();
     const files = new Map();
-    for (const [index, file] of found.entries()) files.set(file, { mode: held.get(file)?.mode ?? "100644", object: objects[index] });
+    for (const [index, file] of found.entries()) {
+      const limit = bound(file);
+      const size = sizes.get(objects[index])?.size;
+      if (limit !== null && size !== undefined && size > limit) {
+        withheld.set(file, overBound(size, limit, boundText, rootFile(file)));
+        oversized.set(file, size);
+        continue;
+      }
+      files.set(file, { mode: held.get(file)?.mode ?? "100644", object: objects[index] });
+    }
     if (!artifacts) for (const [file, entry] of held) if (isGuardedFile(file)) files.set(file, entry);
     return files;
   }
 }
 
+// What tells one file on disk from another without reading it: its device, inode, size, and change time, which every write or replacement of it changes.
+const diskIdentity = (stats) => ({ dev: stats.dev, ino: stats.ino, size: stats.size, mtime: stats.mtimeNs, ctime: stats.ctimeNs });
+async function sameDiskFile(target, disk) {
+  const stats = await lstat(target, { bigint: true }).catch(() => null);
+  const now = stats?.isFile() ? diskIdentity(stats) : null;
+  return Boolean(now) && Object.keys(disk).every((key) => now[key] === disk[key]);
+}
+
 // Why a sync leaves a file out of its commits, as its status names it.
+const OBJECT_CHECK = "Git's object check, which every other machine's fetch applies, refuses it";
 const TOO_LONG = `its name holds more than ${STORE_NAME_BYTES_MAX} bytes or its path more than ${STORE_PATH_BYTES_MAX}, so some machine could not write it`;
 
 /**
@@ -635,7 +748,7 @@ async function commitLocal(base, author, run) {
   // The local version of each file withheld because Git's object check refuses it, which a merge that replaces the file saves.
   run.heldBack = new Map();
   let files = null;
-  const oversized = [];
+  const oversized = new Map();
   if (run.artifacts !== false) {
     files = await withFileLock(path.join(base, ARTIFACTS), () => localFiles(base, true, shared, withheld, oversized), undefined, { timeoutMs: run.artifacts ? SETTINGS.applyLockMs : 1 })
       .catch((error) => { if (error.code !== "lock_timeout") throw error; return null; });
@@ -643,10 +756,28 @@ async function commitLocal(base, author, run) {
     if (!files) scheduleRecordSync(base);
   }
   if (run.artifacts === false) files = await localFiles(base, false, shared, withheld, oversized);
-  // A file withheld by its size keeps the branch's version in the commit, and its local version is held back, so a merge that replaces it saves it as a conflict's local version is saved.
-  for (const file of oversized) {
-    const hashed = await git(base, ["hash-object", "-w", "--no-filters", "--", path.join(base, ...file.split("/"))]);
-    if (hashed.ok && hashed.text) run.heldBack.set(file, { mode: shared.get(file)?.mode ?? "100644", object: hashed.text });
+  // A withheld file keeps the branch's version in the commit, and its local version is held back, so a merge that replaces it saves it as a conflict's local version is saved.
+  // A comment past its folder's bound is hashed, since it held at most a comment's bound when its size was checked; a file above its kind's bound is never read, and enters neither memory nor a commit:
+  // it is held back by the file it is on disk, which a merge that replaces or removes its path moves into the saved copies by a rename.
+  // A file that grew past its bound after its size was checked is found by the size of the object Git wrote for it, which no commit takes, and is held back by the file it is on disk as well.
+  const { bound, boundText, rootFile } = await storeLayout();
+  for (const [file, found] of oversized) {
+    const target = path.join(base, ...file.split("/"));
+    const mode = shared.get(file)?.mode ?? "100644";
+    let size = found;
+    if (size === null) {
+      const hashed = await git(base, ["hash-object", "-w", "--no-filters", "--", target]);
+      const object = hashed.ok && hashed.text ? hashed.text : null;
+      const grown = object ? (await objectInfo(base, [object])).get(object)?.size : undefined;
+      if (grown !== undefined && grown > bound(file)) {
+        size = grown;
+        withheld.set(file, overBound(grown, bound(file), boundText, rootFile(file)));
+      } else if (object) run.heldBack.set(file, { mode, object });
+    }
+    if (size !== null) {
+      const disk = await lstat(target, { bigint: true }).catch(() => null);
+      if (disk?.isFile()) run.heldBack.set(file, { mode, object: null, disk: diskIdentity(disk) });
+    }
     if (shared.has(file)) files.set(file, shared.get(file)); else files.delete(file);
   }
   for (;;) {
@@ -662,7 +793,7 @@ async function commitLocal(base, author, run) {
       const culprits = changed.filter((file) => files.has(file) && refused.objects.includes(files.get(file).object) && (refused.places.get(files.get(file).object)?.includes(file) ?? true));
       if (!culprits.length) throw new Error(`Git's object check, which every other machine's fetch applies, refuses the store's new commit, so it was not made: ${refused.message}`);
       for (const file of culprits) {
-        withheld.set(file, `Git's object check, which every other machine's fetch applies, refuses it (${refused.message})`);
+        withheld.set(file, `${OBJECT_CHECK} (${refused.message})`);
         run.heldBack.set(file, files.get(file));
         if (shared.has(file)) files.set(file, shared.get(file)); else files.delete(file);
       }
@@ -1105,7 +1236,7 @@ async function sync(base, options) {
   await commitLocal(base, author, run);
   let upstream = await upstreamOf(base);
   if (!upstream && managed.has(base)) {
-    const published = await publishBranch(base, author, options);
+    const published = await publishBranch(base, author, options, run, conflicts);
     if (published.status) return report(published.status);
     upstream = published.upstream;
   }
@@ -1149,7 +1280,18 @@ function withheldIn(status, withheld) {
   if (!withheld?.size) return value;
   const listed = [...withheld].slice(0, 5).map(([file, reason]) => `${shownPath(file)}, because ${reason}`).join("; ");
   const more = withheld.size > 5 ? `; and ${withheld.size - 5} more` : "";
-  const note = `The sync did not commit ${listed}${more}. Rename, shorten, or fix it in the store, and the next sync commits it; every other change synced as usual.`;
+  // Each reason takes its own fix, so no message asks for a change that would not let its file sync: a shorter name, fewer bytes, a fix of what Git's object check refuses,
+  // or, for a comment file past its folder's bound, which commits under no name, taking it out of the folder, after which the folder's comments show again.
+  const reasons = [...withheld.values()];
+  const fixes = [
+    [(reason) => reason === TOO_LONG, "Give each file whose name or path is too long a shorter name in the store, and the next sync commits it."],
+    [(reason) => reason.includes(OVER_BOUND), "Make each file above its kind's bound smaller than that bound in the store, and the next sync commits it."],
+    [(reason) => reason.startsWith(OBJECT_CHECK), "Fix each file that Git's object check refuses in the store, as its reason says, and the next sync commits it."],
+    [(reason) => reason.startsWith(OVER_COMMENTS), "Move each comment file that the sync did not commit out of its comment folder, keeping what it says if that matters, since no reader shows a comment of a folder that holds more comment files than an artifact's comments may hold, and no sync commits more of them; the folder's other comments then show again."]
+  ].filter(([fits]) => reasons.some(fits)).map(([, fix]) => fix);
+  // Only a sync that pushed, or had nothing to push, synced every other change; any other one committed them on this machine alone.
+  const others = ["ok", "conflicts"].includes(value.state) ? "Every other change synced as usual." : "Every other change is committed on this machine only, and reaches the remote once a sync can push again.";
+  const note = `The sync did not commit ${listed}${more}. ${fixes.join(" ")} ${others}`;
   return { ...value, withheld: [...withheld].map(([file, reason]) => ({ path: file, reason })), message: [value.message, note].filter(Boolean).join(" ") };
 }
 
@@ -1158,7 +1300,7 @@ function withheldIn(status, withheld) {
  * A clone of an empty remote has no upstream until then, so its first sync publishes it instead of reporting no_upstream.
  * Returns { upstream } to continue the sync, or { status } to report.
  */
-async function publishBranch(base, author, options) {
+async function publishBranch(base, author, options, run, conflicts) {
   const branch = (await git(base, ["symbolic-ref", "--quiet", "--short", "HEAD"])).text;
   if (!branch || !(await git(base, ["config", "--local", "--get", "remote.origin.url"])).ok) return { upstream: null };
   const fetched = await fetchRemote(base, "origin");
@@ -1169,13 +1311,19 @@ async function publishBranch(base, author, options) {
   if (theirs.ok) {
     // An unborn branch has nothing local to keep, so it takes the pushed branch's files before it tracks it.
     if (!head.ok) await refuseUnsafeTree(base, theirs.text);
-    if (!head.ok && !(await apply(base, null, theirs.text, options))) return { status: { state: "merge_failed", message: "Record files changed or stayed locked while the upstream was applied, so the next sync applies it again." } };
+    // A local file at a path the pushed branch holds meets the rules a merge applies: one that this sync withheld is saved before it is replaced, one above its bound by a move of the file unread.
+    if (!head.ok) {
+      const copies = run.heldBack?.size ? heldCopies(run, new Map(), await treeFiles(base, theirs.text)) : [];
+      const adopted = await replaceFiles(base, run, { from: null, to: theirs.text, copies }, options);
+      conflicts.push(...adopted.conflicts);
+      if (!adopted.applied) return { status: { state: "merge_failed", message: "Record files changed or stayed locked while the upstream was applied, so the next sync applies it again." } };
+    }
     await required(base, ["branch", "--quiet", `--set-upstream-to=origin/${branch}`, branch]);
     return { upstream: await upstreamOf(base) };
   }
   if (!head.ok) return { status: { state: "ok", message: "The store and its remote are still empty, so there is nothing to sync yet." } };
   await alignWithUpstream(base, author, head.text, null);
-  const refused = await unpushable(base, "origin");
+  const refused = await unpushable(base, "origin", { upstream: false });
   if (refused) return { status: { state: "merge_failed", message: refused } };
   await options.beforePush?.();
   const pushed = await pushBranch(base, "origin", `refs/heads/${branch}`, { setUpstream: branch });
@@ -1227,7 +1375,9 @@ async function merge(base, author, options, run) {
   // A conflict inside a place where the upstream took the whole folder or file is saved with that place.
   const inClash = (file) => clashes.some((place) => file === place || file.startsWith(`${place}/`));
   const conflicted = [...clashes, ...fallback.filter((file) => !inClash(file))];
-  const other = conflicted.filter((file) => !isSavedFile(file));
+  // A file at the store's root, such as a README that both sides changed and whose lines do not merge, keeps the upstream's version and saves the local one, as a record or an artifact does.
+  const { rootFile } = await storeLayout();
+  const other = conflicted.filter((file) => !isSavedFile(file) && !rootFile(file));
   if (other.length) return { failed: `The upstream conflicts with local changes to ${other.slice(0, 5).join(", ")}, so the store was left as it was.`, conflicts: [] };
   // A status record or comment whose artifact the merged store does not hold, as one changed on one machine while another removed the artifact, leaves the store and is saved and reported.
   const stranded = strandedFiles(result);
@@ -1243,6 +1393,9 @@ async function merge(base, author, options, run) {
   const tree = await writeTree(base, merged);
   const commit = (await required(base, [...author, "commit-tree", tree, "-p", head.text, "-p", theirs, "-m", `prism: merge records from ${(await git(base, ["rev-parse", "--abbrev-ref", "@{upstream}"])).text || "upstream"}`])).text;
   const copies = conflictCopies(placed.local, placed.upstream, conflicted);
+  // A file at the store's root that both sides changed keeps the upstream's version: this machine's copy is saved and named as such, and where this machine removed the file, the removal that gave way is named instead.
+  const bothChanged = new Map(copies.filter(([file, entry]) => entry && rootFile(file)));
+  const undoneFiles = copies.filter(([file, entry]) => !entry && rootFile(file) && !placed.local.has(file)).map(([file]) => ({ file }));
   for (const [file, entry] of [...stranded, ...surplus]) if (!copies.some(([candidate]) => candidate === file)) copies.push([file, entry]);
   // A file that the merge took out of a place, as the other artifact where two met at one location or one whose placed path a store cannot hold, is saved as a conflict's local version is.
   for (const [file, entry] of placed.saved) {
@@ -1254,9 +1407,15 @@ async function merge(base, author, options, run) {
     const at = copies.findIndex(([candidate]) => candidate === file);
     if (at < 0) copies.push([file, entry]); else copies[at] = [file, entry];
   }
-  // A saved copy of the upstream's change, which the merge took out where this machine's removal stood, is named as the other machine's change.
+  // A saved copy of the upstream's change, which the merge took out where this machine's removal stood or where its path at the artifact's new location would be too long, is named as the other machine's change,
+  // and a saved copy of either side's file whose path at that location would be too long is named with that location, as saved for that cause.
   const theirsSaved = new Set(copies.filter(([file, entry]) => placed.theirs.has(file) && placed.saved.get(file) === entry).map(([file]) => file));
-  return replaceFiles(base, run, { from: head.text, to: commit, copies, theirs: theirsSaved, undone: placed.undone }, options);
+  const tooLongSaved = new Map(copies.filter(([file, entry]) => placed.tooLong.has(file) && placed.saved.get(file) === entry).map(([file]) => [file, placed.tooLong.get(file)]));
+  // A saved copy of a comment that its folder's bound left out is named as such, since its artifact stays, with the comments that reached the store first.
+  const surplusSaved = new Set(copies.filter(([file, entry]) => surplus.some(([candidate, left]) => candidate === file && left === entry)).map(([file]) => file));
+  // A saved copy of such a file is named as a change that both machines made, unless it holds the version that this machine's sync withheld, which is named as withheld.
+  const bothSaved = new Set(copies.filter(([file, entry]) => entry && bothChanged.get(file) === entry).map(([file]) => file));
+  return replaceFiles(base, run, { from: head.text, to: commit, copies, theirs: theirsSaved, tooLong: tooLongSaved, surplus: surplusSaved, bothChanged: bothSaved, undone: [...placed.undone, ...undoneFiles] }, options);
 }
 
 /**
@@ -1264,16 +1423,23 @@ async function merge(base, author, options, run) {
  * { applied, conflicts }, where conflicts lists the saved versions, as a sync status names them, of the files the merge replaced.
  * copies lists [path, entry] for each local version to save, with entry null for a conflicted path where the local side holds no file.
  * run.heldBack maps each file whose local version the sync withheld to that version, which the replacement takes as the file's own bytes; a replaced one is withheld no more.
- * theirs names the copied paths that hold the upstream's change rather than a local version, and undone lists the local changes that the target does not keep and no copy names,
- * which the stage carries so that the next tool results name them once the branch moved.
+ * theirs names the copied paths that hold the upstream's change rather than a local version, tooLong maps each copied path that the merge left out because its path at its artifact's new location would pass a store path's bounds to that location, surplus the copied comments that their folder's bound left out,
+ * bothChanged the copied files at the store's root that the upstream changed too, and undone lists the local changes that the target does not keep and no copy names, which the stage carries so that the next tool results name them once the branch moved.
+ * A comment on disk that neither commit holds and that the target's comments leave no room for is saved into the stage too, which is made when it is first needed.
  */
-async function replaceFiles(base, run, { from, to, copies, theirs = new Set(), undone = [] }, options) {
+async function replaceFiles(base, run, { from, to, copies, theirs = new Set(), tooLong = new Map(), surplus = new Set(), bothChanged = new Set(), undone = [] }, options) {
   const held = run.heldBack ?? new Map();
-  if (!copies.length && !undone.length) return { applied: await apply(base, from, to, options, {}, held), conflicts: [] };
-  const stage = await stageLocal(base, copies, { from, to, theirs, undone });
-  const applied = await apply(base, from, to, options, { replacing: (file) => markReplaced(stage, file) }, held);
+  let stage = copies.length || undone.length ? await stageLocal(base, copies, { from, to, theirs, tooLong, surplus, bothChanged, undone }) : null;
+  const progress = {
+    replacing: async (file) => { if (stage) { await markReplaced(stage, file); await moveAside(base, stage, file); } },
+    leaving: async (file, bytes) => {
+      stage ??= await stageLocal(base, [], { from, to });
+      return bytes === null ? stageSurplusMove(base, stage, file) : stageSurplus(stage, file, bytes);
+    }
+  };
+  const applied = await apply(base, from, to, options, progress, held);
   if (applied) for (const [file, entry] of copies) if (entry && held.get(file) === entry) { held.delete(file); run.withheld?.delete(file); }
-  return { applied, conflicts: await settleStage(base, stage, applied) };
+  return { applied, conflicts: stage ? await settleStage(base, stage, applied) : [] };
 }
 
 // The withheld local versions of the files that a change from one tree to another replaces, as [path, entry].
@@ -1347,7 +1513,9 @@ const COMMENT_BYTES_MAX = 64 * 1024;
 
 // The comment module, which schedules a sync after it writes a comment, imports this one, so it loads when a merge first places a comment.
 let comments;
-const commentForm = () => comments ??= import("./artifact-comments.mjs").then(({ storedComment }) => storedComment);
+const commentModule = () => comments ??= import("./artifact-comments.mjs");
+const commentForm = () => commentModule().then(({ storedComment }) => storedComment);
+const commentFileReader = () => commentModule().then(({ readCommentFile }) => readCommentFile);
 
 // The entry a file of one location takes at another: a comment of the exact form Prism writes names its new location, as a move rewrites it, and every other file keeps its bytes as they are.
 async function placedEntry(base, role, entry, from, to) {
@@ -1373,7 +1541,7 @@ async function placedEntry(base, role, entry, from, to) {
  * A file whose placed path would exceed the bounds of a store path is not placed: a side's version that the base does not hold alike is saved instead.
  * Identity files take no part in the path merge; placedIdentities gives back the one of each artifact the merge keeps.
  * Returns { original, local, upstream, saved, theirs, undone, identities }: the trees as Map(path, entry), saved as Map(path, entry) of the files to save under their own paths,
- * theirs as the Set of saved paths that hold the upstream's change rather than this machine's, undone as the changes of this machine that the merge does not keep and that no saved copy names,
+ * theirs as the Set of saved paths that hold the upstream's change rather than this machine's, tooLong as Map(path, location) of the saved paths left out because their path at the artifact's location would pass a store path's bounds, undone as the changes of this machine that the merge does not keep and that no saved copy names,
  * { removal: location } for a removal that gave way and { move: location, movedTo } for a move to another location that the merge sent elsewhere, and what placedIdentities reads.
  */
 async function placeByIdentity(base, original, local, upstream) {
@@ -1434,11 +1602,14 @@ async function placeByIdentity(base, original, local, upstream) {
   };
   const saved = new Map();
   const theirs = new Set();
+  // The saved files that the merge left out because their path at the artifact's new location would pass a store path's bounds, by that location.
+  const tooLong = new Map();
   // The locations at which a local file of an artifact that left the merge is saved, whose saved copy also names a local removal that gave way there.
   const savedAt = new Set();
-  const save = (file, entry, name, location) => {
+  const save = (file, entry, name, location, longAt = null) => {
     if (saved.has(file)) return;
     saved.set(file, entry);
+    if (longAt !== null) tooLong.set(file, longAt);
     if (name === "upstream") theirs.add(file); else savedAt.add(location);
   };
   const later = [];
@@ -1465,7 +1636,7 @@ async function placeByIdentity(base, original, local, upstream) {
           const views = role === "artifact" && keeps && [await entryBytes(base, entry), await entryBytes(base, keeps)].every((bytes) => bytes?.includes(GENERATED_VIEW));
           if (sameEntry(keeps, entry) || views) continue;
         }
-        if (name === "local" || to !== null) save(file, entry, name, location);
+        if (name === "local" || to !== null) save(file, entry, name, location, to);
       }
     }
   }
@@ -1491,7 +1662,7 @@ async function placeByIdentity(base, original, local, upstream) {
   }
   const kept = new Map();
   for (const [id, location] of final) if (!dropped.has(id)) kept.set(location, id);
-  return { ...placed, saved, theirs, undone, identities: { trees: { local, upstream }, of: identities, kept } };
+  return { ...placed, saved, theirs, tooLong, undone, identities: { trees: { local, upstream }, of: identities, kept } };
 }
 
 /**
@@ -1638,16 +1809,21 @@ function conflictCopies(local, upstream, conflicted) {
  * The stage's record names the commit the branch held and the target commit, and is written last, so a stage without one never held every copy and is dropped.
  * Each file the replacement is about to replace or remove is named in the stage's replaced record first, so a stage that a stopped sync left is settled for exactly the files it replaced.
  */
-async function stageLocal(base, copies, { from, to, theirs = new Set(), undone = [] }) {
+async function stageLocal(base, copies, { from, to, theirs = new Set(), tooLong = new Map(), surplus = new Set(), bothChanged = new Set(), undone = [] }) {
   const folder = syncPath(base, "saving", `${Date.now()}-${process.pid}`);
   await rm(folder, { recursive: true, force: true });
   const conflicts = [];
   for (const [file, entry] of copies) {
     if (!entry) { conflicts.push({ path: file }); continue; }
+    const whose = theirs.has(file) ? { theirs: true } : surplus.has(file) ? { surplus: true } : bothChanged.has(file) ? { bothChanged: true } : {};
+    const cause = tooLong.has(file) ? { tooLong: tooLong.get(file) } : {};
+    // A withheld file above its kind's bound stays where it is until the replacement reaches it, which moves it here, so the stage never reads or copies its bytes,
+    // and its copy is named as one that this machine's sync held back for its size, which the other machine then changed or removed.
+    if (entry.disk) { conflicts.push({ path: file, saved: true, moved: true, overBound: true, ...whose, ...cause }); continue; }
     const target = path.join(folder, "files", ...file.split("/"));
     await mkdir(path.dirname(target), { recursive: true });
     await writeAtomically(target, await entryBytes(base, entry));
-    conflicts.push({ path: file, saved: true, ...(theirs.has(file) ? { theirs: true } : {}) });
+    conflicts.push({ path: file, saved: true, ...whose, ...cause });
   }
   await mkdir(folder, { recursive: true });
   await writeAtomically(path.join(folder, REPLACED_RECORD), "[]\n");
@@ -1657,6 +1833,53 @@ async function stageLocal(base, copies, { from, to, theirs = new Set(), undone =
 
 const STAGE_RECORD = "stage.json";
 const REPLACED_RECORD = "replaced.json";
+
+/**
+ * Move a withheld file above its kind's bound into the stage's copies right before the replacement replaces or removes it, which markReplaced has named first,
+ * by a rename within the store's file system, or by a kernel copy and a removal where the sync folder sits on another one, so its bytes never pass through memory or Git.
+ * A sync that stops before the move finds the file still on disk, and one that stops after it finds the copy in the stage, which settling then saves.
+ */
+async function moveAside(base, stage, file) {
+  if (!stage.conflicts.some((conflict) => conflict.path === file && conflict.moved)) return;
+  const source = path.join(base, ...file.split("/"));
+  const target = path.join(stage.folder, "files", ...file.split("/"));
+  await mkdir(path.dirname(target), { recursive: true });
+  try { await rename(source, target); }
+  catch (error) {
+    if (error.code === "ENOENT") return;
+    if (error.code !== "EXDEV") throw error;
+    const partial = path.join(stage.folder, "copying");
+    await copyFile(source, partial);
+    await rename(partial, target);
+    await rm(source, { force: true });
+  }
+}
+
+/**
+ * Save into a stage a comment of this machine's that leaves the disk because its folder already holds the comments that an artifact may hold, before the caller removes it:
+ * the copy is written and named as replaced first, so a sync that stops before the removal finds the comment still on disk and drops the copy, and one that stops after it saves the copy.
+ */
+async function stageSurplus(stage, file, bytes) {
+  const target = path.join(stage.folder, "files", ...file.split("/"));
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeAtomically(target, bytes);
+  stage.conflicts.push({ path: file, saved: true, surplus: true });
+  await writeAtomically(path.join(stage.folder, STAGE_RECORD), `${JSON.stringify({ from: stage.from, to: stage.to, conflicts: stage.conflicts, undone: stage.undone })}\n`);
+  stage.replaced.push(file);
+  await writeAtomically(path.join(stage.folder, REPLACED_RECORD), `${JSON.stringify(stage.replaced)}\n`);
+}
+
+/**
+ * Save into a stage, unread, a file in a comment folder that leaves the disk because its folder already holds the comments that an artifact may hold, and that the comment reader does not read,
+ * such as one above a comment's bound: it is named as replaced first and then moved into the stage's copies, so a sync that stops before the move finds it still on disk and one that stops after it saves the copy.
+ */
+async function stageSurplusMove(base, stage, file) {
+  stage.conflicts.push({ path: file, saved: true, surplus: true, moved: true });
+  await writeAtomically(path.join(stage.folder, STAGE_RECORD), `${JSON.stringify({ from: stage.from, to: stage.to, conflicts: stage.conflicts, undone: stage.undone })}\n`);
+  stage.replaced.push(file);
+  await writeAtomically(path.join(stage.folder, REPLACED_RECORD), `${JSON.stringify(stage.replaced)}\n`);
+  await moveAside(base, stage, file);
+}
 
 // Whether a replaced or removed file is, holds, or lies below a staged conflict's path.
 const touches = (file, conflict) => file === conflict || file.startsWith(`${conflict}/`) || conflict.startsWith(`${file}/`);
@@ -1677,11 +1900,16 @@ async function markReplaced(stage, file) {
 async function settleStage(base, stage, moved) {
   const copyOf = (file) => path.join(stage.folder, "files", ...file.split("/"));
   const kept = [];
+  // A file moved aside is saved once its copy is in the stage, which only the replacement's move puts there, and is still on disk otherwise, so its bytes are never read here.
+  const movedAside = (conflict) => lstat(copyOf(conflict.path)).then((stats) => stats.isFile(), () => false);
   for (const conflict of stage.conflicts) {
+    if (conflict.moved) { if ((moved || stage.replaced.some((file) => touches(file, conflict.path))) && await movedAside(conflict)) kept.push(conflict); continue; }
     if (moved) { kept.push(conflict); continue; }
     if (!stage.replaced.some((file) => touches(file, conflict.path))) continue;
     if (!conflict.saved) { kept.push(conflict); continue; }
-    const [now, copy] = await Promise.all([fileBytes(path.join(base, ...conflict.path.split("/"))), fileBytes(copyOf(conflict.path))]);
+    // The copy holds a blob's bytes, so the file on disk is read only up to the copy's size, and a longer one differs from it unread.
+    const copy = await fileBytes(copyOf(conflict.path));
+    const now = await boundedBytes(path.join(base, ...conflict.path.split("/")), copy?.length ?? 0);
     if (copy !== null && !sameBytes(now, copy)) kept.push(conflict);
   }
   // The local changes that the merge undid are named only once the branch moved to it; otherwise the next merge finds them again.
@@ -1721,7 +1949,11 @@ async function publishCopies(base, source, about = null) {
 }
 
 // Beside each conflict stamp that needs it, the sync folder keeps what the stamp's copies are and which local changes its merge undid:
-// { theirs: [path], undone: [{ removal } | { move, movedTo }] }, with theirs naming the saved paths that hold another machine's change rather than this machine's.
+// { theirs: [path], tooLong: [{ path, location }], surplus: [path], bothChanged: [path], overBound: [path], undone: [{ removal } | { file } | { move, movedTo }] }, with theirs naming the saved paths that hold another machine's change rather than this machine's,
+// tooLong the saved paths that the merge left out because their path at the location it gave their artifact, named there, would pass a store path's bounds,
+// surplus the saved comments of this machine's that their folder's bound left out of the store, bothChanged the saved files at the store's root that the other machine changed too,
+// overBound the saved files that this machine's sync held back because each was above its kind's bound and that the other machine then changed or removed,
+// and a file in undone a file at the store's root, such as its README, whose removal by this machine gave way to the other machine's change.
 const ABOUT = "conflict-notes";
 const aboutPath = (base, stamp) => syncPath(base, ABOUT, `${stamp}.json`);
 
@@ -1731,10 +1963,15 @@ const aboutPath = (base, stamp) => syncPath(base, ABOUT, `${stamp}.json`);
  */
 async function publishSaved(base, { folder, conflicts, undone = [] }) {
   const theirs = conflicts.filter((conflict) => conflict.saved && conflict.theirs).map((conflict) => conflict.path);
-  const about = theirs.length || undone.length ? { theirs, undone } : null;
+  const surplus = conflicts.filter((conflict) => conflict.saved && conflict.surplus && !conflict.theirs).map((conflict) => conflict.path);
+  const bothChanged = conflicts.filter((conflict) => conflict.saved && conflict.bothChanged && !conflict.theirs && !conflict.surplus).map((conflict) => conflict.path);
+  const tooLong = conflicts.filter((conflict) => conflict.saved && noteLocation(conflict.tooLong)).map((conflict) => ({ path: conflict.path, location: conflict.tooLong }));
+  const overBound = conflicts.filter((conflict) => conflict.saved && conflict.overBound && !conflict.theirs && !conflict.surplus && !conflict.bothChanged).map((conflict) => conflict.path);
+  const about = theirs.length || tooLong.length || surplus.length || bothChanged.length || overBound.length || undone.length ? { theirs, tooLong, surplus, bothChanged, overBound, undone } : null;
   const stamp = conflicts.some((conflict) => conflict.saved) || undone.length ? await publishCopies(base, path.join(folder, "files"), about) : null;
   await rm(folder, { recursive: true, force: true });
-  return conflicts.map(({ path: file, saved }) => ({ path: file, savedAs: saved ? `${SYNC_DIRECTORY}/conflicts/${stamp}/${file}` : null }));
+  // A saved copy of the other machine's change carries theirs true, and one whose path would be too long at its artifact's new location carries that location as tooLongAt, so the status message names whose copy it is and why.
+  return conflicts.map(({ path: file, saved, theirs: other, tooLong: at }) => ({ path: file, savedAs: saved ? `${SYNC_DIRECTORY}/conflicts/${stamp}/${file}` : null, ...(saved && other ? { theirs: true } : {}), ...(saved && noteLocation(at) ? { tooLongAt: at } : {}) }));
 }
 
 // Drop a stage whose merge replaced none of its files, so the merge that runs again saves its copies once.
@@ -1780,7 +2017,10 @@ async function recoverSaved(base) {
     // A stage that an earlier Prism made has no replaced record, so each saved file whose bytes on disk differ from its copy counts as replaced, as that Prism counted it.
     if (!Array.isArray(replaced)) {
       replaced = [];
-      for (const conflict of saved) if (!sameBytes(await fileBytes(path.join(base, ...conflict.path.split("/"))), await fileBytes(path.join(folder, "files", ...conflict.path.split("/"))))) replaced.push(conflict.path);
+      for (const conflict of saved) {
+        const copy = await fileBytes(path.join(folder, "files", ...conflict.path.split("/")));
+        if (!sameBytes(await boundedBytes(path.join(base, ...conflict.path.split("/")), copy?.length ?? 0), copy)) replaced.push(conflict.path);
+      }
     }
     conflicts.push(...await settleStage(base, { folder, conflicts: stage.conflicts, undone: stage.undone ?? [], replaced: replaced.filter((file) => typeof file === "string") }, moved));
   }
@@ -1855,7 +2095,35 @@ function sameRegistration(left, right) {
 const entryBytes = async (base, entry) => entry && FILE_MODES.has(entry.mode) ? (await required(base, ["cat-file", "blob", entry.object])).stdout : null;
 // A path that is a folder, or lies below a file, holds no file, as when a file on one side meets a folder on the other.
 const fileBytes = (target) => readFile(target).catch((error) => { if (["ENOENT", "ENOTDIR", "EISDIR"].includes(error.code)) return null; throw error; });
-const sameBytes = (left, right) => left === null || right === null ? left === right : left.equals(right);
+
+/**
+ * The bytes of a regular file of at most max bytes, null where no file or a folder is there, and { size } for one above max, a link, or any other entry, which is read no further:
+ * it is opened without following a link and without blocking, and its type and size come from the opened file before any byte is read, so memory stays bounded whatever the file holds.
+ * max null reads a file of any size; a file that grows past its size while it is read counts as above max.
+ */
+async function boundedBytes(target, max) {
+  let handle;
+  try { handle = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0)); }
+  catch (error) {
+    if (["ENOENT", "ENOTDIR", "EISDIR"].includes(error.code)) return null;
+    if (["ELOOP", "EMLINK", "ENXIO"].includes(error.code)) return { size: null };
+    throw error;
+  }
+  try {
+    const info = await handle.stat();
+    if (info.isDirectory()) return null;
+    if (!info.isFile() || (max !== null && info.size > max)) return { size: info.isFile() ? info.size : null };
+    const buffer = Buffer.alloc(info.size + 1);
+    let filled = 0;
+    for (let read; filled < buffer.length && (read = (await handle.read(buffer, filled, buffer.length - filled, filled)).bytesRead) > 0;) filled += read;
+    return filled > info.size ? { size: filled } : buffer.subarray(0, filled);
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+const overBytes = (bytes) => bytes !== null && !Buffer.isBuffer(bytes);
+// A file read as above its bound is the same as no other bytes.
+const sameBytes = (left, right) => overBytes(left) || overBytes(right) ? false : left === null || right === null ? left === right : left.equals(right);
 
 // Every changed file's record lock is held from the first check until the branch moves, so no locked record write lands in between.
 // When an artifact changes, the store's artifact lock, which an artifact update holds from its version checks to its writes, is taken first, so neither lands between the other's check and write.
@@ -1995,19 +2263,66 @@ async function refuseUnsafeTree(base, commit) {
 }
 
 /**
- * The refusal of a push whose branch tip holds an entry that every other machine's sync and first clone would refuse, or whose objects that the remote's branches lack fail the check
+ * The refusal of a push whose branch tip holds an entry that every other machine's sync and first clone would refuse, a file above its kind's bound or a comment folder above its bound among them,
+ * whose commits that the remote's branches lack hold a file above its kind's bound, or whose objects that the remote's branches lack fail the check
  * that every other machine's fetch and first clone apply, as a .gitattributes with a line over 2048 bytes does; null when the push is safe.
  * Such an object stays in the remote's history once pushed, so no later commit could undo it for the machines that refuse it.
+ * upstream says whether the branch has an upstream, to whose tip the refusal tells the person to move the branch back once the remote holds it.
  */
-async function unpushable(base, remote) {
+async function unpushable(base, remote, { upstream = true } = {}) {
   const unsafe = await unsafeStoreEntry(base, "HEAD");
   if (unsafe) return `The store's branch holds ${describeUnsafeEntry(unsafe)}, so it was not pushed. Remove that path from the remote's branch or from this store.`;
   const known = (await required(base, ["for-each-ref", "--format=%(objectname)", `refs/remotes/${remote}/`])).text.split("\n").filter(Boolean);
+  // Only a commit made by hand puts such a file on the branch, since a sync's own commit withholds it, so each refusal names the command that takes that commit off while every file stays on disk.
+  const takeOff = async (paths, holds, until) => `Take the commit you made by hand that holds it off the store's branch: ${await resetAdvice(base, { upstream, known, paths, holds })}; the next sync then commits the store's other changes again and withholds ${until}.`;
+  // Git's object check runs first, since a tree that it refuses, such as one nested deeper than Git walks, is one that no listing of the branch's files could read.
   const refused = await refusedObjects(base, "HEAD", known);
-  if (!refused) return null;
-  const places = [...new Set([...refused.places.values()].flat())];
-  const named = (places.length ? places : [...await treeFiles(base, "HEAD")].filter(([, entry]) => refused.objects.includes(entry.object)).map(([file]) => file)).map(shownPath);
-  return `The store's branch holds ${named.length ? named.join(" and ") : "an object"} that Git's object check refuses (${refused.message}), so it was not pushed, since every other machine's fetch and first clone would then refuse the remote for good. Fix that file in this store, or take the commit you made by hand that holds it off the store's branch.`;
+  if (refused) {
+    const places = [...new Set([...refused.places.values()].flat())];
+    const named = places.length ? places : [...await treeFiles(base, "HEAD")].filter(([, entry]) => refused.objects.includes(entry.object)).map(([file]) => file);
+    const fix = await takeOff(named, (_file, { object }) => refused.objects.includes(object), "each such file until it is fixed");
+    return `The store's branch holds ${named.length ? named.map(shownPath).join(" and ") : "an object"} that Git's object check refuses (${refused.message}), so it was not pushed, since every other machine's fetch and first clone would then refuse the remote for good. ${fix}`;
+  }
+  const over = await oversizedStoreEntry(base, "HEAD");
+  const before = over ? null : await oversizedHistory(base, known);
+  const found = over ?? before;
+  if (!found) return null;
+  // A comment folder that holds too many comment files has no one file to look for, so the oldest commit that the remote lacks is taken off with every later one.
+  const fix = await takeOff(found.path ? [found.path] : [], (_file, { size }) => size > found.bound, "each file while it stays above its bound");
+  if (over) return `The store's branch holds ${await describeOversizedEntry(over)}, so it was not pushed, since every other machine's sync would then refuse the remote's branch. ${fix}`;
+  return `A commit of the store's branch that the remote does not hold yet holds ${await describeOversizedEntry(before)}, so the branch was not pushed, since the remote would keep that file in its history for every clone to fetch. ${fix}`;
+}
+
+/**
+ * The command, with what it does, that takes off the store's branch every commit that a refused push would send from the first one that holds a refused file, while the files on disk stay as they are,
+ * computed so that the person runs it as given: a soft reset to the tip of the remote's branch when the remote holds the branch,
+ * else a soft reset to the parent of the oldest commit that the remote lacks and whose entry at one of the paths holds tells apart, as { object, size } from Git's object listing,
+ * else, where that commit is the branch's first, the removal of the branch's ref, after which the next sync commits the files on disk as the branch's first commit.
+ * With no path, or none that such a commit holds, the oldest commit that the remote lacks is the one, so the command takes off every commit the push would send.
+ */
+async function resetAdvice(base, { upstream, known, paths, holds }) {
+  if (upstream) {
+    const tip = await git(base, ["rev-parse", "--verify", "--quiet", "@{upstream}^{commit}"]);
+    if (tip.ok && tip.text) return `run git reset --soft ${tip.text} in the store, which keeps every file on disk and moves the branch back to the tip of the remote's branch`;
+  }
+  const revisions = `HEAD\n${known.map((commit) => `^${commit}\n`).join("")}`;
+  let first = null;
+  if (paths.length) {
+    // The commits that the remote lacks and that change one of the paths, oldest first, so no commit comes before one of its parents.
+    const changing = (await required(base, ["rev-list", "--topo-order", "--reverse", "--full-history", "--stdin", "--", ...paths], { input: revisions, env: { GIT_LITERAL_PATHSPECS: "1" }, maxBuffer: PACK_BYTES_MAX })).text.split("\n").filter(Boolean);
+    const names = changing.flatMap((commit) => paths.map((file) => ({ commit, file })));
+    const listed = names.length ? (await required(base, ["cat-file", "--batch-check=%(objectname) %(objectsize)"], { input: `${names.map(({ commit, file }) => `${commit}:${file}`).join("\n")}\n`, maxBuffer: PACK_BYTES_MAX })).text.split("\n") : [];
+    const at = names.findIndex(({ file }, index) => {
+      const [object, size] = (listed[index] ?? "").split(" ");
+      return /^[0-9a-f]{40,64}$/.test(object) && holds(file, { object, size: Number(size) });
+    });
+    first = at < 0 ? null : names[at].commit;
+  }
+  const holding = first !== null;
+  first ??= (await required(base, ["rev-list", "--topo-order", "--reverse", "--stdin"], { input: revisions, maxBuffer: PACK_BYTES_MAX })).text.split("\n").find(Boolean) ?? null;
+  const parent = first ? await git(base, ["rev-parse", "--verify", "--quiet", `${first}^1`]) : { ok: false };
+  if (parent.ok && parent.text) return `run git reset --soft ${parent.text} in the store, which keeps every file on disk and moves the branch back to the commit before the first commit of it that the remote lacks${holding ? " and that holds the file" : ""}`;
+  return `run git update-ref -d HEAD in the store, which keeps every file on disk and takes every commit off the branch, since ${holding ? "its first commit holds the file" : "the remote lacks each of them"}`;
 }
 
 /**
@@ -2072,7 +2387,8 @@ async function clearFolder(target) {
  * An entry at any other path, such as a .DS_Store the store's history holds, is never written, removed, or compared on disk.
  * The branch moves only when every changed file held the previous commit's bytes and holds the target's bytes afterwards, in the target's spelling.
  * Otherwise the branch stays, so the next commit records the replaced files and the local writes, and the next merge resolves them; progress.replacing, when given, runs before each file is replaced or removed.
- * held maps a file whose local version the sync withheld to that version, which the file may hold in place of the branch's.
+ * progress.leaving, when given, takes each comment on disk that neither commit holds and that the target's comments leave no room for, before it leaves the disk.
+ * held maps a file whose local version the sync withheld to that version, which the file may hold in place of the branch's, or, for a file above its kind's bound, to the file on disk that it must still be.
  * On a file system that ignores letter case, as macOS and Windows use by default, a path that differs only in letter case from a file on disk opens that file,
  * so a path counts as holding bytes only when every name of it is stored in that spelling, and two changed paths that such a file system reads as one take one lock.
  */
@@ -2082,7 +2398,7 @@ async function apply(base, from, to, options, progress = {}, held = new Map()) {
   let files = [];
   try {
     await options.beforeApply?.();
-    const { shareable } = await storeLayout();
+    const { shareable, bound } = await storeLayout();
     const [before, after] = await Promise.all([treeFiles(base, from), treeFiles(base, to)]);
     // A link that the branch held and the target drops was never a file on disk that Prism wrote, so it stays as it is; a submodule link's empty folder goes.
     const onDisk = (file) => [before.get(file), after.get(file)].some((entry) => FILE_MODES.has(entry?.mode)) || before.get(file)?.mode === "160000";
@@ -2101,12 +2417,32 @@ async function apply(base, from, to, options, progress = {}, held = new Map()) {
         return await holdLocks(locked, async () => {
           const next = [];
           const listings = new Map();
-          const ownBytes = async (index, cache) => (await storedInSpelling(base, files[index], cache)) ? fileBytes(targets[index]) : null;
+          // A file is read only up to its kind's bound, so one above it is never read and holds no commit's bytes.
+          const ownBytes = async (index, cache) => (await storedInSpelling(base, files[index], cache)) ? boundedBytes(targets[index], bound(files[index])) : null;
           for (const [index, file] of files.entries()) {
+            // A file withheld because it is above its kind's bound is never read: it must still be the file the sync held back, which the caller moves aside before replacing it.
+            if (held.get(file)?.disk) {
+              if (!(await sameDiskFile(targets[index], held.get(file).disk))) return false;
+              next.push(await entryBytes(base, after.get(file)));
+              continue;
+            }
             const [bytes, expected] = await Promise.all([ownBytes(index, listings), entryBytes(base, before.get(file))]);
             // A file whose local version the sync withheld still holds that version, which the caller saved.
             if (!sameBytes(bytes, expected) && !(held.has(file) && sameBytes(bytes, await entryBytes(base, held.get(file))))) return false;
             next.push(await entryBytes(base, after.get(file)));
+          }
+          // A comment that this machine wrote after the sync read its comment folders, as while the sync fetched or while an update held the artifact lock, is in neither commit,
+          // so the merge did not count it; where the target's comments leave it no room in its folder, it is saved, named as a comment that the folder's bound left out, and leaves the disk,
+          // so no folder on disk holds more comments than a reader takes.
+          if (progress.leaving) {
+            // Each one is read only through the comment reader, which reads a regular file of at most a comment's bound and follows no link; any other file there is moved aside unread.
+            const readComment = await commentFileReader();
+            for (const file of await uncountedComments(base, before, after, files)) {
+              const target = path.join(base, ...file.split("/"));
+              if (!(await lstat(target).catch(() => null))) continue;
+              await progress.leaving(file, await readComment(target));
+              await rm(target, { force: true });
+            }
           }
           // Removals come first, and an artifact folder that one leaves empty, or holding only a file manager's files, goes with it,
           // so a file that takes a removed folder's place, or a folder that differs from a removed one only in letter case, is made anew rather than inside the old one.
@@ -2142,6 +2478,25 @@ async function apply(base, from, to, options, progress = {}, held = new Map()) {
   } finally {
     await rm(marker, { force: true });
   }
+}
+
+/**
+ * The comment files on disk, in the folders to which a change from one tree to another adds comments, that neither tree holds and that the target tree's comments leave no room for,
+ * as paths: a folder keeps the target's comments and then these by file name up to the comments an artifact may hold. Only regular files named like a comment count, found without following a link.
+ */
+async function uncountedComments(base, before, after, files) {
+  const { isCommentFile, commentsMax } = await storeLayout();
+  const growing = new Set(files.filter((file) => isCommentFile(file) && !before.has(file) && after.has(file)).map((file) => path.posix.dirname(file)));
+  if (!growing.size) return [];
+  const counts = new Map([...growing].map((folder) => [folder, 0]));
+  for (const file of after.keys()) if (isCommentFile(file) && counts.has(path.posix.dirname(file))) counts.set(path.posix.dirname(file), counts.get(path.posix.dirname(file)) + 1);
+  const left = [];
+  for (const [folder, count] of counts) {
+    const entries = await readdir(path.join(base, ...folder.split("/")), { withFileTypes: true }).catch((error) => { if (["ENOENT", "ENOTDIR"].includes(error.code)) return []; throw error; });
+    const uncounted = entries.filter((entry) => entry.isFile()).map((entry) => `${folder}/${entry.name}`).filter((file) => isCommentFile(file) && !before.has(file) && !after.has(file)).sort();
+    left.push(...uncounted.slice(Math.max(0, commentsMax - count)));
+  }
+  return left;
 }
 
 /**

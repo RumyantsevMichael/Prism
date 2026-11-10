@@ -485,7 +485,7 @@ function check(definition, context, { revision, input, confirmed }) {
 
 /**
  * Applies one action to a target: { applied, actions }, where applied is the history entry or null for an unchanged value, and actions the target's listing after it;
- * an approval's or a comment's result also names its artifact as artifact { path, scope }, since its entry belongs to no initiative.
+ * an approval's or a comment's result also names its artifact as artifact { path, scope }, since its entry belongs to no initiative, and a comment's result names its stored comment's id as comment.
  */
 export async function applyAction({ projectRoot, target, action, input, revision, confirmed, via = "review-app", indexer = prismIndexer }) {
   const parsed = parseTarget(target);
@@ -505,6 +505,8 @@ export async function applyAction({ projectRoot, target, action, input, revision
     via: typeof via === "string" && via ? via : "review-app"
   });
   let applied = null;
+  // The comment as stored, whose id names its own file, so the review app hands it to another checkout's tabs by reading that one file.
+  let stored = null;
   if (parsed.kind === "approval") {
     // An ambiguous id is refused before any other check, whatever revision and input the request holds.
     if (read.ambiguous) throw fail("approval_ambiguous", read.ambiguous, { reason: read.ambiguous });
@@ -528,7 +530,7 @@ export async function applyAction({ projectRoot, target, action, input, revision
     if (!applied.by.name) throw fail("author_unknown", "Git names no user.name for this checkout, so the comment cannot record who wrote it; set one with git config user.name and comment again.");
     // The store write repeats the artifact and version checks under the artifact lock, so a change that lands after the read above is refused as stale.
     const { artifact } = read;
-    await commentOnArtifact(projectRoot, { path: artifact.path, label: artifact.scope.label, version: checked.after.version, line: checked.after.line, text: checked.after.text, author: { name: applied.by.name, host: os.hostname().slice(0, 255) }, entry: applied }).catch((error) => {
+    stored = await commentOnArtifact(projectRoot, { path: artifact.path, label: artifact.scope.label, version: checked.after.version, line: checked.after.line, text: checked.after.text, author: { name: applied.by.name, host: os.hostname().slice(0, 255) }, entry: applied }).catch((error) => {
       if (error?.code === "artifact_not_found") throw unknownTarget(target);
       if (error?.code === "comment_limit") throw fail("comment_limit", error.message);
       if (error?.code === "version_conflict") throw fail("stale_revision", "The file changed since the page read it.", { current: view(definition, { ...read, artifact: { ...artifact, version: error.version ?? null } }) });
@@ -555,6 +557,6 @@ export async function applyAction({ projectRoot, target, action, input, revision
   // An answered approval gate leaves its artifact's pending gates, so its target has no actions left, and the result names the artifact the answer applied to.
   if (parsed.kind === "approval") return { applied, actions: [], artifact: { path: read.gateRecord.artifact.path, scope: read.gateRecord.artifact.scope } };
   // A comment leaves its artifact unchanged, so the target lists its action again, and the result names the artifact it commented on.
-  if (parsed.kind === "artifact") return { applied, actions: [view(definition, read)], artifact: { path: read.artifact.path, scope: read.artifact.scope } };
+  if (parsed.kind === "artifact") return { applied, actions: [view(definition, read)], artifact: { path: read.artifact.path, scope: read.artifact.scope }, comment: stored.id };
   return { applied, actions: (await listActions({ projectRoot, target, indexer })).actions };
 }

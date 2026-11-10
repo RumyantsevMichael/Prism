@@ -127,12 +127,14 @@ export function isStoreFile(relative) {
 
 const KiB = 1024, MiB = 1024 * KiB;
 /**
- * The most bytes that a store file of each kind holds, well above the largest file of that kind that Prism writes, which every reader and every sync applies,
+ * The most bytes that a store file of each kind holds, well above the largest file of that kind that Prism or a Git host writes, which every reader and every sync applies,
  * since anyone who can push to a store can push files of any size; no JSON kind is bounded above 16 MiB, which a JSON parse reads within a server's heap.
+ * root-text is a README or license at the store's root and root-git its .gitattributes or .gitignore, which no reader loads and every sync writes, hashes, merges, and saves.
  */
 export const STORE_FILE_BOUNDS = Object.freeze({
   artifact: 16 * MiB, accepted: 16 * MiB, status: 16 * MiB, identity: 256, comment: 64 * KiB, ledger: 16 * MiB, migration: 16 * MiB, registration: 64 * KiB,
-  roadmap: MiB, initiative: MiB, state: MiB, "change-map": MiB, review: 4 * MiB, "design-view": 4 * MiB, "frozen-tests": 4 * MiB, claim: 64 * KiB, runs: 4 * MiB
+  roadmap: MiB, initiative: MiB, state: MiB, "change-map": MiB, review: 4 * MiB, "design-view": 4 * MiB, "frozen-tests": 4 * MiB, claim: 64 * KiB, runs: 4 * MiB,
+  "root-text": MiB, "root-git": 64 * KiB
 });
 /** The most comment files that one artifact's comment folder holds. */
 export const COMMENTS_PER_ARTIFACT_MAX = 1000;
@@ -140,9 +142,20 @@ export const COMMENTS_PER_ARTIFACT_MAX = 1000;
 /** The bound of a store file kind as a person reads it, such as 256 bytes, 64 KiB, or 16 MiB. */
 export const boundText = (bytes) => bytes % MiB === 0 ? `${bytes / MiB} MiB` : bytes % KiB === 0 ? `${bytes / KiB} KiB` : `${bytes} bytes`;
 
-/** The most bytes that the store file at a store-relative path holds, or null for a file that takes no bound, such as the README, license, and housekeeping files that Prism never reads. */
+/** A Git host can add a README or a license to a new repository, so a store also shares these names at its root, as plain files that Prism never reads. */
+export const INERT_FILES = new Set(["README", "README.md", "README.txt", "LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING"]);
+
+/** Whether a store-relative path is a README or license at the store's root, or the .gitattributes or .gitignore that Prism writes there: files that no reader of Prism loads. */
+export const isRootStoreFile = (relative) => INERT_FILES.has(relative) || Object.hasOwn(HOUSEKEEPING, relative);
+
+/**
+ * The most bytes that the store file at a store-relative path holds, or null for a path that a store does not share.
+ * A README or license at the root takes 1 MiB and the .gitattributes or .gitignore there 64 KiB, so no file that a store shares is without a bound.
+ */
 export function storeFileBound(relative) {
-  if (typeof relative !== "string" || !isStoreFile(relative) || Object.hasOwn(HOUSEKEEPING, relative)) return null;
+  if (INERT_FILES.has(relative)) return STORE_FILE_BOUNDS["root-text"];
+  if (typeof relative === "string" && Object.hasOwn(HOUSEKEEPING, relative)) return STORE_FILE_BOUNDS["root-git"];
+  if (typeof relative !== "string" || !isStoreFile(relative)) return null;
   const top = relative.split("/")[0];
   const kind = { [ARTIFACTS]: "artifact", [ARTIFACT_ACCEPTED]: "accepted", [ARTIFACT_STATUS]: "status", [ARTIFACT_IDENTITY]: "identity", [ARTIFACT_COMMENTS]: "comment", [ARTIFACT_MIGRATIONS]: "ledger", migrations: "migration", [REPOSITORIES]: "registration" }[top]
     ?? parseRecordPath(`${RECORD_DIRECTORY}/${relative}`)?.kind;

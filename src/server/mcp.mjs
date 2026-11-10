@@ -6,9 +6,9 @@ import { assertInput } from "./workflow/artifact-schema.mjs";
 import { CONSERVATION_TOOLS, callConservationTool } from "./conservation/conservation-tools.mjs";
 import { conservationStore } from "./conservation/conservation-store.mjs";
 import { ChangeMapError, GET_CHANGE_MAP_SCHEMA, UPDATE_CHANGE_MAP_SCHEMA, getChangeMap, updateChangeMap } from "./conservation/change-map.mjs";
-import { readFile, realpath } from "node:fs/promises";
+import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { finishUnfinishedMoves, nameToolCallRoot, outsideToolCall, recordStoreOf, restoreMigrationReports, takeMigrationReports, toolCallContext, withToolCall } from "./workflow/record-store.mjs";
+import { COMMENTS_PER_ARTIFACT_MAX, finishUnfinishedMoves, nameToolCallRoot, outsideToolCall, recordStoreOf, restoreMigrationReports, takeMigrationReports, toolCallContext, withToolCall } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
 import { confirmSavedConflicts, releaseSavedConflicts, takeSavedConflicts } from "./workflow/record-store-sync.mjs";
 import { withCallSession } from "./workflow/slice-claims.mjs";
@@ -39,7 +39,7 @@ import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workfl
 import { ARTIFACT_TOOLS, artifactAtLocation, getArtifact, updateArtifact } from "./workflow/store-artifacts.mjs";
 import { savedComment } from "./workflow/artifact-comments.mjs";
 import { keptExplanation, shownPath } from "./workflow/artifact-migration.mjs";
-import { ARTIFACT_MIGRATIONS } from "./workflow/artifact-paths.mjs";
+import { ARTIFACT_MIGRATIONS, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX } from "./workflow/artifact-paths.mjs";
 import { forgetAskedGates, recordAskedGates } from "./workflow/approval-deliveries.mjs";
 import { VERIFY_SLICE_SCHEMA, cancelVerifications, verificationBrief, verifySlice } from "./workflow/verification.mjs";
 import { cancelRecordSyncs } from "./workflow/record-store-sync.mjs";
@@ -1201,17 +1201,18 @@ async function undoneMoveLine(item, argumentsValue) {
   return `- ${await savedArtifactWhere(item.store, item.undoneMove, argumentsValue)}, which this machine moved to scope ${movedTo?.scope.label ?? `artifacts/${item.movedTo}`}`;
 }
 
-// Whether the store at storeBase holds an artifact at a location below artifacts/.
-const holdsArtifact = (storeBase, location) => readFile(path.join(storeBase, "artifacts", ...location.split("/"))).then(() => true, () => false);
+// Whether the store at storeBase holds an artifact at a location below artifacts/, told from the file's entry alone, so no byte of a file above its kind's bound is read.
+const holdsArtifact = (storeBase, location) => lstat(path.join(storeBase, "artifacts", ...location.split("/"))).then((stats) => stats.isFile(), () => false);
 
 // A saved status record or comment named by the artifact it belongs to, and a comment also by its line and text, quoted only from a comment of the exact form Prism writes,
 // since the saved copy may be any file that another machine's store brought, and any other file is named by its path, scope, and saved copy alone.
-async function savedDerivedLine(item, argumentsValue) {
-  const line = await savedArtifactWhere(item.store, item.statusOf ?? item.commentOn, argumentsValue);
-  if (item.statusOf) return `${line}, its status record (saved copy: ${item.savedAs})`;
+// where, when given, is the location at which the store keeps the artifact, as for a file whose path there would be too long, while the saved file names the location it was made at, and copy names whose copy it is.
+async function savedDerivedLine(item, argumentsValue, where = null, copy = "saved copy") {
+  const line = await savedArtifactWhere(item.store, where ?? item.statusOf ?? item.commentOn, argumentsValue);
+  if (item.statusOf) return `${line}, its status record (${copy}: ${item.savedAs})`;
   const comment = await savedComment(item.savedAs, item.commentOn).catch(() => null);
   const said = comment ? `, a comment on line ${comment.line}: ${JSON.stringify(comment.text)}` : ", a file in its comment folder that is no comment of the form Prism writes, so its bytes are not shown";
-  return `${line}${said} (saved copy: ${item.savedAs})`;
+  return `${line}${said} (${copy}: ${item.savedAs})`;
 }
 
 // The notes of one tool result that name the files a store sync saved hold at most SAVED_NOTE_MAX bytes, whatever a sync brings:
@@ -1309,20 +1310,33 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
   if (!Array.isArray(value?.content)) return none;
   // The other notes are taken first, so the move's removals come as close as they can before the result is written.
   const taken = await takeSavedConflicts().catch(() => []);
-  const saved = taken.filter((item) => item.record);
+  // A file that this machine's sync held back because it was above its kind's bound, and that another machine then changed or removed, is named for that cause alone, from its path, never its bytes.
+  const overBound = taken.filter((item) => item.overBound);
+  const saved = taken.filter((item) => item.record && !item.overBound);
   const removals = taken.filter((item) => item.undoneRemoval);
+  const fileRemovals = taken.filter((item) => item.undoneFile);
   const moves = taken.filter((item) => item.undoneMove);
+  // A file of either machine's that a sync took out because its path at its artifact's new location would be too long is named with that location, for that cause alone.
+  const tooLong = taken.filter((item) => item.tooLongAt && !item.overBound);
   // Another machine's change that a sync took out where this machine's removal stood is named apart, since it is no change of this machine's.
-  const theirs = taken.filter((item) => item.theirs);
-  const artifacts = taken.filter((item) => item.location && !item.theirs);
-  const files = taken.filter((item) => item.file);
+  const theirs = taken.filter((item) => item.theirs && !item.tooLongAt);
+  const artifacts = taken.filter((item) => item.location && !item.theirs && !item.tooLongAt && !item.overBound);
+  // A file at the store's root, such as its README, is saved when both machines changed it, and a store file is also saved when the other machine changed the version that this machine's sync withheld.
+  const files = taken.filter((item) => item.file && !item.bothChanged && !item.overBound);
+  const bothChanged = taken.filter((item) => item.file && item.bothChanged);
+  // A comment of this machine's that its folder's bound left out belongs to an artifact that the store still holds, with the comments that reached the store first.
+  const surplus = taken.filter((item) => item.commentOn && item.surplus && !item.theirs && !item.tooLongAt);
   // A status record that changed on both sides keeps the upstream one while its artifact stays; one, or a comment, whose artifact the store no longer holds left the store.
   const derived = [];
-  for (const item of taken.filter((item) => (item.statusOf || item.commentOn) && !item.theirs)) derived.push({ item, kept: Boolean(item.statusOf) && await holdsArtifact(item.store, item.statusOf) });
+  for (const item of taken.filter((item) => (item.statusOf || item.commentOn) && !item.theirs && !item.surplus && !item.tooLongAt && !item.overBound)) derived.push({ item, kept: Boolean(item.statusOf) && await holdsArtifact(item.store, item.statusOf) });
   const sections = [];
   // The local removals and moves that a sync undid come first, since each is a deliberate change of this machine that the store no longer shows.
   if (removals.length) {
     sections.push({ header: `Store sync undid this machine's removal of ${plural(removals.length, "artifact")}, because another machine edited ${removals.length === 1 ? "its" : "their"} text, as approving a file does, before this machine's removal reached the store; the store holds ${removals.length === 1 ? "it" : "them"} again with the other machine's changes. Read each one again with get_artifact and remove it again with update_artifact if the removal still matters.`, items: removals, line: async (item) => `- ${await savedArtifactWhere(item.store, item.undoneRemoval, argumentsValue)}` });
+  }
+  if (fileRemovals.length) {
+    const them = fileRemovals.length === 1 ? "it" : "them";
+    sections.push({ header: `Store sync undid this machine's removal of ${plural(fileRemovals.length, "store file")} at the store's root, such as its README, because another machine changed ${them} before this machine's removal reached the store; the store holds ${them} again with the other machine's version. Remove ${them} from the store again if the removal still matters.`, items: fileRemovals, line: async (item) => `- ${item.undoneFile} in the record store at ${item.store}` });
   }
   if (moves.length) {
     sections.push({ header: `Store sync undid this machine's move of ${plural(moves.length, "artifact")} to another scope, because another machine moved ${moves.length === 1 ? "it" : "them"} elsewhere, or kept its own file at the path this machine moved ${moves.length === 1 ? "it" : "them"} to, before this machine's move reached the store; the store keeps each in the first scope named below, with this machine's other changes to it. Read each one again with get_artifact and move it again with move_scope if the move still matters.`, items: moves, line: (item) => undoneMoveLine(item, argumentsValue) });
@@ -1330,20 +1344,47 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
   if (theirs.length) {
     sections.push({ header: `Store sync saved ${plural(theirs.length, "change")} that another machine made to an artifact that this machine had removed, which left the file's text as it was, such as a comment or an approval asked; this machine's removal stands, so the store holds no such artifact, or holds the file that this machine wrote or moved to its path, and saved ${theirs.length === 1 ? "that change" : "those changes"} beside the store. Tell the person, and redo what still matters on an artifact the store holds.`, items: theirs, line: async (item) => `- ${item.location ? await savedArtifactWhere(item.store, item.location, argumentsValue) + ` (the other machine's version: ${item.savedAs})` : await savedDerivedLine(item, argumentsValue)}` });
   }
+  if (tooLong.length) {
+    const one = tooLong.length === 1;
+    const line = async (item) => {
+      const whose = item.theirs ? "the other machine's version" : "this machine's version";
+      if (item.location) return `- ${await savedArtifactWhere(item.store, item.tooLongAt, argumentsValue)} (${whose}: ${item.savedAs})`;
+      return `- ${await savedDerivedLine(item, argumentsValue, item.tooLongAt, whose)}`;
+    };
+    sections.push({ header: `Store sync saved ${plural(tooLong.length, "file")}, such as a comment or a status record, that one machine changed on an artifact while the other machine moved the artifact, because ${one ? "its path" : "their paths"} at the artifact's new location would hold a name of more than ${STORE_NAME_BYTES_MAX} bytes or more than ${STORE_PATH_BYTES_MAX} bytes in all, too long for a store to share; the store keeps the artifact at the new location named below without ${one ? "that file" : "those files"}, and saved ${one ? "it" : "them"} beside the store. Tell the person, and redo what still matters on the artifact there, after moving it to a shorter location if the change needs a file of its own.`, items: tooLong, line });
+  }
   if (saved.length) {
     sections.push({ header: `Store sync found ${plural(saved.length, "record")} that someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each record again and redo the change through Prism's tools if it still matters.`, items: saved, line: async (item) => `- ${item.record} (this machine's version: ${item.savedAs})` });
   }
   if (artifacts.length) {
     sections.push({ header: `Store sync found ${plural(artifacts.length, "artifact")} that this machine changed while another machine changed the same lines, or removed the file and wrote or moved another one to its path; the store kept the other machine's version and saved this machine's version. Read each artifact again with get_artifact and redo the change with update_artifact if it still matters.`, items: artifacts, line: (item) => savedArtifactLine(item, argumentsValue) });
   }
+  if (overBound.length) {
+    const one = overBound.length === 1;
+    const line = async (item) => {
+      const copy = `this machine's copy: ${item.savedAs}`;
+      if (item.location) return `- ${await savedArtifactWhere(item.store, item.location, argumentsValue)} (${copy})`;
+      if (item.statusOf) return `- ${await savedArtifactWhere(item.store, item.statusOf, argumentsValue)}, its status record (${copy})`;
+      if (item.commentOn) return `- ${await savedArtifactWhere(item.store, item.commentOn, argumentsValue)}, a file in its comment folder (${copy})`;
+      return item.record ? `- ${item.record} (${copy})` : `- ${item.file} in the record store at ${item.store} (${copy})`;
+    };
+    sections.push({ header: `Store sync saved ${plural(overBound.length, "file")} of this machine's that ${one ? "was" : "were"} above the bound that a store file of ${one ? "its" : "their"} kind may hold, so this machine's sync held ${one ? "it" : "them"} back from the store, and that another machine then changed or removed; the store keeps the other machine's version, and this machine's copy is saved at the path named below. Tell the person, and redo what still matters in fewer bytes than that bound.`, items: overBound, line });
+  }
   const records = derived.filter((entry) => entry.kept).map((entry) => entry.item);
   if (records.length) {
     sections.push({ header: `Store sync found ${plural(records.length, "status record")} of an artifact that this machine changed while another machine changed the same record, or removed the artifact and wrote or moved another one to its path; the store kept the other machine's record and saved this machine's. Read each artifact again with get_artifact, and ask its approval again with ask_approval if this machine's answer still matters for the file the store now holds.`, items: records, line: async (item) => `- ${await savedDerivedLine(item, argumentsValue)}` });
   }
+  if (surplus.length) {
+    sections.push({ header: `Store sync saved ${plural(surplus.length, "comment")} that this machine made on a file that already holds the ${COMMENTS_PER_ARTIFACT_MAX} comments that a file may hold, because other machines' comments on it reached the store first; the store keeps the file and those comments, and saved ${surplus.length === 1 ? "this comment" : "these comments"} beside the store, where no page shows ${surplus.length === 1 ? "it" : "them"}. Tell the person what ${surplus.length === 1 ? "it says" : "they say"}, since the file takes no further comment.`, items: surplus, line: async (item) => `- ${await savedDerivedLine(item, argumentsValue)}` });
+  }
   const stranded = derived.filter((entry) => !entry.kept).map((entry) => entry.item);
   if (stranded.length) {
     const counted = [[stranded.filter((item) => item.statusOf).length, "status record"], [stranded.filter((item) => item.commentOn).length, "comment"]].filter(([count]) => count).map(([count, noun]) => plural(count, noun)).join(" and ");
-    sections.push({ header: `Store sync took ${counted} out of the store because the store no longer holds the artifact ${stranded.length === 1 ? "it was" : "they were"} made on, as when one machine changed an artifact while another removed it, also when that machine then wrote another file at its path, or because the place it would take holds a path too long for a store to share, and saved ${stranded.length === 1 ? "it" : "them"} beside the store. Tell the person, and redo what still matters on an artifact the store holds.`, items: stranded, line: async (item) => `- ${await savedDerivedLine(item, argumentsValue)}` });
+    sections.push({ header: `Store sync took ${counted} out of the store because the store no longer holds the artifact ${stranded.length === 1 ? "it was" : "they were"} made on, as when one machine changed an artifact while another removed it, also when that machine then wrote another file at its path, and saved ${stranded.length === 1 ? "it" : "them"} beside the store. Tell the person, and redo what still matters on an artifact the store holds.`, items: stranded, line: async (item) => `- ${await savedDerivedLine(item, argumentsValue)}` });
+  }
+  if (bothChanged.length) {
+    const them = bothChanged.length === 1 ? "that file" : "those files";
+    sections.push({ header: `Store sync found ${plural(bothChanged.length, "store file")} at the store's root, such as its README, that this machine changed while another machine also changed ${them}; the store keeps the other machine's version, and this machine's copy is saved at the path named below. Fix the file from the saved copy if the change still matters.`, items: bothChanged, line: async (item) => `- ${item.file} in the record store at ${item.store} (this machine's copy: ${item.savedAs})` });
   }
   if (files.length) {
     sections.push({ header: `Store sync took the upstream's version of ${plural(files.length, "store file")} whose local version this machine's sync had withheld, because another machine could not take it; the store kept the upstream's version and saved this machine's version. Fix the file from the saved copy if the change still matters.`, items: files, line: async (item) => `- ${item.file} in the record store at ${item.store} (this machine's version: ${item.savedAs})` });
