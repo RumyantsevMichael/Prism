@@ -1196,6 +1196,29 @@ body.has-maximized::after {
   font-size: var(--prism-font-size-md);
 }
 
+/* ---------- The shipped history label of a shipped initiative's pages and previews ---------- */
+
+/* A document page's label is a full-width row under its header, so it never crowds the header's title or chips. */
+.document-history > .shipped-history {
+  margin: calc(-1 * var(--prism-space-2)) 0 var(--prism-space-5);
+}
+
+.link-preview > .shipped-history {
+  margin-bottom: var(--prism-space-3);
+}
+
+/* After the preview's paragraph spacing, so the banner's lines sit together as the kit sets them. */
+.shipped-history p {
+  margin: 0;
+}
+
+/* The note keeps the page's text color, because muted text on the warning tint falls below 4.5:1 in the light theme. */
+.shipped-history .shipped-history-changed {
+  margin-top: var(--prism-space-1);
+  color: var(--prism-color-ink);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
 .link-preview:has(.preview-lines) {
   max-width: min(calc(var(--prism-preview-width) * 1.5), calc(100vw - var(--prism-space-5) * 2));
 }

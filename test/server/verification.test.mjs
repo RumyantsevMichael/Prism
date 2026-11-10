@@ -181,8 +181,8 @@ test("a passing run completes the slice, and only project content changes make i
   await writeFile(path.join(root, "source.mjs"), "export const value = 2;\n");
   const stale = await checkSliceGate({ projectRoot: root, initiative: INITIATIVE, slice: "download", gate: "completion" });
   assert.deepEqual(stale.problems.map((problem) => problem.code), ["verification_stale"]);
-  await initiativeUpdate(root, [{ op: "set_status", slug: "download", status: "in-progress" }]);
-  await assert.rejects(initiativeUpdate(root, [{ op: "set_status", slug: "download", status: "done" }]), /changed after the verification run/);
+  // A done slice stays done, so its stale gate is fixed as new work rather than by reopening the slice.
+  await assert.rejects(initiativeUpdate(root, [{ op: "set_status", slug: "download", status: "in-progress" }]), /stays done/);
   assert.equal((await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download" })).status, "passed", "an approved command runs without asking again");
   assert.equal((await getInitiative({ projectRoot: root, initiative: INITIATIVE })).record.slices.download.status, "done");
 });

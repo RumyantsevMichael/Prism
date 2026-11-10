@@ -1,0 +1,18 @@
+@startuml
+title history-refusals - code
+component "shipped-history.mjs\nrefuseShipped" as Refuse
+component "initiative.mjs\nupdateInitiative" as Initiative
+component "state.mjs\nupdateCoordinationState,\ncheckpointPause" as State
+component "review-ledger.mts\nupdateReview" as Review
+component "verification.mjs\nverifySlice" as Verify
+component "design-view.mjs\nupdateDesignView" as View
+component "change-map.mjs\nupdateChangeMap" as Map
+component "mcp.mjs\nstateErrorData" as Mcp
+Initiative --> Refuse
+State --> Refuse
+Review --> Refuse
+Verify --> Refuse
+View --> Refuse
+Map --> Refuse
+Mcp ..> Refuse : initiative_shipped data
+@enduml

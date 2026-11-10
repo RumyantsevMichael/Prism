@@ -8,6 +8,7 @@ import { codeChip } from "./code-location.js";
 import { claimChip, claimOf } from "./claims.js";
 import { componentChip } from "./components.js";
 import { mountInitiativeSettings } from "./actions.js";
+import { shippedHistoryHtml } from "./shipped-history.js";
 
 const MODES = [["board", "Board"], ["list", "List"], ["graph", "Graph"]];
 // These columns always show; another status, such as deferred, gets a column only while a slice has it.
@@ -114,7 +115,7 @@ export async function render(container, entity, ctx) {
   const item = data.roadmapItem;
   ctx.state.mode ??= "board";
   const modes = data.exists && data.valid ? `<div class="segmented" role="group" aria-label="Initiative view">${MODES.map(([mode, label]) => `<prism-button size="sm" variant="ghost" data-initiative-mode="${mode}" pressed="${ctx.state.mode === mode}">${label}</prism-button>`).join("")}</div>` : "";
-  const head = summaryPanel(`
+  const head = `${shippedHistoryHtml(data.shippedHistory)}${summaryPanel(`
       <div class="summary-row">
         <div class="chip-row">${item ? stateBadge(item.state) : stateBadge("unlisted")}${item ? badge(item.band) : ""}${item?.readyToShip && item.state !== "shipped" ? badge("ready to ship", "success") : ""}</div>
         <div class="view-controls">${artifactChip("roadmap", ctx, "Roadmap")}${modes}</div>
@@ -128,7 +129,7 @@ export async function render(container, entity, ctx) {
         ["Requirements", item?.requirements.length ? `<span class="chip-row">${requirementLinks(item.requirements, ctx)}</span>` : null],
         ["Records", `<span class="chip-row">${[artifactChip(data.recordPath, ctx, "Initiative record"), ctx.hasArtifact(data.statePath) ? artifactChip(data.statePath, ctx, "Coordination state") : ""].join("")}</span>`]
       ])}
-      ${data.runTotals ? runTotalsHtml(data.runTotals.initiative, "initiative") : ""}`);
+      ${data.runTotals ? runTotalsHtml(data.runTotals.initiative, "initiative") : ""}`)}`;
   // The settings belong to the initiative whatever state its record is in, so every branch that has an action target shows them.
   const settings = '<div data-initiative-settings></div>';
   const mountSettings = () => mountInitiativeSettings(container.querySelector("[data-initiative-settings]"), { target: `initiative:${data.id}`, eyebrow: "Orchestration of every slice", ctx });

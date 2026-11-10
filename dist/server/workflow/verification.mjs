@@ -13,6 +13,7 @@ import { repositoryId } from "./repository-names.mjs";
 import { changedPaths, contentTree, crossesComponent, setSliceRef, treeId, treeReadable } from "./slice-gate.mjs";
 import { acceptedDesign, checkFrozenTests, designProblems } from "./slice-design.mjs";
 import { readCoordinationState, updateCoordinationState } from "./state.mjs";
+import { refuseShipped } from "./shipped-history.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { publicRemote } from "./remote-url.mjs";
 
@@ -491,6 +492,8 @@ export async function verifySlice({ projectRoot, initiative, slice, approvalGate
   try { assertInput(VERIFY_SLICE_SCHEMA, { projectRoot, initiative, slice, ...(approvalGate ? { approvalGate } : {}), ...(chatApproval ? { chatApproval } : {}), ...(contractDefects ? { contractDefects } : {}), ...(dependents === undefined ? {} : { dependents }) }); }
   catch (error) { throw fail("validation_failed", `The verification arguments are invalid: ${describeErrors(error.errors)}`, { errors: error.errors }); }
   const root = await realpath(projectRoot);
+  // A shipped initiative's verification is history, so nothing runs and no contract defect or dependents' run is recorded.
+  await refuseShipped(root, initiative);
   if (dependents === true) return dependentsRun({ root, initiative, scope: slice, approvalGate, chatApproval, contractDefects, dataDirectory, signal, onProgress, maxWaitMs });
   const design = await acceptedDesign(root, initiative, slice);
   if (!design) throw fail("design_missing", `The slice ${slice} has no accepted design. Accept it with the update_initiative accept_design operation before verification.`);

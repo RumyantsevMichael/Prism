@@ -38,11 +38,11 @@ One fresh implementation session per slice makes its frozen tests pass and has P
 Code establishes implemented behavior.
 Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves a slice's design, and tests enforce behavior.
 
-- Read durable sources in this order: glossary, Approved requirements, relevant ADRs, and relevant feature files.
+- Read durable sources in this order: glossary, Approved requirements, relevant ADRs, and relevant feature files, and take current intent only from Approved requirements, Accepted ADRs, the glossary, and feature files, because a shipped initiative's state is [shipped history](#common-terms).
 - Stop and report conflicting durable sources for user resolution.
 - Change Prism records only through Prism MCP tools, never by editing their files or generated views, and report a refusal that the tool's message does not resolve.
 - Persist a fact only when a later session needs it and no existing artifact owns it.
-- Keep durable requirements, ADRs, features, and user guidance free of slice identities and scratch paths.
+- Keep durable requirements, ADRs, features, and user guidance free of slice identities and plans paths.
 
 ## Common terms
 
@@ -50,13 +50,13 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | --- | --- |
 | Initiative | A roadmap-owned item that groups related Approved outcomes, identified by a stable identifier that names its plans folder. |
 | Prism record | Machine JSON that only Prism MCP tools read and write, addressed by initiative and slice identifiers rather than file paths. |
-| Roadmap record | The Prism record owning initiative bands, order, required initiatives, rationale, open questions, and recorded ship and supersede decisions, read through `get_roadmap` and changed through `update_roadmap`. |
-| Initiative lifecycle | `envisioned`, `planned`, and `in-progress` derived by `get_roadmap` from the initiative record and coordination state, plus recorded `shipped` and `superseded` decisions. |
+| Roadmap record | The Prism record owning initiative bands, order, required initiatives, rationale, open questions, recorded ship and supersede decisions, and the shipped initiative and slices that a fix initiative `corrects`, read through `get_roadmap` and changed through `update_roadmap`. |
+| Initiative lifecycle | `envisioned`, `planned`, and `in-progress` derived by `get_roadmap` from the initiative record and coordination state, plus recorded `shipped` and `superseded` decisions; a shipped initiative's state is shipped history from then on. |
 | Initiative record | The Prism record of slice titles, outcomes, topology, requirement assignments, dependencies, status, and accepted designs, read through `get_initiative` and changed through `update_initiative`; `initiative.md` is its generated view. |
 | Coordination state | The initiative's Prism record of settings, active work, pending user gate records, next actions, and the action history, read through `get_coordination_state` and changed through `update_coordination_state`, except the action history and the settings marks that only review app actions write. |
 | Person change notice | `personChanges` on a Prism result that names an initiative, shown once per session and only to the initiative's coordinator, the agent whose claim or slice start last succeeded in the session, or its main agent until one has: the person's changes from the review app that the session has not seen, each with its author; a coordinator's gate wait returns them with status `changed`, and an agent's settings write keeps each setting the person set and lists it under `keptSettings`. |
 | Slice | One observable outcome across required layers that one fresh implementation session delivers, planned by a contract. |
-| Contract scope | The root slice, or a part that a split design created, that one design gives one contract. |
+| Contract scope | The root slice, a part that a split design created, or a done slice with reported defects, that one design gives one contract. |
 | Slice plan | The **Slices** section of a contract: each planned slice with its outcome, component, requirements, dependencies, frozen test files, and review recommendation. |
 | Workspace | The checkouts and repositories whose Prism records share one store, named by the workspace name that `update_roadmap` sets with `set_workspace_name`, or after the store while it has none. |
 | Component | A part of a repository with its own folder, optional test command, and dependencies, declared under `## Components` in `.prism/workflow.md` and identified across the workspace as `<repository>/<component>`, where the repository's name is its `Repository` name under `## Workspace`, or `root` when it gives none. |
@@ -67,7 +67,9 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Split evidence | What Prism requires before a scope splits into parts that get their own contracts: `contract_size`, contract files estimated above the token budget that one implementer reads; `unfrozen`, an Unprobed assumption that one part settles; or `user_gate`, a gate where the person asked for the split. A split into a contract's slice plan needs none. |
 | `slice.md` | A design document in a slice folder: for a contract scope, the contract, assumptions, and slice plan, or the interfaces between parts after a split; for a planned slice, its changes. |
 | Approved requirement | An accepted product or system obligation. |
-| Defect | Reported behavior that contradicts an Approved requirement; `triage` reproduces it and links that requirement, so the fix needs no new requirement. |
+| Defect | Reported behavior that contradicts an Approved requirement; `triage` reproduces it and links that requirement, so the fix needs no new requirement, and records it on the done slice with `report_defect` while that slice's initiative has not shipped, or adds a later initiative that `corrects` the shipped work. |
+| Fix slice | A new slice below a done slice that fixes defects reported on it with `report_defect`, proposed through one `add_fix` in the done scope's design and kept in its own folder, while the done slice's records stay unchanged; ship refuses with `fixes_unfinished` until every reported defect has a done fix slice. |
+| Shipped history | A shipped initiative's state: its records, contracts, slice documents, frozen tests, verification runs, and reviews, which Prism marks in each slice document, reports through `shippedHistory`, and refuses to change with `initiative_shipped`; sessions cite it only as history. |
 | Requirement assignment | Approved requirement references whose coverage is preserved through each split. |
 | Effective dependencies | A leaf's own dependencies plus the dependencies inherited from its ancestors. |
 | Starting surface | The command, route, public function, event, job, or user action where a slice enters the system. |
@@ -77,7 +79,7 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Contract | The frozen observable interface of a contract scope that fixes what the requirements leave open, shared by its planned slices. |
 | Assumption probe | A small experiment against the real system that confirms a contract assumption, or a fail-safe clause where no probe is possible. |
 | Contract defect | A contract clause that an implementer finds wrong, or that a review finding names as its cause, reported through `verify_slice`, which blocks the slice until design revises the contract. |
-| Frozen tests | Acceptance test files of one slice, fixed when its design is accepted; implementation must not change them, and verification refuses to run when one changed. |
+| Frozen tests | Acceptance test files of one slice, fixed when its design is accepted; implementation must not change them unless its slice is a fix of that slice whose **Changes** names the file, and verification refuses to run when one changed. |
 | Staged tests | Frozen tests of a slice that has not started, which Prism keeps out of the work tree until `set_status` `in-progress` starts the slice, or until `restore_tests` puts them back for a design revision. |
 | Design diagrams | PlantUML source written by design: an overview of each contract's slices, shared interfaces, and order, and a code view per slice; Prism parses them and refuses a view that does not parse or shows more than 30 elements. |
 | Changes | The files a planned slice is expected to add, change, or remove, with the units each adds or whose interface it changes; after verification the review browser compares them with what the verified result changed. |
@@ -89,7 +91,7 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Accepted design | A planned slice's design recorded through `update_initiative` with its frozen tests, its review mark, and its component. |
 | Review mark | `required` or `none` on an accepted design, set from the user's marks at the design gate and the `review` setting at that moment; a later change of the setting keeps it. |
 | Verification run | An implementer's `verify_slice` run of the user-approved test command from `.prism/workflow.md`, recorded on the slice: the slice's component's own command in its folder, or the repository's command in the project root, after checking the component boundary against the slice's start content; a slice with an accepted design completes only on a fresh passing run, which completes a slice marked `none` by itself. |
-| Dependents' run | The `verify_slice` run with `dependents` `true` that the orchestrator starts once every leaf of a contract scope whose design accepted a slice plan, or of a leaf that is a scope of its own, is done: the test command of every component of the same repository that depends, directly or through other components, on a component of the scope's leaves, each distinct command and folder once in dependency order behind one approval gate, recorded on the scope; until a later run passes, a failed or declined dependent, or one that has not run, blocks `ship` with `dependents_blocked` and keeps `readyToShip` false, and a dependency on another repository's component never runs. |
+| Dependents' run | The `verify_slice` run with `dependents` `true` that the orchestrator starts once every leaf of a contract scope whose design accepted a slice plan, or of a leaf that is a scope of its own, is done: the test command of every component of the same repository that depends, directly or through other components, on a component of the scope's leaves, each distinct command and folder once in dependency order behind one approval gate, recorded on the scope; until a later run passes, a failed or declined dependent, one that has not run, or a run that started before a leaf of its scope last passed verification blocks `ship` with `dependents_blocked` and keeps `readyToShip` false, and a dependency on another repository's component never runs. |
 | Implementation review | An independent review of the verified result of a slice marked `required`. |
 | Review record | The Prism record of one slice's review waves, lanes, and findings, read through `get_review` and changed through `update_review`. |
 | Review wave | One pass of fresh reviewers over one verified result of a slice; after two waves for one accepted design, each further wave needs the user's answered decision gate. |

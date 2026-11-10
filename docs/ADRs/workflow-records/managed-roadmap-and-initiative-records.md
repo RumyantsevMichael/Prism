@@ -53,7 +53,7 @@ Humans reading the repository without the review browser see generated Markdown 
 
 The roadmap record sits beside the configured roadmap Markdown and the initiative record sits beside the initiative's coordination state.
 Reads return the record with its revision and derived facts; writes take the expected revision and a batch of typed operations that apply atomically or not at all.
-Orchestration creates the roadmap entry before the initiative record, creates or imports the initiative record, applies accepted splits and dependency changes, sets leaf status, records the ship decision, graduates durable facts, and then deletes the initiative directory.
+Orchestration creates the roadmap entry before the initiative record, creates or imports the initiative record, applies accepted splits and dependency changes, sets leaf status, records the ship decision, graduates durable facts, and keeps the initiative directory as history.
 The roadmap skill applies accepted prioritization and supersede decisions and migrates legacy roadmaps.
 
 ## Decision Log
@@ -61,3 +61,5 @@ The roadmap skill applies accepted prioritization and supersede decisions and mi
 2026-10-14: Accepted after three real orchestrated runs created, completed, and shipped initiatives only through the record tools, and the user approved the change for review.
 2026-10-14: Clarified that the initiative directory is the root slice folder, after a run showed the completion gate looking for the root slice's review in a subfolder.
 2026-10-22: [Keep machine records under .prism](machine-records-under-prism.md) proposes moving the roadmap and initiative records out of the configured roadmap and plans paths, while their generated views stay there.
+2026-11-08: [Shipped work as immutable history](shipped-history.md) proposes keeping a shipped initiative's records and slice folders as history that no tool changes or removes, so plans are no longer scratch and orchestration no longer deletes the initiative directory or removes a shipped initiative's records.
+2026-11-10: Orchestration keeps the initiative directory after ship, as [Shipped work as immutable history](shipped-history.md) decided.

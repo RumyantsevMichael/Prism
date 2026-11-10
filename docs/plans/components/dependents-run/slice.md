@@ -1,5 +1,8 @@
 # Run the dependents' tests when a scope finishes
 
+> Shipped history: initiative `components` shipped on 2026-11-07, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 A finished scope runs its repository's dependents' tests once, records the run, and blocks shipping and the ready to ship state while a dependent is red or unproven.

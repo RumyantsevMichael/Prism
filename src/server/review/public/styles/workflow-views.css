@@ -405,6 +405,11 @@
   white-space: nowrap;
 }
 
+/* A group's note sits under its label, aligned with it. */
+.attention-group > .attention-group-note {
+  margin: 0 var(--prism-space-3) var(--prism-space-2);
+}
+
 .attention-group:first-child .attention-group-label {
   margin-top: var(--prism-space-2);
 }

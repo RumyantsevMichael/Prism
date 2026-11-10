@@ -21,6 +21,7 @@ import { themeDiagram } from "./kit/diagram-theme.js";
 import { currentPhase } from "./views/slice.js";
 import { createPoller, deadline, POLL_DEADLINE_MS } from "./views/poller.js";
 import { createEventRelay } from "./views/event-relay.js";
+import { shippedHistoryHtml } from "./views/shipped-history.js";
 
 const project = document.getElementById("project");
 const navRoot = document.getElementById("nav");
@@ -1301,8 +1302,17 @@ async function refreshContext(path) {
   currentContext = { ref: path, value };
   renderNavigation();
   pageBar.setTrail(trailOf(path));
+  const history = artifact.querySelector("[data-shipped-history]");
+  if (history) {
+    history.innerHTML = documentHistoryHtml(path);
+  }
   // A slice's or initiative's tab takes the title its context names.
   renderTabs();
+}
+
+// A slice document of a shipped initiative carries the shipped history label from its context.
+function documentHistoryHtml(path) {
+  return shippedHistoryHtml(currentContext?.ref === path ? currentContext.value.shippedHistory : null);
 }
 
 function controlsOf(root) {
@@ -1596,6 +1606,7 @@ async function showArtifact(path) {
         ${source ? "<prism-chip>Read-only</prism-chip>" : structured ? "" : `<prism-chip>${diagramLabel}</prism-chip>`}
       </div>
     </header>
+    <div class="document-history" data-shipped-history>${documentHistoryHtml(path)}</div>
     ${documentCard}`;
   pageBar.setActions(structured ? modeButtons(state, path) : []);
   if (structured) {
@@ -1691,14 +1702,16 @@ function viewContext(path, state) {
       const listing = await listed.json().catch(() => ({}));
       if (!listed.ok) throw Object.assign(new Error(listing.message ?? "The answer was not recorded."), { code: listing.code === "unknown_target" ? "unknown_gate" : listing.code });
       const action = (listing.actions ?? []).find((item) => item.id === "gate.answer");
+      // A question the server no longer takes an answer to, such as one of a shipped initiative, is refused with the server's own reason.
+      if (action && !action.available) throw Object.assign(new Error(action.reason ?? "The answer was not recorded."), { code: "action_unavailable" });
       const names = new Set((action?.fields ?? []).map((field) => field.name));
       const input = Object.fromEntries([["choice", choice], ["note", note]].filter(([name, value]) => names.has(name) && value !== null && value !== undefined && value !== ""));
       const response = await appFetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ action: "gate.answer", target, input, revision: action?.revision ?? null }) }).catch(unanswered);
       const result = await response.json().catch(() => ({ message: "The server returned an unreadable response." }));
       if (!response.ok) {
-        // The answer form names an answered or withdrawn question as it always has.
-        const code = result.code === "action_unavailable" ? "gate_answered" : result.code === "unknown_target" ? "unknown_gate" : result.code;
-        throw Object.assign(new Error(result.message ?? "The answer was not recorded."), { code });
+        // A withdrawn question reads as one, and any other refusal carries the server's reason.
+        const code = result.code === "unknown_target" ? "unknown_gate" : result.code;
+        throw Object.assign(new Error(result.reason ?? result.message ?? "The answer was not recorded."), { code });
       }
       return result;
     },

@@ -1,5 +1,8 @@
 # Index retained baselines per component
 
+> Shipped history: initiative `components` shipped on 2026-11-07, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 A retained baseline is indexed per component, reusing equal live indexes, and its analysis is the union of its components.

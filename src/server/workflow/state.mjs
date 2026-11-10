@@ -8,6 +8,7 @@ import { SLUG_PATTERN } from "./initiative-graph.mjs";
 import { locateRecord, moveLegacyRecords, sliceDocumentFolder, writeRecord } from "./record-store.mjs";
 import { canonicalJson, mergeOrder, mergeScalars, mergeUnit, MergeConflict, parseVersions } from "./record-merge.mjs";
 import { revisionMismatch } from "./revision.mjs";
+import { refuseShipped } from "./shipped-history.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 
 const SCHEMA_VERSION = 1;
@@ -959,10 +960,16 @@ export async function updateCoordinationState({ projectRoot, initiative, expecte
   if (expectedRevision !== null && typeof expectedRevision !== "string") {
     throw error("invalid_revision", "The expectedRevision argument must be a state revision string or null.");
   }
+  // A shipped initiative's coordination state is history, so a change to it is refused after argument validation and before any other check or write.
+  await refuseShipped(projectRoot, initiative);
   await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
   await mkdir(path.dirname(resolved.path), { recursive: true });
-  return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => applyStateChange(resolved, expectedRevision, changes), error, { renew: Boolean(changes.activeOperations?.length) }));
+  return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
+    // A ship that landed after the first check refuses the change too, so the state never changes after the initiative shipped.
+    await refuseShipped(projectRoot, initiative);
+    return applyStateChange(resolved, expectedRevision, changes);
+  }, error, { renew: Boolean(changes.activeOperations?.length) }));
 }
 
 // Resolving a gate by its id removes only that gate, so it holds after any other change, such as the browser answer that prompted it.
@@ -1019,10 +1026,12 @@ async function applyStateChange(resolved, expectedRevision, changes) {
 }
 
 export async function answerUserGate({ projectRoot, initiative, id, choice = null, note = null, write = writeRecord }) {
+  await refuseShipped(projectRoot, initiative);
   await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
   await mkdir(path.dirname(resolved.path), { recursive: true });
   return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
+    await refuseShipped(projectRoot, initiative);
     const current = await loadState(resolved.path);
     if (!current.exists || !current.valid) {
       throw error("invalid_state", "The coordination state is missing or invalid.");
@@ -1071,6 +1080,8 @@ export async function recordPersonAction({ projectRoot, initiative, prepare }) {
   const preview = await resolveState(projectRoot, initiative);
   const previewed = await loadState(preview.path);
   if (await decide(preview, previewed) === null) return { ...publicStateResult(preview, previewed), entry: null };
+  // The action's own checks answer first, so the review browser can say why an action is unavailable; a change that passes them is still refused for a shipped initiative.
+  await refuseShipped(projectRoot, initiative);
   await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
   await mkdir(path.dirname(resolved.path), { recursive: true });
@@ -1078,6 +1089,8 @@ export async function recordPersonAction({ projectRoot, initiative, prepare }) {
     const current = await loadState(resolved.path);
     const change = await decide(resolved, current);
     if (change === null) return { ...publicStateResult(resolved, current), entry: null };
+    // A ship that landed after the first check refuses the action too, so the state never changes after the initiative shipped.
+    await refuseShipped(projectRoot, initiative);
     const { entry, setting, answer } = change;
     const problem = historyEntryProblem(entry);
     if (problem) throw error("invalid_changes", `The history entry is invalid: ${problem}.`);
@@ -1113,6 +1126,8 @@ export async function checkpointPause({ projectRoot, initiative, expectedRevisio
   if (typeof activeSlice !== "string" || !SLUG_PATTERN.test(activeSlice) || typeof recoveryContent !== "string" || !recoveryContent.trim() || Buffer.byteLength(recoveryContent) > 65536) {
     throw error("invalid_pause", "An active slice and a recovery note of at most 64 KiB are required.");
   }
+  // A shipped initiative's state is history, so the pause is refused before the recovery note or any record is written.
+  await refuseShipped(projectRoot, initiative);
   await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
   const folder = await sliceDocumentFolder(resolved.root, resolved.initiative, activeSlice);
@@ -1126,6 +1141,8 @@ export async function checkpointPause({ projectRoot, initiative, expectedRevisio
   await assertNearestExistingPathInside(resolved.root, path.dirname(recovery));
   await mkdir(path.dirname(resolved.path), { recursive: true });
   return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
+    // A ship that landed after the first check refuses the pause too, before the recovery note is written.
+    await refuseShipped(projectRoot, initiative);
     const current = await loadState(resolved.path);
     if (current.revision !== expectedRevision) {
       throw error(expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("coordination state", expectedRevision, current.revision), { current: publicStateResult(resolved, current) });

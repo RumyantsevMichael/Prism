@@ -329,7 +329,7 @@ test("declares the project root and read-only artifact tools", async (context) =
   const settings = tools.update_coordination_state.inputSchema.properties.changes.properties.settings.properties;
   assert.deepEqual(settings.autonomy.enum, ["conservative", "broad", "full"]);
   assert.equal(settings.agentFlow, undefined);
-  assert.equal(tools.get_coordination_state.annotations.readOnlyHint, true);
+  assert.equal(tools.get_coordination_state.annotations.readOnlyHint, false, "a first read of an earlier ship records and marks its slice documents");
   assert.equal(tools.validate_coordination_state.annotations.readOnlyHint, true);
   assert.equal(tools.update_coordination_state.annotations.readOnlyHint, false);
   assert.equal(tools.set_workflow_recording.annotations.readOnlyHint, false);
