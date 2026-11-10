@@ -113,7 +113,7 @@ const sourceCache = new Map();
 
 function gitListFiles(projectRoot) {
   return new Promise((resolve) => {
-    execFile("git", ["-C", projectRoot, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { maxBuffer: 64 * 1024 * 1024 }, (error, stdout) => {
+    execFile("git", ["-C", projectRoot, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (error, stdout) => {
       resolve(error ? [] : stdout.split("\0").filter(Boolean));
     });
   });
@@ -403,7 +403,7 @@ export function openBrowser(url) {
   const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open";
   const args = platform === "win32" ? ["/c", "start", "", url] : [url];
   try {
-    const child = spawn(command, args, { detached: true, stdio: "ignore" });
+    const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true });
     child.on("error", () => {});
     child.unref();
     return true;

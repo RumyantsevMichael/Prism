@@ -285,7 +285,7 @@ function execute(command, cwd, { signal, timeoutMs, onProgress, logPath = null }
     log?.on("error", () => { log = null; });
     const started = Date.now();
     let output = "", timedOut = false, cancelled = false, forced = null;
-    const child = spawn(command, { cwd, env: commandEnvironment(), shell: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, { cwd, env: commandEnvironment(), shell: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     // Only the end of the output is kept, so failing test names are read line by line as the output arrives, before it is cut.
     const failing = new Set();
     const scanners = new Map();
@@ -435,7 +435,7 @@ async function verificationRun({ root, initiative, slice, target, key, design, s
 // Git answers about the checkout are optional, so any error is an unknown value rather than a failed run.
 function gitValue(root, args) {
   return new Promise((resolve) => {
-    execFile("git", ["-C", root, ...args], { timeout: 10000 }, (error, stdout) => resolve(error ? null : stdout.trim() || null));
+    execFile("git", ["-C", root, ...args], { timeout: 10000, windowsHide: true }, (error, stdout) => resolve(error ? null : stdout.trim() || null));
   });
 }
 

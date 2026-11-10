@@ -32,6 +32,39 @@ jobs:
           npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
           npm test
 
+  # Windows users install the same plugin, and its hooks, MCP server, and Git calls behave differently there.
+  windows:
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Claude Code and Codex
+        run: npm install -g @anthropic-ai/claude-code @openai/codex@0.147.0
+
+      - name: Test the server on Windows
+        run: |
+          npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          npm test
+
+      # npm starts both CLIs through .cmd shims, which Node cannot spawn without a shell, so the smoke test runs their real entry points.
+      - name: Smoke-test Prism tools and hooks in real Claude Code and Codex on Windows
+        if: ${{ !cancelled() }}
+        run: |
+          root="$(npm root -g)"
+          export CLAUDE_BIN="$root/@anthropic-ai/claude-code/bin/claude.exe"
+          export CODEX_BIN="$root/@openai/codex/bin/codex.js"
+          node scripts/host-smoke.mjs claude codex codex-turn
+
   validate:
     runs-on: ubuntu-latest
     steps:

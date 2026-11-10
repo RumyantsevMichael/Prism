@@ -9,7 +9,9 @@ import { RECORD_DIRECTORY } from "./record-store.mjs";
 import { acceptedDesign, checkFrozenTests, latestVerification, SliceDesignError, unfinishedFrozenTestsOfOthers } from "./slice-design.mjs";
 import { readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 
-const run = promisify(execFile);
+const execFileAsync = promisify(execFile);
+// Every Git call hides its console window, which Windows would otherwise open for a console program started by a process without one.
+const run = (command, args, options = {}) => execFileAsync(command, args, { ...options, windowsHide: true });
 
 async function git(root, args, env, timeout = 0) {
   const { stdout } = await run("git", args, { cwd: root, env, maxBuffer: 16 * 1024 * 1024, timeout });

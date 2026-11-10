@@ -293,7 +293,8 @@ export async function openCodeNibClient(projectRoot, options = {}) {
   const child = spawn(command, ["mcp", canonicalRoot], {
     cwd: canonicalRoot,
     env: process.env,
-    stdio: ["pipe", "pipe", "pipe"]
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true
   });
   const client = new McpStdioClient(child, options);
   client.projectRoot = canonicalRoot;

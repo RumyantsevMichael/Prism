@@ -70,7 +70,8 @@ function requestWithAppServer({ cwd, environment, spawnProcess = defaultSpawn, t
     const child = spawnProcess(configuredCommand(environment), configuredArguments(environment), {
       cwd,
       env: environment,
-      stdio: ["pipe", "pipe", "ignore"]
+      stdio: ["pipe", "pipe", "ignore"],
+      windowsHide: true
     });
     const finish = (error, value) => {
       if (settled) return;

@@ -90,7 +90,7 @@ export function runGit(base, args, options) {
 
 function git(base, args, { env = {}, input, maxBuffer = 64 * 1024 * 1024 } = {}) {
   return new Promise((resolve) => {
-    const child = execFile("git", [...FIXED_CONFIG, "-C", base, ...args], { env: gitEnvironment(env), timeout: SETTINGS.gitTimeoutMs, maxBuffer, encoding: "buffer" }, (error, stdout, stderr) => {
+    const child = execFile("git", [...FIXED_CONFIG, "-C", base, ...args], { env: gitEnvironment(env), timeout: SETTINGS.gitTimeoutMs, maxBuffer, encoding: "buffer", windowsHide: true }, (error, stdout, stderr) => {
       resolve({ ok: !error, code: error ? (typeof error.code === "number" ? error.code : -1) : 0, missing: error?.code === "ENOENT", stdout, text: stdout.toString("utf8").trim(), stderr: stderr.toString("utf8").trim() });
     });
     if (input !== undefined) child.stdin.end(input);
@@ -112,7 +112,7 @@ export function gitTooOld() {
   const key = process.env.PATH ?? "";
   if (!versionChecks.has(key)) {
     versionChecks.set(key, new Promise((resolve) => {
-      execFile("git", ["--version"], { env: gitEnvironment(), timeout: SETTINGS.gitTimeoutMs }, (error, stdout) => {
+      execFile("git", ["--version"], { env: gitEnvironment(), timeout: SETTINGS.gitTimeoutMs, windowsHide: true }, (error, stdout) => {
         const found = /^git version (\d+)\.(\d+)(?:\.(\d+))?/.exec(error ? "" : String(stdout).trim());
         if (!found) return resolve(null);
         const [major, minor] = GIT_MINIMUM.split(".").map(Number);
