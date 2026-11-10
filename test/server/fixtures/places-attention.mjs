@@ -19,15 +19,15 @@ export async function prepareAttention(root) {
     const [review, decision] = state.pending;
     review.answer = { choice: "approve", note: null, via: "browser", answeredAt: ago(1) };
     state.closed = [
-      { ...decision, id: "gate-closed-recent", question: "Keep the old socket wrapper?", options: decision.options, answer: { choice: null, note: "Keep it until connection retries land.", via: "browser", answeredAt: ago(2) }, closedAt: ago(2) },
-      { ...review, id: "gate-withdrawn", question: "Review the first draft of the change map.", answer: undefined, closedAt: ago(3), reason: "The design changed, so the agent withdrew it." },
-      { ...review, id: "gate-closed-old", question: "Review the retry ADR draft.", answer: { choice: "approve", note: null, via: "browser", answeredAt: ago(10) }, closedAt: ago(10) }
+      { ...decision, id: "gate-0000000a", question: "Keep the old socket wrapper?", options: decision.options, answer: { choice: null, note: "Keep it until connection retries land.", via: "browser", answeredAt: ago(2) }, closedAt: ago(2) },
+      { ...review, id: "gate-0000000b", question: "Review the first draft of the change map.", answer: undefined, closedAt: ago(3), reason: "The design changed, so the agent withdrew it." },
+      { ...review, id: "gate-0000000c", question: "Review the retry ADR draft.", answer: { choice: "approve", note: null, via: "browser", answeredAt: ago(10) }, closedAt: ago(10) }
     ].map((entry) => JSON.parse(JSON.stringify(entry)));
   });
   for (const [id, title] of [["alpha-search", "Alpha search"], ["beta-billing", "Beta billing"], ["gamma-gateway", "Gamma gateway"]]) {
     await writeText(root, `.prism/initiatives/${id}/initiative.json`, `${JSON.stringify({ schemaVersion: 1, id, slices: {
-      [id]: { title, outcome: `${title}.`, status: "split", parent: null, requirements: [], dependencies: [], splitEvidence: { kind: "user_gate", gate: "g1" } },
-      first: { title: `${title} first part`, outcome: "First.", status: "blocked", parent: id, requirements: [], dependencies: [] }
+      [id]: { title, outcome: `${title}.`, status: "split", parent: null, requirements: ["docs/requirements/x.md#1"], dependencies: [], splitEvidence: { kind: "user_gate", gate: "g1" } },
+      first: { title: `${title} first part`, outcome: "First.", status: "blocked", parent: id, requirements: ["docs/requirements/x.md#1"], dependencies: [] }
     }, history: [] }, null, 2)}\n`);
   }
 }
