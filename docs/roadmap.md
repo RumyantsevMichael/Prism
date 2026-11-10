@@ -13,11 +13,14 @@ Serves: Reliable planning and resumable work in Prism's spec-driven engineering 
 - **Single review app** (`single-review-app`): Run one review app per user that every agent session and project shares, with a project switcher that shows which project waits on the user.
 - **Repository intelligence** (`repository-intelligence`): Give workflow agents deterministic repository evidence: providers, context planning, session capacity, structural analysis, and duplication gates.
 - **Shipped work as history** (`shipped-work-history`): Treat a shipped initiative's state as immutable history that tools and skills recognise, and let fixes to done work ship inside the initiative that has not shipped yet.
+- **Navigate the review app by places** (`review-app-places`): Switch the review app between Attention, Work, Roadmap, Knowledge, and History from an icon rail, with the sidebar showing only the current place, so large projects stay navigable without losing any page or feature.
+- **Launched sessions from the review app** (`launched-sessions`): Let the person start, watch, stop, and continue an initiative's orchestration as a headless Claude Code or Codex session on their own machine, resumed by Prism when they answer its gates.
 
 ### Next
 
 - **Agent execution evidence and continuity** (`agent-execution-evidence`): Report observed context ranges, keep pause checkpoints current and recoverable, and assess diagram readability.
 - **Workspace artifacts in the store** (`workspace-artifacts`): Keep a workspace's requirements, ADRs and plans in its shared store, reviewed in Prism and changed in status only at gates, while executable artifacts stay with the code.
+- **Show a whole workspace in the review app** (`workspace-view`): Make the workspace, one record store, the unit the review app opens: list workspaces only, combine every scope's artifacts for people and agents, add a workspace from its store URL alone, and show code-repository content from Prism-kept clones. Requires `workspace-artifacts`.
 
 ### Shipped
 
@@ -31,8 +34,11 @@ Serves: Reliable planning and resumable work in Prism's spec-driven engineering 
 - **Shared record store**: Now, because Michael made shared state outside working repositories milestone M1 on 2026-10-31: his colleagues use Prism across many repositories and give the best feedback. Increments 1 and 2 shipped in PR #57; code links, the migration ledger, the saved-conflict notice, and the structural merge are in PR #72; slice claims come next. Requirements and ADRs stay Proposed while they are adjusted.
 - **Single review app**: Now, because Michael asked for it on 2026-10-17 and approved the design direction in the project thread; it builds on the plain-HTTP review server from PR #25.
 - **Repository intelligence**: Kept in Now while repository-intelligence work continues on main.
+- **Navigate the review app by places**: Now, because Michael asked on 2026-11-09 to build what the current data supports right away; he approved the places mockup and the requirements that day, with roles as hats and the engineer and tech lead first.
+- **Launched sessions from the review app**: Now, because Michael approved the requirements on 2026-11-09 after agreeing the scope in the project thread; it builds on the review app action registry and gate answers.
 - **Agent execution evidence and continuity**: Next, because observed-range reporting consumes verified ranges from repository context planning, while pause checkpoints and diagram-readability assessment can proceed independently after design. The new work stays together until design shows that its outcomes need separate sequencing.
 - **Workspace artifacts in the store**: Next, because Michael decided on 7 November 2026 that descriptive artifacts move to the store so every session's progress is visible in one place, and that Prism's own documents leave its public repository.
+- **Show a whole workspace in the review app**: Next, after workspace-artifacts, whose store artifacts and scopes it builds on and whose scope filter it amends; Michael asked for it on 10 November 2026 and agreed the design the same day.
 
 ## Open questions
 
