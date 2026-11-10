@@ -51,7 +51,15 @@ jobs:
       - name: Install Claude Code and Codex
         run: npm install -g @anthropic-ai/claude-code @openai/codex@0.147.0
 
+      # The review app's browser tests run on Windows too, through the same global Playwright and Chromium as on Linux.
+      - name: Install Playwright and Chromium for the browser tests
+        run: |
+          npm install -g playwright@1.63.0
+          npx playwright install chromium
+
       - name: Test the server on Windows
+        env:
+          PRISM_REQUIRE_BROWSER: "1"
         run: |
           npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
           npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund

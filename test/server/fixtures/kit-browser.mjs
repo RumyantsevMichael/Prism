@@ -12,7 +12,8 @@ export const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 function loadPlaywright() {
   const bases = [ROOT];
   try {
-    bases.push(execFileSync("npm", ["root", "-g"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
+    // npm is a .cmd shim on Windows, which starts only through the shell.
+    bases.push(execFileSync("npm", ["root", "-g"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], shell: process.platform === "win32", windowsHide: true }).trim());
   } catch {
   }
   for (const base of bases) {
