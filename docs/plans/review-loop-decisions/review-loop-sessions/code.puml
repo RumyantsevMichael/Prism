@@ -1,0 +1,11 @@
+@startuml
+title Follow the review loop decision - code
+component "skills/orchestrate/SKILL.md\n5. Review, 6. User gates" as Orchestrate
+component "skills/workflow/SKILL.md\nCommon terms" as Workflow
+component "skills/review/SKILL.md" as Review
+component "docs/user-guide/workflow.md" as GuideWorkflow
+component "docs/user-guide/review-browser.md" as GuideBrowser
+Orchestrate ..> Workflow : terms
+Review ..> Workflow : terms
+GuideWorkflow ..> GuideBrowser : links
+@enduml

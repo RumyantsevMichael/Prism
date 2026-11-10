@@ -1,0 +1,24 @@
+@startuml
+title Review loop decisions - slices
+package "defer-low-findings" as Defer {
+  interface "accept_wave gate + deferrals" as AcceptDeferred
+  interface "resolve choice" as Choice
+  interface "DEFERRED, deferred, deferredFindings" as DeferredReads
+}
+package "review-loop-gate" as Loop {
+  interface "review loop gate" as LoopGate
+  interface "return_to_design" as Return
+}
+package "review-app-deferred" as Browser
+package "review-loop-sessions" as Sessions
+Loop ..> Choice : reads the chosen option
+Loop ..> AcceptDeferred : offers accept-deferred
+Browser ..> DeferredReads : shows deferred findings
+Browser ..> LoopGate : shows the summary
+Sessions ..> LoopGate : waits for it
+Sessions ..> Return : redesign
+Sessions ..> AcceptDeferred : files follow-ups
+Loop ..> Defer : after
+Browser ..> Loop : after
+Sessions ..> Loop : after
+@enduml
