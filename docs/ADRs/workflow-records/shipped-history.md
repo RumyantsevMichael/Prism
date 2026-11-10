@@ -1,6 +1,6 @@
 # Shipped work as immutable history
 
-Status: Proposed
+Status: Accepted
 Created: 2026-11-08
 
 ## Requirements
@@ -57,3 +57,5 @@ Reads add one shipped-history object built from the decision, the current slice 
 The slice graph treats a fix slice as a leaf below the slice it fixes, so completion, progress, design candidates, and dependencies include it while the fixed slice stays done.
 
 ## Decision Log
+
+2026-11-10: Accepted after the seven slices of the shipped work history initiative were implemented, verified, and reviewed, including a ship that serializes with every writer of the initiative's state.
