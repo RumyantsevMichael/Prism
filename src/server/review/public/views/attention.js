@@ -100,7 +100,12 @@ function answerForm(item, draft) {
   </div>`;
 }
 
-function gateCard(item, ctx, draft) {
+// A question the server no longer takes an answer to, such as one of a shipped initiative, names why in place of the form.
+function unavailableAnswer(item) {
+  return `<p class="notice gate-unavailable" role="note"><span class="gate-tag">Cannot be answered</span> ${escapeHtml(item.unavailable)}</p>`;
+}
+
+export function gateCard(item, ctx, draft) {
   const available = item.artifacts.filter((artifact) => artifact.available);
   const missing = item.artifacts.filter((artifact) => !artifact.available);
   return `<li class="attention-card gate-${escapeHtml(item.kind)}">
@@ -110,7 +115,7 @@ function gateCard(item, ctx, draft) {
     ${available.length ? `<div class="attention-artifacts"><span class="muted">Inspect</span> ${available.map((artifact) => artifactChip(artifact.path, ctx, artifact.path.split("/").pop())).join(" ")}</div>` : ""}
     ${missing.length ? `<p class="muted">Not found: ${missing.map((artifact) => `<code>${escapeHtml(artifact.path)}</code>`).join(" ")}</p>` : ""}
     ${item.stale ? `<p class="notice">Every file this question refers to is gone, so it may no longer apply. The agent that asked it withdraws it when it does not.</p>` : ""}
-    ${answerForm(item, draft)}
+    ${item.unavailable ? unavailableAnswer(item) : answerForm(item, draft)}
   </li>`;
 }
 
@@ -131,6 +136,13 @@ function closedCard(item, ctx) {
     <p class="gate-given">${outcome}</p>
     ${item.reason ? `<p class="muted">${escapeHtml(item.reason)}</p>` : ""}
   </li>`;
+}
+
+// A refused answer shows beside the form: the server's reason for an action it no longer offers, and a re-render shows the question as it now stands.
+export function answerError(error) {
+  if (error.code === "action_unavailable" || error.code === "gate_answered") return { message: error.message, rerender: true };
+  if (error.code === "unknown_gate") return { message: "The agent already resolved or withdrew this question.", rerender: true };
+  return { message: error.message, rerender: false };
 }
 
 function bindAnswers(container, ctx, gates) {
@@ -196,12 +208,13 @@ function bindAnswers(container, ctx, gates) {
         ctx.rerender();
       } catch (error) {
         // The server stays the backstop: its refusal shows beside the form, and the draft keeps the note through a re-render.
-        draft.error = error.code === "gate_answered" ? "This question already has an answer." : error.code === "unknown_gate" ? "The agent already resolved or withdrew this question." : error.message;
+        const refusal = answerError(error);
+        draft.error = refusal.message;
         failure.textContent = draft.error;
         failure.hidden = false;
         sending = false;
         refresh();
-        if (error.code === "gate_answered" || error.code === "unknown_gate") ctx.rerender();
+        if (refusal.rerender) ctx.rerender();
       }
     });
     // The page re-renders when live data changes, so an unsent note and its cursor are restored.
@@ -324,10 +337,12 @@ export function render(container, entity, ctx) {
   const recent = data.recentChanges ?? [];
   const gates = data.needsYou.filter((item) => item.type === "gate");
   const notes = data.needsYou.filter((item) => item.type !== "gate");
+  // A question that can no longer be answered still shows, but it does not wait on the person.
+  const waiting = gates.filter((item) => !item.unavailable).length;
   container.innerHTML = `
     <section class="view-card summary-card">
       <div class="stat-row">
-        <div class="stat ${gates.length ? "is-warn" : "is-good"}"><span class="stat-value">${gates.length}</span><span class="stat-label">${gates.length === 1 ? "question waits" : "questions wait"} on you</span></div>
+        <div class="stat ${waiting ? "is-warn" : "is-good"}"><span class="stat-value">${waiting}</span><span class="stat-label">${waiting === 1 ? "question waits" : "questions wait"} on you</span></div>
         <div class="stat"><span class="stat-value">${notes.length}</span><span class="stat-label">other ${notes.length === 1 ? "item needs" : "items need"} you</span></div>
         <div class="stat"><span class="stat-value">${data.watch.length}</span><span class="stat-label">agent-side ${data.watch.length === 1 ? "signal" : "signals"}</span></div>
       </div>

@@ -194,6 +194,8 @@ JSON records such as the coordination state have a Structured and a Raw view.
 A shipped initiative records finished work, so its page and each of its slice pages show the label `Shipped history: <initiative> shipped on <date>; this page records finished work.` above their content.
 Each slice document of a shipped initiative, its `slice.md`, shows the same label above the document.
 When that document changed after the initiative shipped, ignoring the history mark that Prism writes into it, the label adds `This document changed after the initiative shipped.`
+A link preview of such a document carries the same label.
+An open question of a shipped initiative stays on Attention marked `Cannot be answered` with the reason `The initiative shipped on <date>, so its state is history.`, and it does not count among the questions that wait on you or in the Attention badge.
 For an initiative that shipped before Prism recorded its slice documents, the first page that reaches it records their content then and marks each one as history, so commit those marked files apart from other changes.
 Take current intent from Approved requirements, Accepted ADRs, the glossary, and feature files, and treat a shipped initiative's pages only as a record of what was built.
 

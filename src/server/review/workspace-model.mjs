@@ -13,7 +13,7 @@ import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
 import { loadDesignView } from "../workflow/design-view.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
-import { shippedHistory, shippedHistoryLabel } from "../workflow/shipped-history.mjs";
+import { shippedActionReason, shippedDecision, shippedHistory, shippedHistoryLabel } from "../workflow/shipped-history.mjs";
 
 const LIBRARY_LIMIT = 500;
 const RECENT_CHANGES_LIMIT = 20;
@@ -446,6 +446,8 @@ async function computeAttention(projectRoot) {
     const snapshot = await initiativeSnapshot(projectRoot, config, id, items.get(id));
     const initiative = { id, title: snapshot.title };
     const state = snapshot.state;
+    // A shipped initiative's state is history, so its open questions can no longer be answered and no longer wait on the person.
+    const shipped = await shippedDecision(projectRoot, id).catch(() => null);
     if (state?.valid) for (const entry of state.state?.history ?? []) changes.push({ ...entry, initiative: id });
     if (state?.exists && !state.valid) {
       watch.push({ type: "record-problem", initiative, path: await recordFile(projectRoot, { kind: "state", initiative: id }), message: state.errors.join(" ") });
@@ -459,7 +461,7 @@ async function computeAttention(projectRoot) {
           const current = key ? await recordFile(projectRoot, key).catch(() => artifact) : artifact;
           artifacts.push({ path: current, available: await isFile(projectRoot, current) });
         }
-        const gate = { type: "gate", id: entry.id, kind: entry.kind, question: entry.question, context: entry.context ?? null, options: entry.options ?? null, recommended: entry.recommended ?? null, askedAt: entry.askedAt, answer: entry.answer ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null, artifacts };
+        const gate = { type: "gate", id: entry.id, kind: entry.kind, question: entry.question, context: entry.context ?? null, options: entry.options ?? null, recommended: entry.recommended ?? null, askedAt: entry.askedAt, answer: entry.answer ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null, artifacts, unavailable: shipped ? shippedActionReason(shipped) : null };
         // A question whose every attached file is gone was likely overtaken by later work, so the page says it may no longer apply.
         if (!gate.answer && artifacts.length && artifacts.every((artifact) => !artifact.available)) gate.stale = true;
         (gate.answer ? answered : needsYou).push(gate);
@@ -507,7 +509,9 @@ async function computeAttention(projectRoot) {
   // The newest closed questions come first, across initiatives, so the list stays short.
   earlier.sort((left, right) => newestFirst(left.closedAt, right.closedAt));
   const recentChanges = changes.sort((left, right) => historyOrder(right, left)).slice(0, RECENT_CHANGES_LIMIT);
-  return { needsYou, answered, earlier: earlier.slice(0, 20), watch, recentChanges, gateCount: needsYou.filter((item) => item.type === "gate").length };
+  // Only a question the person can answer counts, so a shipped initiative's question shows on the page but raises no count or badge.
+  const waiting = needsYou.filter((item) => !(item.type === "gate" && item.unavailable));
+  return { needsYou, answered, earlier: earlier.slice(0, 20), watch, recentChanges, gateCount: waiting.filter((item) => item.type === "gate").length, waitingCount: waiting.length };
 }
 
 function glossaryTerms(content) {
@@ -548,7 +552,7 @@ async function computeNavigation(projectRoot) {
   const attention = await loadAttention(projectRoot);
   return {
     roadmap: { exists: roadmap.exists ?? false, error: roadmap.error ?? null, valid: roadmap.valid ?? false },
-    attention: { needsYou: attention.needsYou.length, gates: attention.gateCount, answered: attention.answered.length, watch: attention.watch.length },
+    attention: { needsYou: attention.waitingCount, gates: attention.gateCount, answered: attention.answered.length, watch: attention.watch.length },
     initiatives: [
       ...roadmap.items.map((item) => ({ id: item.id, title: item.title, band: item.band, state: item.state })),
       ...roadmap.unlisted.map((id) => ({ id, title: id, band: null, state: "unlisted" }))

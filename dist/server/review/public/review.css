@@ -3785,9 +3785,16 @@ th {
   overflow-wrap: anywhere;
 }
 
+/* The note keeps the page's text color, because muted text on the warning tint falls below 4.5:1 in the light theme. */
 .shipped-history .shipped-history-changed {
-  color: var(--ink-muted);
+  color: var(--ink);
+  font-weight: 600;
   margin-top: 0.25rem;
+}
+
+/* A document page's label is a full-width row under its header, so it never crowds the header's title or pills. */
+.document-history .shipped-history {
+  margin: -0.5rem 0 1rem;
 }
 
 .chart-legend {
@@ -5424,6 +5431,11 @@ th {
   color: var(--choice-bad);
   font-size: 0.76rem;
   margin: 0;
+}
+
+.gate-unavailable {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 @media (prefers-color-scheme: dark) {

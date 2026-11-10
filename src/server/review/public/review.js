@@ -1309,7 +1309,6 @@ async function showArtifact(path) {
         <nav class="breadcrumbs" aria-label="Location" data-breadcrumbs>${breadcrumbHtml(path)}</nav>
         <h1>${escapeHtml(fileName(data.path))}</h1>
         <p class="artifact-path">${escapeHtml(data.path)}</p>
-        <div data-shipped-history>${documentHistoryHtml(path)}</div>
       </div>
       <div class="artifact-meta">
         ${structured ? `<div class="segmented" role="group" aria-label="View mode">
@@ -1321,6 +1320,7 @@ async function showArtifact(path) {
         ${source ? '<span class="meta-pill">Read-only</span>' : structured ? "" : `<span class="meta-pill">${diagramLabel}</span>`}
       </div>
     </header>
+    <div class="document-history" data-shipped-history>${documentHistoryHtml(path)}</div>
     ${documentCard}`;
   if (structured) {
     for (const button of artifact.querySelectorAll(".segmented button")) {
@@ -1408,14 +1408,16 @@ function viewContext(path, state) {
       const listing = await listed.json().catch(() => ({}));
       if (!listed.ok) throw Object.assign(new Error(listing.message ?? "The answer was not recorded."), { code: listing.code === "unknown_target" ? "unknown_gate" : listing.code });
       const action = (listing.actions ?? []).find((item) => item.id === "gate.answer");
+      // A question the server no longer takes an answer to, such as one of a shipped initiative, is refused with the server's own reason.
+      if (action && !action.available) throw Object.assign(new Error(action.reason ?? "The answer was not recorded."), { code: "action_unavailable" });
       const names = new Set((action?.fields ?? []).map((field) => field.name));
       const input = Object.fromEntries([["choice", choice], ["note", note]].filter(([name, value]) => names.has(name) && value !== null && value !== undefined && value !== ""));
       const response = await fetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ action: "gate.answer", target, input, revision: action?.revision ?? null }) }).catch(unanswered);
       const result = await response.json().catch(() => ({ message: "The server returned an unreadable response." }));
       if (!response.ok) {
-        // The answer form names an answered or withdrawn question as it always has.
-        const code = result.code === "action_unavailable" ? "gate_answered" : result.code === "unknown_target" ? "unknown_gate" : result.code;
-        throw Object.assign(new Error(result.message ?? "The answer was not recorded."), { code });
+        // A withdrawn question reads as one, and any other refusal carries the server's reason.
+        const code = result.code === "unknown_target" ? "unknown_gate" : result.code;
+        throw Object.assign(new Error(result.reason ?? result.message ?? "The answer was not recorded."), { code });
       }
       return result;
     },

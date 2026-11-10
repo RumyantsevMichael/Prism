@@ -103,6 +103,20 @@ async function fileSummary(data, anchor, { renderMarkdown, kindLabel, drawDiagra
   return `${head}<div class="document-content">${section || '<p class="muted">The document is empty.</p>'}</div>`;
 }
 
+// A slice document of a shipped initiative previews with the label its page shows, so a link to old work never reads as current intent.
+async function documentHistory(ref, fetchJson) {
+  if (ref.split("/").pop() !== "slice.md") return null;
+  const context = await fetchJson(`./api/context?ref=${encodeURIComponent(ref)}`).catch(() => null);
+  return context?.shippedHistory ?? null;
+}
+
+/** The preview of an internal link's target: an entity's summary, or a file's start or linked section under any shipped history label it carries. */
+export async function previewHtml({ ref, anchor = null }, { fetchJson, renderMarkdown, kindLabel, drawDiagram = null }) {
+  if (parseEntityRef(ref)) return entitySummary(await fetchJson(`./api/entity?ref=${encodeURIComponent(ref)}`));
+  const [data, history] = await Promise.all([fetchJson(`./api/artifact?path=${encodeURIComponent(ref)}`), documentHistory(ref, fetchJson)]);
+  return `${shippedHistoryHtml(history)}${await fileSummary(data, anchor, { renderMarkdown, kindLabel, drawDiagram })}`;
+}
+
 // Hovering or focusing an internal link shows what it points to: an entity's summary, the start of a file or the linked section, or a diagram drawn small.
 // A file's preview offers to show the whole file in the side panel when the page has one.
 export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, currentPath, drawDiagram = null, onShowInPanel = null }) {
@@ -129,9 +143,7 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
     const key = `${ref}#${anchor ?? ""}`;
     const cached = cache.get(key);
     if (cached && Date.now() - cached.at < CACHE_MS) return cached.html;
-    const html = parseEntityRef(ref)
-      ? entitySummary(await fetchJson(`./api/entity?ref=${encodeURIComponent(ref)}`))
-      : await fileSummary(await fetchJson(`./api/artifact?path=${encodeURIComponent(ref)}`), anchor, { renderMarkdown, kindLabel, drawDiagram });
+    const html = await previewHtml({ ref, anchor }, { fetchJson, renderMarkdown, kindLabel, drawDiagram });
     cache.set(key, { at: Date.now(), html });
     return html;
   }
