@@ -1,33 +1,33 @@
 {
   "schemaVersion": 1,
-  "assetVersion": "native-runtime-42555634090-1",
+  "assetVersion": "native-runtime-42738413449-1",
   "bundles": {
     "darwin-arm64": {
-      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/native-runtime-42555634090-1/prism-native-darwin-arm64.tar.gz",
+      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/native-runtime-42738413449-1/prism-native-darwin-arm64.tar.gz",
       "bytes": 115633743,
       "sha256": "54585a56ac3bede80fc7b3388541eec5e87ea08ac935d0bf6a1a32ba366452fd",
       "unpackedBytes": 513428667
     },
     "darwin-x64": {
-      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/native-runtime-42555634090-1/prism-native-darwin-x64.tar.gz",
+      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/native-runtime-42738413449-1/prism-native-darwin-x64.tar.gz",
       "bytes": 118182614,
       "sha256": "19da88e3df5860628804efbd80d9cdc7601ee7846d718e9bef99251054280c6b",
       "unpackedBytes": 521769796
     },
     "linux-x64": {
-      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/native-runtime-42555634090-1/prism-native-linux-x64.tar.gz",
+      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/native-runtime-42738413449-1/prism-native-linux-x64.tar.gz",
       "bytes": 131028772,
       "sha256": "0d1dfb39445f41e970547a4664d7c3e7db70c81e0b0142094fe314be9454d266",
       "unpackedBytes": 533483663
     },
     "linux-arm64": {
-      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/native-runtime-42555634090-1/prism-native-linux-arm64.tar.gz",
+      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/native-runtime-42738413449-1/prism-native-linux-arm64.tar.gz",
       "bytes": 126689572,
       "sha256": "aa13a7e299e8ef3f576a439a60357a73614b5ab13eb5c0d8840059e6122bfb30",
       "unpackedBytes": 517356635
     },
     "win32-x64": {
-      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/native-runtime-42555634090-1/prism-native-win32-x64.tar.gz",
+      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/native-runtime-42738413449-1/prism-native-win32-x64.tar.gz",
       "bytes": 127685460,
       "sha256": "2f11d38042dd241730e4bc52e6c5bfc71bd07f5544a4b1aba2f0e5cc61c3e707",
       "unpackedBytes": 511937730
@@ -74,5 +74,5 @@
     ],
     "license": "MIT"
   },
-  "modelMirror": "https://github.com/RumyantsevMichael/Prism/releases/download/native-runtime-42555634090-1"
+  "modelMirror": "https://github.com/RumyantsevMichael/Prism/releases/download/native-runtime-42738413449-1"
 }
