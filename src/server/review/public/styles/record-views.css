@@ -1353,9 +1353,13 @@ a.code-link:hover {
 
 /* The lead line sits right under the page's title, as the mockup's page subtitle does, so it takes back the header's bottom margin. */
 .knowledge-lead {
-  margin: calc(var(--prism-space-5) * -1) 0 var(--prism-space-6);
+  margin: calc(var(--prism-space-5) * -1) 0 0;
   color: var(--prism-color-ink-muted);
   overflow-wrap: anywhere;
+}
+
+.knowledge-lead + .knowledge-table {
+  margin-top: var(--prism-space-2);
 }
 
 .knowledge-lead b {
