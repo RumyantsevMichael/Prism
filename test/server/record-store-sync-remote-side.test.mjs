@@ -304,7 +304,7 @@ test("a percent-encoded file:// URL reads the hook names, refuses a hook it cann
   assert.equal(git(store, ["config", "remote.origin.url"]), encoded, "the sync changed the person's remote");
   const helpers = (await read(trace)).split("\n").filter((line) => line.includes("run_command:") && /(upload|receive)-pack '/.test(line));
   assert.ok(helpers.length >= 2, "the trace shows no remote-side helper");
-  for (const line of helpers) assert.ok(line.includes(`pack '\\''${remote}'\\''`) || line.includes(`pack '${remote}'`), line);
+  for (const line of helpers) assert.ok(line.includes(`pack '\\''${gitPath(remote)}'\\''`) || line.includes(`pack '${gitPath(remote)}'`), line);
   const managed = await managedRecordStore(projectRoot, encoded, (message) => new Error(message));
   assert.equal(git(managed, ["config", "remote.origin.url"]), encoded, "the first clone did not record the remote as configured");
   assert.equal(await readFile(path.join(managed, "roadmap.json"), "utf8"), "{\"store\":true}\n");
@@ -461,7 +461,7 @@ test("the helper enters the repository it names, whatever path Git appends to it
   assert.match(listed, /refs\/heads\/main/);
   assert.doesNotMatch(listed, /refs\/heads\/moved/);
   const [started] = await helpersIn(trace);
-  assert.ok(started?.includes(`prism_pinned_helper '\\''${gitPath(moved)}'\\''`), `Git did not append the rewritten path: ${started}`);
+  assert.ok(started?.includes(`prism_pinned_helper '\\''${moved}'\\''`), `Git did not append the rewritten path: ${started}`);
   // A push whose pushInsteadOf rule rewrites the path lands in the repository the helper names too.
   const clone = path.join(parent, "clone");
   git(parent, ["clone", "-q", real, clone]);
@@ -488,11 +488,12 @@ test("a url.<base>.insteadOf or pushInsteadOf rule that matches the repository's
   assert.deepEqual(await localRepository(viaLink, store), { path: gitPath(path.join(real, "remote.git")) });
   await writeFile(path.join(store, "roadmap.json"), "{\"store\":true}\n");
   for (const kind of ["insteadOf", "pushInsteadOf"]) {
-    git(store, ["config", `url.${moved}/.${kind}`, `${real}/`]);
+    // Git matches a rule against the path Prism names, which on Windows has forward slashes.
+    git(store, ["config", `url.${gitPath(moved)}/.${kind}`, `${gitPath(real)}/`]);
     const status = await syncRecordStoreNow(store);
     assert.equal(status.state, "git_failed", `${kind}: ${JSON.stringify(status)}`);
-    assert.match(status.message, new RegExp(`url\\.<base>\\.${kind} rule .* matches ${path.join(real, "remote.git").replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
-    git(store, ["config", "--unset", `url.${moved}/.${kind}`]);
+    assert.match(status.message, new RegExp(`url\\.<base>\\.${kind} rule .* matches ${gitPath(path.join(real, "remote.git")).replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+    git(store, ["config", "--unset", `url.${gitPath(moved)}/.${kind}`]);
   }
   for (const side of [real, moved]) assert.equal(git(path.join(side, "remote.git"), ["show", "main:roadmap.json"]), "{}", side);
   assert.equal((await syncRecordStoreNow(store)).state, "ok");
@@ -503,7 +504,7 @@ test("a url.<base>.insteadOf or pushInsteadOf rule that matches the repository's
   const before = process.env.GIT_CONFIG_GLOBAL;
   process.env.GIT_CONFIG_GLOBAL = global;
   try {
-    git(parent, ["config", "--global", `url.${moved}/.insteadOf`, `${real}/`]);
+    git(parent, ["config", "--global", `url.${gitPath(moved)}/.insteadOf`, `${gitPath(real)}/`]);
     const projectRoot = path.join(parent, "project");
     await mkdir(projectRoot);
     useManagedStores(projectRoot, path.join(parent, "stores"));

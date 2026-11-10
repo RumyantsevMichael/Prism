@@ -3,6 +3,7 @@ import { arrangeGroups, GROUP_LIMIT, groupNameOf, joinGroup } from "./public/vie
 import { randomBytes } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PLUGIN_ROOT } from "../plugin-root.mjs";
@@ -405,7 +406,8 @@ export function openBrowser(url) {
   const command = platform === "darwin" ? "open" : platform === "win32" ? "rundll32" : "xdg-open";
   const args = platform === "win32" ? ["url.dll,FileProtocolHandler", url] : [url];
   try {
-    const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true });
+    // A browser that the opener starts inherits its working folder, so it starts in the home folder and never keeps a project folder busy, which Windows would refuse to remove or rename.
+    const child = spawn(command, args, { cwd: homedir(), detached: true, stdio: "ignore", windowsHide: true });
     child.on("error", () => {});
     child.unref();
     return true;

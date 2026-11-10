@@ -316,7 +316,8 @@ test("a local artifact whose path differs only in letter case from one the upstr
   assert.ok(!git(storeA, ["ls-tree", "-r", "--name-only", "origin/main"]).includes("Notes.md"), "no tree with both spellings reaches the remote");
 });
 
-test("a branch that took an unportable upstream entry by hand pushes nothing until the remote drops it", async (context) => {
+// The test pulls the entry by hand on a machine whose Git accepts the name, which Windows never is.
+test("a branch that took an unportable upstream entry by hand pushes nothing until the remote drops it", { skip: process.platform === "win32" && "Windows cannot write a file named aux.md, so no branch here can take it by hand" }, async (context) => {
   const { storeA, storeB } = await stores(context);
   const crafted = pushCrafted(storeA, ["notes", "aux.md"]);
   // A person pulls the upstream by hand on a machine whose Git accepts the name.

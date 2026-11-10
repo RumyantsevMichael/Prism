@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { open, lstat, readFile, rm, rename } from "node:fs/promises";
+import { open, lstat, readFile, rm, rename, utimes } from "node:fs/promises";
 import path from "node:path";
 
 const LOCK_TIMEOUT_MS = 5000;
@@ -23,8 +23,13 @@ async function acquireFileLock(artifactPath, makeError, options) {
     try {
       const handle = await open(lockPath, "wx", 0o600);
       const token = randomBytes(16).toString("hex");
-      await handle.writeFile(JSON.stringify({ pid: process.pid, token, renewable: options.renew === true, at: new Date().toISOString() }));
-      return { handle, lockPath, token };
+      try {
+        await handle.writeFile(JSON.stringify({ pid: process.pid, token, renewable: options.renew === true, at: new Date().toISOString() }));
+      } finally {
+        // The lock is the file and its token, never an open handle: Windows refuses to rename a folder while a file in it is open, as a store sync does when another machine changed the folder's letter case.
+        await handle.close();
+      }
+      return { lockPath, token };
     } catch (caught) {
       if (caught.code !== "EEXIST") {
         throw caught;
@@ -64,19 +69,16 @@ async function acquireFileLock(artifactPath, makeError, options) {
 export async function withFileLock(artifactPath, action, makeError = defaultError, options = {}) {
   const lock = await acquireFileLock(artifactPath, makeError, options);
   const heartbeat = options.renew ? setInterval(async () => {
+    const owner = await readFile(lock.lockPath, "utf8").then(JSON.parse).catch(() => null);
     const now = new Date();
-    lock.handle.utimes(now, now).catch(() => {});
-    if (options.onRenew) {
-      const owner = await readFile(lock.lockPath, "utf8").then(JSON.parse).catch(() => null);
-      options.onRenew(owner?.token === lock.token);
-    }
+    if (owner?.token === lock.token) await utimes(lock.lockPath, now, now).catch(() => {});
+    options.onRenew?.(owner?.token === lock.token);
   }, options.heartbeatMs ?? 5000) : null;
   heartbeat?.unref();
   try {
     return await action();
   } finally {
     clearInterval(heartbeat);
-    await lock.handle.close().catch(() => {});
     const owner = await readFile(lock.lockPath, "utf8").then(JSON.parse).catch(() => null);
     if (owner?.token === lock.token) await rm(lock.lockPath, { force: true }).catch(() => {});
   }
