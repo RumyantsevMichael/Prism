@@ -94,3 +94,5 @@ Prism keeps, per agent session and initiative in its private app directory, the 
 A Claude Code hook that runs before each tool use of Prism records which sub-agent made it, by tool use id, and the server reads that record for the call with the same id; on Codex the server reads the calling thread from the call's metadata.
 
 ## Decision Log
+
+2026-11-10: The invariant that an action changes only Prism records and runs no command is superseded for the launch, stop, and resume of a launched session by [launched-sessions.md](launched-sessions.md), as [review-app-actions.md§15](../../requirements/review-app-actions.md#15) allows; every other action keeps it, and those three actions still pass through this registry, its checks, and its history.

@@ -1,0 +1,12 @@
+@startuml
+title launch-stop - code
+component "session/launched-sessions.mjs\nstopLaunch" as Api
+component "session/launch-records.mjs\nstop request, stopped state" as Records
+component "session/launch-supervisor.mjs\nwatches stop, ends the tree" as Supervisor
+component "session/process-tree.mjs\ndescendants, polite and forced end,\nexclusions" as Tree
+component "review/review-app-discovery.mjs\nreview-app.json" as Discovery
+Api --> Records : write stop request
+Supervisor --> Records : read request, record end
+Supervisor --> Tree : end host tree
+Tree ..> Discovery : review app pid
+@enduml
