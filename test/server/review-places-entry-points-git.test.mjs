@@ -4,11 +4,11 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // How Touched by my work and Changed this week use Git: recorded values never reach Git as options, merges count, and a failing Git says so.
 
-const DIST = process.env.PRISM_ENTRY_POINTS_DIST ?? path.join(path.dirname(new URL(import.meta.url).pathname), "../../dist");
+const DIST = process.env.PRISM_ENTRY_POINTS_DIST ?? path.join(path.dirname(fileURLToPath(import.meta.url)), "../../dist");
 const load = (relative) => import(pathToFileURL(path.join(DIST, relative)).href);
 const DAY = 24 * 60 * 60 * 1000;
 

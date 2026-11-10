@@ -49,7 +49,8 @@ function syncIgnoringCase(store) {
   return JSON.parse(child.stdout);
 }
 
-const listing = (folder) => readdir(folder, { recursive: true }).then((names) => names.sort());
+// readdir names nested entries with the platform separator, which the expected listings write as /.
+const listing = (folder) => readdir(folder, { recursive: true }).then((names) => names.map((name) => name.split(path.sep).join("/")).sort());
 
 for (const [label, local, upstream, kept] of [
   ["record", { "initiatives/Reports/state.json": "{\"v\":\"b\"}\n" }, { "initiatives/reports/state.json": "{\"v\":\"a\"}\n" }, ["reports", "reports/state.json"]]
@@ -119,7 +120,7 @@ test("the store sync suites pass on a file system that ignores letter case", { t
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-sync-case-suites-")));
   context.after(() => rm(root, { recursive: true, force: true }));
   const marker = path.join(root, "case-insensitive.loaded");
-  const here = path.dirname(new URL(import.meta.url).pathname);
+  const here = path.dirname(fileURLToPath(import.meta.url));
   const { NODE_TEST_CONTEXT: _, ...inherited } = process.env;
   const output = await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--test", "--test-reporter=tap", ...SUITES.map((suite) => path.join(here, suite))], {

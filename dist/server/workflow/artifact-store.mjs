@@ -102,8 +102,20 @@ export async function withArtifactLock(artifactPath, action) {
   }
 }
 
+// Windows refuses to rename a file or folder while another process holds it, as another reader, Git that has just exited, or a virus scanner reading new files does,
+// so there a rename is retried for a few seconds while the refusal says the path is in use.
+export async function renameWhenFree(from, to) {
+  for (let delay = 10; ; delay *= 2) {
+    try { return await rename(from, to); }
+    catch (error) {
+      if (process.platform !== "win32" || !["EPERM", "EACCES", "EBUSY"].includes(error.code) || delay > 2560) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
+
 /** @param {string} artifactPath @param {string | Uint8Array} contents @param {{ renameFile?: typeof rename, mode?: number, beforeTemporary?: (path: string) => Promise<void>, afterTemporary?: (path: string) => Promise<void> }} options */
-export async function writeAtomically(artifactPath, contents, { renameFile = rename, mode: requestedMode, beforeTemporary, afterTemporary } = {}) {
+export async function writeAtomically(artifactPath, contents, { renameFile = renameWhenFree, mode: requestedMode, beforeTemporary, afterTemporary } = {}) {
   let mode = requestedMode ?? 0o644;
   try {
     const info = await lstat(artifactPath);

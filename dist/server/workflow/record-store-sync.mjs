@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { withFileLock, writeAtomically } from "./artifact-store.mjs";
+import { renameWhenFree, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { commitProblem, gitFileName, isLinkMode, LINK_TARGET_BYTES_MAX, linkTargetProblem, TREE_DEPTH_MAX, TREE_DEPTH_TEXT, tooDeepTree, treeEntries, treeProblems } from "./git-objects.mjs";
 import { hasRecordMerge, recordMergeFor } from "./record-merge.mjs";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
@@ -1701,30 +1701,18 @@ async function storedInSpelling(base, file, cache) {
   return true;
 }
 
+// Windows refuses to rename a folder to another spelling of its own name, so there the folder first moves to a unique name beside it.
+async function respell(from, to) {
+  if (process.platform !== "win32") return rename(from, to);
+  const between = `${from}.respell-${process.pid}-${randomBytes(4).toString("hex")}`;
+  await renameWhenFree(from, between);
+  try { await renameWhenFree(between, to); } catch (error) { await renameWhenFree(between, from).catch(() => {}); throw error; }
+}
+
 /**
  * Give each folder above a path that the file system stores in another letter case, and finds by this spelling too, this spelling, as it would after a removal emptied it,
  * so a file written below it lands at the target's spelling, which the next commit reads back; a file system that tells letter case apart keeps the two spellings as two folders.
  */
-// Windows refuses to rename a folder to another spelling of its own name, so there the folder first moves to a unique name beside it.
-// Windows also refuses to move a folder while another process, such as Git that has just exited or a virus scanner reading new files,
-// still holds a file inside it, so each move is retried for a few seconds while the refusal says the folder is in use.
-async function respell(from, to) {
-  if (process.platform !== "win32") return rename(from, to);
-  const between = `${from}.respell-${process.pid}-${randomBytes(4).toString("hex")}`;
-  await moveWhenFree(from, between);
-  try { await moveWhenFree(between, to); } catch (error) { await moveWhenFree(between, from).catch(() => {}); throw error; }
-}
-
-async function moveWhenFree(from, to) {
-  for (let delay = 10; ; delay *= 2) {
-    try { return await rename(from, to); }
-    catch (error) {
-      if (!["EPERM", "EACCES", "EBUSY"].includes(error.code) || delay > 2560) throw error;
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-  }
-}
-
 async function respellFolders(base, file) {
   let folder = base;
   for (const name of file.split("/").slice(0, -1)) {
