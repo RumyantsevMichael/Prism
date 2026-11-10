@@ -129,7 +129,7 @@ test("clause 28: every page the app served before is reachable from the rail, a 
   const catalog = page.context().waitForEvent("page", { timeout: 5000 });
   await page.getByRole("menuitem", { name: /Component catalog/ }).click();
   const opened = await catalog;
-  await opened.waitForLoadState("domcontentloaded");
+  await opened.waitForURL(/\/kit\/catalog/, { timeout: 15000 });
   assert.match(opened.url(), /\/kit\/catalog/);
   assert.deepEqual(reached, ["requirements", "docs/requirements/retries.md", "docs/ADRs/retries/total-retry-deadline.md", "glossary", "initiative:retry-hardening", SLICE, "diagram", "initiative:audit-log", "attention"]);
   assert.equal(page.url().includes("palette"), false);

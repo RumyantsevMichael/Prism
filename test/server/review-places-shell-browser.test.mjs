@@ -250,7 +250,7 @@ test("clause 17: a sidebar entry is a link: Shift and middle click open the brow
     const opened = page.context().waitForEvent("page", { timeout: 5000 });
     await row.locator(":scope > a").click(click);
     const other = await opened;
-    await other.waitForLoadState("domcontentloaded");
+    await other.waitForURL(/[?&]artifact=/, { timeout: 15000 });
     assert.equal(new URL(other.url()).searchParams.get("artifact"), "initiative:activity-reports", `a ${label} opened the address in the browser`);
     await other.close();
     assert.equal(await shownRef(page), "attention", `a ${label} left this page`);
