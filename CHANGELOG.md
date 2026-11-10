@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.21.0](https://github.com/RumyantsevMichael/Prism/compare/v0.20.0...v0.21.0) (2026-11-10)
+
+
+### Added
+
+* give the plugin an icon in Claude Code and Codex ([#158](https://github.com/RumyantsevMichael/Prism/issues/158)) ([dc649e7](https://github.com/RumyantsevMichael/Prism/commit/dc649e7a1f226ea748b98fa5b894e5a6bd9edb65))
+* keep shipped work as history and fix done work inside its initiative ([#163](https://github.com/RumyantsevMichael/Prism/issues/163)) ([9328e29](https://github.com/RumyantsevMichael/Prism/commit/9328e29835b1ba190a05c9b286fdf4e7eb0b2594)), closes [#156](https://github.com/RumyantsevMichael/Prism/issues/156)
+
+
+### Fixed
+
+* **review:** match the approved mockup, restore tabs, and stop the multi-tab freeze ([#157](https://github.com/RumyantsevMichael/Prism/issues/157)) ([049aa9c](https://github.com/RumyantsevMichael/Prism/commit/049aa9ce09d404d0b8d43313a4e05bceb94d4fc4))
+* **review:** open stale links in the app, keep previews reachable ([#161](https://github.com/RumyantsevMichael/Prism/issues/161)) ([a28f334](https://github.com/RumyantsevMichael/Prism/commit/a28f334558d37addd02826a29569c8aaa7934887)), closes [#160](https://github.com/RumyantsevMichael/Prism/issues/160)
+
+
+### Documentation
+
+* ship shipped work history on the roadmap ([#164](https://github.com/RumyantsevMichael/Prism/issues/164)) ([0abcf42](https://github.com/RumyantsevMichael/Prism/commit/0abcf42de1e0fadd31e4d58a5004c3f7521d757d)), closes [#156](https://github.com/RumyantsevMichael/Prism/issues/156)
+
 ## [0.20.0](https://github.com/RumyantsevMichael/Prism/compare/v0.19.0...v0.20.0) (2026-11-09)
 
 
