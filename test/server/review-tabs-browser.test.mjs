@@ -309,7 +309,9 @@ test("a named tab group shows its head before its tabs, collapses, takes and let
   const layout = () => page.evaluate(() => [...document.querySelector("#open-tabs").children].map((node) => node.tagName === "PRISM-DOC-TAB-GROUP" ? `[${node.getAttribute("name")}:${node.getAttribute("count")}${node.hasAttribute("collapsed") ? ":c" : ""}]` : `${node.getAttribute("value")}${node.getAttribute("group") ? "+" : ""}${node.hidden ? "(h)" : ""}`));
   const waitFor = async (check, message) => {
     for (let tries = 0; tries < 40 && !check(await session(base)); tries += 1) await page.waitForTimeout(100);
-    assert.ok(check(await session(base)), message);
+    const last = await session(base);
+    // A failure names the session and the strip as they ended, so a failure under load says which step did not land.
+    assert.ok(check(last), `${message}: session ${JSON.stringify({ openTabs: last.openTabs, groups: last.groups, activeTab: last.activeTab })}, strip ${JSON.stringify(await layout())}`);
   };
   const groupsOf = (snapshot) => JSON.stringify(snapshot.groups.map((group) => [group.name, group.tabs, group.collapsed]));
   assert.deepEqual(await layout(), ["attention", "roadmap", "[Retry requests:2]", "requirements+", "decisions+", "glossary"]);
