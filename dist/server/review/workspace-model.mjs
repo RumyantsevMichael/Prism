@@ -733,6 +733,12 @@ async function initiativeContext(projectRoot, id, { slug = null, file = null } =
   return { trail, scope: { ...scope, current: known }, place };
 }
 
+async function knownInitiative(projectRoot, id) {
+  if ((await readText(projectRoot, await recordFile(projectRoot, { kind: "initiative", initiative: id }))) !== null) return true;
+  const roadmap = await loadRoadmapView(projectRoot).catch(() => null);
+  return Boolean(roadmap?.items?.some((item) => item.id === id));
+}
+
 // Context gives every tab, including plain files, a breadcrumb trail, the sidebar scope it belongs to, and the place it belongs to:
 // the trail of a page of a place starts with the place's crumb, and a page of no place keeps its trail from Files.
 export async function entityContext(projectRoot, ref) {
@@ -755,7 +761,8 @@ export async function entityContext(projectRoot, ref) {
   if (record?.initiative && ref.startsWith(".prism/")) return initiativeContext(projectRoot, record.initiative, { slug: record.slice ?? null, file: fileCrumb });
   if (under(plans, ref)) {
     const [id, segment] = ref.slice(plans.length + 1).split("/");
-    if (SLUG_PATTERN.test(id ?? "") && (await readText(projectRoot, await recordFile(projectRoot, { kind: "initiative", initiative: id }))) !== null) {
+    // A plans folder is an initiative's when the initiative has a record or stands on the roadmap; its record and decision then choose the place.
+    if (SLUG_PATTERN.test(id ?? "") && await knownInitiative(projectRoot, id)) {
       return initiativeContext(projectRoot, id, { slug: segment && ref !== `${plans}/${id}/${segment}` ? segment : null, file: fileCrumb });
     }
   }
