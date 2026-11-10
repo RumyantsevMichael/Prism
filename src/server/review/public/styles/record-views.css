@@ -1373,7 +1373,7 @@ a.code-link:hover {
 
 .knowledge-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 120px 140px 240px;
+  grid-template-columns: minmax(0, 2fr) 120px 140px minmax(0, 1fr);
   align-items: center;
   gap: var(--prism-space-5);
   min-width: 0;
@@ -1395,7 +1395,7 @@ a.code-link:hover {
 }
 
 .knowledge-table.is-changed .knowledge-row {
-  grid-template-columns: minmax(0, 1fr) 120px 140px 200px;
+  grid-template-columns: minmax(0, 2fr) 120px 140px minmax(0, 1fr);
 }
 
 .knowledge-table.is-undated .knowledge-row {
@@ -1409,13 +1409,12 @@ a.code-link:hover {
   min-width: 0;
 }
 
+/* A long title, author, or reason wraps rather than ending in an ellipsis, since a plain link has no tooltip to show the rest. */
 .knowledge-title > a,
 .knowledge-title > span {
   min-width: 0;
-  overflow: hidden;
   font-weight: var(--prism-font-weight-medium);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .knowledge-kind {
@@ -1425,20 +1424,16 @@ a.code-link:hover {
 
 .knowledge-cell {
   min-width: 0;
-  overflow: hidden;
   color: var(--prism-color-ink-muted);
   font-size: var(--prism-font-size-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .knowledge-why {
   min-width: 0;
-  overflow: hidden;
   color: var(--prism-color-ink-muted);
   font-size: var(--prism-font-size-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .knowledge-group {
@@ -1532,7 +1527,7 @@ a.code-link:hover {
     min-width: 0;
   }
 
-  .knowledge-row.is-head {
+  .knowledge-table .knowledge-row.is-head {
     display: none;
   }
 
