@@ -1325,7 +1325,8 @@ a.code-link:hover {
   overflow-wrap: anywhere;
 }
 
-.superseded-line > prism-state {
+.superseded-glyph {
+  display: inline-flex;
   flex: none;
 }
 

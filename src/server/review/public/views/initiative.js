@@ -118,7 +118,7 @@ function supersededNote(data) {
   const ref = by ? `initiative:${by.id}` : null;
   const link = by ? ` by <a class="superseded-by" href="./review?artifact=${encodeURIComponent(ref)}" data-artifact="${escapeHtml(ref)}">${escapeHtml(by.title)}</a>` : "";
   return `<div class="superseded-note">
-      <p class="superseded-line"><prism-state state="superseded" aria-hidden="true"></prism-state><span>Superseded${date ? ` ${escapeHtml(date)}` : ""}${link}</span></p>
+      <p class="superseded-line"><span class="superseded-glyph" aria-hidden="true"><prism-state state="superseded"></prism-state></span><span>Superseded${date ? ` ${escapeHtml(date)}` : ""}${link}</span></p>
       ${decision.reason ? `<p class="superseded-reason">${escapeHtml(decision.reason)}</p>` : ""}
     </div>`;
 }
