@@ -298,7 +298,7 @@ const SPECIMENS = {
   "prism-rail-item": {
     default: `<prism-rail label="One place"><prism-rail-item value="work" label="Work" icon="tree" pressed="false"></prism-rail-item></prism-rail>`,
     pressed: `<prism-rail label="Current place"><prism-rail-item value="work" label="Work" icon="tree" pressed="true"></prism-rail-item></prism-rail>`,
-    count: `<prism-rail label="Place with a count"><prism-rail-item value="attention" label="Attention" icon="bell" pressed="false" count="3" count-label="3 questions"></prism-rail-item><prism-rail-item value="attention-many" label="Attention" icon="bell" pressed="true" count="128" count-label="128 questions"></prism-rail-item></prism-rail>`,
+    count: `<prism-rail label="Place with a count"><prism-rail-item value="attention" label="Attention" icon="bell" pressed="false" count="3" count-label="3 questions"></prism-rail-item><prism-rail-item value="attention-some" label="Attention" icon="bell" pressed="false" count="12" count-label="12 questions"></prism-rail-item><prism-rail-item value="attention-many" label="Attention" icon="bell" pressed="true" count="128" count-label="128 questions"></prism-rail-item></prism-rail>`,
     toggle: `<prism-rail label="Sidebar button"><prism-rail-item value="toggle" label="Collapse the sidebar" tip="Collapse the sidebar ([)" icon="panel-left" aria-expanded="true"></prism-rail-item></prism-rail>`,
     small: `<prism-rail-item value="attention" label="Attention" icon="bell" size="sm" count="3" count-label="3 questions"></prism-rail-item>`,
     "long-text": `<prism-rail label="Long place"><prism-rail-item value="long" label="${LONG}" icon="book" pressed="false" count="7" count-label="7 records"></prism-rail-item></prism-rail>`,

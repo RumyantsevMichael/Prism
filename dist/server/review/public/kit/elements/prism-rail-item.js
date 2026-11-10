@@ -4,6 +4,8 @@ import { Base, emit, make, setAttribute } from "./base.js";
 
 // Attributes a page sets on the item that reach its native button, such as the sidebar button's expanded state.
 const FORWARDED = ["aria-expanded", "aria-controls", "aria-keyshortcuts"];
+// The largest count the badge draws whole; a larger one shows as this number and a plus, and the accessible name and tooltip carry it whole.
+const MAX_SHOWN = 99;
 
 export class PrismRailItem extends Base {
   static tag = "prism-rail-item";
@@ -15,7 +17,7 @@ export class PrismRailItem extends Base {
       { name: "icon", values: ["prism-icon name"], default: "", description: "The glyph the button shows." },
       { name: "value", values: ["text"], default: "", description: "The value the item sends in prism-select when it is chosen." },
       { name: "pressed", values: ["boolean", "false"], default: "", description: "Makes it a toggle and exposes the state as aria-pressed; the current place is pressed and paints the selected color with an accent bar at its start." },
-      { name: "count", values: ["number"], default: "", description: "A count on the button's top end corner; 0 or none shows no badge." },
+      { name: "count", values: ["number"], default: "", description: "A count on the button's top end corner; 0 or none shows no badge, two or more digits draw a small badge, and over 99 shows 99+ with the whole count in the accessible name and the tooltip." },
       { name: "count-label", values: ["text"], default: "", description: "The count in words, added to the accessible name after a comma while the badge shows, such as 3 questions." },
       { name: "tip", values: ["text"], default: "", description: "The tooltip's text on hover and keyboard focus, when it should say more than the label, such as the key that runs it." },
       { name: "size", values: ["md", "sm"], default: "md", description: "md is a rail button; sm draws the same button at --prism-control-height with a small count, as the top bar's Attention bell does while the rail is hidden." }
@@ -74,13 +76,16 @@ export class PrismRailItem extends Base {
     setAttribute(this.button, "aria-pressed", this.hasAttribute("pressed") ? String(this.pressed) : null);
     for (const name of FORWARDED) setAttribute(this.button, name, this.getAttribute(name));
     setAttribute(this.icon, "name", this.getAttribute("icon") || null);
-    setAttribute(this.badge, "size", this.getAttribute("size") === "sm" ? "sm" : null);
+    // A count of two or more digits draws the small badge, and one over 99 shows 99+, so the badge stays on the corner and the glyph stays readable.
+    setAttribute(this.badge, "size", this.getAttribute("size") === "sm" || count > 9 ? "sm" : null);
     this.badge.hidden = count === 0;
-    if (this.badge.textContent !== (count ? String(count) : "")) this.badge.textContent = count ? String(count) : "";
-    // The kit tooltip reads the item's tip, so the label stands in when no tip says more.
-    if ((!this.hasAttribute("tip") || this.tipFromLabel) && this.getAttribute("tip") !== label) {
+    const shown = count > MAX_SHOWN ? `${MAX_SHOWN}+` : count ? String(count) : "";
+    if (this.badge.textContent !== shown) this.badge.textContent = shown;
+    // The kit tooltip reads the item's tip, so the label stands in when no tip says more, with the whole count when the badge caps it.
+    const tip = label && count > MAX_SHOWN ? `${label}, ${words}` : label;
+    if ((!this.hasAttribute("tip") || this.tipFromLabel) && this.getAttribute("tip") !== tip) {
       this.settingTip = true;
-      setAttribute(this, "tip", label || null);
+      setAttribute(this, "tip", tip || null);
       this.settingTip = false;
       this.tipFromLabel = true;
     }

@@ -1031,7 +1031,6 @@ prism-rail-item {
   position: absolute;
   top: calc(-1 * var(--prism-space-1));
   right: calc(-1 * var(--prism-space-1));
-  max-width: calc(var(--prism-control-height) + var(--prism-space-2));
   pointer-events: none;
 }
 
