@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -142,4 +142,20 @@ test("Changed this week's count reuses the record libraries the navigation alrea
   const { records, pathspecs } = await recordFiles(root, loaded);
   assert.deepEqual(records.map((record) => [record.kind, record.ref]), [["requirement", "reqs/given.md"], ["glossary", "G.md"], ["diagram", "plans/x/flow.puml"]]);
   assert.deepEqual(pathspecs, ["reqs", "adrs", "G.md", "plans"]);
+});
+
+test("Changed this week reads Git without taking its optional locks, so the person's index is never rewritten", { timeout: 60000 }, async (context) => {
+  const root = await scratch(context);
+  git(root, ["init", "-q"]);
+  await write(root, "docs/requirements/a.md", "# A\n");
+  git(root, ["add", "docs/requirements/a.md"]);
+  git(root, ["commit", "-q", "-m", "Add a"]);
+  // A file whose time changed but whose content did not is one that a status read with optional locks refreshes in the index.
+  const later = new Date(Date.now() + DAY);
+  await utimes(path.join(root, "docs/requirements/a.md"), later, later);
+  const index = await readFile(path.join(root, ".git/index"));
+  const { recordChanges } = await load("server/review/record-changes.mjs");
+  const result = await recordChanges(root, [{ kind: "requirement", title: "A", ref: "docs/requirements/a.md" }], ["docs/requirements"]);
+  assert.equal(result.available, true);
+  assert.deepEqual(await readFile(path.join(root, ".git/index")), index, "the index is left as Git wrote it");
 });

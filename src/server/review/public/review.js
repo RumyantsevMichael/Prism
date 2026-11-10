@@ -2018,13 +2018,19 @@ function rememberSlice(path) {
   void countTouched(slice);
 }
 
-// The server's answer for Touched by my work of one slice, as { slice, answer }, with a null answer when there is no slice or the server could not answer.
+// The server's last answer for Touched by my work, kept so that one request that fails while the page polls leaves the page and its count as they were.
+let touchedKept = { slice: null, answer: null };
+
+// The server's answer for Touched by my work of one slice, as { slice, answer }, with a null answer when there is no slice,
+// and the slice's last answer, or null before it had one, when the server could not answer.
 async function touchedAnswer(slice) {
   if (!slice) return { slice: null, answer: null };
   try {
-    return { slice, answer: await fetchJson(`./api/touched?slice=${encodeURIComponent(slice)}`) };
+    const answer = await fetchJson(`./api/touched?slice=${encodeURIComponent(slice)}`);
+    touchedKept = { slice, answer };
+    return { slice, answer };
   } catch {
-    return { slice, answer: null };
+    return { slice, answer: touchedKept.slice === slice ? touchedKept.answer : null };
   }
 }
 
@@ -2146,7 +2152,7 @@ function viewContext(path, state) {
     lane: pendingLane?.path === path ? pendingLane.lane : null,
     // Touched by my work reads the slice in the selected tab, or else the one selected last, and passes its answer back for the sidebar's count.
     touchedSlice: () => lastSlice,
-    fetchTouched: (slice) => fetchJson(`./api/touched?slice=${encodeURIComponent(slice)}`),
+    fetchTouched: async (slice) => (await touchedAnswer(slice)).answer,
     onTouched: (slice, answer) => noteTouched(slice, answer),
     escapeHtml,
     showToast,

@@ -5,6 +5,7 @@ import { changedPaths, treeId } from "../workflow/slice-gate.mjs";
 import { listRecordEntries, sliceDocumentFolder } from "../workflow/record-store.mjs";
 import { glossaryEntries, loadGlossary, loadInitiativeView, recordFiles } from "./workspace-model.mjs";
 
+const GIT_TIMEOUT_MS = 10000;
 const SLICE_PATTERN = /^([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)$/;
 
 export class TouchedError extends Error {
@@ -57,7 +58,8 @@ async function verifiedChanges(projectRoot, id, slug, slice) {
   const passed = entries.filter((item) => item.entry?.kind === "verification" && item.entry.passed === true && typeof item.entry.tree === "string").at(-1);
   if (!passed || !treeId(passed.entry.tree)) return null;
   // A moved file lists both its paths, and only its new path names a record file.
-  const files = await changedPaths(projectRoot, start, passed.entry.tree);
+  // The page asks while the person waits, so a Git that hangs counts as unreadable after 10 seconds.
+  const files = await changedPaths(projectRoot, start, passed.entry.tree, { timeoutMs: GIT_TIMEOUT_MS });
   return files ? { files } : { unreadable: true };
 }
 

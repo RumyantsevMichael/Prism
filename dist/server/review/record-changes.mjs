@@ -13,10 +13,11 @@ export const UNAVAILABLE = Object.freeze({
 
 // One Git command in the project; Git is looked up through PATH on each call, so a project without Git says so rather than failing.
 // Git's messages are read in English whatever the locale.
+// Git takes no optional lock, so a status read never rewrites the index or makes the person's own `git add` find it locked.
 // A failure keeps Git's exit code, which is a number only when Git ran to its end, and its message, so a command that was killed or overflowed reads as Git not running.
 function git(root, args) {
   return new Promise((resolve) => {
-    execFile("git", ["-c", "core.quotePath=false", ...args], { cwd: root, env: { ...process.env, LC_ALL: "C", LANGUAGE: "C" }, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_BUFFER, encoding: "utf8" }, (error, stdout, stderr) => {
+    execFile("git", ["-c", "core.quotePath=false", ...args], { cwd: root, env: { ...process.env, LC_ALL: "C", LANGUAGE: "C", GIT_OPTIONAL_LOCKS: "0" }, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_BUFFER, encoding: "utf8" }, (error, stdout, stderr) => {
       resolve(error ? { ok: false, code: error.killed || typeof error.code !== "number" ? null : error.code, stderr: String(stderr ?? ""), stdout: "" } : { ok: true, stdout });
     });
   });
