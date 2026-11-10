@@ -16,13 +16,25 @@ const VIEWS = {
   slice: () => import("./slice.js"),
   requirements: () => import("./library.js"),
   decisions: () => import("./library.js"),
-  glossary: () => import("./library.js")
+  glossary: () => import("./library.js"),
+  diagrams: () => import("./library.js"),
+  touched: () => import("./knowledge.js"),
+  changed: () => import("./knowledge.js")
 };
 
-// Mirrors the server's entity references: sections, initiative:<id>, and slice:<id>/<slug>.
+// Knowledge's own pages by the part of their address after `knowledge:`.
+export const KNOWLEDGE_PAGES = Object.freeze({ diagrams: "Diagrams", touched: "Touched by my work", changed: "Changed this week" });
+
+// Mirrors the server's entity references: sections, Attention's filtered pages, Knowledge's pages, initiative:<id>, and slice:<id>/<slug>.
 export function parseEntityRef(ref) {
   if (SECTIONS.includes(ref)) return { kind: ref };
-  let match = /^initiative:([A-Za-z0-9_-]+)$/.exec(ref ?? "");
+  // Attention's filtered pages: one kind, one initiative's items, or the questions answered this week.
+  let match = /^attention:(questions|findings|failed|blocked|ready|problems|answered|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
+  if (match) return { kind: "attention", page: match[1] };
+  // Knowledge's own pages: the diagrams, the records behind the open slice, and this week's record changes.
+  match = /^knowledge:(diagrams|touched|changed)$/.exec(ref ?? "");
+  if (match) return { kind: "knowledge", page: match[1] };
+  match = /^initiative:([A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "initiative", id: match[1] };
   match = /^slice:([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "slice", id: match[1], slug: match[2] };
@@ -84,11 +96,13 @@ export function recordLabel(path, titles = new Map()) {
 
 export function entityLabel(entity) {
   const data = entity.data;
+  if (entity.kind === "attention" && entity.ref !== "attention") return { title: "Attention", lead: null, subtitle: null };
   if (entity.kind === "attention") return { title: "Attention", lead: "Answer here or in the agent's conversation; the agent picks the answer up on its own.", subtitle: null };
   if (entity.kind === "roadmap") return { eyebrow: "Roadmap", title: "Roadmap", lead: data.serves || null, subtitle: data.recordPath ?? null };
   if (entity.kind === "initiative") return { eyebrow: "Initiative", title: data.roadmapItem?.title ?? data.id, subtitle: data.recordPath };
   if (entity.kind === "slice") return { eyebrow: `Slice · ${data.initiativeTitle}`, title: data.slice.title, subtitle: data.artifacts?.folder ?? null };
   if (entity.kind === "glossary") return { eyebrow: "Library", title: "Glossary", subtitle: data.path };
+  if (Object.hasOwn(KNOWLEDGE_PAGES, entity.kind)) return { eyebrow: "Knowledge", title: KNOWLEDGE_PAGES[entity.kind], subtitle: null };
   return { eyebrow: "Library", title: ENTITY_LABELS[entity.kind], subtitle: data.directory };
 }
 

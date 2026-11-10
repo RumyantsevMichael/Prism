@@ -1241,3 +1241,23 @@ a.code-link:hover {
   color: var(--prism-color-warning);
   font-weight: var(--prism-font-weight-bold);
 }
+
+/* ---------- Knowledge's entry points and Diagrams: the pages lay out the kit's library table ---------- */
+
+/* A library table stands a small gap further below the line under the title than the page's usual gap, as the mockup's table stands below its page subtitle. */
+.artifact-header + .structured-view > :is(.knowledge-table, .diagram-list):first-child {
+  margin-top: var(--prism-space-2);
+}
+
+.knowledge-table {
+  --prism-lib-columns: minmax(0, 2fr) 120px 140px minmax(0, 1fr);
+}
+
+.knowledge-table.is-undated {
+  --prism-lib-columns: minmax(0, 1fr) 120px;
+}
+
+.knowledge-table.is-slices,
+.diagram-list {
+  --prism-lib-columns: minmax(0, 1fr) minmax(0, 1fr);
+}

@@ -1,0 +1,8 @@
+@startuml
+title work-place - units
+component "review.js\nrenderWorkPlace" as Render
+component "workspace-model.mjs\ncomputeNavigation places.work" as Model
+component "prism-tree-item" as Tree
+Render --> Model : groups and ordered slices
+Render --> Tree : rows, more row, filter matches
+@enduml

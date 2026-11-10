@@ -6,7 +6,15 @@ import { badge, bindLinks, card, emptyNote, escapeHtml, plural } from "./util.js
 import { currentPhase } from "./slice.js";
 import { preference, setPreference } from "../kit/preferences.js";
 
-const MODES = [["board", "Board"], ["list", "List"], ["graph", "Graph"]];
+/** The Roadmap page's views, which the Roadmap place's sidebar switches; the page draws no switch of its own. */
+export const ROADMAP_VIEWS = Object.freeze([["board", "Board"], ["list", "List"], ["graph", "Graph"]]);
+/** The lanes a lane link names in its address, each with its band. */
+export const LANES = Object.freeze([["now", "Now"], ["next", "Next"], ["later", "Later"], ["parked", "Parked"]]);
+
+/** The heading of a lane on the drawn board, or null when the board does not show it. */
+export function laneHeading(root, lane) {
+  return LANES.some(([name]) => name === lane) ? root.querySelector(`#roadmap-band-${lane}`) : null;
+}
 
 export { stateBadge };
 
@@ -147,10 +155,15 @@ async function graph(container, data, ctx, titles, archive) {
   enablePanZoom(section, ctx.state.graph ??= {});
 }
 
+// The view comes from the Roadmap place's sidebar; a lane link always shows the board, with that lane open so its heading can scroll into view.
 export async function render(container, entity, ctx) {
   const data = entity.data;
-  // The view, the archive toggle, and the collapsed lanes are the person's preferences, so every roadmap opens the way they last left one.
-  const view = { mode: preference("roadmap.view"), archive: preference("roadmap.showArchived"), collapsedLanes: preference("roadmap.collapsedLanes") };
+  // The view, the archive toggle, and the collapsed lanes are the person's preferences, so every roadmap opens the way they last left one;
+  // the Roadmap place's sidebar switches the view, and a lane link always shows the board with that lane open.
+  const lane = LANES.find(([name]) => name === ctx.lane)?.[1] ?? null;
+  const chosen = ROADMAP_VIEWS.some(([name]) => name === ctx.roadmapView) ? ctx.roadmapView : preference("roadmap.view");
+  const view = { mode: lane ? "board" : chosen, archive: preference("roadmap.showArchived"), collapsedLanes: preference("roadmap.collapsedLanes") };
+  if (lane) view.collapsedLanes = view.collapsedLanes.filter((band) => band !== lane);
   const archived = data.items.filter((item) => ARCHIVED.has(item.state)).length;
   const titles = new Map(data.items.map((item) => [item.id, item.title]));
   const missing = data.error
@@ -174,11 +187,10 @@ export async function render(container, entity, ctx) {
     <div data-roadmap-body></div>
     ${data.openQuestions?.length ? `<section class="roadmap-questions" aria-labelledby="roadmap-questions"><h2 id="roadmap-questions"><prism-icon name="question" size="sm"></prism-icon><span>Open questions</span><prism-badge tone="neutral">${data.openQuestions.length}</prism-badge></h2><ul>${data.openQuestions.map((question) => `<li><prism-icon name="chevron-right" size="xs"></prism-icon><span>${escapeHtml(question)}</span></li>`).join("")}</ul></section>` : ""}
     ${data.unlisted?.length ? card("Initiatives not on the roadmap", `<p class="muted">These plans folders have an initiative record but no roadmap entry.</p><ul class="row-list">${data.unlisted.map((id) => `<li>${initiativeLink(id, id)}</li>`).join("")}</ul>`, { eyebrow: "Needs prioritization" }) : ""}`;
-  // The page head carries the view's controls beside the title: the archive toggle and the board, list, and graph modes.
+  // The page head carries the archive toggle beside the title; the board, list, and graph switch is the Roadmap place's, in the sidebar.
   const head = container.parentElement?.querySelector(".artifact-header");
   const controls = `<div class="view-controls roadmap-controls">
       <prism-button size="sm" variant="ghost" data-roadmap-archive pressed="${view.archive}"${archived ? "" : " disabled"}>${view.archive ? "Hide" : "Show"} shipped and superseded <prism-badge tone="neutral">${archived}</prism-badge></prism-button>
-      <div class="segmented" role="group" aria-label="Roadmap view">${MODES.map(([mode, label]) => `<prism-button size="sm" variant="ghost" data-roadmap-mode="${mode}" pressed="${view.mode === mode}">${label}</prism-button>`).join("")}</div>
     </div>`;
   head?.querySelector(".roadmap-controls")?.remove();
   if (head) head.insertAdjacentHTML("beforeend", controls);
@@ -209,12 +221,6 @@ export async function render(container, entity, ctx) {
     void setPreference("roadmap.showArchived", !view.archive).catch(() => {});
     ctx.rerender();
   });
-  for (const button of controlRoot.querySelectorAll("[data-roadmap-mode]")) {
-    button.addEventListener("click", () => {
-      void setPreference("roadmap.view", button.dataset.roadmapMode).catch(() => {});
-      ctx.rerender();
-    });
-  }
   applyWidths(container);
   bindLinks(container, ctx);
 }

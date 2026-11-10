@@ -75,6 +75,7 @@ test("eight tabs of two projects share one event stream, and the last tab still 
 
   const last = pages.at(-1);
   await last.bringToFront();
+  await last.getByRole("navigation", { name: "Places" }).getByRole("button", { name: /^Knowledge/ }).click();
   const started = Date.now();
   await last.locator("#sidebar").getByRole("treeitem", { name: /^Glossary/ }).click();
   await last.waitForFunction(() => /Glossary/.test(document.querySelector("#artifact h1")?.textContent ?? ""), null, { timeout: 5000 });

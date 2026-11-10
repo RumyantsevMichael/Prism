@@ -43,7 +43,8 @@ export class PrismDocTabs extends Base {
     this.addEventListener("pointerdown", (event) => this.dragStart(event));
     this.addEventListener("click", (event) => {
       // The click that ends a drag only drops the tab; it does not open it.
-      if (this.dropped) {
+      // That click comes from the pointer, so it has a click count; a click from the keyboard or a script has none and acts as usual.
+      if (this.dropped && event.detail > 0) {
         this.dropped = false;
         event.stopPropagation();
         return;
@@ -304,6 +305,8 @@ export class PrismDocTabs extends Base {
 
   // A press on a tab's title or a group's head becomes a drag once the pointer moves a few pixels along the strip; until then it is a click.
   dragStart(event) {
+    // A new press starts a new gesture, so the click of an earlier drop that the browser never sent cannot swallow this one.
+    this.dropped = false;
     const [item, part] = this.hit(event);
     if (!item || (part !== "select" && part !== "toggle") || event.button !== 0 || this.stops.length < 2) return;
     const startX = event.clientX;
@@ -334,11 +337,8 @@ export class PrismDocTabs extends Base {
     const drop = () => {
       cleanup();
       if (!dragging) return;
+      // Some browsers follow the drop with a click and some do not, so the flag lasts until that click or the next press, never for a span of time.
       this.dropped = true;
-      // A click follows the pointerup only when both land on the same element, so the flag never outlives this drop.
-      setTimeout(() => {
-        this.dropped = false;
-      });
       this.report(item, before);
     };
     const cancel = () => {
