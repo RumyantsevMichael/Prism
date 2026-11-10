@@ -113,7 +113,9 @@ const SUITES = [
   "record-store-sync-crash.test.mjs"
 ];
 
-test("the store sync suites pass on a file system that ignores letter case", { timeout: 900000 }, async (context) => {
+// The emulation hooks POSIX folders below TMPDIR; NTFS ignores letter case itself, so on Windows the suites already run that way directly.
+const NATIVE = process.platform === "win32" && "Windows file systems ignore letter case themselves, and the store sync suites run on them directly";
+test("the store sync suites pass on a file system that ignores letter case", { timeout: 900000, skip: NATIVE }, async (context) => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-sync-case-suites-")));
   context.after(() => rm(root, { recursive: true, force: true }));
   const marker = path.join(root, "case-insensitive.loaded");

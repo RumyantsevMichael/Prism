@@ -96,8 +96,15 @@ test("a listed path that no longer holds a checkout of its repository leaves the
   const removed = await cloneOf(api, place.parent, "api-removed", {});
   const renamed = await cloneOf(api, place.parent, "api-renamed", {});
   const moved = await cloneOf(api, place.parent, "api-moved", {});
-  for (const checkout of [removed, renamed, moved]) ok(await (await prismServer(context, checkout, { appFolder: place.app, hostRoot: false })).call("get_roadmap"));
+  const servers = [];
+  for (const checkout of [removed, renamed, moved]) {
+    const server = await prismServer(context, checkout, { appFolder: place.app, hostRoot: false });
+    servers.push(server);
+    ok(await server.call("get_roadmap"));
+  }
   assert.equal((await entries(place)).length, 3);
+  // Windows cannot remove a folder that a running server works in, so the removed checkout's server ends first.
+  await servers[0].close();
   await rm(removed, { recursive: true, force: true });
   // This folder now names its repository differently, as a checkout that changed its Repository line would.
   await configure(renamed, { repository: "api-two" });

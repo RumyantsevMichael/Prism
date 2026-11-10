@@ -18,6 +18,13 @@ test.after(async () => { cancelRecordSyncs(); await rm(environment, { recursive:
 
 const git = (cwd, args, input) => execFileSync("git", ["-C", cwd, ...args], { input, stdio: ["pipe", "pipe", "pipe"] }).toString().trim();
 const exists = (target) => access(target).then(() => true, () => false);
+// Whether the crafted entry reached the disk. Windows finds a folder by its 8.3 short name too, so a crafted PRISM-~1 path can name the sync's
+// own folder and a file the sync wrote there; such a file holds the sync's content, not the crafted one.
+const writtenThrough = async (target, contents = "crafted\n") => {
+  if (!(await exists(target))) return false;
+  const text = await readFile(target, "utf8").catch(() => null);
+  return text === null || text === contents;
+};
 // Whether a path is stored on disk in exactly this spelling, as folder listings show it, which a file system that ignores letter case tells apart only that way.
 async function stored(base, ...names) {
   let folder = base;
@@ -118,7 +125,7 @@ for (const { label, names, target, contents, mode } of CRAFTED) {
       assert.equal(status.state, "merge_failed", JSON.stringify(status));
       assert.match(status.message, /which no store may hold/);
       assert.ok(status.message.includes(JSON.stringify(names.join("/"))), "the refusal names the path");
-      assert.equal(await exists(target(storeB)), false, "nothing is written through the crafted path");
+      assert.equal(await writtenThrough(target(storeB), contents), false, "nothing is written through the crafted path");
       assert.equal(isAncestor(storeB, crafted), false, "the branch stays where it was");
       assert.equal(git(storeB, ["status", "--porcelain", "--", ".", ":(exclude).prism-sync"]), "", "the store's files match its branch");
       assert.equal(await exists(path.join(storeB, "artifacts", "plans", "slice.md")), true);

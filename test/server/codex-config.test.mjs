@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   CODEX_CONFIG_REASON,
-  codexLaunch,
   inspectCodexEffectiveConfig,
   normalizeConfigResponse
 } from "../../dist/server/session/host-adapters/codex-config.mjs";
+import { commandLaunch } from "../../dist/server/command-launch.mjs";
 
 const verifiedAt = "2026-09-20T12:00:00.000Z";
 
@@ -106,12 +109,20 @@ test("fails closed when the app-server request is unavailable", async () => {
   });
 });
 
-test("starts Codex through cmd.exe on Windows unless the command is an executable", () => {
-  assert.deepEqual(codexLaunch("codex", ["app-server", "--stdio"], "linux"), { command: "codex", args: ["app-server", "--stdio"], shell: false });
-  assert.deepEqual(codexLaunch("codex", ["app-server", "proxy", "--sock", "C:\\Users\\a b\\codex.sock"], "win32"), {
-    command: "\"codex\"",
+test("starts Codex and other named commands on Windows by the file PATH and PATHEXT find, through cmd.exe for a shim", async (context) => {
+  const folder = await mkdtemp(path.join(os.tmpdir(), "prism-command-launch-"));
+  context.after(() => rm(folder, { recursive: true, force: true }));
+  await writeFile(path.join(folder, "codex"), "#!/bin/sh\n");
+  await writeFile(path.join(folder, "codex.cmd"), "@echo off\n");
+  await writeFile(path.join(folder, "codenib.exe"), "");
+  const environment = { Path: `${folder};${path.join(folder, "missing")}`, PATHEXT: ".exe;.cmd" };
+  assert.deepEqual(commandLaunch("codex", ["app-server", "--stdio"], "linux", environment), { command: "codex", args: ["app-server", "--stdio"], shell: false });
+  assert.deepEqual(commandLaunch("codex", ["app-server", "proxy", "--sock", "C:\\Users\\a b\\codex.sock"], "win32", environment), {
+    command: `"${path.join(folder, "codex.cmd")}"`,
     args: ["\"app-server\"", "\"proxy\"", "\"--sock\"", "\"C:\\Users\\a b\\codex.sock\""],
     shell: true
   });
-  assert.deepEqual(codexLaunch("C:\\Tools\\codex.EXE", ["app-server"], "win32"), { command: "C:\\Tools\\codex.EXE", args: ["app-server"], shell: false });
+  assert.deepEqual(commandLaunch("codenib", ["mcp"], "win32", environment), { command: path.join(folder, "codenib.exe"), args: ["mcp"], shell: false });
+  assert.deepEqual(commandLaunch(path.join(folder, "codenib.exe"), ["mcp"], "win32", environment), { command: path.join(folder, "codenib.exe"), args: ["mcp"], shell: false });
+  assert.deepEqual(commandLaunch("not-installed", ["mcp"], "win32", environment), { command: "not-installed", args: ["mcp"], shell: false }, "a command found nowhere starts as named, so its spawn fails with ENOENT");
 });

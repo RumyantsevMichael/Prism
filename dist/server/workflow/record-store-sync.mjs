@@ -1706,11 +1706,23 @@ async function storedInSpelling(base, file, cache) {
  * so a file written below it lands at the target's spelling, which the next commit reads back; a file system that tells letter case apart keeps the two spellings as two folders.
  */
 // Windows refuses to rename a folder to another spelling of its own name, so there the folder first moves to a unique name beside it.
+// Windows also refuses to move a folder while another process, such as Git that has just exited or a virus scanner reading new files,
+// still holds a file inside it, so each move is retried for a few seconds while the refusal says the folder is in use.
 async function respell(from, to) {
   if (process.platform !== "win32") return rename(from, to);
   const between = `${from}.respell-${process.pid}-${randomBytes(4).toString("hex")}`;
-  await rename(from, between);
-  try { await rename(between, to); } catch (error) { await rename(between, from).catch(() => {}); throw error; }
+  await moveWhenFree(from, between);
+  try { await moveWhenFree(between, to); } catch (error) { await moveWhenFree(between, from).catch(() => {}); throw error; }
+}
+
+async function moveWhenFree(from, to) {
+  for (let delay = 10; ; delay *= 2) {
+    try { return await rename(from, to); }
+    catch (error) {
+      if (!["EPERM", "EACCES", "EBUSY"].includes(error.code) || delay > 2560) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
 }
 
 async function respellFolders(base, file) {

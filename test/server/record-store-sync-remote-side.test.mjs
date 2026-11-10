@@ -6,6 +6,9 @@ import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
+// Git names a Windows path with forward slashes, as Prism hands it to Git.
+const gitPath = (file) => process.platform === "win32" ? file.replaceAll("\\", "/") : file;
+
 // A remote reached by a path or a file:// URL has its receive-pack and upload-pack run on this machine, so no hook or command that the remote's own files name runs during a sync or a first clone,
 // and a sync's fetch removes only the remote-tracking branches its remote no longer holds, whatever refspecs the person configured.
 const environment = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-sync-remote-side-env-")));
@@ -63,7 +66,7 @@ test("only a remote that Git reaches by its local transport gets the helper with
   const [option, unsigned, ...rest] = await remoteHelperOption("--receive-pack", ["https://example.com/records.git", pathToFileURL(remote).href]);
   // The helper is a shell function that runs receive-pack in the repository its own text names, and ignores the path Git appends to it.
   assert.match(option, /^--receive-pack=prism_pinned_helper\(\) \{ exec git -c 'core\.hooksPath=.*no-hooks' -c 'core\.alternateRefsCommand=exit 0;' -c 'core\.alternateRefsPrefixes=' -c 'receive\.denyCurrentBranch=refuse' .* receive-pack '(.*)'; \}; prism_pinned_helper$/);
-  assert.ok(option.endsWith(` receive-pack '${remote}'; }; prism_pinned_helper`), option);
+  assert.ok(option.endsWith(` receive-pack '${gitPath(remote)}'; }; prism_pinned_helper`), option);
   for (const setting of ["receive.autogc=false", "gc.auto=0", "maintenance.auto=false", "core.fsmonitor=", "hook.pre-receive.enabled=false", "hook.post-receive.enabled=false", "hook.reference-transaction.enabled=false", "hook.pre-auto-gc.enabled=false"]) {
     assert.ok(option.includes(` -c '${setting}' `), setting);
   }
@@ -270,7 +273,7 @@ test("a percent-encoded file:// URL reads the hook names, refuses a hook it cann
   configureHooks(remote, { unnamed: true });
   const encoded = pathToFileURL(remote).href;
   assert.match(encoded, /My%20Drive/);
-  assert.deepEqual(await localRepository(encoded, parent), { path: remote });
+  assert.deepEqual(await localRepository(encoded, parent), { path: gitPath(remote) });
   await assert.rejects(helperNames(encoded, parent), /hook named "a=b"/);
   const store = path.join(parent, "store");
   git(parent, ["clone", "-q", remote, store]);
@@ -319,7 +322,7 @@ test("a remote path that starts with ~ or ends with slashes reads the hook names
   await remoteWithBranch(parent, atHome);
   configureHooks(atHome);
   const tilde = `~/stores/${path.basename(parent)}.git`;
-  assert.deepEqual(await localRepository(tilde, parent), { path: atHome });
+  assert.deepEqual(await localRepository(tilde, parent), { path: gitPath(atHome) });
   assert.ok((await helperNames(tilde, parent)).includes(" -c 'hook.audit.enabled=false' "), tilde);
   // Git drops the trailing slashes before it tries the .git suffixes, so records/ names records.git.
   const remote = path.join(parent, "records.git");
@@ -327,7 +330,7 @@ test("a remote path that starts with ~ or ends with slashes reads the hook names
   await remoteWithBranch(path.join(parent, "seeds"), remote);
   configureHooks(remote);
   for (const url of [`${path.join(parent, "records")}/`, `${remote}///`, `${pathToFileURL(remote).href}/`]) {
-    assert.deepEqual(await localRepository(url, parent), { path: remote }, url);
+    assert.deepEqual(await localRepository(url, parent), { path: gitPath(remote) }, url);
     assert.ok((await helperNames(url, parent)).includes(" -c 'hook.audit.enabled=false' "), url);
   }
   for (const [url, target] of [[tilde, atHome], [`${path.join(parent, "records")}/`, remote]]) {
@@ -355,7 +358,7 @@ test("a remote whose path is a .git file reads the hook names of the Git directo
   const pointer = path.join(parent, "pointer");
   await writeFile(pointer, `gitdir: ${real}\n`);
   for (const url of [linked, pathToFileURL(linked).href, pointer, path.relative(parent, linked)]) {
-    assert.deepEqual(await localRepository(url, parent), { path: real }, url);
+    assert.deepEqual(await localRepository(url, parent), { path: gitPath(real) }, url);
     assert.ok((await helperNames(url, parent)).includes(" -c 'hook.audit.enabled=false' "), url);
   }
   const store = path.join(parent, "store");
@@ -416,8 +419,14 @@ test("a local remote URL whose repository Prism cannot find the way Git does is 
   git(store, ["remote", "set-url", "origin", "~prism-no-such-user/remote.git"]);
   await writeFile(path.join(store, "roadmap.json"), "{\"store\":true}\n");
   const status = await syncRecordStoreNow(store);
-  assert.equal(status.state, "git_failed", JSON.stringify(status));
-  assert.match(status.message, /cannot tell which repository Git opens for the local remote ~prism-no-such-user\/remote\.git/);
+  if (process.platform === "win32") {
+    // Git for Windows has no ~user home lookup and reads the URL as a folder below the store, which holds no repository.
+    assert.equal(status.state, "fetch_failed", JSON.stringify(status));
+    assert.match(status.message, /No Git repository is found at the local remote/);
+  } else {
+    assert.equal(status.state, "git_failed", JSON.stringify(status));
+    assert.match(status.message, /cannot tell which repository Git opens for the local remote ~prism-no-such-user\/remote\.git/);
+  }
   const projectRoot = path.join(parent, "project");
   await mkdir(projectRoot);
   useManagedStores(projectRoot, path.join(parent, "stores"));
@@ -435,7 +444,8 @@ const helpersIn = async (trace) => (await read(trace)).split("\n").filter((line)
 
 test("the helper enters the repository it names, whatever path Git appends to it, for a path with spaces, quotes, $, backticks, and non-ASCII letters", async (context) => {
   const parent = await folder(context);
-  const odd = path.join(parent, "it's a \"$HOME\" `x` café");
+  // Windows forbids a double quote in a file name, so there the folder keeps every other character.
+  const odd = path.join(parent, process.platform === "win32" ? "it's a $HOME `x` café" : "it's a \"$HOME\" `x` café");
   await mkdir(odd);
   const real = path.join(odd, "real.git");
   const moved = path.join(parent, "moved.git");
@@ -451,7 +461,7 @@ test("the helper enters the repository it names, whatever path Git appends to it
   assert.match(listed, /refs\/heads\/main/);
   assert.doesNotMatch(listed, /refs\/heads\/moved/);
   const [started] = await helpersIn(trace);
-  assert.ok(started?.includes(`prism_pinned_helper '\\''${moved}'\\''`), `Git did not append the rewritten path: ${started}`);
+  assert.ok(started?.includes(`prism_pinned_helper '\\''${gitPath(moved)}'\\''`), `Git did not append the rewritten path: ${started}`);
   // A push whose pushInsteadOf rule rewrites the path lands in the repository the helper names too.
   const clone = path.join(parent, "clone");
   git(parent, ["clone", "-q", real, clone]);
@@ -475,7 +485,7 @@ test("a url.<base>.insteadOf or pushInsteadOf rule that matches the repository's
   git(parent, ["clone", "-q", path.join(real, "remote.git"), store]);
   git(store, ["remote", "set-url", "origin", viaLink]);
   // Plain Git reaches the real folder through the link, where the rule does not apply, so a sync naming the real folder's path must not let the rule apply either.
-  assert.deepEqual(await localRepository(viaLink, store), { path: path.join(real, "remote.git") });
+  assert.deepEqual(await localRepository(viaLink, store), { path: gitPath(path.join(real, "remote.git")) });
   await writeFile(path.join(store, "roadmap.json"), "{\"store\":true}\n");
   for (const kind of ["insteadOf", "pushInsteadOf"]) {
     git(store, ["config", `url.${moved}/.${kind}`, `${real}/`]);
@@ -567,7 +577,7 @@ test("a first clone whose URL an insteadOf rule turns into a ~/ path clones the 
     assert.equal(git(managed, ["config", "remote.origin.url"]), configured);
     assert.equal(await readFile(path.join(managed, "roadmap.json"), "utf8"), "{}\n");
     const [started] = await helpersIn(trace);
-    assert.ok(started?.includes(" -c '\\''hook.audit.enabled=false'\\'' ") && started.includes(`upload-pack '\\''${atHome}'\\''`), started);
+    assert.ok(started?.includes(" -c '\\''hook.audit.enabled=false'\\'' ") && started.includes(`upload-pack '\\''${gitPath(atHome)}'\\''`), started);
     await writeFile(path.join(managed, "roadmap.json"), "{\"managed\":true}\n");
     assert.equal((await syncRecordStoreNow(managed)).state, "ok");
     assert.equal(git(atHome, ["show", "main:roadmap.json"]), "{\"managed\":true}");

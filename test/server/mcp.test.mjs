@@ -140,7 +140,10 @@ input.on("line", (line) => {
 `;
   await writeFile(executable, source);
   await chmod(executable, 0o755);
-  return executable;
+  if (process.platform !== "win32") return executable;
+  // Windows runs no #! script, so there the stub is a .cmd shim, as npm installs a command, which Prism starts through cmd.exe.
+  await writeFile(`${executable}.cmd`, `@"${process.execPath}" "${executable}" %*\r\n`);
+  return `${executable}.cmd`;
 }
 
 function delay(milliseconds) {
@@ -883,7 +886,8 @@ test("opens the system browser when it presents a review", async (context) => {
 
   assert.match(review.result.structuredContent.url, /^http:\/\/127\.0\.0\.1:/);
   assert.equal(review.result.structuredContent.opened, true);
-  assert.equal(await waitForMarker(browser.marker), "opened");
+  // The stub stands in for open and xdg-open on PATH; Windows starts the browser through rundll32, which no stub on PATH replaces.
+  if (process.platform !== "win32") assert.equal(await waitForMarker(browser.marker), "opened");
 });
 
 test("present_review gathers the presented tabs into the tab group the agent names", async (context) => {
@@ -898,14 +902,15 @@ test("present_review gathers the presented tabs into the tab group the agent nam
   assert.match(JSON.stringify(refused), /tab group name/);
 });
 
-test("does not reopen an existing viewer for repeated presentation calls", async (context) => {
+test("does not reopen an existing viewer for repeated presentation calls", { skip: process.platform === "win32" && "it counts browser opens through an open or xdg-open stub on PATH, and Windows opens the browser through rundll32" }, async (context) => {
   const root = await projectFixture(context, "idempotent-present", "artifact.md");
   const browser = await browserStub(context);
   const mcp = mcpProcess(context, root, undefined, browser.environment);
 
   await initialize(mcp);
   const first = await callTool(mcp, 2, "present_review", { projectRoot: root, artifact: "docs/artifact.md" }, "first-task");
-  assert.equal(await waitForMarker(browser.marker), "opened");
+  // The stub stands in for open and xdg-open on PATH; Windows starts the browser through rundll32, which no stub on PATH replaces.
+  if (process.platform !== "win32") assert.equal(await waitForMarker(browser.marker), "opened");
   // Only a tab that holds a write session counts as connected, so the stream uses the session the opened tab takes from its grant.
   const openedUrl = new URL(await readFile(browser.url, "utf8"));
   const grant = new URLSearchParams(openedUrl.hash.slice(1)).get("write");
@@ -939,7 +944,8 @@ test("opens one review page for the complete artifact tree when no artifact is s
   assert.match(review.result.structuredContent.url, /^http:\/\/127\.0\.0\.1:/);
   assert.doesNotMatch(review.result.structuredContent.url, /artifact=/);
   assert.equal(review.result.structuredContent.opened, true);
-  assert.equal(await waitForMarker(browser.marker), "opened");
+  // The stub stands in for open and xdg-open on PATH; Windows starts the browser through rundll32, which no stub on PATH replaces.
+  if (process.platform !== "win32") assert.equal(await waitForMarker(browser.marker), "opened");
 });
 
 test("native semantic MCP discovery is passive and search exposes bounded structured results and stable errors", async context => {

@@ -401,8 +401,9 @@ export function publicAsset(route) {
 
 export function openBrowser(url) {
   const platform = process.platform;
-  const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open";
-  const args = platform === "win32" ? ["/c", "start", "", url] : [url];
+  // cmd.exe's start would read an & in the URL's query as a second command, so Windows opens the URL through the shell's URL handler.
+  const command = platform === "darwin" ? "open" : platform === "win32" ? "rundll32" : "xdg-open";
+  const args = platform === "win32" ? ["url.dll,FileProtocolHandler", url] : [url];
   try {
     const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true });
     child.on("error", () => {});

@@ -109,6 +109,8 @@ async function shutdownApp(directory) {
   }
   try {
     const owner = JSON.parse(await readFile(path.join(directory, "review-app.lock"), "utf8"));
+    // Windows ends a process at once without running its shutdown, which leaves its lock file behind, so the app first gets time to stop by itself.
+    if (owner.pid !== process.pid) await eventually(() => !alive(owner.pid), 5000).catch(() => {});
     if (owner.pid !== process.pid && alive(owner.pid)) process.kill(owner.pid);
     // Windows cannot delete the directory while the app still holds its lock file open.
     await eventually(() => !alive(owner.pid), 5000);
@@ -661,11 +663,14 @@ test("an MCP server lists its project in the app from start until it exits", asy
 test("an MCP server in a host that names no project starts the app at once and lists the project from its first Prism tool call", async (context) => {
   const directory = await appDirectory(context);
   const root = await project(context, "codex");
+  // The app watches the project that the server registered until its lease ends, and Windows cannot remove a watched folder, so the app stops before the project is removed.
+  defer(context, () => shutdownApp(directory));
   const env = isolatedEnv({ PRISM_REVIEW_APP_DIR: directory, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) });
   delete env.PRISM_REVIEW_APP;
   delete env.CLAUDE_PROJECT_DIR;
   const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
-  defer(context, () => child.kill());
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  defer(context, async () => { child.kill(); await exited; });
   readline.createInterface({ input: child.stdout }).on("line", () => {});
   // The app starts with the server, before any tool call names the project.
   const started = await eventually(async () => (await control(await readDiscovery(directory), "health")).proven, 30000);
@@ -1046,6 +1051,8 @@ test("the prism review command exits after presenting through a running app", as
   const directory = await appDirectory(context);
   const watched = await project(context, "running");
   const root = await project(context, "cli");
+  // The app watches the project that the command registered until its lease ends, and Windows cannot remove a watched folder, so the app stops before the project is removed.
+  defer(context, () => shutdownApp(directory));
   const review = await pool(context, { app: { directory } }).get(watched, "task");
   const events = await viewerEvents(context, await review.reviewUrl([]));
   await eventually(() => events.some((event) => event.name === "session"));
