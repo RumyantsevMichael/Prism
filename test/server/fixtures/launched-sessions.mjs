@@ -31,7 +31,8 @@ export const LAUNCH_ID = /^launch-[0-9a-f]{16}$/;
 // One stub serves both hosts; its file name says which host it is.
 // A plan: { hold: "forever" | <ms>, exit, stderr, isError, denials: [{ tool, reason }], threadId (codex; null emits no thread.started),
 // declined: [<command>] (codex), failed (codex), ignoreTerm, children: ["group" | "session" | "stubborn"], noEvents }.
-const STUB = String.raw`#!/usr/bin/env node
+// Each stub names node by its absolute path, so PATH needs no folder of node's, which may also hold a real host.
+const STUB = String.raw`#!${process.execPath}
 const { appendFileSync, readFileSync } = require("node:fs");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
@@ -99,6 +100,15 @@ async function temporary(context, prefix) {
   return directory;
 }
 
+// The executables that a launch resolves on PATH; a test PATH keeps no folder that holds one, so no real host can start.
+const HOST_EXECUTABLES = ["claude", "codex"].flatMap((name) => process.platform === "win32" ? [`${name}.exe`, `${name}.cmd`] : [name]);
+
+/** `bin` followed by the inherited PATH folders that hold no host executable, so a launch finds only the stubs in `bin`. */
+export function controlledPath(bin, inherited = "") {
+  const kept = inherited.split(path.delimiter).filter(Boolean).filter((folder) => !HOST_EXECUTABLES.some((name) => existsSync(path.join(folder, name))));
+  return [bin, ...kept].join(path.delimiter);
+}
+
 /** A folder of stub host executables: claude and codex by default, or only the names given. */
 export async function stubBin(context, hosts = ["claude", "codex"]) {
   const bin = await temporary(context, "prism-launch-bin-");
@@ -132,11 +142,14 @@ export async function waitFor(probe, { ms = 15000, every = 100, what = "the cond
 }
 
 /**
- * A project with one initiative, a private review app folder, stub hosts on PATH, and the environment that a launch reads.
+ * A project with one initiative, a private review app folder, stub hosts on a PATH that holds no other host, and the environment that a launch reads.
  * `env` carries the foreign host session variables of clause 4, so a test can check that the launched host sees none of them.
  * Every process that the test's launches leave behind, the supervisors and every stub and its children, ends after the test.
  */
 export async function launchFixture(context, { hosts = ["claude", "codex"], plans = {}, gates = false, dialog = null } = {}) {
+  // Registered before any temporary folder, so it runs while the run log still exists: after hooks run in registration order.
+  let ending = null;
+  context.after(() => ending?.());
   const { root, gateIds } = await actionProject(context, { gates });
   const scratch = await temporary(context, "prism-launch-");
   const app = path.join(scratch, "app");
@@ -153,7 +166,7 @@ export async function launchFixture(context, { hosts = ["claude", "codex"], plan
   if (dialog) {
     await setDialog(dialog);
     const file = path.join(bin, "zenity");
-    await writeFile(file, `#!/usr/bin/env node
+    await writeFile(file, `#!${process.execPath}
 const fs = require("node:fs");
 fs.appendFileSync(${JSON.stringify(dialogLog)}, JSON.stringify({ argv: process.argv.slice(2) }) + "\\n");
 process.exit(JSON.parse(fs.readFileSync(${JSON.stringify(dialogFile)}, "utf8")).code ?? 0);
@@ -161,7 +174,7 @@ process.exit(JSON.parse(fs.readFileSync(${JSON.stringify(dialogFile)}, "utf8")).
     chmodSync(file, 0o755);
   }
   const base = isolatedEnv();
-  const env = { ...base, ...FOREIGN_SESSION, PATH: `${bin}${path.delimiter}${base.PATH ?? ""}`, PRISM_REVIEW_APP_DIR: app, PRISM_STUB_LOG: log, PRISM_STUB_PLANS: plansFile, PRISM_STUB_MARKER: "kept", PRISM_LAUNCH_STOP_GRACE_MS: "1500", ...(dialog ? { DISPLAY: ":0" } : {}) };
+  const env = { ...base, ...FOREIGN_SESSION, PATH: controlledPath(bin, base.PATH), PRISM_REVIEW_APP_DIR: app, PRISM_STUB_LOG: log, PRISM_STUB_PLANS: plansFile, PRISM_STUB_MARKER: "kept", PRISM_LAUNCH_STOP_GRACE_MS: "1500", ...(dialog ? { DISPLAY: ":0" } : {}) };
   delete env.WAYLAND_DISPLAY;
   if (!dialog) delete env.DISPLAY;
   const runs = (host = null) => existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((entry) => !host || entry.host === host) : [];
@@ -176,16 +189,15 @@ process.exit(JSON.parse(fs.readFileSync(${JSON.stringify(dialogFile)}, "utf8")).
       Object.assign(process.env, saved);
     });
   };
-  context.after(() => {
-    for (const run of runs()) for (const pid of [run.pid, ...run.children.map((child) => child.pid)]) if (alive(pid)) try { process.kill(pid, "SIGKILL"); } catch {}
-    if (process.platform === "win32") return;
-    // Every supervisor names its launch folder, which lies in this test's review app folder, on its command line.
-    const listed = execFileSync("ps", ["-A", "-o", "pid=,args="], { encoding: "utf8" }).split("\n");
-    for (const line of listed) {
-      const match = /^\s*(\d+)\s+(.*)$/.exec(line);
-      if (match && match[2].includes(app) && Number(match[1]) !== process.pid) try { process.kill(Number(match[1]), "SIGKILL"); } catch {}
+  ending = () => {
+    const ended = [];
+    if (process.platform !== "win32") {
+      // Every supervisor names its launch folder, which lies in this test's review app folder, and every stub its file in bin, on its command line.
+      ended.push(...processesNaming(app), ...processesNaming(bin));
     }
-  });
+    for (const run of runs()) ended.push(run.pid, ...run.children.map((child) => child.pid));
+    for (const pid of ended) if (pid !== process.pid && alive(pid)) try { process.kill(pid, "SIGKILL"); } catch {}
+  };
   return { root, gateIds, app, bin, log, env, setPlans, runs, alive, dialogs, setDialog, useAsProcessEnv };
 }
 
