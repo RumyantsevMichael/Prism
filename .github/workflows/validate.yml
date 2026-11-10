@@ -63,7 +63,16 @@ jobs:
           root="$(npm root -g)"
           export CLAUDE_BIN="$root/@anthropic-ai/claude-code/bin/claude.exe"
           export CODEX_BIN="$root/@openai/codex/bin/codex.js"
-          node scripts/host-smoke.mjs claude codex codex-turn
+          node scripts/host-smoke.mjs claude codex
+
+      # As on Linux, the oldest supported Codex installs the plugin above and the model turn runs on the latest Codex.
+      - name: Smoke-test a Codex model turn with Prism hooks on the latest Codex on Windows
+        if: ${{ !cancelled() }}
+        run: |
+          npm install --prefix "$RUNNER_TEMP/codex-current" @openai/codex@latest
+          export CODEX_BIN="$RUNNER_TEMP/codex-current/node_modules/@openai/codex/bin/codex.js"
+          node "$CODEX_BIN" --version
+          node scripts/host-smoke.mjs codex-turn
 
   validate:
     runs-on: ubuntu-latest
