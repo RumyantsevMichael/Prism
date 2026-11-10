@@ -240,6 +240,28 @@ test("clause 44: a listbox driven from a field keeps focus in the field and move
   assert.match(await region.getByRole("option", { name: /Timeout retries/ }).innerText(), /Slice/, "an option shows its kind");
 });
 
+test("a first-current listbox shows its first option as current, so the first ArrowDown moves to the second option", { skip }, async (context) => {
+  const { page } = await catalog(context);
+  await mount(page, `<prism-field id="query" type="search" label="Jump to" name="q"></prism-field>
+    <prism-listbox id="matches" label="Matches" for="query" first-current>
+      <prism-list-item value="roadmap">Roadmap</prism-list-item>
+      <prism-list-item value="slice">Timeout retries</prism-list-item>
+      <prism-list-item value="doc">docs/retry.md</prism-list-item>
+    </prism-listbox>`);
+  const state = () => page.evaluate(() => {
+    const control = document.querySelector("#query input");
+    const id = control.getAttribute("aria-activedescendant");
+    const current = document.querySelector("#matches prism-list-item[current]");
+    return { active: id ? document.getElementById(id)?.closest("prism-list-item")?.getAttribute("value") ?? document.getElementById(id)?.getAttribute("value") : null, current: current?.getAttribute("value") ?? null };
+  });
+  await page.locator("#fixture").getByRole("searchbox", { name: "Jump to" }).focus();
+  assert.deepEqual(await state(), { active: null, current: "roadmap" });
+  await page.keyboard.press("ArrowDown");
+  assert.deepEqual(await state(), { active: "slice", current: null });
+  await page.keyboard.press("ArrowUp");
+  assert.deepEqual(await state(), { active: "roadmap", current: null });
+});
+
 test("clause 45: a dialog opens modally over a blurred scrim, keeps focus inside, closes with Escape, its button, or the scrim, and returns focus", { skip }, async (context) => {
   const { page } = await catalog(context);
   await mount(page, `<prism-button id="opener">Open the store</prism-button>

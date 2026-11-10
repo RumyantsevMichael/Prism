@@ -253,7 +253,7 @@ export function createPalette({ dialog, field, results, preview, scopes = null, 
   }
 
   // Until an arrow key picks a result, the first one stands in for it: the listbox shows it as current, the preview shows it, and Enter opens it.
-  // The listbox keeps no active option then, so the first ArrowDown still lands on the first result.
+  // The listbox keeps no active option then, and the first ArrowDown moves on to the second result.
   const current = () => results.active ?? results.options[0] ?? null;
 
   function facts(pairs) {
