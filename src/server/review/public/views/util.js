@@ -4,6 +4,21 @@ export function escapeHtml(value) {
   return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
+// A path under .prism/ or a JSON file name inside a sentence, without the punctuation that ends the sentence.
+const CODE_SUBJECT = /\.prism\/\S*?(?=[.,;:!?)]*(?:\s|$))|[\w.-]*[\w-]\.json\b/g;
+
+/** A message as HTML, with each path under .prism/ and each JSON file name in code marked data-code-subject. */
+export function messageHtml(text) {
+  const value = String(text ?? "");
+  let html = "";
+  let last = 0;
+  for (const match of value.matchAll(CODE_SUBJECT)) {
+    html += `${escapeHtml(value.slice(last, match.index))}<code data-code-subject>${escapeHtml(match[0])}</code>`;
+    last = match.index + match[0].length;
+  }
+  return html + escapeHtml(value.slice(last));
+}
+
 export function shortId(value) {
   return typeof value === "string" && value.length > 14 ? `${value.slice(0, 8)}…${value.slice(-4)}` : String(value ?? "");
 }

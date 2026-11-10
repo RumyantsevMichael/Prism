@@ -1,4 +1,4 @@
-import { artifactChip, badge, bindLinks, chip, emptyState, escapeHtml, plural, stat } from "./util.js";
+import { artifactChip, badge, bindLinks, chip, emptyState, escapeHtml, messageHtml, plural, stat } from "./util.js";
 import { recordKind, recordLabel } from "./entities.js";
 import { claimAttributes } from "./claims.js";
 import { isExpired } from "./claim-index.js";
@@ -471,8 +471,8 @@ function noteEntry(item, ctx) {
     unlisted: () => ({ kind: "Needs prioritization", icon: "roadmap", tone: "warning", title: `${escapeHtml(item.initiative.id)} is not on the roadmap`, text: `${escapeHtml(item.initiative.id)} has an initiative record but no roadmap entry. Ask the agent to run <code>roadmap</code>.`, where: location(item, ctx), meta: "Needs prioritization" }),
     "open-question": () => ({ kind: "Roadmap question", icon: "roadmap", tone: "neutral", title: escapeHtml(item.text), text: "", where: roadmapLink, meta: "Open question on the roadmap" }),
     "roadmap-missing": () => ({ kind: "No roadmap", icon: "warning", tone: "warning", title: "No roadmap", text: "No roadmap record exists yet. Ask the agent to run <code>setup</code>.", where: "", meta: "Roadmap" }),
-    "roadmap-problem": () => ({ kind: "Roadmap problem", icon: "warning", tone: "danger", title: "The roadmap has a problem", text: escapeHtml(item.message), where: roadmapLink, meta: "Roadmap problem" }),
-    config: () => ({ kind: "Workflow settings", icon: "warning", tone: "warning", title: "Check the workflow settings", text: escapeHtml(item.message), where: "", meta: "Workflow settings" })
+    "roadmap-problem": () => ({ kind: "Roadmap problem", icon: "warning", tone: "danger", title: "The roadmap has a problem", text: messageHtml(item.message), where: roadmapLink, meta: "Roadmap problem" }),
+    config: () => ({ kind: "Workflow settings", icon: "warning", tone: "warning", title: "Check the workflow settings", text: messageHtml(item.message), where: "", meta: "Workflow settings" })
   }[item.type];
   const content = describe ? describe() : { kind: item.type, icon: "info", tone: "neutral", title: escapeHtml(item.type), text: "", where: "", meta: "" };
   return {

@@ -20,6 +20,7 @@ import { DENSITIES, savePreferences, THEMES } from "./kit/preferences.js";
 import { shownActionEntries } from "./views/actions.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
 import { currentPhase } from "./views/slice.js";
+import { messageHtml } from "./views/util.js";
 import { createPoller, deadline, POLL_DEADLINE_MS } from "./views/poller.js";
 import { createEventRelay } from "./views/event-relay.js";
 
@@ -1353,7 +1354,11 @@ function attentionNavigation() {
     warnings.className = "nav-diagnostics";
     warnings.setAttribute("summary", `${navigation.diagnostics.length} workflow ${navigation.diagnostics.length === 1 ? "setting warning" : "setting warnings"}`);
     const list = element("ul", "");
-    list.append(...navigation.diagnostics.map((item) => element("li", "", item.message)));
+    list.append(...navigation.diagnostics.map((item) => {
+      const line = element("li", "");
+      line.innerHTML = messageHtml(item.message);
+      return line;
+    }));
     warnings.append(list);
     parts.push(warnings);
   }
