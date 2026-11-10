@@ -34,14 +34,19 @@ const UNIX_DIALOG_PLATFORMS = new Set(["linux", "freebsd", "openbsd"]);
 // The dialogs this process has open; the pending file carries the rule to other processes of this machine.
 let openHere = 0;
 
-// zenity renders its text as Pango markup, so the characters that markup reads are written as entities and shown as typed.
+// zenity (g_strcompress) and kdialog (Utils::parseString) decode backslash escapes in their text before showing it, so each backslash is written doubled.
+function backslashText(text) {
+  return text.replace(/\\/g, "\\\\");
+}
+
+// zenity then renders its text as Pango markup, so the characters that markup reads are written as entities and shown as typed.
 function pangoText(text) {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return backslashText(text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"));
 }
 
 // kdialog lets Qt guess whether its text is rich text; a text that could read as markup is given as rich text that shows it as typed.
 function qtText(text) {
-  if (!/[<&]/.test(text)) return text;
+  if (!/[<&]/.test(text)) return backslashText(text);
   return `<p style="margin:0; white-space:pre-wrap">${pangoText(text)}</p>`;
 }
 

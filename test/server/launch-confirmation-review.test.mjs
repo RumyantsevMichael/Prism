@@ -127,6 +127,20 @@ test("kdialog shows the question as typed when the checkout contains & or <", { 
   assert.equal(decodeEntities(match[1]), confirmationText({ label: "Claude Code", initiative: "reports", checkout: markupCheckout }));
 });
 
+// zenity (g_strcompress) and kdialog (Utils::parseString) both turn \\ into \ before showing the text; zenity also decodes \n, octal and other escapes.
+const decodeBackslashes = (value) => value.replace(/\\(.)/gs, (_, c) => c === "\\" ? "\\" : `<undoubled \\${c}>`);
+const backslashCheckout = "/home/me/repo\\n\\074b\\076tools\\";
+
+for (const name of ["zenity", "kdialog"]) {
+  test(`${name} shows the question as typed when the checkout contains backslashes`, { skip: posixOnly }, async (t) => {
+    const { env, argv } = await recordingDialog(t, name);
+    const { confirmLaunch, confirmationText } = await module();
+    await rejection(confirmLaunch({ ...request(env, T0), checkout: backslashCheckout }));
+    const text = name === "zenity" ? argv().find((arg) => arg.startsWith("--text=")).slice("--text=".length) : argv().at(-1);
+    assert.equal(decodeBackslashes(text), confirmationText({ label: "Claude Code", initiative: "reports", checkout: backslashCheckout }));
+  });
+}
+
 test("an initiative that is not a slug is refused before any dialog", { skip: posixOnly }, async (t) => {
   const { env, asked } = await dialogs(t, "zenity", { code: 0, waitMs: 10 });
   const { confirmLaunch } = await module();
