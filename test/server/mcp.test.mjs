@@ -982,6 +982,10 @@ test("verify_slice reports a missing design and asks for command approval throug
   assert.deepEqual(verify.inputSchema.required, ["projectRoot", "initiative", "slice"]);
   assert.ok(listed.some((tool) => tool.name === "update_design_view"));
   await callTool(mcp, 3, "update_initiative", { projectRoot: root, initiative: "reports", expectedRevision: null, operations: [{ op: "create", slug: "reports", title: "Signed reports", requirements: ["req.md#R1"] }] });
+  const unclaimed = await callTool(mcp, 40, "verify_slice", { projectRoot: root, initiative: "reports", slice: "reports" });
+  assert.equal(unclaimed.error.data.code, "claim_required");
+  const created = await callTool(mcp, 41, "get_initiative", { projectRoot: root, initiative: "reports" });
+  await callTool(mcp, 42, "update_initiative", { projectRoot: root, initiative: "reports", expectedRevision: created.result.structuredContent.revision, operations: [{ op: "claim", slug: "reports" }] });
   const missing = await callTool(mcp, 4, "verify_slice", { projectRoot: root, initiative: "reports", slice: "reports" });
   assert.equal(missing.error.data.code, "design_missing");
   const current = await callTool(mcp, 5, "get_initiative", { projectRoot: root, initiative: "reports" });
