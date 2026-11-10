@@ -10,6 +10,7 @@ Design plans against code it cannot read: a colleague's service whose interface 
 Agents guess these facts from memory or ask the person to paste code, so a contract can rest on an interface that differs at the version the work actually uses.
 Prism's native indexes cover only the project's own checkout, keyed by its working tree, and every result they return is treated as the project's own code.
 Michael decided on 9 November 2026 that a workspace's repositories carry a role, worked on or reference, beside a list of libraries, that each work item pins the exact commit of every reference repository it reads, that the project's own code always comes first, and that one separate tool, `search_references`, answers from reference repositories and libraries.
+He also decided that a peer team's Prism store can be a reference entry, read-only, with its Approved records shown by default, names qualified by workspace, and its records indexed separately from its code.
 
 ## Goals
 
@@ -18,6 +19,7 @@ Michael decided on 9 November 2026 that a workspace's repositories carry a role,
 - Index an outside source's interfaces first, and its internals only when a query asks for them.
 - Keep outside indexes affordable on a machine that holds many of them.
 - Show what changed in the cited files when a pin moves.
+- Let a plan cite a peer workspace's requirements and decisions at a known store commit.
 
 ## Non-goals
 
@@ -25,7 +27,6 @@ Michael decided on 9 November 2026 that a workspace's repositories carry a role,
 - Plan slices, run tests, or write anything in a reference repository or a library.
 - Store any content of an outside source in the shared store.
 - Index host tools such as Claude Code or Codex, whose facts come from probes recorded in host profiles.
-- Search another Prism workspace's records, which is a federation capability of its own.
 
 ## Design questions
 
@@ -215,3 +216,42 @@ Requirement: If a commit that a work item pins or cites is no longer reachable f
 Rationale: A force-push upstream must not erase the evidence a contract rests on.
 
 Related: [reference-search.md§12](#12)
+
+<a id="15"></a>
+## 15. Search a peer workspace's records
+
+Pattern: Event-driven
+
+Disposition: Active
+
+Requirement: When `search_references` answers from a reference entry that is another Prism workspace's store, Prism shall answer from that store's records at the store commit the work item pins, as records with their kind, status, and links, and name each record with its workspace.
+
+Rationale: A peer team's Approved requirements and decisions are the facts a plan must respect about their system, and a name qualified by workspace keeps them apart from this workspace's records.
+
+Related: [record-search.md§1](record-search.md#1), [reference-search.md§3](#3)
+
+<a id="16"></a>
+## 16. Show a peer workspace's Approved records by default
+
+Pattern: Optional feature
+
+Disposition: Active
+
+Requirement: Where a `search_references` call names no record status for a peer workspace, Prism shall return only that workspace's Approved requirements, Accepted decisions, and current glossary terms.
+
+Rationale: A peer team's drafts and superseded records are not commitments, and showing them by default would let a plan rest on something the team never agreed.
+
+Related: [record-search.md§2](record-search.md#2)
+
+<a id="17"></a>
+## 17. Index a peer workspace's records apart from its code
+
+Pattern: Ubiquitous
+
+Disposition: Active
+
+Requirement: Prism shall keep the index of a peer workspace's records separate from the indexes of that workspace's code and of this workspace's records.
+
+Rationale: Michael asked for a separate records index, so a question about a peer team's decisions never ranks against their code or against this workspace's own records.
+
+Related: [reference-search.md§9](#9)
