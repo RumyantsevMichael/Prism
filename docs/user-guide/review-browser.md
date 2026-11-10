@@ -44,7 +44,13 @@ Its sidebar lists **Everything**, then under **By kind** **Questions**, **Review
 An initiative is **Blocked** when one of its slices is blocked and none is in progress or claimed, and it keeps the roadmap's order inside its group; initiatives that are not on the roadmap go by title.
 **Roadmap** switches the Roadmap page between **Board**, **List**, and **Graph** under **View**, marking the view the page shows, and lists **Now**, **Next**, **Later**, and **Parked** under **Lanes**, each with its count of open initiatives; choosing it on the rail also opens the Roadmap page.
 A lane opens the board with that lane's heading scrolled into view, also again while the board is open, and its address, such as `review?artifact=roadmap&lane=parked`, does the same in a new window.
-**Knowledge** lists Requirements, Decisions, and the Glossary with their counts.
+**Knowledge** starts with a search field, such as `Search 11 records`, that counts the requirements files, decisions, glossary terms, and diagrams.
+Below it, **Start from** holds **Touched by my work** and **Changed this week**, and **Browse by kind** holds **Requirements**, **Decisions**, **Glossary**, and **Diagrams**, each with its count.
+**Touched by my work** and **Changed this week** are **Planned**: their pages say what they will list, and their rows show no count yet.
+**Diagrams** lists every PlantUML file of the plans and decisions folders by the name after `@startuml`, or by its file name, with what it belongs to: the initiative and slice whose folder holds it, the initiative, or the decision beside it.
+Typing two or more characters in the search replaces the groups with the matching requirements, decisions, glossary terms, and diagrams, grouped by kind and at most 20 of each, titles that hold the text first.
+A record matches when every word you type occurs in its title or its text, ignoring case, and a glossary term opens the Glossary.
+Clearing the field or pressing Esc in it brings the groups back.
 **History** lists the shipped and superseded initiatives, newest decision first, each with the decision's date, such as `9 Nov`, or `14 Jun 2025` in another year, and a muted `Superseded` mark on superseded ones; hover or focus a row to see when it shipped, or when it was superseded and by which initiative.
 It says `Nothing has shipped yet.` while there is none.
 Choosing any other place leaves the open page as it is, and the place stays while you change tabs, follow links, use the palette, or go back.

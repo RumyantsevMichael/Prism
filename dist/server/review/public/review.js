@@ -1,7 +1,7 @@
 import { renderToString } from "./vendor/plantuml.js";
 import { renderView } from "./views/registry.js";
 import { closeEvidence, openEvidence } from "./views/evidence.js";
-import { ENTITY_LABELS, entityLabel, parseEntityRef, recordKind, recordLabel, renderEntity } from "./views/entities.js";
+import { ENTITY_LABELS, entityLabel, KNOWLEDGE_PAGES, parseEntityRef, recordKind, recordLabel, renderEntity } from "./views/entities.js";
 import { createPalette } from "./views/palette.js";
 import { highlight, highlightLines, languageOf } from "./views/highlight.js";
 import { anchorTarget, decorateDocuments, HEADING_PREFIX, LINE_RANGE, markCurrentSection, renderText, revealInDocument } from "./views/markdown.js";
@@ -1107,6 +1107,7 @@ function pageLabel(path) {
     const named = describe(path);
     return named.code ? path : named.label === named.kind ? named.kind : `${named.kind} · ${named.label}`;
   }
+  if (parsed.kind === "knowledge") return KNOWLEDGE_PAGES[parsed.page];
   if (parsed.page) return attentionPageLabel(path, parsed.page);
   if (ENTITY_LABELS[parsed.kind]) return ENTITY_LABELS[parsed.kind];
   const indexed = navigation.index?.find((entry) => entry.ref === path)?.label;
@@ -1573,15 +1574,111 @@ function roadmapNavigation() {
   return [section("View"), roadmapViews(), section("Lanes"), tree("Lanes", lanes)];
 }
 
+// Knowledge's search field stays one element across renders, so typing in it keeps its focus and its text while the results below it change.
+let knowledgeSearchField = null;
+// The last answer of the records search, by the text it answered, and the text the field asked for last.
+let knowledgeResults = null;
+let knowledgeAsked = "";
+let knowledgeTimer = null;
+const KNOWLEDGE_SEARCH_MINIMUM = 2;
+const KNOWLEDGE_SEARCH_DELAY_MS = 150;
+const KNOWLEDGE_GROUPS = [["requirement", "Requirements", "list"], ["decision", "Decisions", "scale"], ["glossary-term", "Glossary", "book"], ["diagram", "Diagrams", "diagram"]];
+
+function knowledgeQuery() {
+  return (knowledgeSearchField?.value ?? "").trim();
+}
+
+// The search asks the server once the person stops typing for a moment, and draws the answer only while the field still holds its text.
+function askKnowledgeSearch() {
+  clearTimeout(knowledgeTimer);
+  const query = knowledgeQuery();
+  if (query.length < KNOWLEDGE_SEARCH_MINIMUM) {
+    knowledgeAsked = "";
+    renderNavigation();
+    return;
+  }
+  knowledgeTimer = setTimeout(async () => {
+    knowledgeAsked = query;
+    let answer;
+    try {
+      answer = await fetchJson(`./api/records/search?q=${encodeURIComponent(query)}`);
+    } catch {
+      answer = { query, groups: [], failed: true };
+    }
+    if (knowledgeQuery() !== query) return;
+    knowledgeResults = { ...answer, query };
+    renderNavigation();
+  }, KNOWLEDGE_SEARCH_DELAY_MS);
+}
+
+function knowledgeSearch(total) {
+  if (!knowledgeSearchField) {
+    knowledgeSearchField = kitElement("prism-field", { type: "search", variant: "filter", class: "nav-filter nav-search" });
+    const icon = navIcon("search");
+    icon.slot = "start";
+    icon.setAttribute("size", "sm");
+    knowledgeSearchField.append(icon);
+    knowledgeSearchField.addEventListener("input", () => askKnowledgeSearch());
+    knowledgeSearchField.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !knowledgeSearchField.value) return;
+      event.preventDefault();
+      event.stopPropagation();
+      knowledgeSearchField.value = "";
+      askKnowledgeSearch();
+    });
+  }
+  const label = `Search ${total} ${total === 1 ? "record" : "records"}`;
+  knowledgeSearchField.setAttribute("label", label);
+  knowledgeSearchField.setAttribute("placeholder", label);
+  return knowledgeSearchField;
+}
+
+// The matching records grouped by kind, each opening its page, or a note when nothing matches; until the first answer arrives the groups stay.
+function knowledgeMatches(query) {
+  if (!knowledgeResults || knowledgeResults.query !== query) return null;
+  if (knowledgeResults.failed) return [element("p", "nav-note", "The search could not be run.")];
+  if (!knowledgeResults.groups.length) return [element("p", "nav-note", `No record matches "${query}".`)];
+  const parts = [];
+  for (const [kind, label, icon] of KNOWLEDGE_GROUPS) {
+    const group = knowledgeResults.groups.find((entry) => entry.kind === kind);
+    if (!group?.results.length) continue;
+    // A glossary term opens the Glossary, so it is never marked as the open page.
+    const rows = group.results.map((result) => treeItem(result.ref, result.title, { selected: kind !== "glossary-term" && selectedPath === result.ref, start: [navIcon(icon)], tip: result.title }));
+    parts.push(section(label), tree(label, rows));
+  }
+  return parts;
+}
+
+/**
+ * Knowledge: the records search, then Start from, the entry points into the records behind the person's work, then Browse by kind,
+ * each kind's list with its count; while the search holds two or more characters, its matches replace the groups.
+ */
 function knowledgeNavigation() {
   const glossary = navigation.glossary ?? {};
   const library = navigation.library ?? {};
+  const entries = navigation.places?.knowledge ?? {};
   const count = (value) => Number.isInteger(value) ? [meta(String(value))] : [];
-  return [section("Browse by kind"), tree("Browse by kind", [
-    treeItem("requirements", ENTITY_LABELS.requirements, { selected: selectedPath === "requirements", start: [navIcon("list")], end: count(library.requirements) }),
-    treeItem("decisions", ENTITY_LABELS.decisions, { selected: selectedPath === "decisions", start: [navIcon("scale")], end: count(library.decisions) }),
-    treeItem("glossary", "Glossary", { selected: selectedPath === "glossary", start: [navIcon("book")], end: glossary.exists ? count(library.terms) : [element("span", "nav-state", "missing")] })
-  ])];
+  const total = ["requirements", "decisions", "terms", "diagrams"].reduce((sum, kind) => sum + (Number.isInteger(library[kind]) ? library[kind] : 0), 0);
+  const field = knowledgeSearch(total);
+  const query = knowledgeQuery();
+  const matches = query.length >= KNOWLEDGE_SEARCH_MINIMUM ? knowledgeMatches(query) : null;
+  if (matches) return [field, ...matches];
+  const row = (ref, label, icon, end) => treeItem(ref, label, { selected: selectedPath === ref, start: [navIcon(icon)], end });
+  return [
+    field,
+    section("Start from"),
+    tree("Start from", [
+      row("knowledge:touched", "Touched by my work", "branch", count(entries.touched)),
+      row("knowledge:changed", "Changed this week", "clock", count(entries.changed))
+    ]),
+    section("Browse by kind"),
+    tree("Browse by kind", [
+      row("requirements", ENTITY_LABELS.requirements, "list", count(library.requirements)),
+      row("decisions", ENTITY_LABELS.decisions, "scale", count(library.decisions)),
+      row("glossary", "Glossary", "book", glossary.exists ? count(library.terms) : [element("span", "nav-state", "missing")]),
+      row("knowledge:diagrams", "Diagrams", "diagram", count(library.diagrams))
+    ])
+  ];
 }
 
 /**
@@ -1618,7 +1715,7 @@ function renderNavigation() {
   for (const rail of [shellRail, drawerRail]) renderRail(rail, attention.gates ?? 0);
   const entity = Boolean(parseEntityRef(selectedPath ?? ""));
   const claims = claimIndex ? [...claimIndex.live(), ...claimIndex.expired()].map((claim) => [claim.ref, claim.expiresAt, claim.label]) : [];
-  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", attentionMoreOpen, roadmapView]);
+  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", knowledgeQuery(), knowledgeResults, attentionMoreOpen, roadmapView]);
   if (key === navigationKey) return;
   navigationKey = key;
   const focused = document.activeElement?.closest?.("prism-tree-item");
@@ -2079,7 +2176,8 @@ function paletteEntries() {
     { ref: "roadmap", label: "Roadmap", kind: "place", detail: "Initiatives by band" },
     { ref: "requirements", label: "Requirements", kind: "place", detail: "Library" },
     { ref: "decisions", label: "Decisions", kind: "place", detail: "Library" },
-    { ref: "glossary", label: "Glossary", kind: "place", detail: "Library" }
+    { ref: "glossary", label: "Glossary", kind: "place", detail: "Library" },
+    { ref: "knowledge:diagrams", label: "Diagrams", kind: "place", detail: "Library" }
   ];
   const indexed = navigation.index ?? [];
   const known = new Set(indexed.map((entry) => entry.ref));

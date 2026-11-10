@@ -28,8 +28,34 @@ function decisions(data, ctx) {
   }).join("");
 }
 
+// The diagrams of the plans and decisions folders by name, each with the slice, initiative, or decision it belongs to, in the server's order.
+export function renderDiagrams(data, ctx) {
+  const diagrams = data?.diagrams ?? [];
+  if (!diagrams.length) return card("Diagrams", emptyState("No diagrams yet", "No PlantUML file exists in the plans or decisions folders."));
+  return card(plural(diagrams.length, "diagram"), `<div class="table-wrap"><table class="data-table diagram-table"><thead><tr><th>Diagram</th><th>Belongs to</th></tr></thead><tbody>${diagrams.map((diagram) => `<tr>
+    <td>${artifactLink(diagram.path, ctx, diagram.name)}</td>
+    <td class="muted">${escapeHtml(diagram.owner.title)}</td>
+  </tr>`).join("")}</tbody></table></div>`, { eyebrow: "Diagrams" });
+}
+
+// The entry points that a later change of the review app fills; until then each page says what it will list.
+const PLANNED_PAGES = {
+  touched: ["Touched by my work", "This page will list the records behind the slice you have open."],
+  changed: ["Changed this week", "This page will list the records changed in the last 7 days."]
+};
+
 export function render(container, entity, ctx) {
   const data = entity.data;
+  if (entity.kind === "diagrams") {
+    container.innerHTML = renderDiagrams(data, ctx);
+    bindLinks(container, ctx);
+    return;
+  }
+  if (Object.hasOwn(PLANNED_PAGES, entity.kind)) {
+    const [title, text] = PLANNED_PAGES[entity.kind];
+    container.innerHTML = card(title, emptyState("Planned", text));
+    return;
+  }
   if (entity.kind === "glossary") {
     container.innerHTML = data.exists
       ? `<section class="view-section document-sheet"><prism-doc class="document-content">${ctx.renderMarkdown(data.content, data.path)}</prism-doc></section>`

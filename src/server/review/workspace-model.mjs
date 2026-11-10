@@ -682,15 +682,130 @@ async function describeRecord(projectRoot, config, artifactPath, key, snapshot) 
   return null;
 }
 
-function glossaryTerms(content) {
-  const terms = [];
+// The glossary's terms with the text that defines each: a heading's term owns the lines up to the next heading, a table row's term the row's other cells.
+function glossaryEntries(content) {
+  const entries = new Map();
+  let open = null;
   for (const line of (content ?? "").split("\n")) {
     const heading = /^#{2,4}\s+(.+?)\s*$/.exec(line);
-    if (heading) terms.push(heading[1]);
-    const row = /^\|\s*([^|]+?)\s*\|/.exec(line);
-    if (row && !/^-+$/.test(row[1].replace(/[:\s]/g, "")) && !["term", "name"].includes(row[1].toLowerCase())) terms.push(row[1].replace(/\*\*/g, ""));
+    if (heading) {
+      open = entries.get(heading[1]) ?? { term: heading[1], text: "" };
+      entries.set(open.term, open);
+      continue;
+    }
+    if (/^#\s/.test(line)) open = null;
+    const row = /^\|\s*([^|]+?)\s*\|(.*)$/.exec(line);
+    if (row && !/^-+$/.test(row[1].replace(/[:\s]/g, "")) && !["term", "name"].includes(row[1].toLowerCase())) {
+      const term = row[1].replace(/\*\*/g, "");
+      const entry = entries.get(term) ?? { term, text: "" };
+      entry.text += ` ${row[2].replace(/\|/g, " ")}`;
+      entries.set(term, entry);
+    } else if (open) open.text += ` ${line}`;
   }
-  return [...new Set(terms)].slice(0, LIBRARY_LIMIT);
+  return [...entries.values()].slice(0, LIBRARY_LIMIT);
+}
+
+function glossaryTerms(content) {
+  return glossaryEntries(content).map((entry) => entry.term);
+}
+
+const DIAGRAM_DEPTH = 6;
+
+// A diagram's name: the name after @startuml, or else its file name without .puml.
+function diagramName(file, source) {
+  const named = /^\s*@startuml[ \t]+([^\r\n]+?)\s*$/m.exec(source ?? "")?.[1]?.replace(/^"(.*)"$/, "$1").trim();
+  return named && !named.startsWith("(") ? named : path.posix.basename(file, ".puml");
+}
+
+/**
+ * Every PlantUML file of the plans folder and the decisions folder, by name and owner, ordered by owner and then name:
+ * a slice's folder belongs to `<initiative> · <slice>`, an initiative's folder to the initiative, and a decisions folder file to the decision beside it.
+ */
+export function loadDiagrams(projectRoot) {
+  return remember(`diagrams:${projectRoot}`, () => computeDiagrams(projectRoot));
+}
+
+async function computeDiagrams(projectRoot) {
+  const config = await readWorkflowConfig(projectRoot);
+  const diagrams = [];
+  const isDiagram = (name) => name.toLowerCase().endsWith(".puml");
+  const plans = config.paths.plans;
+  if (plans) {
+    const files = [];
+    await walk(projectRoot, plans, DIAGRAM_DEPTH, isDiagram, files, LIBRARY_LIMIT);
+    const owners = new Map();
+    for (const file of files) {
+      const [id, segment] = file.slice(plans.length + 1).split("/");
+      const folder = path.posix.dirname(file);
+      if (folder === plans) {
+        diagrams.push({ file, owner: { kind: "initiative", title: plans } });
+        continue;
+      }
+      if (!owners.has(id)) {
+        const known = SLUG_PATTERN.test(id) && await knownInitiative(projectRoot, id).catch(() => false);
+        owners.set(id, known ? await initiativeTree(projectRoot, id).then(({ scope, view }) => ({ title: scope.title, slices: view.record?.slices ?? {} })).catch(() => ({ title: id, slices: {} })) : { title: id, slices: {} });
+      }
+      const owner = owners.get(id);
+      const slice = file.split("/").length > plans.split("/").length + 2 && owner.slices[segment] && owner.slices[segment].parent !== null ? owner.slices[segment] : null;
+      diagrams.push({ file, owner: slice ? { kind: "slice", title: `${owner.title} · ${slice.title}` } : { kind: "initiative", title: owner.title } });
+    }
+  }
+  const adrs = config.paths.adrs;
+  if (adrs) {
+    const files = [];
+    await walk(projectRoot, adrs, 4, isDiagram, files, LIBRARY_LIMIT);
+    const decisions = new Map((await loadLibrary(projectRoot, "decisions")).entries.map((entry) => [entry.path, entry.title]));
+    for (const file of files) {
+      const title = decisions.get(file.replace(/\.puml$/i, ".md")) ?? path.posix.dirname(file);
+      diagrams.push({ file, owner: { kind: "decision", title } });
+    }
+  }
+  const named = await Promise.all(diagrams.map(async ({ file, owner }) => {
+    const source = await readText(projectRoot, file);
+    return { path: file, name: diagramName(file, source), owner, text: source ?? "" };
+  }));
+  named.sort((left, right) => left.owner.title.localeCompare(right.owner.title) || left.name.localeCompare(right.name) || left.path.localeCompare(right.path));
+  return named;
+}
+
+const SEARCH_KINDS = Object.freeze(["requirement", "decision", "glossary-term", "diagram"]);
+const SEARCH_MINIMUM = 2;
+const SEARCH_LIMIT = 20;
+
+// Every record the Knowledge search reads, by kind, with the text it matches against.
+async function searchableRecords(projectRoot) {
+  const records = Object.fromEntries(SEARCH_KINDS.map((kind) => [kind, []]));
+  for (const [kind, library] of [["requirement", "requirements"], ["decision", "decisions"]]) {
+    for (const entry of (await loadLibrary(projectRoot, library)).entries) records[kind].push({ title: entry.title, ref: entry.path, text: await readText(projectRoot, entry.path) ?? "" });
+  }
+  const glossary = await loadGlossary(projectRoot);
+  for (const entry of glossaryEntries(glossary.content)) records["glossary-term"].push({ title: entry.term, ref: "glossary", text: entry.text });
+  for (const diagram of await loadDiagrams(projectRoot)) records.diagram.push({ title: diagram.name, ref: diagram.path, text: diagram.text });
+  return records;
+}
+
+/**
+ * The Knowledge search: the records whose title or text holds every word of `query`, ignoring case, grouped by kind in a fixed order,
+ * at most 20 per group with the titles that hold the whole text first, and no group for a kind without a match or for text shorter than two characters.
+ */
+export async function searchRecords(projectRoot, query) {
+  const text = String(query ?? "").trim();
+  if (text.length < SEARCH_MINIMUM) return { query: text, groups: [] };
+  const words = text.toLowerCase().split(/\s+/).filter(Boolean);
+  const whole = text.toLowerCase();
+  const records = await searchableRecords(projectRoot);
+  const groups = [];
+  for (const kind of SEARCH_KINDS) {
+    const matches = records[kind].filter((record) => {
+      const haystack = `${record.title}\n${record.text}`.toLowerCase();
+      return words.every((word) => haystack.includes(word));
+    });
+    if (!matches.length) continue;
+    const titled = (record) => record.title.toLowerCase().includes(whole) ? 0 : 1;
+    const ordered = matches.map((record, index) => ({ record, index })).sort((left, right) => titled(left.record) - titled(right.record) || left.index - right.index);
+    groups.push({ kind, results: ordered.slice(0, SEARCH_LIMIT).map(({ record }) => ({ title: record.title, ref: record.ref })) });
+  }
+  return { query: text, groups };
 }
 
 async function searchIndex(projectRoot, config, roadmap, glossary) {
@@ -728,7 +843,11 @@ async function computeNavigation(projectRoot) {
     attention: { needsYou: attention.needsYou.length, gates: attention.gateCount, answered: attention.answered.length, watch: attention.watch.length },
     initiatives: listedInitiatives,
     glossary: { path: glossary.path, exists: glossary.exists },
-    library: Object.fromEntries(await Promise.all(["requirements", "decisions"].map(async (kind) => [kind, (await loadLibrary(projectRoot, kind).catch(() => ({ entries: [] }))).entries.length]))),
+    library: {
+      ...Object.fromEntries(await Promise.all(["requirements", "decisions"].map(async (kind) => [kind, (await loadLibrary(projectRoot, kind).catch(() => ({ entries: [] }))).entries.length]))),
+      terms: glossaryTerms(glossary.content).length,
+      diagrams: (await loadDiagrams(projectRoot).catch(() => [])).length
+    },
     diagnostics: config.diagnostics,
     index: await searchIndex(projectRoot, config, roadmap, glossary),
     // Each place's own navigation data, by the place's name, for the places that need more than the lists above.
@@ -906,6 +1025,9 @@ export function parseEntityRef(ref) {
   // Attention's filtered pages: one kind, one initiative's items, or the questions answered this week.
   let match = /^attention:(questions|findings|failed|blocked|ready|problems|answered|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "attention", page: match[1] };
+  // Knowledge's own pages: the diagrams, the records behind the open slice, and this week's record changes.
+  match = /^knowledge:(diagrams|touched|changed)$/.exec(ref ?? "");
+  if (match) return { kind: "knowledge", page: match[1] };
   match = /^initiative:([A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "initiative", id: match[1] };
   match = /^slice:([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)$/.exec(ref ?? "");
@@ -916,7 +1038,7 @@ export function parseEntityRef(ref) {
 export async function entityExists(projectRoot, ref) {
   const parsed = parseEntityRef(ref);
   if (!parsed) return false;
-  if (SECTION_REFS.includes(parsed.kind)) return true;
+  if (SECTION_REFS.includes(parsed.kind) || parsed.kind === "knowledge") return true;
   if (parsed.kind === "initiative") {
     const roadmap = await loadRoadmapView(projectRoot);
     if (roadmap.items.some((item) => item.id === parsed.id) || roadmap.unlisted.includes(parsed.id)) return true;
@@ -943,6 +1065,8 @@ export async function loadEntity(projectRoot, ref, options = {}) {
   if (parsed.kind === "roadmap") return { ref, kind: "roadmap", data: await loadRoadmapView(projectRoot) };
   if (parsed.kind === "requirements" || parsed.kind === "decisions") return { ref, kind: parsed.kind, data: await loadLibrary(projectRoot, parsed.kind) };
   if (parsed.kind === "glossary") return { ref, kind: "glossary", data: await loadGlossary(projectRoot) };
+  if (parsed.kind === "knowledge" && parsed.page === "diagrams") return { ref, kind: "diagrams", data: { diagrams: (await loadDiagrams(projectRoot)).map(({ path: file, name, owner }) => ({ path: file, name, owner })) } };
+  if (parsed.kind === "knowledge") return { ref, kind: parsed.page, data: null };
   if (parsed.kind === "initiative") {
     const view = await loadInitiativeView(projectRoot, parsed.id);
     return { ref, kind: "initiative", data: { ...view, runTotals: await loadInitiativeRunTotals(projectRoot, view), code: await initiativeCode(projectRoot, view) } };
