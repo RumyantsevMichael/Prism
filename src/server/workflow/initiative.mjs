@@ -389,6 +389,86 @@ export async function readInitiativeWithClaims(projectRoot, initiative) {
   return { resolved, loaded: (await claimsView(resolved, loaded, { report: false })).loaded };
 }
 
+// Work on a slice belongs to the holder whose live claim covers it, so an agent that never claimed the slice, or whose claim lapsed, was released, or was replaced, is refused before it changes anything.
+// These operations are such work; set_status is too when it moves a slice out of in-progress, and every other operation that changes a slice is refused only while another holder's claim covers it.
+const CLAIMED_WORK = new Set(["propose_design", "accept_proposal", "restore_tests", "report_contract_defects"]);
+// These operations change no slice's work, or take the claim themselves.
+const UNCLAIMED_OPERATIONS = new Set(["create", "claim", "release_claim", "import_map", "regenerate_markdown", "remove_records"]);
+
+const claimCovers = (slices, claim, slug) => {
+  for (let current = slug, depth = 0; current !== null && current !== undefined && depth < 1000; current = slices[current]?.parent, depth += 1) if (current === claim.slug) return true;
+  return false;
+};
+
+// A slug that only a pending proposal creates belongs to the scope that proposed it, such as a part that a design view describes before its proposal is accepted.
+function workSlug(record, slug) {
+  if (Object.hasOwn(record.slices, slug)) return slug;
+  for (const [scope, proposal] of Object.entries(record.proposals ?? {})) {
+    const created = (proposal?.operations ?? []).flatMap((operation) => operation.op === "split" ? (operation.children ?? []).map((child) => child.slug) : operation.op === "add_fix" ? [operation.fix?.slug] : []);
+    if (created.includes(slug) && Object.hasOwn(record.slices, scope)) return scope;
+  }
+  return null;
+}
+
+/** The work a tool call does on an initiative's slices: { slug, own } for each slice it changes, where own means the caller must hold a live claim that covers the slice. */
+export function initiativeWork(operations, record) {
+  const work = [];
+  for (const operation of Array.isArray(operations) ? operations : []) {
+    if (!operation || UNCLAIMED_OPERATIONS.has(operation.op)) continue;
+    const slug = operation.op === "split" ? operation.parent : operation.slug;
+    if (typeof slug !== "string") continue;
+    const status = record?.slices?.[slug]?.status;
+    const own = CLAIMED_WORK.has(operation.op) || (operation.op === "set_status" && operation.status !== "in-progress" && status === "in-progress");
+    work.push({ slug, op: operation.op, own });
+  }
+  return work;
+}
+
+/**
+ * Refuse a tool call that works on slices without the caller's claim: slice_claimed while another holder's live claim covers a slice it changes,
+ * and claim_required while a slice it works on has no live claim of the caller on the slice or an ancestor.
+ * work lists { slug, own, op }, and claimedHere the slugs the same call claims or starts first, which count as the caller's.
+ * Records that cannot be read, a shipped initiative, and a slug the record does not hold are left to the tool, which refuses them with its own error.
+ */
+export async function requireClaimedWork({ projectRoot, initiative, tool, work, claimedHere = [] }) {
+  if (!work.length) return;
+  try {
+    await refuseShipped(projectRoot, initiative);
+  } catch {
+    return;
+  }
+  let resolved, loaded;
+  try {
+    ({ resolved, loaded } = await readInitiative(projectRoot, initiative));
+  } catch {
+    return;
+  }
+  const record = loaded?.record;
+  if (!record?.slices || typeof record.slices !== "object") return;
+  const { claims } = await readClaims(resolved);
+  const holder = claimHolder();
+  const now = Date.now();
+  for (const item of work) {
+    const slug = workSlug(record, item.slug);
+    if (slug === null) continue;
+    if (claimedHere.some((claimed) => claimCovers(record.slices, { slug: claimed }, slug))) continue;
+    const blocking = blockingClaim(record.slices, claims, slug, holder, now);
+    if (blocking) throw fail("slice_claimed", claimedMessage(slug, blocking), { claim: claimView(blocking) });
+    if (!item.own) continue;
+    const covering = [...claims.values()].filter((claim) => claim.holder === holder && claimCovers(record.slices, claim, slug));
+    if (covering.some((claim) => isLive(claim, now))) continue;
+    const lapsed = covering.sort((a, b) => Date.parse(b.expiresAt) - Date.parse(a.expiresAt))[0];
+    const why = lapsed ? `This session's claim on ${lapsed.slug} expired at ${lapsed.expiresAt}` : `No live claim of this session covers ${slug}`;
+    throw fail("claim_required", `${why}, so ${tool}${item.op ? ` ${item.op}` : ""} was not applied: work on a slice needs its holder's live claim. Call update_initiative with a claim operation for ${slug}, or for the scope that contains it, then call again; Prism refuses the claim with slice_claimed when another agent took the slice meanwhile.`, { slice: slug, ...(lapsed ? { claim: claimView(lapsed) } : {}) });
+  }
+}
+
+/** The slugs an update claims or starts itself, which its other operations may work on. */
+export const claimedByUpdate = (operations) => (Array.isArray(operations) ? operations : [])
+  .filter((operation) => operation?.op === "claim" || (operation?.op === "set_status" && operation.status === "in-progress"))
+  .map((operation) => operation.slug)
+  .filter((slug) => typeof slug === "string");
+
 function markdown(record) {
   const analysis = analyzeInitiative(record.slices);
   const lines = [`# Initiative: ${record.id}`, "", generatedNotice(RECORD_NAME), ""];
@@ -789,9 +869,10 @@ async function applyOperation(resolved, record, operation, effects) {
       break;
     }
     case "claim": {
-      // Design claims its scope before it starts, and the claim ends when its proposal is accepted.
-      requireSlice(operation.slug);
-      takeClaim(record, operation.slug, "design", effects, operation);
+      // Design claims its scope before it starts, and the claim ends when its proposal is accepted; a slice in progress is claimed for implementation,
+      // so an agent whose claim lapsed takes the slice back unless another agent took it meanwhile.
+      const slice = requireSlice(operation.slug);
+      takeClaim(record, operation.slug, slice.status === "in-progress" ? "implementation" : "design", effects, operation);
       break;
     }
     case "release_claim": {
@@ -1283,7 +1364,7 @@ export const INITIATIVE_TOOLS = [
   },
   {
     name: "update_initiative",
-    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Design proposes its result with propose_design, whose split, set_dependencies, update_slice, and accept_design operations change only the scope and the slices inside it: Prism checks them on a copy of the record, refuses with the same errors as a direct update, and keeps the proposal pending without changing any slice; after the design gate, accept_proposal applies it with the slugs whose review is required and, for a user_gate split, the gate where the person approved it. Both operations stand alone in their update. A split whose every part takes accept_design in the same update is a contract's slice plan; any other split into parts needs evidence: contract_size names contract files whose estimated tokens exceed the contract budget, unfrozen quotes an Unprobed assumption from the scope's slice.md and names the part that settles it, and user_gate names a pending gate the person answered, which a proposed split names at accept_proposal. Accepting designs refuses a contract whose slice.md and frozen tests exceed that budget with contract_too_large, listing the measured files. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts, while a started slice set back to not-started stages them again; restore_tests puts the staged tests of a slice and its descendants back for a design revision, and accepting each design again stages them again. report_contract_defects, which verify_slice sends for an implementer, blocks a started slice and keeps the defects on it until its next accepted design, which clears them but leaves the slice blocked until set_status in-progress restarts it. Accepting a design also checks the PlantUML files of the slice and the initiative overview and refuses one that does not parse or shows more than 30 elements, and refuses a slice.md Changes line that is not add, change, or remove followed by comma-separated paths in backticks and a colon with the note. accept_design takes the slice's component, bare or as <repository>/<component>, records it as <repository>/<component>, and may leave it out only in a repository that declares no components under ## Components in .prism/workflow.md, which records the root component; acceptance refuses an invalid declaration with component_invalid, component_overlap, component_dependency_unknown, or component_cycle, a component that is not this repository's with component_unknown, listing its components, and a slice whose Changes paths or frozen tests belong to another component and lie under no shared path with component_boundary, listing the paths. set_status in-progress refuses to start a not-started slice with dependencies_incomplete, naming them, until every slice it depends on directly or through an ancestor is done. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. A slice has at most one holder, the host session that claimed it, or the Prism server process when the host names no session, across every checkout and machine that shares the records: set_status in-progress takes an implementation claim, claim takes a design claim on a scope before design starts, and a claim covers the slice's descendants. Taking a claim is refused with slice_claimed, naming the holder's label, activity, and expiry, while another holder's live claim covers the slice, an ancestor, or a descendant; an expired claim is replaced and the result names it under replacedClaims. An update that takes or releases claims is checked whole, writes its claims first, and where store sync is on waits for a sync before anything else is written: another machine's claim or renewal that won refuses it with slice_claimed, and an unreachable remote refuses it with claim_unconfirmed; a refused update applies none of its operations. The holding server renews its live claims every 10 minutes, a server the host restarts in the same session renews them after its first read or update of the initiative, a claim expires 30 minutes after its last renewal, and an expired claim is never renewed. A claim ends when its slice leaves in-progress, when the scope's proposal is accepted, or through release_claim, which anyone may send and which the history records. A defect in done work is fixed as new work: report_defect ({ slug, requirements, summary }) records a defect d<n> on a done slice and refuses any other slice with validation_failed; claim takes a design claim on a done slice; propose_design on a done scope takes exactly one add_fix ({ slug, defects, fix: { slug, title, outcome, requirements } }) naming that scope, set_dependencies and update_slice on the fix slug, and one accept_design of the fix slug, refusing with validation_failed any other operation, a defect the scope does not hold or another fix slice names, and a used slug, while add_fix outside propose_design refuses too; accept_proposal adds the fix as a not-started slice below the done slice, with fixes { slice, defects }, whose slice.md sits in its own folder, and leaves the done slice's records unchanged. A fix slice is a leaf of the done slice's ancestors, cannot split, starts after the dependencies of the done slice and its ancestors, and holds the dependents of the done slice until it is done. set_status changing a done slice to another status refuses with slice_done. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. A shipped initiative's state is history: every operation on it, remove_records included, is refused with initiative_shipped, naming the initiative and its ship time, before every check except argument validation, and changes no record, while a roadmap record that cannot be read or parsed refuses it with invalid_roadmap; start new work on it as a new initiative. After the roadmap records the initiative as superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
+    description: "Apply revision-checked initiative operations: create the root slice, split a slice, set leaf status, set dependencies, update a slice title or outcome, accept a slice design with its frozen acceptance tests and review mark, or import a legacy map.puml. Design proposes its result with propose_design, whose split, set_dependencies, update_slice, and accept_design operations change only the scope and the slices inside it: Prism checks them on a copy of the record, refuses with the same errors as a direct update, and keeps the proposal pending without changing any slice; after the design gate, accept_proposal applies it with the slugs whose review is required and, for a user_gate split, the gate where the person approved it. Both operations stand alone in their update. A split whose every part takes accept_design in the same update is a contract's slice plan; any other split into parts needs evidence: contract_size names contract files whose estimated tokens exceed the contract budget, unfrozen quotes an Unprobed assumption from the scope's slice.md and names the part that settles it, and user_gate names a pending gate the person answered, which a proposed split names at accept_proposal. Accepting designs refuses a contract whose slice.md and frozen tests exceed that budget with contract_too_large, listing the measured files. Accepting the design of a slice that has not started stages its frozen tests: Prism keeps them and takes them out of the work tree, and set_status in-progress puts them back when the slice starts, while a started slice set back to not-started stages them again; restore_tests puts the staged tests of a slice and its descendants back for a design revision, and accepting each design again stages them again. report_contract_defects, which verify_slice sends for an implementer, blocks a started slice and keeps the defects on it until its next accepted design, which clears them but leaves the slice blocked until set_status in-progress restarts it. Accepting a design also checks the PlantUML files of the slice and the initiative overview and refuses one that does not parse or shows more than 30 elements, and refuses a slice.md Changes line that is not add, change, or remove followed by comma-separated paths in backticks and a colon with the note. accept_design takes the slice's component, bare or as <repository>/<component>, records it as <repository>/<component>, and may leave it out only in a repository that declares no components under ## Components in .prism/workflow.md, which records the root component; acceptance refuses an invalid declaration with component_invalid, component_overlap, component_dependency_unknown, or component_cycle, a component that is not this repository's with component_unknown, listing its components, and a slice whose Changes paths or frozen tests belong to another component and lie under no shared path with component_boundary, listing the paths. set_status in-progress refuses to start a not-started slice with dependencies_incomplete, naming them, until every slice it depends on directly or through an ancestor is done. Done transitions require a passing completion gate: a fresh passing verify_slice run for a slice with an accepted design, plus an accepted implementation review when that design requires review; verify_slice records done itself when no review is marked. A slice has at most one holder, the host session that claimed it, or the Prism server process when the host names no session, across every checkout and machine that shares the records: set_status in-progress takes an implementation claim, claim takes a design claim on a scope before design starts, or an implementation claim on a slice that is in-progress, such as after the caller's claim lapsed, and a claim covers the slice's descendants. An agent's call that works on a slice, namely propose_design, accept_proposal, restore_tests, report_contract_defects, set_status moving a slice out of in-progress, verify_slice except a dependents' run, update_review, update_change_map, and update_design_view, is refused with claim_required before it changes anything unless a live claim of the caller is on the slice or an ancestor, saying whether its own claim expired; an operation may work on a slice that an earlier operation of the same update claims or starts. Any other change to a slice is refused with slice_claimed while another holder's live claim covers it. Taking a claim is refused with slice_claimed, naming the holder's label, activity, and expiry, while another holder's live claim covers the slice, an ancestor, or a descendant; an expired claim is replaced and the result names it under replacedClaims. An update that takes or releases claims is checked whole, writes its claims first, and where store sync is on waits for a sync before anything else is written: another machine's claim or renewal that won refuses it with slice_claimed, and an unreachable remote refuses it with claim_unconfirmed; a refused update applies none of its operations. The holding server renews its live claims every 10 minutes, a server the host restarts in the same session renews them after its first read or update of the initiative, a claim expires 30 minutes after its last renewal, and an expired claim is never renewed. A claim ends when its slice leaves in-progress, when the scope's proposal is accepted, or through release_claim, which anyone may send and which the history records. A defect in done work is fixed as new work: report_defect ({ slug, requirements, summary }) records a defect d<n> on a done slice and refuses any other slice with validation_failed; claim takes a design claim on a done slice; propose_design on a done scope takes exactly one add_fix ({ slug, defects, fix: { slug, title, outcome, requirements } }) naming that scope, set_dependencies and update_slice on the fix slug, and one accept_design of the fix slug, refusing with validation_failed any other operation, a defect the scope does not hold or another fix slice names, and a used slug, while add_fix outside propose_design refuses too; accept_proposal adds the fix as a not-started slice below the done slice, with fixes { slice, defects }, whose slice.md sits in its own folder, and leaves the done slice's records unchanged. A fix slice is a leaf of the done slice's ancestors, cannot split, starts after the dependencies of the done slice and its ancestors, and holds the dependents of the done slice until it is done. set_status changing a done slice to another status refuses with slice_done. Every write validates the whole slice graph and regenerates initiative.md. The result acknowledges the new revision and the touched slices; get_initiative reads the whole record. A shipped initiative's state is history: every operation on it, remove_records included, is refused with initiative_shipped, naming the initiative and its ship time, before every check except argument validation, and changes no record, while a roadmap record that cannot be read or parsed refuses it with invalid_roadmap; start new work on it as a new initiative. After the roadmap records the initiative as superseded, remove_records alone deletes the initiative's coordination records during cleanup and keeps its run entries.",
     inputSchema: UPDATE_INITIATIVE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

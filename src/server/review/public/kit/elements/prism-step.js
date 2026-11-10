@@ -1,4 +1,5 @@
-// prism-step: one phase of a prism-stepper: a bar in the phase's fill when it is done or current, its label, and its state written for assistive technology.
+// prism-step: one step of a prism-stepper: a bar in the phase's fill when it is done or current, or a dot in a vertical stepper, its label,
+// an optional detail from its slot="detail" children, and its state written for assistive technology.
 import { Base, make, setAttribute } from "./base.js";
 import { unwatchShortening, watchShortening } from "../shorten.js";
 
@@ -12,7 +13,8 @@ export class PrismStep extends Base {
     purpose: "One phase of a prism-stepper with its state: a bar in --prism-color-phase-<phase>-fill when done or current and --prism-color-line-strong when upcoming.",
     options: [
       { name: "phase", values: PHASES, default: "", description: "The phase, which gives the bar its color." },
-      { name: "state", values: STATES, default: "upcoming", description: "Where the slice is; current is exposed as aria-current=\"step\" and every state is written out for assistive technology." }
+      { name: "state", values: STATES, default: "upcoming", description: "Where the slice is; current is exposed as aria-current=\"step\" and every state is written out for assistive technology." },
+      { name: "slot=\"detail\"", values: ["children"], default: "", description: "Children shown under the label, such as the current step's meter and progress text." }
     ],
     states: STATES,
     keyboard: []
@@ -23,8 +25,14 @@ export class PrismStep extends Base {
       this.bar = make(this, "span", "prism-step-bar", { "aria-hidden": "true" });
       this.nameElement = make(this, "span", "prism-step-name");
       this.stateElement = make(this, "span", "sr-only");
-      this.nameElement.append(...this.childNodes);
+      const detail = [...this.children].filter((node) => node.getAttribute("slot") === "detail");
+      this.nameElement.append(...[...this.childNodes].filter((node) => !detail.includes(node)));
       this.append(this.bar, this.nameElement, this.stateElement);
+      if (detail.length) {
+        this.detailElement = make(this, "span", "prism-step-detail");
+        this.detailElement.append(...detail);
+        this.append(this.detailElement);
+      }
     }
     setAttribute(this, "role", "listitem");
     this.attributeChangedCallback();

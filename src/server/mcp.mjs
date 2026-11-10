@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { jsonLine, readJsonLines } from "./json-lines.mjs";
 import { pluginURL } from "./plugin-root.mjs";
+import { errorFields, log, startProcessLog } from "./log.mjs";
 import { ACTIVE_OPERATIONS_SCHEMA } from "./workflow/active-operations.mjs";
 import { assertInput } from "./workflow/artifact-schema.mjs";
 import { CONSERVATION_TOOLS, callConservationTool } from "./conservation/conservation-tools.mjs";
@@ -11,7 +12,7 @@ import path from "node:path";
 import { recordStoreOf, restoreMigrationReports, takeMigrationReports } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
 import { confirmSavedConflicts, releaseSavedConflicts, takeSavedConflicts } from "./workflow/record-store-sync.mjs";
-import { withCallSession } from "./workflow/slice-claims.mjs";
+import { callSessionId, withCallSession } from "./workflow/slice-claims.mjs";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
 import {
   listRepositoryIntelligenceProviders,
@@ -35,7 +36,7 @@ import { opensAtStart } from "./review/open-at-start.mjs";
 import { reviewAppDirectory, reviewAppDisabled } from "./review/review-app-discovery.mjs";
 import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
 import { historyMarksText, shippedHistory } from "./workflow/shipped-history.mjs";
-import { INITIATIVE_TOOLS, InitiativeError, getInitiative, initiativeAcknowledgement, updateInitiative } from "./workflow/initiative.mjs";
+import { INITIATIVE_TOOLS, InitiativeError, claimedByUpdate, getInitiative, initiativeAcknowledgement, initiativeWork, readInitiative, requireClaimedWork, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
 import { VERIFY_SLICE_SCHEMA, cancelVerifications, verificationBrief, verifySlice } from "./workflow/verification.mjs";
 import { cancelRecordSyncs } from "./workflow/record-store-sync.mjs";
@@ -54,6 +55,8 @@ import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, f
 // PRISM_REVIEW_APP=off keeps this session on its own review server, as tests and plugin checkouts under development need.
 const reviewServers = createReviewServerPool(reviewAppDisabled() ? {} : { app: { directory: reviewAppDirectory(), evidenceDirectory: conservationStore.directory, intelligenceDirectory: nativeSemanticRuntime.directory, recordStoreDirectory: managedStoresDirectory() } });
 const pluginManifest = JSON.parse(await readFile(pluginURL(".codex-plugin/plugin.json"), "utf8"));
+// The host reads this process's stdout as the protocol, so the log goes to the shared Prism log file, and warnings also to stderr, which hosts keep.
+startProcessLog("mcp", { version: pluginManifest.version, cwd: process.cwd() }, { mirror: true });
 
 function decisionDataDirectory(argumentsValue) {
   const configured = process.env.PLUGIN_DATA || process.env.CLAUDE_PLUGIN_DATA;
@@ -165,6 +168,11 @@ function requestedTabs(argumentsValue) {
     return argumentsValue.artifacts;
   }
   return hasArtifact ? argumentsValue.artifact : undefined;
+}
+
+// An agent may name the tab group its presented tabs join, such as the piece of work they belong to.
+function requestedGroup(argumentsValue) {
+  return Object.hasOwn(argumentsValue, "group") ? { group: argumentsValue.group } : {};
 }
 
 // A session that fell back to its own review server tells the agent, so two review pages for one project reach the user as a known cause.
@@ -460,13 +468,14 @@ const tools = [
   },
   {
     name: "present_review",
-    description: "Open or update one local Prism review page in the system browser for the human. Use artifacts to open every listed artifact as a tab marked as presented by the agent, in the tab strip that every window of the review session shares, and to focus the first one; the human's open tabs stay open. Repeated calls update connected viewer pages without opening another tab. Omit artifact and artifacts to open Attention, which lists recorded user gates, roadmap, and library entry points. The tool returns no rendered image data.",
+    description: "Open or update one local Prism review page in the system browser for the human. Use artifacts to open every listed artifact as a tab marked as presented by the agent, in the tab strip that every window of the review session shares, and to focus the first one; the human's open tabs stay open. Use group to gather the presented tabs into a named tab group, such as the piece of work they belong to; presenting under the same name again adds to that group. Repeated calls update connected viewer pages without opening another tab. Omit artifact and artifacts to open Attention, which lists recorded user gates, roadmap, and library entry points. The tool returns no rendered image data.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
         artifact: { type: "string", description: "One project-relative artifact path, opened as one agent tab. Use artifacts to present several artifacts at once." },
-        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths, each opened as its own agent tab that stays open until the human closes it. An empty array opens Attention." }
+        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths, each opened as its own agent tab that stays open until the human closes it. An empty array opens Attention." },
+        group: { type: "string", minLength: 1, maxLength: 60, description: "A short name for the tab group the presented tabs join, such as the initiative or task they belong to. A new name makes a new group; a tab already in another group moves into this one. Omit it to leave the tabs ungrouped." }
       },
       required: ["projectRoot"],
       additionalProperties: false
@@ -887,7 +896,7 @@ async function callGateWait(argumentsValue, metadata, requestId) {
   }
   let value;
   const unsupported = waitUnsupportedReason();
-  const hookSession = typeof metadata?.sessionId === "string" && metadata.sessionId ? metadata.sessionId : null;
+  const hookSession = callSessionId(metadata);
   // Only the initiative's coordinator when the wait starts has it end on the person's changes; one step of the session tells whether it coordinates and which entries it holds at its start.
   // Every wait that names an initiative holds its gates in the session's notice record while it runs, so their answers reach the agent once, in its result, whichever agent waited.
   const initiative = argumentsValue.initiative;
@@ -1212,7 +1221,28 @@ async function withPersonChanges(name, argumentsValue, value) {
   return { ...value, content: [...value.content, { type: "text", text: personChangesText(changes) }], structuredContent: { ...value.structuredContent, personChanges: changes } };
 }
 
+// The tools that work on one slice: each needs its caller's live claim on the slice or an ancestor.
+// A dependents' run checks a finished scope whose leaves are all done, so it works on no slice in progress and needs no claim.
+const SLICE_WORK_TOOLS = new Set(["verify_slice", "update_review", "update_change_map", "update_design_view"]);
+
+// An agent's tool call that works on slices is refused before it changes anything unless the caller holds the claim; the person's actions in the review app never come through here.
+async function requireCallClaims(name, argumentsValue) {
+  if (typeof argumentsValue?.initiative !== "string") return;
+  if (name === "update_initiative") {
+    const projectRoot = await requestedProjectRoot(argumentsValue);
+    const record = await readInitiative(projectRoot, argumentsValue.initiative).then(({ loaded }) => loaded?.record, () => null);
+    const work = initiativeWork(argumentsValue.operations, record);
+    await requireClaimedWork({ projectRoot, initiative: argumentsValue.initiative, tool: name, work, claimedHere: claimedByUpdate(argumentsValue.operations) });
+    return;
+  }
+  if (!SLICE_WORK_TOOLS.has(name) || typeof argumentsValue.slice !== "string") return;
+  if (name === "verify_slice" && argumentsValue.dependents === true) return;
+  const projectRoot = await requestedProjectRoot(argumentsValue);
+  await requireClaimedWork({ projectRoot, initiative: argumentsValue.initiative, tool: name, work: [{ slug: argumentsValue.slice, own: true }] });
+}
+
 async function callTool(name, argumentsValue = {}, metadata, requestId) {
+  await requireCallClaims(name, argumentsValue);
   if (name === "wait_for_user_gate") {
     return callGateWait(argumentsValue, metadata, requestId);
   }
@@ -1266,7 +1296,7 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
     return { content: [{ type: "text", text: reviewContent(url, review) }], structuredContent: { url, ...await reviewSessionContent(review), ...privateServerContent(review) } };
   }
   if (name === "present_review") {
-    const opened = await review.open(requestedTabs(argumentsValue));
+    const opened = await review.open(requestedTabs(argumentsValue), requestedGroup(argumentsValue));
     return { content: [{ type: "text", text: reviewContent(opened.url, review) }], structuredContent: { ...opened, ...await reviewSessionContent(review), ...privateServerContent(review) } };
   }
   if (name === "list_reviewable_artifacts") {
@@ -1293,6 +1323,7 @@ if (process.env.CLAUDE_PROJECT_DIR) {
 // so a call cancelled before its result is written gets no response, and the saved versions its notes would name stay pending for the next result the host reads.
 const callsInProgress = new Set();
 const cancelledCalls = new Set();
+const callNames = new Map();
 
 const input = readJsonLines(process.stdin);
 input.on("line", async (line) => {
@@ -1316,10 +1347,13 @@ input.on("line", async (line) => {
       callsInProgress.add(request.id);
       const meta = request.params?._meta;
       const { name, arguments: argumentsValue } = request.params ?? {};
+      callNames.set(request.id, name);
+      const started = performance.now(), done = log.doing(`call:${request.id}`, String(name));
       const value = await withCallSession(meta, async () => {
         const agent = await callAgent(meta).catch(() => undefined);
         return withCallAgent(agent, async () => withPersonChanges(name, argumentsValue, await callTool(name, argumentsValue, meta, request.id)));
-      });
+      }).finally(done);
+      log.debug("tool_call", { tool: name, ms: Math.round(performance.now() - started), ...(value?.isError ? { isError: true } : {}) });
       // A cancelled request gets no response, so it carries no notes either; nor does a result made once the host closed input, which ends the session.
       if (value.structuredContent?.status === "cancelled" || cancelledCalls.has(request.id)) return;
       if (closing) { await result(request.id, value); return; }
@@ -1336,6 +1370,7 @@ input.on("line", async (line) => {
       failure(request.id, -32601, `Method not found: ${request.method}`);
     }
   } catch (error) {
+    log.warn("request_failed", { method: request?.method, ...(callNames.has(request?.id) ? { tool: callNames.get(request.id) } : {}), ...errorFields(error) });
     if (request?.id !== undefined && !cancelledCalls.has(request.id)) {
       const data = stateErrorData(error);
       failure(request.id, -32603, errorMessage(error, data), data);
@@ -1344,6 +1379,7 @@ input.on("line", async (line) => {
     if (request?.method === "tools/call") {
       callsInProgress.delete(request.id);
       cancelledCalls.delete(request.id);
+      callNames.delete(request.id);
     }
   }
 });
@@ -1354,6 +1390,7 @@ const CLOSE_GRACE_MS = 5000;
 let closing = false;
 input.on("close", async () => {
   closing = true;
+  log.info("process_stopping", { reason: "input closed" });
   const deadline = setTimeout(() => process.exit(0), CLOSE_GRACE_MS);
   deadline.unref();
   try {
@@ -1363,6 +1400,7 @@ input.on("close", async () => {
     stopClaimRenewals();
     await Promise.all([nativeSemanticRuntime.close(), reviewServers.close(), Promise.allSettled([...endingWaits])]);
   } finally {
+    await log.flush();
     process.exit(0);
   }
 });

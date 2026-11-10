@@ -70,6 +70,7 @@
   --prism-popover-width: 400px;
   --prism-menu-width: 320px;
   --prism-doc-tab-width: 220px;
+  --prism-doc-tab-group-width: 180px;
   --prism-palette-width: 800px;
   --prism-preview-width: 260px;
   /* At this window width and below, a menu marked sheet spans the window, as the phone layout's menus do; the shell's own phone breakpoint is the same width. */
@@ -185,6 +186,13 @@
   --prism-color-on-person-3: #8a1f5c;
   --prism-color-person-4: #e2e5ec;
   --prism-color-on-person-4: #39404f;
+  /* Tab group colors: each named group of tabs takes one, drawn from the existing hues so every tone keeps its contrast on the strip. */
+  --prism-color-group-1: var(--prism-color-accent);
+  --prism-color-group-2: var(--prism-color-success);
+  --prism-color-group-3: var(--prism-color-warning);
+  --prism-color-group-4: var(--prism-color-info);
+  --prism-color-group-5: var(--prism-color-on-person-3);
+  --prism-color-group-6: var(--prism-color-on-agent);
   --prism-color-avatar-edge: rgb(19 18 25 / 0.1);
   --prism-gradient-canvas: radial-gradient(1100px 280px at 50% 0%, rgb(122 92 255 / 0.07), transparent 72%);
   --prism-shadow-island: 0 1px 2px rgb(19 18 25 / 0.05), 0 4px 14px rgb(19 18 25 / 0.05);
@@ -274,6 +282,13 @@
   --prism-color-on-person-3: #f2a5d4;
   --prism-color-person-4: #262a35;
   --prism-color-on-person-4: #c3c9d8;
+  /* Tab group colors: each named group of tabs takes one, drawn from the existing hues so every tone keeps its contrast on the strip. */
+  --prism-color-group-1: var(--prism-color-accent);
+  --prism-color-group-2: var(--prism-color-success);
+  --prism-color-group-3: var(--prism-color-warning);
+  --prism-color-group-4: var(--prism-color-info);
+  --prism-color-group-5: var(--prism-color-on-person-3);
+  --prism-color-group-6: var(--prism-color-on-agent);
   --prism-color-avatar-edge: rgb(255 255 255 / 0.1);
   --prism-gradient-canvas: radial-gradient(1100px 280px at 50% 0%, rgb(140 121 255 / 0.1), transparent 72%);
   --prism-shadow-island: 0 0 0 1px rgb(0 0 0 / 0.35), 0 6px 20px rgb(0 0 0 / 0.3);

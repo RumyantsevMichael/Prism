@@ -151,7 +151,8 @@ test("clause 59: the catalog's toolbar and query choose its theme, density, and 
   assert.equal(state.theme, "dark");
   assert.equal(state.density, "comfortable");
   assert.ok(state.width <= 320, `a narrow catalog is at most 320px wide, not ${state.width}`);
-  assert.deepEqual(await (await fetch(`${base}/api/preferences`)).json(), { theme: "system", density: "compact" }, "the catalog stores nothing");
+  const { DEFAULT_PREFERENCES } = await import("../../dist/server/review/public/kit/preference-registry.js");
+  assert.deepEqual(await (await fetch(`${base}/api/preferences`)).json(), DEFAULT_PREFERENCES, "the catalog stores nothing");
   for (const name of ["Light", "Dark", "System", "Comfortable", "Compact", "Wide", "Narrow"]) {
     assert.ok(await page.getByRole("button", { name, exact: true }).or(page.getByRole("radio", { name, exact: true })).or(page.getByRole("menuitemradio", { name, exact: true })).count(), `the toolbar offers ${name}`);
   }

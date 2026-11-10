@@ -50,12 +50,12 @@ async function appBackedReview(client, projectRoot, { startSession, openBrowser:
     reviewUrl: (tabs) => viaApp(async () => tabUrl((await client.present(projectRoot, { open: false })).url, tabs), (review) => review.reviewUrl(tabs)),
     getSession: () => viaApp(async () => (await client.present(projectRoot, { open: false })).session, (review) => review.getSession()),
     setOpenTabs: (tabs) => viaApp(async () => (await client.present(projectRoot, { tabs, open: false })).session.openTabs, (review) => review.setOpenTabs(tabs)),
-    open: (tabs) => viaApp(async () => {
-      const answer = await client.present(projectRoot, { tabs: normalizeTabs(tabs), open: true });
+    open: (tabs, { group } = {}) => viaApp(async () => {
+      const answer = await client.present(projectRoot, { tabs: normalizeTabs(tabs), ...(group === undefined ? {} : { group }), open: true });
       // The app never opens a browser; this session opens it in its own environment, with the app's grant in the fragment of only the URL it opens.
       const opened = answer.open ? Boolean(await browserOpener(withWriteGrant(answer.url, answer.writeGrant))) : false;
       return { url: answer.url, opened, ...answer.session };
-    }, (review) => review.open(tabs)),
+    }, (review) => review.open(tabs, group === undefined ? {} : { group })),
     viewerCount: () => session ? session.then((review) => review.viewerCount()) : 1,
     privateServer: () => privateServer,
     heldServer: async () => session && await session,

@@ -27,9 +27,18 @@ const identity = { holder: sessionHolder() ?? randomBytes(8).toString("hex"), la
 // Codex names its root session, which its sub-agents share, in each tool call's metadata rather than in the server's environment.
 const callSession = new AsyncLocalStorage();
 
+/**
+ * The host session a tool call's metadata names, or null: Codex sends it as sessionId, and releases before that field name it only in x-codex-turn-metadata as session_id.
+ * Both give a sub-agent its root session, while threadId names the sub-agent's own thread, so it is never used.
+ */
+export function callSessionId(metadata) {
+  for (const value of [metadata?.sessionId, metadata?.["x-codex-turn-metadata"]?.session_id]) if (typeof value === "string" && value.trim()) return value;
+  return null;
+}
+
 /** Run one tool call as the host session its metadata names, so the claims it takes and renews belong to that session; without one, the server's own holder stays. */
 export function withCallSession(metadata, run) {
-  const holder = digestHolder(metadata?.sessionId);
+  const holder = digestHolder(callSessionId(metadata));
   return holder ? callSession.run(holder, run) : run();
 }
 const labels = new Map();

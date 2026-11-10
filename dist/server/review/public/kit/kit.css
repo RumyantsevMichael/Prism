@@ -165,6 +165,10 @@ prism-doc-tabs[empty] {
   display: none;
 }
 
+prism-doc-tabs[dragging] {
+  cursor: grabbing;
+}
+
 prism-doc-tabs[fade-start] {
   mask-image: linear-gradient(to right, transparent, var(--prism-color-ink) var(--prism-space-7));
 }
@@ -1751,6 +1755,165 @@ prism-step[state="current"] .prism-step-name {
   font-weight: var(--prism-font-weight-semibold);
 }
 
+/* A vertical stepper hangs each step on a rail as a dot: a step's piece of rail is as tall as the step and starts at its dot, so the rail runs
+   from the first dot to the last, and each dot centers on its label's first line, an odd-width rail under an odd-width dot sharing its center pixel. */
+prism-stepper[orientation="vertical"] {
+  display: block;
+}
+
+prism-stepper[orientation="vertical"] prism-step {
+  --prism-step-dot-center: calc(var(--prism-space-1) + 0.5lh);
+  position: relative;
+  display: block;
+  padding: var(--prism-space-1) 0 var(--prism-space-3) calc(var(--prism-space-5) + var(--prism-dot-size) / 2);
+  font-size: inherit;
+}
+
+prism-stepper[orientation="vertical"] prism-step:not([phase])[state="done"] { --prism-step-fill: var(--prism-color-success); }
+prism-stepper[orientation="vertical"] prism-step:not([phase])[state="current"] { --prism-step-fill: var(--prism-color-accent); --prism-step-ink: var(--prism-color-ink); }
+
+prism-stepper[orientation="vertical"] prism-step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: var(--prism-step-dot-center);
+  left: calc((var(--prism-dot-size) - var(--prism-stroke)) / 2);
+  width: var(--prism-stroke);
+  height: 100%;
+  background: var(--prism-color-line-strong);
+}
+
+prism-stepper[orientation="vertical"] .prism-step-bar {
+  position: absolute;
+  z-index: var(--prism-layer-raised);
+  top: calc(var(--prism-step-dot-center) - var(--prism-dot-size) / 2);
+  left: 0;
+  width: var(--prism-dot-size);
+  height: var(--prism-dot-size);
+  border: var(--prism-stroke) solid var(--prism-color-line-strong);
+  background: var(--prism-color-raised);
+}
+
+prism-stepper[orientation="vertical"] prism-step:is([state="done"], [state="current"]) > .prism-step-bar {
+  border-color: var(--prism-step-fill);
+  background: var(--prism-step-fill);
+  box-shadow: none;
+}
+
+prism-stepper[orientation="vertical"] .prism-step-name {
+  display: block;
+}
+
+.prism-step-detail {
+  display: grid;
+  gap: var(--prism-space-1);
+  margin-top: var(--prism-space-1);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+}
+
+/* ---------- prism-table: a compact table of figures that becomes blocks of named values in a narrow column ---------- */
+
+prism-table {
+  container: prism-table / inline-size;
+  display: block;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+prism-table table {
+  width: max-content;
+  border-collapse: collapse;
+  font-size: var(--prism-font-size-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+prism-table :is(th, td) {
+  padding: var(--prism-space-1) var(--prism-space-4);
+  text-align: end;
+  vertical-align: baseline;
+}
+
+prism-table :is(th, td):first-child {
+  padding-inline-start: 0;
+  text-align: start;
+}
+
+prism-table thead th {
+  color: var(--prism-color-ink-muted);
+  font-weight: var(--prism-font-weight-medium);
+}
+
+prism-table thead th[scope="colgroup"] {
+  border-bottom: var(--prism-stroke) solid var(--prism-color-line);
+  text-align: center;
+}
+
+prism-table tbody tr {
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+/* Names wrap, so a long row or column name never widens the table past its column; figures stay on one line. */
+prism-table th {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+prism-table tbody th {
+  font-weight: var(--prism-font-weight-medium);
+}
+
+prism-table .prism-table-note {
+  color: var(--prism-color-ink-muted);
+  text-align: start;
+}
+
+.prism-table-mark {
+  margin-inline-end: var(--prism-space-1);
+  color: var(--prism-color-warning);
+}
+
+@container prism-table (max-width: 600px) {
+  prism-table :is(table, tbody, tr, th, td) {
+    display: block;
+  }
+
+  prism-table table {
+    width: 100%;
+  }
+
+  prism-table thead {
+    display: none;
+  }
+
+  prism-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(calc(var(--prism-control-height) * 4.5), 1fr));
+    gap: 0 var(--prism-space-4);
+    padding-block: var(--prism-space-2);
+  }
+
+  prism-table tbody th,
+  prism-table .prism-table-note {
+    grid-column: 1 / -1;
+    padding-inline: 0;
+  }
+
+  prism-table tbody td {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0 var(--prism-space-3);
+    padding-inline: 0;
+  }
+
+  prism-table tbody td[data-label]::before {
+    content: attr(data-label);
+    margin-inline-end: auto;
+    color: var(--prism-color-ink-muted);
+  }
+}
+
 /* ---------- prism-breadcrumbs: crumbs that shorten before the current page does ---------- */
 
 prism-breadcrumbs {
@@ -1929,6 +2092,178 @@ prism-doc img {
   max-width: 100%;
   height: auto;
   border-radius: var(--prism-radius-md);
+}
+
+/* ---------- prism-maximize: the icon button that maximizes a region and restores it ---------- */
+
+prism-maximize {
+  display: inline-flex;
+  flex: none;
+}
+
+/* In a region without a header the button floats at the top end corner, beside the region's first lines, and sticks while the region scrolls. */
+prism-maximize[floating] {
+  position: sticky;
+  top: 0;
+  z-index: var(--prism-layer-raised);
+  float: inline-end;
+  margin: 0 0 var(--prism-space-3) var(--prism-space-4);
+}
+
+/* ---------- prism-contents: a document's contents, beside it on a wide window and above it, folded, on a narrow one ---------- */
+
+/* The box that holds the contents and the document lays them out side by side; the contents column runs the box's full height. */
+:has(> prism-contents) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) calc(var(--prism-sidebar-width) * 0.8);
+  column-gap: var(--prism-space-7);
+  align-items: start;
+}
+
+:has(> prism-contents) > :not(prism-contents) {
+  grid-column: 1;
+}
+
+prism-contents {
+  display: block;
+  grid-column: 2;
+  grid-row: 1 / span 40;
+  align-self: stretch;
+  min-width: 0;
+  margin-block: calc(var(--prism-contents-inset, 0px) * -1);
+  border-inline-start: var(--prism-stroke) solid var(--prism-color-line);
+  font-size: var(--prism-font-size-sm);
+}
+
+/* The header and list stick inside the full-height column and fit the visible part of the scrolling element, which fit() measures. */
+.prism-contents-body {
+  position: sticky;
+  top: var(--prism-contents-top, 0px);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  max-height: var(--prism-contents-fit, 100vh);
+  padding: var(--prism-contents-inset, 0px) 0 var(--prism-contents-inset, 0px) var(--prism-space-5);
+}
+
+.prism-contents-head {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--prism-space-3);
+  min-height: var(--prism-control-height-sm);
+}
+
+.prism-contents-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-inline: var(--prism-space-3);
+  color: var(--prism-color-ink-muted);
+  font-weight: var(--prism-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.prism-contents-toggle {
+  display: none;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.prism-contents-tools {
+  display: flex;
+  flex: none;
+  gap: var(--prism-space-2);
+  margin-inline-start: auto;
+}
+
+.prism-contents-tools:empty {
+  display: none;
+}
+
+/* Only the list scrolls, so the header never scrolls away. */
+.prism-contents-list {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.prism-contents-list ol {
+  display: grid;
+  gap: var(--prism-space-1);
+  margin: var(--prism-space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.prism-contents-list a {
+  display: block;
+  padding: var(--prism-space-1) var(--prism-space-3);
+  border-radius: var(--prism-radius-sm);
+  color: var(--prism-color-ink-muted);
+  line-height: var(--prism-line-height-tight);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.prism-contents-list a:hover {
+  background: var(--prism-color-hover);
+  color: var(--prism-color-ink);
+}
+
+/* The list clips its overflow, so the focus ring is drawn inside the link. */
+.prism-contents-list a:focus-visible {
+  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
+  outline-offset: calc(var(--prism-stroke-strong) * -1);
+}
+
+.prism-contents-list a[aria-current="location"] {
+  background: var(--prism-color-selected);
+  color: var(--prism-color-accent-text);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.prism-contents-list .depth-1 { padding-inline-start: var(--prism-space-6); }
+.prism-contents-list .depth-2 { padding-inline-start: var(--prism-space-8); }
+
+@media (max-width: 1100px) {
+  :has(> prism-contents) {
+    display: block;
+  }
+
+  prism-contents {
+    margin: 0 0 var(--prism-space-5);
+    border: var(--prism-stroke) solid var(--prism-color-line);
+    border-radius: var(--prism-radius-md);
+    background: var(--prism-color-surface);
+  }
+
+  .prism-contents-body {
+    position: static;
+    max-height: none;
+    padding: var(--prism-space-2) var(--prism-space-4);
+  }
+
+  .prism-contents-title {
+    display: none;
+  }
+
+  .prism-contents-toggle {
+    display: inline-flex;
+  }
+
+  prism-contents:not([open]) .prism-contents-list {
+    display: none;
+  }
+
+  prism-contents[pinned] {
+    position: sticky;
+    top: var(--prism-contents-top, 0px);
+    z-index: var(--prism-layer-raised);
+  }
+
+  prism-contents[pinned] .prism-contents-body {
+    max-height: var(--prism-contents-fit, 100vh);
+  }
 }
 
 /* ---------- prism-code: a code block with a line-number gutter ---------- */

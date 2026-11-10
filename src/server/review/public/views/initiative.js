@@ -9,6 +9,7 @@ import { claimChip, claimOf } from "./claims.js";
 import { componentChip } from "./components.js";
 import { mountInitiativeSettings } from "./actions.js";
 import { shippedHistoryHtml } from "./shipped-history.js";
+import { preference, setPreference } from "../kit/preferences.js";
 
 const MODES = [["board", "Board"], ["list", "List"], ["graph", "Graph"]];
 // These columns always show; another status, such as deferred, gets a column only while a slice has it.
@@ -113,8 +114,9 @@ async function graph(container, data, ctx) {
 export async function render(container, entity, ctx) {
   const data = entity.data;
   const item = data.roadmapItem;
-  ctx.state.mode ??= "board";
-  const modes = data.exists && data.valid ? `<div class="segmented" role="group" aria-label="Initiative view">${MODES.map(([mode, label]) => `<prism-button size="sm" variant="ghost" data-initiative-mode="${mode}" pressed="${ctx.state.mode === mode}">${label}</prism-button>`).join("")}</div>` : "";
+  // The view is the person's preference, so every initiative opens in the view they last chose.
+  const mode = preference("initiative.view");
+  const modes = data.exists && data.valid ? `<div class="segmented" role="group" aria-label="Initiative view">${MODES.map(([shown, label]) => `<prism-button size="sm" variant="ghost" data-initiative-mode="${shown}" pressed="${mode === shown}">${label}</prism-button>`).join("")}</div>` : "";
   const head = `${shippedHistoryHtml(data.shippedHistory)}${summaryPanel(`
       <div class="summary-row">
         <div class="chip-row">${item ? stateBadge(item.state) : stateBadge("unlisted")}${item ? badge(item.band) : ""}${item?.readyToShip && item.state !== "shipped" ? badge("ready to ship", "success") : ""}</div>
@@ -154,12 +156,12 @@ export async function render(container, entity, ctx) {
     ${settings}`;
   mountSettings();
   const body = container.querySelector("[data-initiative-body]");
-  if (ctx.state.mode === "graph") await graph(body, data, ctx);
-  else if (ctx.state.mode === "list") body.innerHTML = card("Slice tree", `<ul class="slice-outline root">${tree(data, data.derived.root, 0, ctx)}</ul>`, { eyebrow: summary });
+  if (mode === "graph") await graph(body, data, ctx);
+  else if (mode === "list") body.innerHTML = card("Slice tree", `<ul class="slice-outline root">${tree(data, data.derived.root, 0, ctx)}</ul>`, { eyebrow: summary });
   else body.innerHTML = card("Slice board", board(data, ctx), { eyebrow: `${summary}${data.active.length ? ` · ${plural(data.active.length, "active slice")}` : ""}` });
   for (const button of container.querySelectorAll("[data-initiative-mode]")) {
     button.addEventListener("click", () => {
-      ctx.state.mode = button.dataset.initiativeMode;
+      void setPreference("initiative.view", button.dataset.initiativeMode).catch(() => {});
       ctx.rerender();
     });
   }

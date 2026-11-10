@@ -327,6 +327,7 @@ test("declares the project root and read-only artifact tools", async (context) =
   assert.match(tools.present_review.description, /Omit artifact and artifacts to open Attention/);
   assert.deepEqual(tools.get_review_url.inputSchema.properties.artifacts.items, { type: "string" });
   assert.deepEqual(tools.present_review.inputSchema.properties.artifacts.items, { type: "string" });
+  assert.equal(tools.present_review.inputSchema.properties.group.type, "string");
   const settings = tools.update_coordination_state.inputSchema.properties.changes.properties.settings.properties;
   assert.deepEqual(settings.autonomy.enum, ["conservative", "broad", "full"]);
   assert.equal(settings.agentFlow, undefined);
@@ -885,6 +886,18 @@ test("opens the system browser when it presents a review", async (context) => {
   assert.equal(await waitForMarker(browser.marker), "opened");
 });
 
+test("present_review gathers the presented tabs into the tab group the agent names", async (context) => {
+  const root = await projectFixture(context, "present-group", "artifact.md");
+  const browser = await browserStub(context);
+  const mcp = mcpProcess(context, root, undefined, browser.environment);
+
+  await initialize(mcp);
+  const review = await callTool(mcp, 2, "present_review", { projectRoot: root, artifact: "docs/artifact.md", group: "Retry requests" });
+  assert.deepEqual(review.result.structuredContent.groups, [{ name: "Retry requests", tabs: ["docs/artifact.md"], collapsed: false }]);
+  const refused = await callTool(mcp, 3, "present_review", { projectRoot: root, artifact: "docs/artifact.md", group: "x".repeat(61) });
+  assert.match(JSON.stringify(refused), /tab group name/);
+});
+
 test("does not reopen an existing viewer for repeated presentation calls", async (context) => {
   const root = await projectFixture(context, "idempotent-present", "artifact.md");
   const browser = await browserStub(context);
@@ -983,6 +996,10 @@ test("verify_slice reports a missing design and asks for command approval throug
   assert.deepEqual(verify.inputSchema.required, ["projectRoot", "initiative", "slice"]);
   assert.ok(listed.some((tool) => tool.name === "update_design_view"));
   await callTool(mcp, 3, "update_initiative", { projectRoot: root, initiative: "reports", expectedRevision: null, operations: [{ op: "create", slug: "reports", title: "Signed reports", requirements: ["req.md#R1"] }] });
+  const unclaimed = await callTool(mcp, 40, "verify_slice", { projectRoot: root, initiative: "reports", slice: "reports" });
+  assert.equal(unclaimed.error.data.code, "claim_required");
+  const created = await callTool(mcp, 41, "get_initiative", { projectRoot: root, initiative: "reports" });
+  await callTool(mcp, 42, "update_initiative", { projectRoot: root, initiative: "reports", expectedRevision: created.result.structuredContent.revision, operations: [{ op: "claim", slug: "reports" }] });
   const missing = await callTool(mcp, 4, "verify_slice", { projectRoot: root, initiative: "reports", slice: "reports" });
   assert.equal(missing.error.data.code, "design_missing");
   const current = await callTool(mcp, 5, "get_initiative", { projectRoot: root, initiative: "reports" });

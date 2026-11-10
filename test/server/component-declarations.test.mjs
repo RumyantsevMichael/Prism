@@ -148,6 +148,8 @@ test("clause 9: invalid declarations refuse the operations that read components 
   const root = await solo(context, withComponents(cases[2][0]));
   await plannedSlice(root, "billing-totals", THREE[0].changes);
   const server = await prismServer(context, root);
+  const created = (await server.call("get_initiative", { initiative: INITIATIVE })).result.structuredContent;
+  assert.equal((await server.call("update_initiative", { initiative: INITIATIVE, expectedRevision: created.revision, operations: [{ op: "claim", slug: INITIATIVE }] })).error, undefined);
   const current = (await server.call("get_initiative", { initiative: INITIATIVE })).result.structuredContent;
   const response = await server.call("update_initiative", { initiative: INITIATIVE, expectedRevision: current.revision, operations: [{ op: "propose_design", slug: INITIATIVE, operations: slicePlan([billing()]) }] });
   assert.ok(response.error, "the proposal is refused");

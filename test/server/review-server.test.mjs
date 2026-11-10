@@ -240,6 +240,45 @@ test("uses an injected browser opener when it presents a review", async (context
   }
 });
 
+test("an agent's group name gathers its presented tabs into one named group that the page can collapse, rearrange, and leave", async (context) => {
+  const projectRoot = await fixture(context);
+  await writeFile(path.join(projectRoot, "docs", "notes.md"), "# Notes\n");
+  await writeFile(path.join(projectRoot, "docs", "plan.md"), "# Plan\n");
+  const review = await startReviewServer({ projectRoot, openBrowser: async () => true });
+  const put = async (body) => fetchReview(`${review.baseUrl}/api/session`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  try {
+    await review.open(["docs/notes.md"]);
+    await review.open(["docs/roadmap.md", "docs/roadmap.puml"], { group: "  Retry   requests " });
+    let session = review.getSession();
+    assert.deepEqual(session.groups, [{ name: "Retry requests", tabs: ["docs/roadmap.md", "docs/roadmap.puml"], collapsed: false }]);
+    // A tab presented later under the same name joins the group, and the group's tabs stay side by side.
+    const reordered = await put({ openTabs: ["docs/roadmap.md", "docs/notes.md", "docs/roadmap.puml"], groups: [{ ...session.groups[0], collapsed: true }] });
+    session = await reordered.json();
+    assert.deepEqual(session.openTabs, ["docs/roadmap.md", "docs/roadmap.puml", "docs/notes.md"]);
+    assert.equal(session.groups[0].collapsed, true);
+    await review.open(["docs/plan.md"], { group: "Retry requests" });
+    session = review.getSession();
+    assert.deepEqual(session.openTabs, ["docs/roadmap.md", "docs/roadmap.puml", "docs/plan.md", "docs/notes.md"]);
+    assert.deepEqual(session.groups, [{ name: "Retry requests", tabs: ["docs/roadmap.md", "docs/roadmap.puml", "docs/plan.md"], collapsed: false }], "a presentation shows its group expanded");
+    // A tab presented under another name moves into that group.
+    await review.open(["docs/plan.md"], { group: "Indexing" });
+    assert.deepEqual(review.getSession().groups.map((group) => [group.name, group.tabs]), [["Retry requests", ["docs/roadmap.md", "docs/roadmap.puml"]], ["Indexing", ["docs/plan.md"]]]);
+    // A tab that leaves a group keeps its place; closing a group's last tab removes the group.
+    session = await (await put({ openTabs: ["docs/roadmap.md", "docs/roadmap.puml", "docs/notes.md"], groups: [{ name: "Retry requests", tabs: ["docs/roadmap.md"] }] })).json();
+    assert.deepEqual(session.groups, [{ name: "Retry requests", tabs: ["docs/roadmap.md"], collapsed: false }]);
+    assert.deepEqual(session.openTabs, ["docs/roadmap.md", "docs/roadmap.puml", "docs/notes.md"]);
+    // A grouped tab is never the preview, so the next ordinary open does not replace it.
+    session = await (await put({ openTabs: ["docs/roadmap.md", "docs/roadmap.puml", "docs/notes.md"], previewTab: "docs/roadmap.md" })).json();
+    assert.equal(session.previewTab, null);
+    for (const groups of [[{ name: "", tabs: ["docs/roadmap.md"] }], [{ name: "x".repeat(61), tabs: ["docs/roadmap.md"] }], [{ name: "A", tabs: ["docs/roadmap.md"] }, { name: "A", tabs: ["docs/notes.md"] }], [{ name: "A", tabs: ["docs/roadmap.md"] }, { name: "B", tabs: ["docs/roadmap.md"] }], [{ name: "A", tabs: ["docs/plan.md"] }], [{ name: "A", tabs: [] }], [{ name: "A", tabs: ["docs/roadmap.md"], collapsed: "yes" }], "A"]) {
+      assert.equal((await put({ openTabs: ["docs/roadmap.md", "docs/roadmap.puml", "docs/notes.md"], groups })).status, 400, JSON.stringify(groups));
+    }
+    await assert.rejects(review.open(["docs/notes.md"], { group: " " }), /tab group name/);
+  } finally {
+    await review.close();
+  }
+});
+
 test("stores agent-selected tabs and exposes them to the viewer", async (context) => {
   const projectRoot = await fixture(context);
   const review = await startReviewServer({ projectRoot });
@@ -247,13 +286,13 @@ test("stores agent-selected tabs and exposes them to the viewer", async (context
     await review.setOpenTabs(["docs/roadmap.md", "docs/roadmap.puml"]);
     assert.deepEqual(review.getOpenTabs(), ["docs/roadmap.md", "docs/roadmap.puml"]);
     const session = await fetchReview(`${review.baseUrl}/api/session`);
-    assert.deepEqual(await session.json(), { openTabs: ["docs/roadmap.md", "docs/roadmap.puml"], activeTab: "docs/roadmap.md", previewTab: null, agentTabs: ["docs/roadmap.md", "docs/roadmap.puml"], revision: 1 });
+    assert.deepEqual(await session.json(), { openTabs: ["docs/roadmap.md", "docs/roadmap.puml"], activeTab: "docs/roadmap.md", previewTab: null, agentTabs: ["docs/roadmap.md", "docs/roadmap.puml"], groups: [], activeSource: "agent", revision: 1 });
     const updated = await fetchReview(`${review.baseUrl}/api/session`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ openTabs: ["docs/roadmap.puml"] })
     });
-    assert.deepEqual(await updated.json(), { openTabs: ["docs/roadmap.puml"], activeTab: "docs/roadmap.puml", previewTab: null, agentTabs: ["docs/roadmap.puml"], revision: 2 });
+    assert.deepEqual(await updated.json(), { openTabs: ["docs/roadmap.puml"], activeTab: "docs/roadmap.puml", previewTab: null, agentTabs: ["docs/roadmap.puml"], groups: [], activeSource: "page", revision: 2 });
     assert.deepEqual(review.getOpenTabs(), ["docs/roadmap.puml"]);
     const invalidActive = await fetchReview(`${review.baseUrl}/api/session`, {
       method: "PUT",
@@ -285,7 +324,7 @@ test("a shared viewer stream carries the session of each page a tab joined it fo
     const joined = await post("join", { stream: hub.data.stream, tab: "first-tab-0001" });
     assert.equal(joined.status, 200);
     assert.deepEqual(await joined.json(), { project: page });
-    assert.deepEqual(await shared.next(), { event: "session", data: { project: page, data: { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], revision: 0 } } });
+    assert.deepEqual(await shared.next(), { event: "session", data: { project: page, data: { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], groups: [], activeSource: null, revision: 0 } } });
     assert.equal((await post("join", { stream: hub.data.stream, tab: "second-tab-002" })).status, 200);
     await shared.next();
     assert.equal(review.viewerCount(), 2);
@@ -321,11 +360,11 @@ test("broadcasts session changes to every connected viewer page", async (context
     streams.push(first, second);
     assert.equal(first.status, 200);
     assert.match(first.headers["content-type"], /text\/event-stream/);
-    assert.deepEqual((await first.next()).data, { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], revision: 0 });
-    assert.deepEqual((await second.next()).data, { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], revision: 0 });
+    assert.deepEqual((await first.next()).data, { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], groups: [], activeSource: null, revision: 0 });
+    assert.deepEqual((await second.next()).data, { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], groups: [], activeSource: null, revision: 0 });
 
     await review.setOpenTabs(["docs/roadmap.md", "docs/roadmap.puml"]);
-    const update = { openTabs: ["docs/roadmap.md", "docs/roadmap.puml"], activeTab: "docs/roadmap.md", previewTab: null, agentTabs: ["docs/roadmap.md", "docs/roadmap.puml"], revision: 1 };
+    const update = { openTabs: ["docs/roadmap.md", "docs/roadmap.puml"], activeTab: "docs/roadmap.md", previewTab: null, agentTabs: ["docs/roadmap.md", "docs/roadmap.puml"], groups: [], activeSource: "agent", revision: 1 };
     assert.deepEqual((await first.next()).data, update);
     assert.deepEqual((await second.next()).data, update);
   } finally {

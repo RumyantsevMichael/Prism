@@ -249,6 +249,9 @@ Prism stores diagrams as PlantUML `.puml` source files, and the browser renders 
 Markdown links open the linked file or heading in the review.
 A link to a missing file or a target outside the project is marked as missing, and an external link opens in a new browser tab.
 A document with three or more headings gets a contents list that marks the current section.
+In a wide window the contents stay beside the text while it scrolls, and a list longer than the window scrolls on its own and keeps the current section in view.
+In a window 1100 pixels wide or narrower the contents sit above the text and fold open from their header.
+Consecutive lines of text render as one paragraph, as in CommonMark, so a document written one sentence per line reads as ordinary paragraphs.
 Each heading with text under it has a fold toggle beside it, and a link or contents entry that leads into a folded section opens it.
 Code in source files, Markdown code blocks, previews, and diagram source is highlighted by language.
 
@@ -261,7 +264,8 @@ A file's preview has a Show in side panel button, and Alt+click on a link does t
 The panel draws a PlantUML file, and the diagrams a document links, as its page does, fitted to the panel's width, with the same zoom and source controls.
 The side panel holds one file at a time, so opening another replaces it, and a link inside the panel opens its target in the panel.
 Open as tab opens the file in a tab that stays open, Esc or the close button closes the panel, and dragging its left edge sets its width.
-Graph, diagram, and document cards can be maximized, and Esc restores them.
+Graph, diagram, and document cards can be maximized with their Maximize button, and Esc restores them.
+A maximized document keeps its Restore button in view while it scrolls, in its contents header when it has contents.
 
 ## Find artifacts
 
@@ -313,6 +317,17 @@ Each fallback also adds a line with the time, project, and reason to `fallbacks.
 `prism review` opens the project in the shared review app and returns.
 It opens the system browser only when no review tab that can make changes is open, and such a tab shows the project or a notice with a link to it instead.
 When the shared app cannot start or `PRISM_REVIEW_APP=off` is set, `prism review` serves the review itself until you stop it with `Ctrl-C`.
+
+## Logs
+
+Every Prism process writes to one log file, `logs/prism.log` in the state directory above, so the review app, each session's MCP server, and their index builds leave one record.
+Each line is a JSON object with the time, level, event, process name and id, and the event's own fields.
+The log records each process start and stop, index builds with their phases, durations, and failures, review app requests that fail or take more than two seconds, MCP tool calls that fail, and uncaught errors.
+It also records each time a process stops answering for more than a second, with what it was doing at the time, such as the index phase of the component being built.
+Past 5 MiB the file moves to `prism.log.1`, replacing the older one.
+Set `PRISM_LOG_LEVEL` to `debug`, `info` (the default), `warn`, `error`, or `off`, and set `PRISM_LOG_DIR` to write the log to another folder.
+An MCP server also writes its warnings and errors to its error output, which the agent host keeps with its own logs.
+The log holds project paths, component names, and tool names, but no file contents, search queries, or tool arguments.
 
 ## Security
 
