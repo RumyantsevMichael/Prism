@@ -11,6 +11,7 @@ import { conservationStore, canonical, digest, conservationError, withinScope } 
 import { assessDeltaReadiness, resolveReference, COMPARISON_VERSION } from "../conservation/conservation-analysis.mjs";
 import { objectSchema as obj, arraySchema as arr, textField as str, hashField, referenceSchema, justificationSchema } from "../conservation/conservation-schema.mjs";
 import type { ComparisonEvidence, DeltaDocument, Evidence, GrowthJustification, Observation, Reference, SnapshotEvidence } from "../conservation/conservation-types.mjs";
+import { parseStoreJson } from "../workflow/store-json.mjs";
 
 type Mode = "design-audit" | "implementation-review";
 type Status = "OPEN" | "IN PROGRESS" | "FIXED" | "VERIFIED" | "REOPENED";
@@ -121,7 +122,7 @@ const recordSchema = obj({
 export async function loadReview(projectRoot: string, initiative: string, slice: string) {
   const resolved = await locateRecord(projectRoot, { kind: "review", initiative, slice });
   try {
-    const bytes = await regularBytes(resolved.target, 4 * 1024 * 1024), document = JSON.parse(bytes.toString()) as ReviewRecord;
+    const bytes = await regularBytes(resolved.target, 4 * 1024 * 1024), document = parseStoreJson(bytes.toString()) as ReviewRecord;
     assertInput(recordSchema, document);
     return { resolved, exists: true, revision: digest(bytes), document };
   } catch (error) { if (error.code === "ENOENT") return { resolved, exists: false, revision: null, document: null }; throw error; }

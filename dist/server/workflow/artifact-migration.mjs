@@ -13,6 +13,7 @@ import { roadmapViewOf } from "./roadmap.mjs";
 import { generatedNotice } from "./projection.mjs";
 import { ARTIFACT_CONTENT_MAX, ARTIFACT_LOCATION_MAX, artifactText, artifactVersion, collidingPath, createMovedArtifacts, pathIndex, recordMovedStatus, seenArtifacts, storedArtifactIn, writeMovedView } from "./store-artifacts.mjs";
 import { roadmapPaths } from "./workflow-config.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 // On a checkout's first access to its store, the files Git tracks under its artifact paths move into its repository's scope once, and every file the move cannot take stays where it is.
 // The move writes the store and its ledger first and removes a checkout file only then, right before a tool result that reports the removal is written, and only while it holds the bytes the store took,
@@ -345,7 +346,7 @@ async function ledgersOf(storeBase, repository) {
   catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
   for (const name of names) {
     let entry;
-    try { entry = JSON.parse((await fileBytes(folder, name, 64 * 1024 * 1024))?.toString("utf8") ?? "null"); }
+    try { entry = parseStoreJson((await fileBytes(folder, name, 64 * 1024 * 1024))?.toString("utf8") ?? "null"); }
     catch { continue; }
     if (entry?.repository !== repository) continue;
     for (const move of Array.isArray(entry.moved) ? entry.moved : []) {
@@ -353,8 +354,9 @@ async function ledgersOf(storeBase, repository) {
       if (typeof move?.from === "string") ledger.movedFrom.add(move.from);
       if (typeof move?.from === "string" && typeof move?.to === "string") ledger.movedTo.set(move.from, move.to);
     }
+    // Only text names a path or a reason, so no value that a sync brings in a ledger is turned into a string.
     for (const kept of Array.isArray(entry.kept) ? entry.kept : []) {
-      if (typeof kept?.path !== "string") continue;
+      if (typeof kept?.path !== "string" || typeof kept.reason !== "string") continue;
       ledger.kept.add(`${kept.path}\0${kept.reason}`);
       ledger.keptFor.set(kept.path, new Set([...ledger.keptFor.get(kept.path) ?? [], kept.reason]));
     }
@@ -742,9 +744,9 @@ async function ledgerMoves(seen, name) {
   if (name === null) return null;
   try {
     const file = await resolveLedgerFile(seen, name);
-    const entry = JSON.parse((await fileBytes(path.dirname(file), path.basename(file), 64 * 1024 * 1024))?.toString("utf8") ?? "null");
+    const entry = parseStoreJson((await fileBytes(path.dirname(file), path.basename(file), 64 * 1024 * 1024))?.toString("utf8") ?? "null");
     if (entry?.repository !== seen.repository || !Array.isArray(entry.moved)) return null;
-    return new Set(entry.moved.map((move) => `${move?.from}\0${move?.to}`));
+    return new Set(entry.moved.filter((move) => typeof move?.from === "string" && typeof move.to === "string").map((move) => `${move.from}\0${move.to}`));
   } catch { return null; }
 }
 

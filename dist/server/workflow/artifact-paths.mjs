@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
+import { parseStoreJson } from "./store-json.mjs";
 
 // A store keeps descriptive artifacts under artifacts/, in one folder per scope, and inside it one fixed folder or file per kind,
 // so checkouts that configure different paths share one layout, while the configured path stays each artifact's address.
@@ -64,7 +65,7 @@ export function identityOf(bytes) {
   try {
     const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     if (text.replace(/\n$/, "").includes("\n")) return null;
-    value = JSON.parse(text);
+    value = parseStoreJson(text);
   } catch { return null; }
   if (value === null || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 1 || typeof value.id !== "string") return null;
   return IDENTITY_FORM.test(value.id) ? value.id : null;

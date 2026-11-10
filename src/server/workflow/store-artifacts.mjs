@@ -11,6 +11,7 @@ import { ComponentError, readComponents } from "./components.mjs";
 import { checkArtifactFolders, noteToolCallWrite, recordStoreOf, resolveArtifactFile, resolveStatusFile, seenScopes, withArtifactStoreLock } from "./record-store.mjs";
 import { pruneArtifactFolders, scheduleRecordSync } from "./record-store-sync.mjs";
 import { artifactKinds, readWorkflowConfig } from "./workflow-config.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 // Agents read and write a workspace's descriptive artifacts in its record store through these tools, addressed by the project-relative path the checkout's configured paths give them.
 const PAGE_LINES = 2000;
@@ -615,7 +616,7 @@ async function applyOperations(seen, checked, { held = null, noteWrites = false 
       if (!original.has(moved.target)) original.set(moved.target, null);
       state.set(moved.target, stored(moved.bytes));
       names.set(moved.target, file);
-      entries.push({ name: comment.name, target: moved.target, comment: JSON.parse(moved.bytes.toString("utf8")) });
+      entries.push({ name: comment.name, target: moved.target, comment: parseStoreJson(moved.bytes.toString("utf8")) });
     }
   };
   // Each artifact's identity changes with it in the same update: a create writes a new one, a move carries it, a removal removes it, and every other write keeps it.

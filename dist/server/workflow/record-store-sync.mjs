@@ -8,6 +8,7 @@ import { canonicalJson, hasRecordMerge, nestedDeeperThan, recordMergeFor } from 
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { localRepository, localTransport, UnresolvableLocalRemote } from "./git-local-repository.mjs";
 import { withoutCredentials } from "./remote-url.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 // A record store that is a Git checkout exchanges its records with its upstream.
 // One process at a time syncs a store, and record reads and writes wait while a merge replaces record files.
@@ -143,7 +144,7 @@ async function required(base, args, options) {
 // The working-tree marker tells record reads and writes in every process that the merge step is replacing record files.
 async function holderAlive(marker) {
   try {
-    const owner = JSON.parse(await readFile(marker, "utf8"));
+    const owner = parseStoreJson(await readFile(marker, "utf8"));
     if (Date.now() - Date.parse(owner.at) > SETTINGS.waitMs * 6) return false;
     try { process.kill(owner.pid, 0); return true; } catch (error) { return error.code !== "ESRCH"; }
   } catch (error) { return error.code !== "ENOENT"; }
@@ -277,7 +278,7 @@ const undoneForm = (change) => change !== null && typeof change === "object" && 
 
 // What a conflict stamp's copies are and which local changes its merge undid, from the note beside it, or nothing for a stamp without one or with a note of any other form.
 async function readAbout(base, stamp) {
-  const value = await readFile(aboutPath(base, stamp), "utf8").then(JSON.parse).catch(() => null);
+  const value = await readFile(aboutPath(base, stamp), "utf8").then(parseStoreJson).catch(() => null);
   const theirs = Array.isArray(value?.theirs) ? value.theirs.filter((file) => typeof file === "string") : [];
   const undone = Array.isArray(value?.undone) ? value.undone.filter(undoneForm).map((change) => noteLocation(change.removal) ? { removal: change.removal } : { move: change.move, movedTo: change.movedTo }) : [];
   return { theirs: new Set(theirs), undone };
@@ -319,7 +320,7 @@ export async function syncRecordStoreNow(base, options = {}) {
 
 /** The latest sync outcome of a store, or null before its first sync. */
 export async function readSyncStatus(base) {
-  try { return JSON.parse(await readFile(syncPath(base, "status.json"), "utf8")); }
+  try { return parseStoreJson(await readFile(syncPath(base, "status.json"), "utf8")); }
   catch { return null; }
 }
 
@@ -1676,7 +1677,7 @@ async function recoverSaved(base) {
   const conflicts = [];
   for (const name of names) {
     const folder = syncPath(base, "saving", name);
-    const stage = await readFile(path.join(folder, STAGE_RECORD), "utf8").then(JSON.parse).catch(() => null);
+    const stage = await readFile(path.join(folder, STAGE_RECORD), "utf8").then(parseStoreJson).catch(() => null);
     const copies = await lstat(path.join(folder, "files")).then((stats) => stats.isDirectory(), () => false);
     if (!stage && !copies && STAMP.test(name)) {
       await publishCopies(base, folder).catch(() => rm(folder, { recursive: true, force: true }));
@@ -1688,7 +1689,7 @@ async function recoverSaved(base) {
     const saved = valid ? stage.conflicts.filter((conflict) => conflict.saved) : [];
     if (!valid || (saved.length && !copies)) { await rm(folder, { recursive: true, force: true }); continue; }
     const moved = typeof stage.to === "string" && (await git(base, ["merge-base", "--is-ancestor", stage.to, "HEAD"])).ok;
-    let replaced = await readFile(path.join(folder, REPLACED_RECORD), "utf8").then(JSON.parse).catch(() => null);
+    let replaced = await readFile(path.join(folder, REPLACED_RECORD), "utf8").then(parseStoreJson).catch(() => null);
     // A stage that an earlier Prism made has no replaced record, so each saved file whose bytes on disk differ from its copy counts as replaced, as that Prism counted it.
     if (!Array.isArray(replaced)) {
       replaced = [];
@@ -1748,7 +1749,7 @@ function sameRegistration(left, right) {
   try {
     const parsed = [left, right].map((bytes) => {
       let value;
-      try { value = JSON.parse(bytes.toString("utf8")); } catch { return null; }
+      try { value = parseStoreJson(bytes.toString("utf8")); } catch { return null; }
       if (value === null || typeof value !== "object" || Array.isArray(value) || nestedDeeperThan(value)) return null;
       const { registeredAt, ...rest } = value;
       return canonicalJson(rest);

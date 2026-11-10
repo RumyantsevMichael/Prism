@@ -31,6 +31,7 @@ import { createProjectReview, isTrustedHost, normalizeTabs, readBody, send } fro
 import { loadAttention } from "./workspace-model.mjs";
 import { readWorkspaceIdentity, workspaceLabel } from "./workspace-identity.mjs";
 import { createWriteSessions } from "./write-sessions.mjs";
+import { parseStoreJson } from "../workflow/store-json.mjs";
 
 const LEASE_MS = 3 * 60 * 1000;
 const IDLE_MS = 30 * 60 * 1000;
@@ -52,7 +53,7 @@ function statusError(status, message) {
 function parseBody(text) {
   if (!text) return {};
   try {
-    return JSON.parse(text);
+    return parseStoreJson(text);
   } catch {
     throw statusError(400, "The request body must be JSON.");
   }

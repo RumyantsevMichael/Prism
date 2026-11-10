@@ -14,6 +14,7 @@ import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservati
 import { contractClauses, loadDesignView } from "../workflow/design-view.mjs";
 import { appliedArtifactActions, pendingApprovalGates, storeArtifactStatuses } from "../workflow/store-artifacts.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
+import { parseStoreJson } from "../workflow/store-json.mjs";
 
 const LIBRARY_LIMIT = 500;
 const RECENT_CHANGES_LIMIT = 20;
@@ -133,7 +134,7 @@ async function sliceArtifacts(root, directory, slices, slug, id) {
   let review = null;
   if (reviewSource !== null) {
     try {
-      review = { path: reviewPath, ...reviewSummary(JSON.parse(reviewSource)) };
+      review = { path: reviewPath, ...reviewSummary(parseStoreJson(reviewSource)) };
     } catch {
       review = { path: reviewPath, invalid: true };
     }
@@ -166,7 +167,7 @@ async function initiativeFindings(root, config, id) {
     const source = await readText(root, ledger);
     if (source === null) continue;
     try {
-      const summary = reviewSummary(JSON.parse(source));
+      const summary = reviewSummary(parseStoreJson(source));
       totals.unresolved += summary.unresolved;
       totals.blocking += summary.blocking;
     } catch {
@@ -333,7 +334,7 @@ async function derivedChangeMapState(projectRoot, id, slug, design, verification
   if (!design?.baselineId || !verification?.passed || !verification.snapshotId || verification.designAcceptedAt !== design.acceptedAt) return null;
   const source = await readText(projectRoot, await recordFile(projectRoot, { kind: "change-map", initiative: id, slice: slug }));
   let document = null;
-  try { document = source === null ? null : JSON.parse(source); }
+  try { document = source === null ? null : parseStoreJson(source); }
   catch { return { derived: false }; }
   if (document && !document.derived) return { derived: false };
   if (document?.derived?.runId === verification.id) return { derived: true, runId: verification.id, document };
@@ -567,7 +568,7 @@ async function computeAttention(projectRoot) {
       const source = await readText(projectRoot, ledger);
       if (source === null) continue;
       try {
-        const summary = reviewSummary(JSON.parse(source));
+        const summary = reviewSummary(parseStoreJson(source));
         if (summary.unresolved || summary.blocking) watch.push({ type: "findings", initiative, slice: { slug, title: slices[slug].title }, unresolved: summary.unresolved, blocking: summary.blocking, path: ledger });
       } catch {
         watch.push({ type: "record-problem", initiative, path: ledger, message: "The review ledger is not valid JSON." });
@@ -628,7 +629,7 @@ async function artifactChanges(projectRoot) {
 // What a gate's attached record is, so the page names it by title and kind with the counts that matter for the answer.
 async function describeRecord(projectRoot, config, artifactPath, key, snapshot) {
   const json = async () => {
-    try { return JSON.parse(await readText(projectRoot, artifactPath) ?? "null"); }
+    try { return parseStoreJson(await readText(projectRoot, artifactPath) ?? "null"); }
     catch { return null; }
   };
   if (key?.kind === "change-map") {

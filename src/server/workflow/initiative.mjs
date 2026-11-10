@@ -20,6 +20,7 @@ import { CONTRACT_TOKEN_BUDGET, designProblems, digestFrozenTests, installFrozen
 import { effectiveSettings, readCoordinationState } from "./state.mjs";
 import { checkFolderDiagrams, diagramProblems } from "./diagram-check.mjs";
 import { contractClauses, plannedChanges } from "./design-view.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 const RECORD_NAME = "initiative.json";
 const PROJECTION_NAME = "initiative.md";
@@ -185,7 +186,7 @@ export function mergeInitiativeRecord(versions) {
     };
     const contents = serialize(merged);
     if (Buffer.byteLength(contents) > RECORD_MAX_BYTES) return { conflict: "The merged initiative record exceeds 1 MiB." };
-    const raw = JSON.parse(contents);
+    const raw = parseStoreJson(contents);
     const { errors } = validateRecord(raw, initiative);
     if (merged.schemaVersion !== 1) errors.unshift("schemaVersion must be 1.");
     if (errors.length) return { conflict: `The merged initiative record is invalid: ${errors[0]}` };
@@ -208,7 +209,7 @@ async function loadRecord(resolved) {
   const text = contents.toString("utf8");
   let raw;
   try {
-    raw = JSON.parse(text);
+    raw = parseStoreJson(text);
   } catch {
     return { exists: true, revision, text, record: null, valid: false, errors: ["The initiative record must contain valid JSON."], analysis: null };
   }

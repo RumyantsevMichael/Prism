@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { ARTIFACT_ACCEPTED, ARTIFACT_STATUS, artifactLocation, STATUS_RECORD_NAME } from "./artifact-paths.mjs";
-import { nestedDeeperThan } from "./record-merge.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 // A requirement's and an ADR's status is recorded in the store beside the artifact, and only a person's answer at a gate changes it.
 // The status record of an artifact lives at artifact-status/<its location>/status.json, so it moves and goes with the artifact,
@@ -11,6 +11,10 @@ const NEW_STATUS = Object.freeze({ requirements: "Draft", adrs: "Proposed" });
 const CLOSED_KEPT = 20;
 const HISTORY_KEPT = 50;
 const STATUS_MAX = 200;
+// The longest question and context that ask_approval records: its question input holds at most 4096 characters and its context at most 8000,
+// and a question it writes itself names the file and the status, so 8000 bounds both.
+const GATE_TEXT_MAX = 8000;
+const NOTE_MAX = 4000;
 export const APPROVAL_CHOICES = Object.freeze(["approve", "request-changes"]);
 export const APPROVAL_OPTIONS = Object.freeze([{ id: "approve", label: "Approve" }, { id: "request-changes", label: "Request changes" }]);
 
@@ -57,16 +61,23 @@ export function askableStatus(kind, status) {
   return typeof status === "string" && status.length > 0 && status.length <= STATUS_MAX && status === status.trim() && !/[\r\n]/.test(status) && !(kind === "adrs" && /^accepted$/i.test(status));
 }
 
+const boundedText = (value, max) => typeof value === "string" && value.length <= max;
+const optionalText = (value, max) => value === undefined || value === null || boundedText(value, max);
+const optionalPerson = (value) => value === undefined || value === null || (isRecord(value) && boundedText(value.name, 200) && optionalText(value.host, 255));
+
 /**
- * Whether a stored gate is one that ask_approval could have recorded: a string id, an askable status, and a sha256 version,
- * and, once answered, a known choice with a note of at most 4000 characters.
- * A gate that a damaged file or another writer placed in a synced record otherwise could decide what an approval writes.
+ * Whether a stored gate is one that ask_approval could have recorded: a string id, an askable status, a sha256 version, a question of 1 to 8000 characters, and a context of at most 8000 or none,
+ * with its times and closing reason as text, and, once answered, a known choice with a note of at most 4000 characters and the person who answered as { name, host }.
+ * A gate that a damaged file or another writer placed in a synced record otherwise could decide what an approval writes, or what Attention shows.
  */
 function wellFormedGate(kind, gate) {
-  if (typeof gate.id !== "string" || !gate.id || !askableStatus(kind, gate.status) || !VERSION.test(gate.version ?? "")) return false;
+  if (typeof gate.id !== "string" || !gate.id || gate.id.length > 200 || !askableStatus(kind, gate.status) || !VERSION.test(gate.version ?? "")) return false;
+  if (!boundedText(gate.question, GATE_TEXT_MAX) || !gate.question || !optionalText(gate.context, GATE_TEXT_MAX)) return false;
+  if (!optionalText(gate.askedAt, 64) || !optionalText(gate.closedAt, 64) || !optionalText(gate.closed, 64) || !optionalText(gate.supersededBy, 200)) return false;
   if (gate.answer === undefined) return true;
   const answer = gate.answer;
-  return isRecord(answer) && APPROVAL_CHOICES.includes(answer.choice) && (answer.note === null || answer.note === undefined || (typeof answer.note === "string" && answer.note.length <= 4000));
+  return isRecord(answer) && APPROVAL_CHOICES.includes(answer.choice) && optionalText(answer.note, NOTE_MAX) && optionalText(answer.answeredAt, 64) && optionalText(answer.via, 64)
+    && optionalText(answer.entry, 64) && optionalPerson(answer.by);
 }
 
 /**
@@ -76,19 +87,19 @@ function wellFormedGate(kind, gate) {
 export function parseRecord(kind, bytes) {
   if (bytes === null || bytes === undefined) return newRecord(kind);
   let value;
-  try { value = JSON.parse(Buffer.isBuffer(bytes) ? bytes.toString("utf8") : bytes); }
+  try { value = parseStoreJson(Buffer.isBuffer(bytes) ? bytes.toString("utf8") : bytes); }
   catch { return newRecord(kind); }
   if (!isRecord(value)) return newRecord(kind);
   const fresh = newRecord(kind);
   return {
     status: hasStatus(kind) ? (typeof value.status === "string" && value.status.trim() && !/[\r\n]/.test(value.status) ? value.status : fresh.status) : null,
     acceptedVersion: typeof value.acceptedVersion === "string" && VERSION.test(value.acceptedVersion) ? value.acceptedVersion : null,
-    // The approval and history keep values a synced file gives, so one nested deeper than Prism writes is left out and serializing the record never exhausts the call stack.
-    approval: isRecord(value.approval) && !nestedDeeperThan(value.approval) ? value.approval : null,
+    // The bounded reader refuses a record nested deeper than Prism writes, so the approval and history items it keeps never exhaust the call stack when serialized again.
+    approval: isRecord(value.approval) ? value.approval : null,
     // A gate that ask_approval could not have recorded is dropped, so Attention never offers it and no answer can apply it.
     pending: list(value.pending).filter((gate) => wellFormedGate(kind, gate)),
     closed: list(value.closed).filter((gate) => wellFormedGate(kind, gate)),
-    history: list(value.history).filter((item) => !nestedDeeperThan(item))
+    history: list(value.history)
   };
 }
 
@@ -235,7 +246,7 @@ export function answerApproval(kind, file, record, { id, choice, note = null, by
   }
   if (!APPROVAL_CHOICES.includes(choice)) throw fail("invalid_answer", "The answer is invalid: choice must be approve or request-changes.");
   const normalizedNote = typeof note === "string" && note.trim() ? note.trim() : null;
-  if (normalizedNote !== null && normalizedNote.length > 4000) throw fail("invalid_answer", "The answer is invalid: note must be at most 4000 characters.");
+  if (normalizedNote !== null && normalizedNote.length > NOTE_MAX) throw fail("invalid_answer", "The answer is invalid: note must be at most 4000 characters.");
   if (choice === "request-changes" && normalizedNote === null) throw fail("invalid_answer", "The answer is invalid: a request for changes needs a note.");
   if (gate.version !== version) {
     throw fail("artifact_changed", `${file} changed since this approval was asked, so the answer would approve a version nobody asked about; nothing changed. The agent asks again for the current version.`);

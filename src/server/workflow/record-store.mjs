@@ -12,6 +12,7 @@ import { checkRepositoryName, portableRepositoryName, REPOSITORIES, REPOSITORY_R
 import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, STATUS_RECORD_NAME, artifactAddress, componentScope, locationArtifact, normalizeArtifactPath, repositoryScope, scopeFolder, wellFormedName, WORKSPACE_SCOPE } from "./artifact-paths.mjs";
 import { COMPONENT_NAME, readComponents } from "./components.mjs";
 import { artifactKinds, initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 // Machine records live under .prism beside the workflow config, or in the record store the workflow config names; human documents and generated views stay under the configured paths.
 // A record keeps its .prism path as its address in both cases: only recordStoreOf and resolveRecordFile know where its file lives.
@@ -374,7 +375,7 @@ async function legacyRecords(root, store, config) {
 async function legacyRootSlice(root, store, directory, initiative) {
   for (const candidate of [path.join(root, directory, RECORD_FILES.initiative), physical(store, recordPath({ kind: "initiative", initiative }))]) {
     try {
-      const record = JSON.parse(await readFile(candidate, "utf8"));
+      const record = parseStoreJson(await readFile(candidate, "utf8"));
       const found = Object.entries(record?.slices ?? {}).find(([, slice]) => slice?.parent === null)?.[0];
       if (found && SLUG_PATTERN.test(found)) return found;
     } catch { /* A missing or unreadable record falls back to the initiative identifier. */ }
@@ -440,7 +441,7 @@ async function readLedger(store) {
   const ledger = { records: new Set(), repositories: new Set() };
   for (const name of names) {
     let entry;
-    try { entry = JSON.parse(await readFile(path.join(directory, name), "utf8")); }
+    try { entry = parseStoreJson(await readFile(path.join(directory, name), "utf8")); }
     catch { continue; }
     // A file from before the ledger names the repository it migrated, without the paths.
     if (LEGACY_MARKER.test(name)) ledger.repositories.add(name.slice(0, -".json".length));
@@ -722,7 +723,7 @@ async function storedFrozenTests(store) {
   catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
   for (const name of names) {
     let record;
-    try { record = JSON.parse((await readBytes(physical(store, recordPath({ kind: "initiative", initiative: name })), RECORD_MAX_BYTES))?.toString("utf8") ?? "null"); }
+    try { record = parseStoreJson((await readBytes(physical(store, recordPath({ kind: "initiative", initiative: name })), RECORD_MAX_BYTES))?.toString("utf8") ?? "null"); }
     catch { continue; }
     for (const slice of Object.values(record?.slices ?? {})) {
       for (const test of Array.isArray(slice?.design?.frozenTests) ? slice.design.frozenTests : []) {
@@ -926,7 +927,7 @@ export async function listRecordEntries(projectRootPath, key, { maxBytes = 1024 
   const entries = [];
   for (const name of names) {
     const bytes = await readBytes(path.join(located.target, name), maxBytes);
-    if (bytes !== null) entries.push({ id: name.slice(0, -5), entry: JSON.parse(bytes.toString("utf8")) });
+    if (bytes !== null) entries.push({ id: name.slice(0, -5), entry: parseStoreJson(bytes.toString("utf8")) });
   }
   return entries;
 }
@@ -993,7 +994,7 @@ export async function sliceDocumentFolder(projectRootPath, initiative, slice) {
   const bytes = await readBytes(physical(store, recordPath({ kind: "initiative", initiative })), 1024 * 1024).catch(() => null);
   let rootSlice = initiative;
   try {
-    const found = bytes && Object.entries(JSON.parse(bytes.toString("utf8"))?.slices ?? {}).find(([, value]) => value?.parent === null)?.[0];
+    const found = bytes && Object.entries(parseStoreJson(bytes.toString("utf8"))?.slices ?? {}).find(([, value]) => value?.parent === null)?.[0];
     if (found) rootSlice = found;
   } catch { /* An unreadable record keeps the identifier convention. */ }
   return slice === rootSlice ? directory : `${directory}/${slice}`;

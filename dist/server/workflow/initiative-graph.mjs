@@ -1,3 +1,4 @@
+import { parseStoreJson } from "./store-json.mjs";
 // Slice-graph invariants for initiative records, ported from the former write-map validator so the server enforces them on every write.
 export const LEAF_STATUSES = Object.freeze(["not-started", "in-progress", "blocked", "deferred", "done"]);
 export const SLICE_STATUSES = Object.freeze([...LEAF_STATUSES, "split"]);
@@ -140,7 +141,7 @@ export function parseLegacyMap(source) {
       const [, titleJson, alias, status, opens] = match;
       const slug = slugFor(alias);
       requireCondition(!Object.hasOwn(slices, slug), "Duplicate slice");
-      slices[slug] = { title: JSON.parse(titleJson), status, parent: stack.at(-1) ?? null, requirements: [], dependencies: [] };
+      slices[slug] = { title: parseStoreJson(titleJson), status, parent: stack.at(-1) ?? null, requirements: [], dependencies: [] };
       if (opens) stack.push(slug);
     } else if (line === "}") {
       requireCondition(stack.length > 0, "Unexpected closing brace");
@@ -149,7 +150,7 @@ export function parseLegacyMap(source) {
       requireCondition(stack.length === 0, "Requirements must follow state declarations");
       const slug = slugFor(match[1]);
       requireCondition(Object.hasOwn(slices, slug), "Unknown requirement owner");
-      slices[slug].requirements.push(JSON.parse(match[2]));
+      slices[slug].requirements.push(parseStoreJson(match[2]));
     } else if ((match = /^(s_[0-9a-f]+) --> (s_[0-9a-f]+) : depends on$/.exec(line))) {
       requireCondition(stack.length === 0, "Dependencies must follow state declarations");
       const from = slugFor(match[1]);

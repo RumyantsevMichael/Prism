@@ -21,6 +21,7 @@ import { applyAction, componentIndexingStatus, listActions, listActionTargets, p
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 import { readPreferences, writePreferences } from "./review-preferences.mjs";
 import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
+import { parseStoreJson } from "../workflow/store-json.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -286,7 +287,7 @@ export function artifactKind(artifactPath, data) {
 async function loadJsonArtifact(projectRoot, artifactPath, content) {
   let data;
   try {
-    data = JSON.parse(content);
+    data = parseStoreJson(content);
   } catch (error) {
     return { kind: "json", parseError: error.message };
   }
@@ -536,7 +537,7 @@ function fromPage(request) {
 async function readJson(request) {
   const text = await readBody(request);
   try {
-    return JSON.parse(text);
+    return parseStoreJson(text);
   } catch {
     throw new Error("The request body must be JSON.");
   }
@@ -807,7 +808,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       try {
         let change;
         try {
-          change = JSON.parse(await readBody(request));
+          change = parseStoreJson(await readBody(request));
         } catch {
           throw Object.assign(new Error("The preferences must be a JSON object with theme, density, or both."), { code: "invalid_preference" });
         }

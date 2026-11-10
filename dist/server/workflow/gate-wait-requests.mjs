@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 // A host that cannot move a long tool call to the background, such as Codex, records the wait here,
 // and the host's Stop hook for the same session waits on it after the turn ends.
@@ -38,7 +39,7 @@ export async function recordWaitRequest({ sessionId, projectRoot, initiative, ar
   await mkdir(directory, { recursive: true });
   await removeExpired(directory, now);
   const file = requestFile(directory, sessionId);
-  const replaced = await readFile(file, "utf8").then((text) => JSON.parse(text), () => null).catch(() => null);
+  const replaced = await readFile(file, "utf8").then((text) => parseStoreJson(text), () => null).catch(() => null);
   const temporary = `${file}.${randomBytes(6).toString("hex")}.tmp`;
   const source = artifact ? { artifact, ...(scope === undefined ? {} : { scope }) } : { initiative, ...(Array.isArray(knownEntries) ? { knownEntries } : {}), coordinates: coordinates === true, ...(typeof waitId === "string" ? { waitId } : {}) };
   await writeFile(temporary, `${JSON.stringify({ sessionId, projectRoot, ...source, gateIds, maxWaitMinutes, requestedAt: new Date(now).toISOString() })}\n`);
@@ -56,7 +57,7 @@ export async function takeWaitRequest({ sessionId, directory = gateWaitDirectory
     return null;
   }
   try {
-    const request = JSON.parse(await readFile(taken, "utf8"));
+    const request = parseStoreJson(await readFile(taken, "utf8"));
     if (request.sessionId !== sessionId || now - Date.parse(request.requestedAt) > WAIT_REQUEST_TTL_MS) return null;
     const named = typeof request.initiative === "string" || typeof request.artifact === "string";
     if (!Array.isArray(request.gateIds) || !request.gateIds.length || !named || typeof request.projectRoot !== "string") return null;

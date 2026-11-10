@@ -1,3 +1,7 @@
+import { JSON_DEPTH_MAX, nestedDeeperThan, parseStoreJson } from "./store-json.mjs";
+
+export { JSON_DEPTH_MAX, nestedDeeperThan };
+
 // Store sync merges a record that changed on both sides by its structure when the record's kind registers a merge here.
 // Each entry names the module that owns the kind and is imported only when a merge needs it, so this module imports no record module
 // and the record store, its sync, and the record modules form no import cycle.
@@ -50,21 +54,6 @@ export function canonicalJson(value) {
 
 // A piece of canonicalJson's output that its walk places between values.
 class Text { constructor(text) { this.text = text; } }
-
-/** The deepest nesting of arrays and objects that a JSON value read from the store may hold; Prism's own records stay far below it. */
-export const JSON_DEPTH_MAX = 64;
-
-/** Whether a JSON value nests arrays and objects deeper than max, found without recursion, so a caller can set aside a value that serializing would exhaust the call stack on. */
-export function nestedDeeperThan(value, max = JSON_DEPTH_MAX) {
-  const pending = [[value, 0]];
-  while (pending.length) {
-    const [item, depth] = pending.pop();
-    if (!item || typeof item !== "object") continue;
-    if (depth >= max) return true;
-    for (const child of Array.isArray(item) ? item : Object.values(item)) if (child && typeof child === "object") pending.push([child, depth + 1]);
-  }
-  return false;
-}
 
 export class MergeConflict extends Error {}
 
@@ -155,10 +144,9 @@ export function mergeOrder(label, base, local, upstream, survivors, { upstreamFi
 export function parseVersions({ base, local, upstream }, empty) {
   let versions;
   try {
-    versions = { base: base === null ? empty() : JSON.parse(base), local: JSON.parse(local), upstream: JSON.parse(upstream) };
-  } catch {
-    throw new MergeConflict("A version of the record is not valid JSON.");
+    versions = { base: base === null ? empty() : parseStoreJson(base), local: parseStoreJson(local), upstream: parseStoreJson(upstream) };
+  } catch (error) {
+    throw new MergeConflict(`A version of the record is not valid JSON: ${error.message}`);
   }
-  if (Object.values(versions).some((version) => nestedDeeperThan(version))) throw new MergeConflict(`A version of the record nests deeper than ${JSON_DEPTH_MAX} levels.`);
   return versions;
 }

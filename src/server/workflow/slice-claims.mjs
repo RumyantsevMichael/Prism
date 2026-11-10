@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes } from "node:crypto";
 import { runGit } from "./record-store-sync.mjs";
 import { hostLabel } from "../review/workspace-identity.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 // A claim names the host session, or without one the Prism server process, that works on a slice, so no two agents in any checkout or machine that shares the records start one slice.
 // Each claim is a record of its own beside the initiative record, covers the slice's descendants, and lapses unless its holder renews it.
@@ -72,7 +73,7 @@ export function serializeClaim(claim) {
 /** Parse a claim record of a slice: { claim } when it is well formed, otherwise { problem }. */
 export function parseClaim(slug, bytes) {
   let claim;
-  try { claim = JSON.parse(Buffer.isBuffer(bytes) ? bytes.toString("utf8") : bytes); }
+  try { claim = parseStoreJson(Buffer.isBuffer(bytes) ? bytes.toString("utf8") : bytes); }
   catch { return { problem: `${slug}: the claim record must contain valid JSON.` }; }
   const problems = [];
   if (claim === null || typeof claim !== "object" || Array.isArray(claim)) return { problem: `${slug}: the claim record must be a JSON object.` };

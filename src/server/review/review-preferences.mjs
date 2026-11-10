@@ -2,6 +2,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
 import { reviewAppDirectory } from "./review-app-discovery.mjs";
+import { parseStoreJson } from "../workflow/store-json.mjs";
 
 // The theme and density a user chose in the review browser, kept in the review app folder so that every project, port,
 // and private session server of that user reads the same choice; browser storage is separate for every port.
@@ -25,7 +26,7 @@ function normalize(value) {
 /** The stored preferences, with the default for each value that is missing, unreadable, or invalid. */
 export async function readPreferences(env = process.env) {
   try {
-    return normalize(JSON.parse(await readFile(preferencesPath(env), "utf8")));
+    return normalize(parseStoreJson(await readFile(preferencesPath(env), "utf8")));
   } catch {
     return { ...DEFAULT_PREFERENCES };
   }

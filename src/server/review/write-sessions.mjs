@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
+import { parseStoreJson } from "../workflow/store-json.mjs";
 
 // A grant opens one tab that Prism itself opened: valid once and only for this long after issue.
 const GRANT_MS = 120 * 1000;
@@ -23,7 +24,7 @@ export async function createWriteSessions({ directory = null, restore = false, n
   let tokens = [];
   const file = directory ? path.join(directory, WRITE_SESSIONS_FILE) : null;
   if (file && restore) {
-    const saved = await readFile(file, "utf8").then(JSON.parse, () => null);
+    const saved = await readFile(file, "utf8").then(parseStoreJson, () => null);
     if (Array.isArray(saved?.tokens)) tokens = saved.tokens.filter((value) => typeof value === "string" && /^[0-9a-f]{64}$/.test(value)).slice(-KEPT_TOKENS);
   }
   let saving = Promise.resolve();

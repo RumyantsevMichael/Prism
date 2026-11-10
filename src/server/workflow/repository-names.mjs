@@ -10,6 +10,7 @@ import { recordCheckout } from "./machine-checkouts.mjs";
 import { scheduleRecordSync, SYNC_DIRECTORY, syncRecordStoreNow } from "./record-store-sync.mjs";
 import { nestedDeeperThan } from "./record-merge.mjs";
 import { publicRemote } from "./remote-url.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 // A checkout names its repository to its record store, which registers each name with the remotes and root commit that prove which repository it is.
 // The registrations live in a folder of their own at the store root, never under a .prism address, so no record path can collide with them.
@@ -129,7 +130,7 @@ async function readRegistrations(base, fail) {
     let parsed = null;
     try {
       const bytes = await registrationBytes(path.join(folder, file));
-      if (bytes) parsed = JSON.parse(bytes.toString("utf8"));
+      if (bytes) parsed = parseStoreJson(bytes.toString("utf8"));
     } catch { /* An unreadable registration keeps its name taken. */ }
     // A registration nested deeper than Prism writes one is unreadable too, so comparing the registrations read never exhausts the call stack.
     const valid = parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) && Array.isArray(parsed.remotes) && !nestedDeeperThan(parsed);
@@ -230,7 +231,7 @@ async function pendingOwner(target) {
   const info = await lstat(target).catch(() => null);
   if (!info?.isFile() || Date.now() - info.mtimeMs > PENDING_STALE_MS) return null;
   // A marker still being written has no owner yet and counts as live until it is old.
-  const owner = await readFile(target, "utf8").then((text) => JSON.parse(text) ?? {}).catch(() => ({}));
+  const owner = await readFile(target, "utf8").then((text) => parseStoreJson(text) ?? {}).catch(() => ({}));
   // A process on another host cannot be asked, so only the marker's age expires it.
   if (owner.host !== hostname() || !Number.isSafeInteger(owner.pid) || owner.pid <= 0) return owner;
   try { process.kill(owner.pid, 0); return owner; } catch (error) { return error.code === "ESRCH" ? null : owner; }
@@ -301,7 +302,7 @@ async function markPending(base, name) {
     token,
     release: async () => {
       clearInterval(heartbeat);
-      const owner = await readFile(target, "utf8").then(JSON.parse).catch(() => null);
+      const owner = await readFile(target, "utf8").then(parseStoreJson).catch(() => null);
       if (owner?.token === token) await rm(target, { force: true }).catch(() => {});
     }
   };

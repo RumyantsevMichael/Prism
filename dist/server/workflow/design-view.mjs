@@ -6,6 +6,7 @@ import { inArtifactStore, listStoreArtifacts, locateRecord, readArtifactBytes, r
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 import { checkFolderDiagrams, diagramProblems } from "./diagram-check.mjs";
 import { acceptedDesign, readFrozenTestOf } from "./slice-design.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 const MAX_EXAMPLES = 400;
 const MAX_EXAMPLE_CHARS = 400;
@@ -125,7 +126,7 @@ async function designSource(root, initiative, slice) {
 async function governingDesign(root, initiative, slice, own) {
   if (own.source !== null && contractClauses(own.source).length) return { slug: slice, design: own };
   let slices = {};
-  try { slices = JSON.parse(await readFile((await locateRecord(root, { kind: "initiative", initiative })).target, "utf8"))?.slices ?? {}; }
+  try { slices = parseStoreJson(await readFile((await locateRecord(root, { kind: "initiative", initiative })).target, "utf8"))?.slices ?? {}; }
   catch { return { slug: slice, design: own }; }
   const seen = new Set([slice]);
   for (let parent = slices[slice]?.parent; parent && !seen.has(parent); parent = slices[parent]?.parent) {
@@ -214,7 +215,7 @@ export async function updateDesignView(input) {
 async function storedView(root, initiative, slice) {
   try {
     const { bytes } = await readRecord(root, { kind: "design-view", initiative, slice }, { maxBytes: 4 * 1024 * 1024 });
-    return bytes === null ? null : JSON.parse(bytes.toString("utf8"));
+    return bytes === null ? null : parseStoreJson(bytes.toString("utf8"));
   } catch { return { invalid: true }; }
 }
 

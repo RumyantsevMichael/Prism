@@ -6,6 +6,7 @@ import { writeAtomically } from "./artifact-store.mjs";
 import { ARTIFACT_COMMENTS, artifactAddress, artifactLocation, artifactPathOf, locationArtifact } from "./artifact-paths.mjs";
 import { ARTIFACT_COMMENT_FILE, resolveStatusFile } from "./record-store.mjs";
 import { scheduleRecordSync } from "./record-store-sync.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 // A person's comments on a store artifact: each comment is one file of its own below artifact-comments/<the artifact's location>/,
 // so comments that two machines write never change the same file and a store sync brings each one as it is.
@@ -61,7 +62,7 @@ export function storedComment(name, bytes, location) {
   try {
     const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     if (text.replace(/\n$/, "").includes("\n")) return null;
-    value = JSON.parse(text);
+    value = parseStoreJson(text);
   } catch { return null; }
   if (!hasKeys(value, COMMENT_KEYS) || value.location !== location || value.via !== "review-app") return null;
   if (typeof value.version !== "string" || !VERSION_FORM.test(value.version)) return null;

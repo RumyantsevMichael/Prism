@@ -7,6 +7,7 @@ import { inArtifactStore, readArtifactBytes } from "./record-store.mjs";
 import path from "node:path";
 import { readHostSessionFacts } from "../session/host-session-facts.mjs";
 import { SESSION_TRACE_MAX_AGE_MS, SESSION_TRACE_MAX_DIRECTORY_BYTES } from "../session/session-trace-store.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 const DIRECTORY = "decision-history";
 const MAX_RECORD_BYTES = 8192;
@@ -166,7 +167,7 @@ async function readJsonFile(file, fallback) {
   try {
     const info = await lstat(file);
     if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_FILE_BYTES) throw new Error("The decision file is unsafe.");
-    return JSON.parse(await readFile(file, "utf8"));
+    return parseStoreJson(await readFile(file, "utf8"));
   } catch (error) {
     if (error?.code === "ENOENT") return fallback;
     throw error;

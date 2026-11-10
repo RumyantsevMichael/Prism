@@ -11,6 +11,7 @@ import { CHANGE_MAP_FILES, resolveArtifactPath } from "./change-map.mjs";
 import { isManagedRecordFile, keyOfPath, recordPath, sliceDocumentFolder } from "../workflow/record-store.mjs";
 import type { Evidence, SnapshotEvidence, InventoryEntry } from "./conservation-types.mjs";
 import type { NativeSource, SourceSnapshot, SourceFile, Diagnostic } from "../repository-intelligence/repository-unit-types.mjs";
+import { parseStoreJson } from "../workflow/store-json.mjs";
 
 export const digest = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 // A snapshot follows the ignore rules even for tracked files, so force-adding an ignored workflow artifact does not change the source that evidence binds.
@@ -74,7 +75,7 @@ export class ConservationStore {
   async outputs(projectRoot: string): Promise<string[]> {
     const { directory } = await this.location(projectRoot);
     try {
-      const record = JSON.parse((await regularBytes(path.join(directory, "outputs.json"), 1024 * 1024)).toString()) as Registry;
+      const record = parseStoreJson((await regularBytes(path.join(directory, "outputs.json"), 1024 * 1024)).toString()) as Registry;
       if (record.schemaVersion !== 1 || !Array.isArray(record.outputs) || record.outputs.some(file => typeof file !== "string")) throw new Error();
       return withRenamedChangeMaps(record.outputs);
     } catch (error) { if (error.code === "ENOENT") return []; throw conservationError("evidence_missing", "The managed output registry is invalid."); }
@@ -150,7 +151,7 @@ export class ConservationStore {
   async analysis(projectRoot: string, snapshotId: string) {
     const { directory } = await this.location(projectRoot);
     try {
-      const pointer = JSON.parse((await regularBytes(path.join(directory, "analyses", `${validId(snapshotId)}.json`), 4096)).toString());
+      const pointer = parseStoreJson((await regularBytes(path.join(directory, "analyses", `${validId(snapshotId)}.json`), 4096)).toString());
       const record = await this.get<Extract<Evidence, { kind: "analysis" }>>(projectRoot, pointer.evidenceId, "analysis");
       if (record.snapshotId !== snapshotId) throw conservationError("evidence_missing", "The retained analysis belongs to another snapshot.");
       return record;
@@ -161,7 +162,7 @@ export class ConservationStore {
     try {
       const bytes = await regularBytes(path.join(directory, "records", `${validId(id)}.json`), 64 * 1024 * 1024);
       if (digest(bytes) !== id) throw new Error();
-      const record = JSON.parse(bytes.toString()) as T;
+      const record = parseStoreJson(bytes.toString()) as T;
       if (record.schemaVersion !== 1 || record.project !== root || (kind && record.kind !== kind)) throw new Error();
       return record;
     } catch (error) {

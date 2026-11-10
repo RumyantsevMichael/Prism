@@ -16,6 +16,7 @@ import { mergeHistory, mergeKeyed, mergeOrder, mergeScalars, MergeConflict, pars
 import { ComponentError, listComponents, listsComponents, readComponents } from "./components.mjs";
 import { latestDependentsRun } from "./slice-design.mjs";
 import { proposeComponents } from "./workspace-manifests.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 export const BANDS = Object.freeze(["Now", "Next", "Later", "Parked"]);
 export const DISPLAY_BANDS = Object.freeze([...BANDS, "Shipped"]);
@@ -186,7 +187,7 @@ async function loadRoadmap(resolved) {
   const revision = createHash("sha256").update(contents).digest("hex");
   let raw;
   try {
-    raw = JSON.parse(contents.toString("utf8"));
+    raw = parseStoreJson(contents.toString("utf8"));
   } catch {
     return { exists: true, revision, record: null, valid: false, errors: ["The roadmap record must contain valid JSON."] };
   }
@@ -313,7 +314,7 @@ export async function readWorkspaceName(projectRoot) {
   try {
     const { bytes } = await readRecord(projectRoot, { kind: "roadmap" });
     if (!bytes) return null;
-    const name = JSON.parse(bytes.toString("utf8"))?.workspaceName;
+    const name = parseStoreJson(bytes.toString("utf8"))?.workspaceName;
     return typeof name === "string" && !workspaceNameProblem(name) ? name : null;
   } catch {
     return null;
@@ -333,7 +334,7 @@ export async function getRoadmap(input) {
 export function roadmapViewOf(bytes, recordName) {
   if (!bytes || bytes.length > RECORD_MAX_BYTES) return null;
   let raw;
-  try { raw = JSON.parse(bytes.toString("utf8")); }
+  try { raw = parseStoreJson(bytes.toString("utf8")); }
   catch { return null; }
   return validateRoadmap(raw).length ? null : markdown(raw, recordName);
 }

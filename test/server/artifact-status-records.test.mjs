@@ -5,7 +5,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 import { deliverGateAnswers } from "../../dist/hooks/deliver-gate-answers.mjs";
-import { answerApproval, parseRecord, rewriteStatusLines, writtenStatus } from "../../dist/server/workflow/artifact-status.mjs";
+import { answerApproval, newRecord, parseRecord, rewriteStatusLines, serializeRecord, writtenStatus } from "../../dist/server/workflow/artifact-status.mjs";
 import { startStandaloneReview } from "../../dist/server/review/review-server-pool.mjs";
 import { answerArtifactApproval } from "../../dist/server/workflow/store-artifacts.mjs";
 import { actionOf, apply as applyOn, listing, writeHeaders } from "./fixtures/review-actions.mjs";
@@ -76,13 +76,23 @@ test("a stored gate that no ask_approval could record is dropped, and answering 
   assert.equal(parseRecord("adrs", recordOf([gateOf({ status: "Superseded" })])).pending.length, 1);
   assert.deepEqual(parseRecord("requirements", recordOf([], [gateOf({ answer: { choice: "approve-all", note: null } })])).closed, []);
   assert.equal(parseRecord("requirements", JSON.stringify({ status: "Approved\nInjected" })).status, "Draft");
-  // A synced record may nest its approval or a history item however deep, and Prism serializes what it keeps, so it keeps neither.
+  // A synced record may nest any of its values however deep, and Prism serializes what it keeps, so the store's bounded reader refuses such a record as a damaged one.
   const nested = `${"[".repeat(6000)}${"]".repeat(6000)}`;
-  const deep = parseRecord("requirements", `{"status":"Approved","approval":{"at":"2026-11-09T00:00:00.000Z","nested":${nested}},"history":[{"event":"approved","nested":${nested}},{"event":"approved","at":"2026-11-09T00:00:00.000Z"}]}`);
-  assert.equal(deep.status, "Approved");
-  assert.equal(deep.approval, null);
-  assert.deepEqual(deep.history, [{ event: "approved", at: "2026-11-09T00:00:00.000Z" }]);
-  assert.doesNotThrow(() => JSON.stringify(deep));
+  for (const text of [
+    `{"status":"Approved","approval":{"at":"2026-11-09T00:00:00.000Z","nested":${nested}},"history":[]}`,
+    `{"status":"Approved","history":[{"event":"approved","nested":${nested}}]}`,
+    `{"status":"Approved","pending":[${JSON.stringify(gateOf({})).replace(/"context":null/, `"context":${nested}`)}]}`,
+    `{"status":"Approved","pending":[${JSON.stringify(gateOf({})).replace(/}$/, `,"extra":${nested}}`)}]}`
+  ]) {
+    const deep = parseRecord("requirements", text);
+    assert.deepEqual(deep, newRecord("requirements"));
+    assert.doesNotThrow(() => serializeRecord(deep));
+  }
+  // A gate's question and context are text of bounded size, which Attention shows.
+  for (const fields of [{ question: ["Approve?"] }, { question: "" }, { question: "x".repeat(8001) }, { context: { text: "ctx" } }, { context: "x".repeat(8001) }, { askedAt: 1 }]) {
+    assert.deepEqual(parseRecord("requirements", recordOf([gateOf(fields)])).pending, [], JSON.stringify(fields).slice(0, 80));
+  }
+  assert.deepEqual(parseRecord("requirements", recordOf([], [gateOf({ answer: { choice: "approve", note: null, by: { name: ["Ada"] } } })])).closed, []);
 
   const record = { status: "Proposed", acceptedVersion: null, approval: null, pending: [gateOf({ status: "Accepted" })], closed: [], history: [] };
   assert.throws(() => answerApproval("adrs", "docs/ADRs/x.md", record, { id: "approval-feedfacecafe", choice: "approve", by: { name: "Ada", host: "h" }, version: version(BYTES), text: BYTES }), { code: "gate_invalid" });

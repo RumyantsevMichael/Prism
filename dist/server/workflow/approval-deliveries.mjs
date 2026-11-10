@@ -2,6 +2,7 @@ import { lstat, mkdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { ASKED_GATES_FILE, gateWaitDirectory } from "./gate-wait-requests.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 // The approval gates that each checkout of this machine asked and has not yet received the answer of, by its real project root.
 // An approval answer reaches only the checkout that asked its gate, so this list holds local paths and stays on this machine, never in a record store.
@@ -19,7 +20,7 @@ async function readEntries(file) {
   try {
     const info = await lstat(file);
     if (info.isSymbolicLink() || !info.isFile()) return [];
-    const parsed = JSON.parse(await readFile(file, "utf8"));
+    const parsed = parseStoreJson(await readFile(file, "utf8"));
     return parsed?.schemaVersion === SCHEMA_VERSION && Array.isArray(parsed.gates) ? parsed.gates.filter(validEntry) : [];
   } catch {
     return [];

@@ -9,6 +9,7 @@ import { inArtifactStore, locateRecord, moveLegacyRecords, readArtifactText, sli
 import { canonicalJson, mergeOrder, mergeScalars, mergeUnit, MergeConflict, parseVersions } from "./record-merge.mjs";
 import { revisionMismatch } from "./revision.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 const SCHEMA_VERSION = 1;
 
@@ -715,7 +716,7 @@ async function loadState(statePath) {
   const revision = revisionOf(contents);
   let raw;
   try {
-    raw = JSON.parse(contents);
+    raw = parseStoreJson(contents);
   } catch (caught) {
     return {
       exists: true,
@@ -937,7 +938,7 @@ export function mergeCoordinationState(versions) {
     const fitted = fitState(merged);
     if (fitted === null) return { conflict: "The merged coordination state exceeds 1 MiB with its history and closed gates dropped." };
     const { contents } = fitted;
-    const { errors } = validateStateValue(JSON.parse(contents));
+    const { errors } = validateStateValue(parseStoreJson(contents));
     if (errors.length) return { conflict: `The merged coordination state is invalid: ${errors[0]}` };
     return { contents };
   } catch (caught) {

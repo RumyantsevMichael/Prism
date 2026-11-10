@@ -11,6 +11,7 @@ import { readCoordinationState } from "../workflow/state.mjs";
 import { conservationStore, canonical, digest, conservationError, withinScope } from "../conservation/conservation-store.mjs";
 import { assessDeltaReadiness, resolveReference, COMPARISON_VERSION } from "../conservation/conservation-analysis.mjs";
 import { objectSchema as obj, arraySchema as arr, textField as str, hashField, referenceSchema, justificationSchema } from "../conservation/conservation-schema.mjs";
+import { parseStoreJson } from "../workflow/store-json.mjs";
 const verifiedTreeWave = (wave) => Boolean(wave.tree) && !wave.comparisonId;
 const revisionField = { oneOf: [hashField, { type: "null" }] };
 const sliceIdentity = { projectRoot: str, initiative: str, slice: str };
@@ -122,7 +123,7 @@ const recordSchema = obj({
 async function loadReview(projectRoot, initiative, slice) {
   const resolved = await locateRecord(projectRoot, { kind: "review", initiative, slice });
   try {
-    const bytes = await regularBytes(resolved.target, 4 * 1024 * 1024), document = JSON.parse(bytes.toString());
+    const bytes = await regularBytes(resolved.target, 4 * 1024 * 1024), document = parseStoreJson(bytes.toString());
     assertInput(recordSchema, document);
     return { resolved, exists: true, revision: digest(bytes), document };
   } catch (error) {

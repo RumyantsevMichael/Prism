@@ -7,6 +7,7 @@ import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-stor
 import { MAIN_AGENT } from "./call-agent.mjs";
 import { claimHolder } from "./slice-claims.mjs";
 import { readCoordinationState } from "./state.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 // What each session was shown of the person's changes, and which of its agents coordinates the initiative, kept per session and initiative in Prism's private app directory.
 // Every server process of the session reads and writes one record under one lock, so an entry is shown in at most one result or gate wait of the session.
@@ -33,7 +34,7 @@ function readWaits(value, now) {
 
 async function readNotice(file) {
   try {
-    const value = JSON.parse(await readFile(file, "utf8"));
+    const value = parseStoreJson(await readFile(file, "utf8"));
     return {
       shown: Array.isArray(value?.shown) ? value.shown.filter((id) => typeof id === "string") : null,
       coordinator: typeof value?.coordinator === "string" && value.coordinator ? value.coordinator : MAIN_AGENT,

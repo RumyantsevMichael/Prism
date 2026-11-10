@@ -3,6 +3,7 @@ import { appendFile, lstat, mkdir, readFile, rename, rm, stat } from "node:fs/pr
 import { homedir } from "node:os";
 import path from "node:path";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
+import { parseStoreJson } from "../workflow/store-json.mjs";
 
 // Raise this when a control route or field changes meaning, so a newer client replaces an older app.
 // The cross-version contract is review-app-protocol.schema.json beside this file.
@@ -96,7 +97,7 @@ export async function readDiscovery(directory) {
     if (!(await trustedDirectory(directory))) return null;
     const file = discoveryPath(directory);
     if (!trustedEntry(await lstat(file), "file")) return null;
-    const value = JSON.parse(await readFile(file, "utf8"));
+    const value = parseStoreJson(await readFile(file, "utf8"));
     return validDiscovery(value) ? value : null;
   } catch {
     return null;
@@ -116,7 +117,7 @@ export async function removeDiscovery(directory, controlToken) {
 
 export async function readProjectRoots(directory) {
   try {
-    const value = JSON.parse(await readFile(projectsPath(directory), "utf8"));
+    const value = parseStoreJson(await readFile(projectsPath(directory), "utf8"));
     return Array.isArray(value?.projects) ? value.projects.filter((root) => typeof root === "string" && path.isAbsolute(root)) : [];
   } catch {
     return [];
@@ -127,7 +128,7 @@ export async function readProjectRoots(directory) {
 // most recent first, so a restarted app keeps reading the right ones.
 export async function readProjectDirectories(directory, field) {
   try {
-    const value = JSON.parse(await readFile(projectsPath(directory), "utf8"))?.[field];
+    const value = parseStoreJson(await readFile(projectsPath(directory), "utf8"))?.[field];
     const valid = (stores) => Array.isArray(stores) && stores.length > 0 && stores.every((store) => typeof store === "string" && path.isAbsolute(store));
     return Object.fromEntries(Object.entries(value && typeof value === "object" ? value : {}).filter(([root, stores]) => path.isAbsolute(root) && valid(stores)));
   } catch {
@@ -145,7 +146,7 @@ export async function readLastPort(directory) {
     if (!(await trustedDirectory(directory))) return null;
     const file = path.join(directory, PORT_FILE);
     if (!trustedEntry(await lstat(file), "file")) return null;
-    const port = JSON.parse(await readFile(file, "utf8"))?.port;
+    const port = parseStoreJson(await readFile(file, "utf8"))?.port;
     return Number.isSafeInteger(port) && port >= 1024 && port <= 65535 ? port : null;
   } catch {
     return null;
