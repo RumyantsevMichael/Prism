@@ -32,7 +32,8 @@ const comment = (review, { path: file, scope, version: revision, line, text }, h
 const commentFiles = async (store) => (await readdir(COMMENTS(store)).catch(() => [])).filter((name) => name.endsWith(".json"));
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const entryId = (number) => number.toString(16).padStart(32, "0");
-const commentName = (number) => `2026-11-07T00-00-00-000Z-${number.toString(16).padStart(8, "0")}.json`;
+// A comment file's name as clause 40 writes it, from the comment's at, with which a reader requires the name to begin.
+const commentName = (number, at = "2026-11-07T00:00:00.000Z") => `${at.replace(/[:.]/g, "-")}-${number.toString(16).padStart(8, "0")}.json`;
 // A comment file in the form Prism writes, as another machine's Prism writes it and a store sync brings it; an override of undefined leaves its key out.
 const syncedComment = (overrides = {}) => ({
   location: "requirements/billing.md", version: version("older"), line: 1, text: "Earlier, elsewhere.", author: { name: "Grace", host: "laptop" },
@@ -578,12 +579,14 @@ test("clause 42: a reader takes only files of the form Prism writes as comments,
     syncedComment({ text: "A short entry id.", entry: "abc" }),
     syncedComment({ text: "Another source.", entry: entryId(7), via: "agent" }),
     syncedComment({ text: "No history entry.", entry: undefined, by: undefined, via: undefined }),
-    syncedComment({ text: "A name that is too long.", entry: entryId(8), author: { name: "G".repeat(201), host: "laptop" }, by: { name: "G".repeat(201), email: null, checkout: "acme/web" } })
+    syncedComment({ text: "A name that is too long.", entry: entryId(8), author: { name: "G".repeat(201), host: "laptop" }, by: { name: "G".repeat(201), email: null, checkout: "acme/web" } }),
+    syncedComment({ text: "A file name whose time is not its own.", entry: entryId(13), at: "2026-11-08T00:00:00.000Z" })
   ];
   for (const [index, value] of forged.entries()) await placeComment(folder, commentName(index + 1), value);
   await placeComment(folder, commentName(20), "not json");
   await placeComment(folder, commentName(21), syncedComment({ entry: entryId(9) }));
-  await placeComment(folder, commentName(22), syncedComment({ text: "From the far future.", entry: entryId(10), at: "9999-12-31T00:00:00.000Z" }));
+  const farFuture = "9999-12-31T00:00:00.000Z";
+  await placeComment(folder, commentName(22, farFuture), syncedComment({ text: "From the far future.", entry: entryId(10), at: farFuture }));
 
   const expected = ["Earlier, elsewhere.", "Here.", "From the far future."];
   assert.deepEqual((await artifactView(review)).artifact.comments.map((item) => item.text), expected, "only comments of the form Prism writes are shown, oldest first");
@@ -592,7 +595,7 @@ test("clause 42: a reader takes only files of the form Prism writes as comments,
   assert.equal(attention.status, 200);
   const recent = attention.body.data.recentChanges;
   const comments = recent.filter((entry) => entry.action === "artifact.comment");
-  assert.deepEqual(comments.map((entry) => entry.id), [posted.body.applied.id, entryId(9)], "a time far ahead of the clock does not pin a comment to the top of Recent changes");
+  assert.deepEqual(comments.map((entry) => entry.id), [posted.body.applied.id, entryId(9)], "a time far ahead of the clock does not pin a comment to the top of Recent changes, and no file whose name gives another time than its own is listed");
   assert.deepEqual([comments[1].by, comments[1].at, comments[1].via], [{ name: "Grace", email: null, checkout: "acme/web" }, "2026-11-07T00:00:00.000Z", "review-app"]);
   assert.deepEqual(recent.map((entry) => entry.at), recent.map((entry) => entry.at).sort().reverse(), "Recent changes stays newest first");
 });

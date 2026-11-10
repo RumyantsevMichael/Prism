@@ -1040,6 +1040,7 @@ for (const [how, change, savedPath] of [
     await put(b, removeAndMove());
     const synced = await syncRecordStoreNow(b);
     assert.notEqual(synced.state, "merge_failed", synced.message);
+    assert.doesNotMatch(synced.message ?? "", /this machine's versions are saved/, "the status message does not call the other machine's saved change this machine's");
     for (const store of [b, remote]) {
       const show = (file) => store === remote ? (() => { try { return git(remote, "show", `main:${file}`); } catch { return null; } })() : atHead(b, file);
       assert.equal(show(`artifacts/${WORKSPACE_AT}`), MOVED.trimEnd(), "the moved requirement holds the workspace path");
@@ -1203,6 +1204,48 @@ test("clause 25: a sync commits no local store file above its kind's bound and l
   assert.ok(tree.includes("artifacts/requirements/other.md") && tree.includes("artifacts/plans/foo/slice.md"), "every other change reaches the remote");
   git(a, "pull", "-q", "origin", "main");
   assert.equal(await stat(path.join(a, "artifact-identity", "requirements", "other.md")).catch(() => null), null, "and no other machine gets it");
+});
+
+// A README of exactly bytes bytes, in lines as a person writes one.
+const readme = (bytes) => { const head = "# Store\n"; const body = "x".repeat(bytes - head.length - 1); return `${head}${body.replace(/(.{99})/g, "$1\n").slice(0, bytes - head.length - 1)}\n`; };
+
+test("clause 25: a README at the store's root takes its kind's bound: a sync refuses an upstream one above 1 MiB with merge_failed naming it, and takes one at 1 MiB", { timeout: 240000 }, async (context) => {
+  const over = readme(MiB + 1);
+  assert.equal(Buffer.byteLength(over), MiB + 1);
+  {
+    const { a, b } = await rawStores(context, BASE_FILES);
+    await put(a, { "README.md": over });
+    push(a, "a README above its bound");
+    const synced = await syncRecordStoreNow(b);
+    assert.equal(synced.state, "merge_failed", `${synced.state} ${synced.message}`);
+    assert.ok(synced.message.includes("README.md"), `the refusal names README.md: ${synced.message}`);
+    assert.equal(await readFile(path.join(b, "README.md"), "utf8"), "Prism store\n", "the README above its bound never reaches this machine's disk");
+    assert.equal(atHead(b, "README.md"), "Prism store", "and is not merged into this machine's branch");
+  }
+  const at = readme(MiB);
+  assert.equal(Buffer.byteLength(at), MiB);
+  const { a, b } = await rawStores(context, BASE_FILES);
+  await put(a, { "README.md": at });
+  push(a, "a README at its bound");
+  const synced = await syncRecordStoreNow(b);
+  assert.equal(synced.state, "ok", synced.message);
+  assert.equal(await readFile(path.join(b, "README.md"), "utf8"), at, "a README at its bound syncs");
+});
+
+test("clause 25: a sync commits no local README above its kind's bound and lists it under withheld with a fix that fits, while every other change syncs", { timeout: 240000 }, async (context) => {
+  const { remote, a, b } = await rawStores(context, BASE_FILES);
+  const big = readme(MiB + 1);
+  await put(b, { "README.md": big, "artifacts/plans/foo/slice.md": "# Foo\n" });
+  const synced = await syncRecordStoreNow(b);
+  assert.notEqual(synced.state, "merge_failed", synced.message);
+  assert.deepEqual((synced.withheld ?? []).map((entry) => entry.path), ["README.md"], "the README above its bound is withheld");
+  assert.match(synced.withheld[0].reason, /1 MiB/, "with its bound as the reason");
+  assert.doesNotMatch(synced.message, /[Rr]ename/, "and the message asks for no rename, which would not let a file above its bound sync");
+  assert.equal(await readFile(path.join(b, "README.md"), "utf8"), big, "and stays on disk");
+  assert.equal(git(remote, "show", "main:README.md"), "Prism store", "the remote keeps the README it held");
+  assert.ok(remoteTree(remote).includes("artifacts/plans/foo/slice.md"), "every other change reaches the remote");
+  git(a, "pull", "-q", "origin", "main");
+  assert.equal(await readFile(path.join(a, "README.md"), "utf8"), "Prism store\n", "and no other machine gets it");
 });
 
 test("clause 25: where a merge of both sides' versions would make a file exceed its kind's bound, the upstream's version stays and this machine's is saved and named", { timeout: 240000 }, async (context) => {
