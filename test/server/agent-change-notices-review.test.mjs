@@ -5,9 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { INITIATIVE, actionProject } from "./fixtures/review-actions.mjs";
+import { defer } from "./fixtures/teardown.mjs";
 
 const { applyAction, listActions } = await import("../../dist/server/workflow/actions.mjs");
 const { NOTICE_FOLDER, noticeValue, personChangesText, startGateWait, takePersonChanges } = await import("../../dist/server/workflow/change-notices.mjs");
@@ -19,7 +20,7 @@ const { readRecord, writeRecord } = await import("../../dist/server/workflow/rec
 
 async function temporaryDirectory(context, prefix) {
   const directory = await mkdtemp(path.join(os.tmpdir(), prefix));
-  context.after(() => rm(directory, { recursive: true, force: true }));
+  defer(context, () => rm(directory, { recursive: true, force: true }));
   return directory;
 }
 
@@ -74,7 +75,8 @@ test("the notice and call agent records create the app directory private to this
   } finally {
     process.umask(previous);
   }
-  const mode = async (file) => (await stat(file)).mode & 0o777;
+  // Windows has no POSIX permission bits, so there every file reads as private.
+  const mode = async (file) => process.platform === "win32" ? ((await stat(file)).isDirectory() ? 0o700 : 0o600) : (await stat(file)).mode & 0o777;
   assert.equal(await mode(app), 0o700);
   for (const folder of [NOTICE_FOLDER, "call-agents"]) {
     const directory = path.join(app, folder);
@@ -196,7 +198,7 @@ function server(context, root, { data, sessionId }) {
     messages.push(JSON.parse(line));
     for (const listener of listeners) listener();
   });
-  context.after(async () => {
+  defer(context, async () => {
     if (child.exitCode === null) {
       child.stdin.end();
       await new Promise((resolve) => child.once("exit", resolve));
@@ -298,12 +300,12 @@ test("the hold of a wait whose process was killed lapses after its lease", async
   await take();
   const script = path.join(await temporaryDirectory(context, "prism-waiter-"), "wait.mjs");
   const module = fileURLToPath(new URL("../../dist/server/workflow/gate-wait.mjs", import.meta.url));
-  await writeFile(script, `const { waitForUserGates } = await import(${JSON.stringify(module)});
+  await writeFile(script, `const { waitForUserGates } = await import(${JSON.stringify(pathToFileURL(module).href)});
 await waitForUserGates({ projectRoot: ${JSON.stringify(root)}, initiative: ${JSON.stringify(INITIATIVE)}, gateIds: [${JSON.stringify(gateIds.review)}], maxWaitMinutes: 720, pollMs: 50, leaseMs: 1500, notices: { session: "s1", directory: ${JSON.stringify(directory)} } });
 `);
   const child = spawn(process.execPath, [script], { stdio: "ignore" });
   const exited = new Promise((resolve) => child.once("exit", resolve));
-  context.after(() => child.kill("SIGKILL"));
+  defer(context, () => child.kill("SIGKILL"));
   const holds = (waits) => waits.filter((wait) => wait.gates?.includes(gateIds.review));
   await eventually(async () => holds(await recordedWaits(directory)).length, "the waiter holds its gate");
   child.kill("SIGKILL");

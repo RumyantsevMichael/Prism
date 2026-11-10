@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
@@ -68,7 +69,7 @@ const record = (page, selector, type) => page.evaluate(([selector, type]) => {
 const events = (page) => page.evaluate(() => window.__events ?? []);
 
 async function kitElements() {
-  const kit = await import(path.join(ROOT, "dist/server/review/public/kit/kit.js"));
+  const kit = await import(pathToFileURL(path.join(ROOT, "dist/server/review/public/kit/kit.js")).href);
   return kit.KIT_ELEMENTS.map((element) => ({ tag: element.tag, catalog: element.catalog }));
 }
 
@@ -85,7 +86,7 @@ test("clauses 27, 28: the kit registry holds every element of the contract and d
     assert.ok(Array.isArray(catalog.states) && catalog.states.length, `${tag} lists its states`);
     assert.ok(Array.isArray(catalog.keyboard), `${tag} describes its keyboard behavior`);
   }
-  const kit = await import(path.join(ROOT, "dist/server/review/public/kit/kit.js"));
+  const kit = await import(pathToFileURL(path.join(ROOT, "dist/server/review/public/kit/kit.js")).href);
   assert.equal(typeof kit.defineKit, "function");
   kit.defineKit();
 });

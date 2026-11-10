@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   CODEX_CONFIG_REASON,
+  codexLaunch,
   inspectCodexEffectiveConfig,
   normalizeConfigResponse
 } from "../../dist/server/session/host-adapters/codex-config.mjs";
@@ -103,4 +104,14 @@ test("fails closed when the app-server request is unavailable", async () => {
     status: "UNSUPPORTED",
     reasonCode: CODEX_CONFIG_REASON.APP_SERVER_UNAVAILABLE
   });
+});
+
+test("starts Codex through cmd.exe on Windows unless the command is an executable", () => {
+  assert.deepEqual(codexLaunch("codex", ["app-server", "--stdio"], "linux"), { command: "codex", args: ["app-server", "--stdio"], shell: false });
+  assert.deepEqual(codexLaunch("codex", ["app-server", "proxy", "--sock", "C:\\Users\\a b\\codex.sock"], "win32"), {
+    command: "\"codex\"",
+    args: ["\"app-server\"", "\"proxy\"", "\"--sock\"", "\"C:\\Users\\a b\\codex.sock\""],
+    shell: true
+  });
+  assert.deepEqual(codexLaunch("C:\\Tools\\codex.EXE", ["app-server"], "win32"), { command: "C:\\Tools\\codex.EXE", args: ["app-server"], shell: false });
 });

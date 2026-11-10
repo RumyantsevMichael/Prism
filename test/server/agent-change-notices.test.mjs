@@ -9,6 +9,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { INITIATIVE, actionProject, authorOf } from "./fixtures/review-actions.mjs";
+import { defer } from "./fixtures/teardown.mjs";
 
 const { applyAction, listActions } = await import("../../dist/server/workflow/actions.mjs");
 const { getInitiative, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
@@ -39,7 +40,7 @@ async function person(root, action, input, { confirmed = false, actionTarget = t
 
 async function dataDirectory(context) {
   const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-notices-data-")));
-  context.after(() => rm(directory, { recursive: true, force: true }));
+  defer(context, () => rm(directory, { recursive: true, force: true }));
   return directory;
 }
 
@@ -60,7 +61,7 @@ function server(context, root, { data, sessionId = null, clientName = "claude-co
       await new Promise((resolve) => child.once("exit", resolve));
     }
   };
-  context.after(stop);
+  defer(context, stop);
   let next = 1;
   const send = (message) => child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
   const response = (id, timeout = 15000) => new Promise((resolve, reject) => {

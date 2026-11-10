@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { closeServers, cloneOf, configure, git, prismServer, repository, snapshot, storeFolder } from "./fixtures/repository-checkouts.mjs";
+import { defer } from "./fixtures/teardown.mjs";
 
 // Git runs with a private home and configuration, a fixed identity, and only local repositories; each test has its own Prism application folder.
 const environment = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-machine-checkouts-env-")));
@@ -19,7 +20,7 @@ const ok = (response) => { assert.equal(response.error, undefined, response.erro
 
 async function folder(context) {
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-machine-checkouts-")));
-  context.after(async () => { await closeServers(); await rm(parent, { recursive: true, force: true }); });
+  defer(context, async () => { await closeServers(); await rm(parent, { recursive: true, force: true }); });
   return { parent, app: path.join(parent, "app"), store: await storeFolder(parent) };
 }
 

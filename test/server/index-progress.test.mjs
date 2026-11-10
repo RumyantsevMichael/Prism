@@ -162,7 +162,8 @@ test("a published index carries a units sidecar that is read without the full in
   const prepared = await runtime.prepare(await openNativeRepositoryIntelligence(root));
   const storage = (await runtime.location(root)).directory, revision = prepared.prepared.revision;
   const sidecar = path.join(storage, `units-${revision}.json`);
-  assert.equal((await stat(sidecar)).mode & 0o777, 0o600);
+  // Windows has no POSIX permission bits; its per-user folders keep these files private there.
+  if (process.platform !== "win32") assert.equal((await stat(sidecar)).mode & 0o777, 0o600);
   // An index published before sidecars existed reads as no units until a later preparation reuses it and writes its sidecar.
   await rm(sidecar);
   assert.equal(await readPublishedUnits(root, [cache]), null);

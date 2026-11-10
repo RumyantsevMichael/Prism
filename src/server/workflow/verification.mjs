@@ -265,7 +265,14 @@ function tail(value, limit) {
   return value.length > limit ? value.slice(value.length - limit) : value;
 }
 
+// Windows has no process groups and killing the shell leaves the command it started running, so there the whole tree is ended by taskkill.
 function killGroup(child, signal) {
+  if (process.platform === "win32") {
+    if (!child.pid) return;
+    const killer = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore", windowsHide: true });
+    killer.on("error", () => { try { child.kill(signal); } catch { /* The process already ended. */ } });
+    return;
+  }
   try { process.kill(-child.pid, signal); }
   catch { try { child.kill(signal); } catch { /* The process already ended. */ } }
 }

@@ -12,6 +12,7 @@ import { readSliceRunTotals } from "../../dist/server/session/run-totals.mjs";
 import { hashSessionTraceValue } from "../../dist/server/session/session-trace.mjs";
 import { appendRecord, listRecordEntries } from "../../dist/server/workflow/record-store.mjs";
 import { BASE, SECOND, runRecord, segment } from "./fixtures/run-records.mjs";
+import { defer } from "./fixtures/teardown.mjs";
 
 // Requirements: docs/requirements/run-statistics.md §3, §11, §12, §19.
 // Feature: docs/Features/F-run-totals-reads.feature.
@@ -28,7 +29,7 @@ const REVIEW_PATH = ".prism/initiatives/demo/slices/alpha-one/review.json";
 
 async function scratch(context, prefix) {
   const directory = await mkdtemp(path.join(tmpdir(), prefix));
-  context.after(() => rm(directory, { recursive: true, force: true }));
+  defer(context, () => rm(directory, { recursive: true, force: true }));
   return realpath(directory);
 }
 
@@ -114,7 +115,7 @@ function mcpClient(context, root, environment = {}) {
     pending.get(message.id)?.(message);
     pending.delete(message.id);
   });
-  context.after(() => new Promise((resolve) => {
+  defer(context, () => new Promise((resolve) => {
     if (child.exitCode !== null) return resolve();
     child.once("exit", resolve);
     child.stdin.end();
@@ -310,7 +311,7 @@ function waveRecord(runId, schemaVersion) {
 
 test("a wave total is not exact when an entry of its slice key was skipped as invalid", async (context) => {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), "prism-run-totals-probe-")));
-  context.after(() => rm(root, { recursive: true, force: true }));
+  defer(context, () => rm(root, { recursive: true, force: true }));
   const key = { kind: "runs", initiative: "demo", slice: "alpha" };
   await appendRecord(root, key, "a".repeat(64), waveRecord("a".repeat(64), 1));
   // A record from a newer schema, which this reader skips, served the same wave.

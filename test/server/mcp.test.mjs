@@ -15,13 +15,14 @@ import { REPOSITORY_CONTEXT_INPUT_LIMITS } from "../../dist/server/repository-in
 import { createSessionTraceEvent } from "../../dist/server/session/session-trace.mjs";
 import { appendSessionTraceEvent } from "../../dist/server/session/session-trace-store.mjs";
 import { sessionHolder } from "../../dist/server/workflow/slice-claims.mjs";
+import { defer } from "./fixtures/teardown.mjs";
 
 const SERVER_PATH = fileURLToPath(new URL("../../dist/server/mcp.mjs", import.meta.url));
 const execFileAsync = promisify(execFile);
 
 async function projectFixture(context, name, artifact) {
   const root = await mkdtemp(path.join(os.tmpdir(), `${name}-`));
-  context.after(() => rm(root, { recursive: true, force: true }));
+  defer(context, () => rm(root, { recursive: true, force: true }));
   await mkdir(path.join(root, "docs"), { recursive: true });
   await mkdir(path.join(root, ".prism"), { recursive: true });
   await writeFile(path.join(root, "docs", artifact), `# ${name}\n`);
@@ -54,7 +55,7 @@ function mcpProcess(context, cwd, projectRoot, environment = {}) {
       messages.push(message);
     }
   });
-  context.after(async () => {
+  defer(context, async () => {
     if (child.exitCode === null) {
       child.stdin.end();
       await new Promise((resolve) => child.once("exit", resolve));
@@ -95,7 +96,7 @@ async function browserStub(context) {
   const marker = path.join(directory, "opened");
   const count = path.join(directory, "open-count");
   const url = path.join(directory, "opened-url");
-  context.after(() => rm(directory, { recursive: true, force: true }));
+  defer(context, () => rm(directory, { recursive: true, force: true }));
   const stub = "#!/bin/sh\nprintf '%s' \"$1\" > \"$PRISM_BROWSER_URL\"\nprintf opened > \"$PRISM_BROWSER_MARKER\"\nprintf x >> \"$PRISM_BROWSER_COUNT\"\n";
   for (const command of ["open", "xdg-open"]) {
     await writeFile(path.join(directory, command), stub);
@@ -117,7 +118,7 @@ async function browserStub(context) {
 async function codeNibStub(context, commit, projectRoot) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "prism-codenib-stub-"));
   const executable = path.join(directory, "codenib-stub");
-  context.after(() => rm(directory, { recursive: true, force: true }));
+  defer(context, () => rm(directory, { recursive: true, force: true }));
   const source = `#!/usr/bin/env node
 import readline from "node:readline";
 const input = readline.createInterface({ input: process.stdin });
@@ -341,7 +342,7 @@ test("declares the project root and read-only artifact tools", async (context) =
 test("records native null estimates and explicit provider failures after opt-in", async (context) => {
   const root = await projectFixture(context, "decision-mcp", "artifact.md");
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "prism-decision-mcp-"));
-  context.after(() => rm(dataDirectory, { recursive: true, force: true }));
+  defer(context, () => rm(dataDirectory, { recursive: true, force: true }));
   const mcp = mcpProcess(context, root, root);
   await initialize(mcp);
   const enabled = await callTool(mcp, 2, "set_workflow_recording", { projectRoot: root, dataDirectory, enabled: true });
@@ -364,7 +365,7 @@ test("records native null estimates and explicit provider failures after opt-in"
 test("checkpoints a pause and records its recovery evidence through MCP", async (context) => {
   const root = await projectFixture(context, "pause-mcp", "artifact.md");
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "prism-pause-mcp-"));
-  context.after(() => rm(dataDirectory, { recursive: true, force: true }));
+  defer(context, () => rm(dataDirectory, { recursive: true, force: true }));
   const mcp = mcpProcess(context, root, root);
   await initialize(mcp);
   const initiative = "example";
@@ -384,7 +385,7 @@ test("checkpoints a pause and records its recovery evidence through MCP", async 
 test("requires structured diagram and review checkpoints through MCP", async (context) => {
   const root = await projectFixture(context, "checkpoint-mcp", "artifact.md");
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "prism-checkpoint-mcp-"));
-  context.after(() => rm(dataDirectory, { recursive: true, force: true }));
+  defer(context, () => rm(dataDirectory, { recursive: true, force: true }));
   const mcp = mcpProcess(context, root, root);
   await initialize(mcp);
   await callTool(mcp, 2, "set_workflow_recording", { projectRoot: root, dataDirectory, enabled: true });
@@ -560,7 +561,7 @@ test("resolves explicit session capacity without starting the review server", as
 test("evaluates repository fit from same-session host facts and rejects invalid raw active input", async (context) => {
   const root = await projectFixture(context, "active-repository-fit", "artifact.md");
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "prism-active-facts-"));
-  context.after(() => rm(dataDirectory, { recursive: true, force: true }));
+  defer(context, () => rm(dataDirectory, { recursive: true, force: true }));
   const sessionId = "active-thread";
   const record = createHostSessionFactRecord({
     sessionId,
@@ -650,7 +651,7 @@ test("evaluates repository fit from same-session host facts and rejects invalid 
 test("fails closed when active session facts are absent", async (context) => {
   const root = await projectFixture(context, "missing-active-facts", "artifact.md");
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "prism-missing-active-facts-"));
-  context.after(() => rm(dataDirectory, { recursive: true, force: true }));
+  defer(context, () => rm(dataDirectory, { recursive: true, force: true }));
   const mcp = mcpProcess(context, root, root);
 
   await initialize(mcp);
@@ -667,7 +668,7 @@ test("fails closed when active session facts are absent", async (context) => {
 test("rejects partial active capacity overrides before reading host facts", async (context) => {
   const root = await projectFixture(context, "partial-active-capacity", "artifact.md");
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "prism-partial-active-capacity-"));
-  context.after(() => rm(dataDirectory, { recursive: true, force: true }));
+  defer(context, () => rm(dataDirectory, { recursive: true, force: true }));
   const mcp = mcpProcess(context, root, root, { PLUGIN_DATA: dataDirectory });
 
   await initialize(mcp);
@@ -689,7 +690,7 @@ test("summarizes consumption only for the same active session", async (context) 
   const root = await projectFixture(context, "session-consumption", "artifact.md");
   const canonicalRoot = await realpath(root);
   const dataDirectory = await mkdtemp(path.join(os.tmpdir(), "prism-session-consumption-"));
-  context.after(() => rm(dataDirectory, { recursive: true, force: true }));
+  defer(context, () => rm(dataDirectory, { recursive: true, force: true }));
   const sessionId = "consumption-thread";
   const events = [
     createSessionTraceEvent({
@@ -971,7 +972,7 @@ test("native semantic MCP discovery is passive and search exposes bounded struct
 test("verify_slice reports a missing design and asks for command approval through a review-browser gate", async (context) => {
   const root = await realpath(await projectFixture(context, "verify-slice", "notes.md"));
   const data = await mkdtemp(path.join(os.tmpdir(), "verify-slice-data-"));
-  context.after(() => rm(data, { recursive: true, force: true }));
+  defer(context, () => rm(data, { recursive: true, force: true }));
   await writeFile(path.join(root, ".prism", "workflow.md"), "## Paths\n- Plans: docs/plans\n\n## Stack\n- Test command: npm test\n");
   await writeFile(path.join(root, "docs", "acceptance.test.mjs"), "// frozen\n");
   const mcp = mcpProcess(context, root, root, { PLUGIN_DATA: data });
@@ -997,7 +998,7 @@ test("verify_slice reports a missing design and asks for command approval throug
 test("a claim belongs to the session that a call's metadata names, as Codex names it", async (context) => {
   const root = await realpath(await projectFixture(context, "codex-claims", "notes.md"));
   const data = await mkdtemp(path.join(os.tmpdir(), "codex-claims-data-"));
-  context.after(() => rm(data, { recursive: true, force: true }));
+  defer(context, () => rm(data, { recursive: true, force: true }));
   await writeFile(path.join(root, ".prism", "workflow.md"), "## Paths\n- Plans: docs/plans\n");
   const mcp = mcpProcess(context, root, root, { PLUGIN_DATA: data, CLAUDE_CODE_SESSION_ID: "" });
   await initialize(mcp);
@@ -1011,7 +1012,7 @@ test("a claim belongs to the session that a call's metadata names, as Codex name
 
 test("a read leaves legacy records in place, and the first write reports the files it moved", async (context) => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "legacy-move-")));
-  context.after(() => rm(root, { recursive: true, force: true }));
+  defer(context, () => rm(root, { recursive: true, force: true }));
   await mkdir(path.join(root, ".prism"), { recursive: true });
   await mkdir(path.join(root, "docs", "plans", "reports"), { recursive: true });
   await writeFile(path.join(root, ".prism", "workflow.md"), "## Paths\n- Plans (scratch): docs/plans/\n");
@@ -1036,14 +1037,14 @@ test("a server that knows its project starts the native index in the background 
   const silent = net.createServer((socket) => { sockets.add(socket); socket.on("error", () => {}); });
   await new Promise((resolve) => silent.listen(0, "127.0.0.1", resolve));
   const stopSilent = () => { for (const socket of sockets) socket.destroy(); silent.close(); };
-  context.after(stopSilent);
+  defer(context, stopSilent);
   const platform = `${process.platform}-${process.arch}`;
   const manifest = path.join(data, "manifest.json");
   await writeFile(manifest, JSON.stringify({ schemaVersion: 1, assetVersion: "test-hanging", model: { id: "test/model", revision: "test-revision", files: [] },
     bundles: { [platform]: { url: `https://127.0.0.1:${silent.address().port}/runtime.tar.gz`, bytes: 1024, sha256: "0".repeat(64) } } }));
   const mcp = mcpProcess(context, root, root, { PLUGIN_DATA: data, PRISM_NATIVE_ASSET_MANIFEST: manifest, NO_PROXY: "127.0.0.1", no_proxy: "127.0.0.1" });
   // After hooks run in order, so the data directory is removed only after the server has exited and stopped writing progress there.
-  context.after(() => rm(data, { recursive: true, force: true, maxRetries: 3 }));
+  defer(context, () => rm(data, { recursive: true, force: true, maxRetries: 3 }));
   const storage = path.join(data, "native-intelligence", "projects");
   const record = async () => {
     for (const project of await readdir(storage).catch(() => [])) {
@@ -1074,20 +1075,20 @@ test("a server that knows its project starts the native index in the background 
 
 test("the server exits soon after its input closes, even while its index assets download", async (context) => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-mcp-close-")));
-  context.after(() => rm(root, { recursive: true, force: true }));
+  defer(context, () => rm(root, { recursive: true, force: true }));
   await execFileAsync("git", ["init", "-q"], { cwd: root });
   // A host that accepts connections and never answers keeps the runtime download pending.
   const sockets = new Set();
   const silent = net.createServer((socket) => { sockets.add(socket); socket.on("error", () => {}); });
   await new Promise((resolve) => silent.listen(0, "127.0.0.1", resolve));
-  context.after(() => { for (const socket of sockets) socket.destroy(); silent.close(); });
+  defer(context, () => { for (const socket of sockets) socket.destroy(); silent.close(); });
   const platform = `${process.platform}-${process.arch}`;
   const manifest = path.join(root, "..", `${path.basename(root)}-manifest.json`);
-  context.after(() => rm(manifest, { force: true }));
+  defer(context, () => rm(manifest, { force: true }));
   await writeFile(manifest, JSON.stringify({ schemaVersion: 1, assetVersion: "test-silent", bundles: { [platform]: { url: `https://127.0.0.1:${silent.address().port}/runtime.tar.gz`, sha256: "0".repeat(64), bytes: 1, unpackedBytes: 1 } }, model: { id: "test/model", revision: "test-revision", files: [] } }));
   const env = isolatedEnv({ CLAUDE_PROJECT_DIR: root, PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: manifest });
   const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "ignore", "ignore"] });
-  context.after(() => { if (child.exitCode === null) child.kill("SIGKILL"); });
+  defer(context, () => { if (child.exitCode === null) child.kill("SIGKILL"); });
   await new Promise((resolve) => silent.once("connection", resolve));
   child.stdin.end();
   const code = await new Promise((resolve) => {

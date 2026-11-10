@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -61,7 +62,7 @@ const record = (page, selector, type) => page.evaluate(([selector, type]) => {
 const events = (page, type) => page.evaluate((type) => (window.__events ?? []).filter((event) => event.type === type), type);
 
 test("clause 57: the kit registry and the catalog hold every container with live specimens", { skip }, async (context) => {
-  const kit = await import(path.join(ROOT, "dist/server/review/public/kit/kit.js"));
+  const kit = await import(pathToFileURL(path.join(ROOT, "dist/server/review/public/kit/kit.js")).href);
   const tags = kit.KIT_ELEMENTS.map((element) => element.tag);
   for (const tag of CONTAINERS) assert.ok(tags.includes(tag), `the kit registers ${tag}`);
   const { page } = await catalog(context);

@@ -172,7 +172,7 @@ test("the shared app grants a write session through the presenting process and r
   }
   if (process.platform !== "win32") {
     for (const entry of await readdir(directory)) {
-      if (/write|session/i.test(entry)) assert.equal((await stat(path.join(directory, entry))).mode & 0o077, 0, `${entry} is private to its user`);
+      if (process.platform !== "win32" && /write|session/i.test(entry)) assert.equal((await stat(path.join(directory, entry))).mode & 0o077, 0, `${entry} is private to its user`);
     }
   }
   const pool = createReviewServerPool({ app: { directory, openBrowser: () => true } });

@@ -96,7 +96,8 @@ for (const [storeFile, retiredCopies] of [
 test("resolves a private store directory and rejects a symbolic-link directory", async (context) => {
   const { store, location, dataDirectory } = await resolvedStore(context, "direct");
   assert.equal(path.basename(location.directory), "example-store");
-  assert.equal((await stat(location.directory)).mode & 0o777, 0o700);
+  // Windows has no POSIX permission bits; its per-user folders keep these files private there.
+  if (process.platform !== "win32") assert.equal((await stat(location.directory)).mode & 0o777, 0o700);
   await store.assertDirectory(location, fileSystem);
 
   const linkedData = await temporaryDirectory(context, "prism-private-store-linked-");
@@ -132,7 +133,8 @@ test("rejects symbolic-link and hard-linked records and opens regular records wi
   const handle = await store.openPrivateFile(regularPath, fileSystem);
   await handle.writeFile("record\n", "utf8");
   await handle.close();
-  assert.equal((await stat(regularPath)).mode & 0o777, 0o600);
+  // Windows has no POSIX permission bits; its per-user folders keep these files private there.
+  if (process.platform !== "win32") assert.equal((await stat(regularPath)).mode & 0o777, 0o600);
   await assert.rejects(store.openPrivateFile(regularPath, fileSystem), (error) => error.code === "EEXIST");
 
   const opened = await store.openExistingRegularFile(regularPath, location.directory, fileSystem);
@@ -153,7 +155,8 @@ for (const lockProtocol of ["direct", "staged"]) {
     assert.equal(lock.lockPath, lockPath);
     const [ownerName] = await readdir(lockPath);
     assert.equal(ownerName, `owner-${lock.token}`);
-    assert.equal((await stat(path.join(lockPath, ownerName))).mode & 0o777, 0o600);
+    // Windows has no POSIX permission bits; its per-user folders keep these files private there.
+    if (process.platform !== "win32") assert.equal((await stat(path.join(lockPath, ownerName))).mode & 0o777, 0o600);
     assert.equal(await store.ownsLock(lock, location.directory, fileSystem), true);
 
     assert.equal(await store.acquireLock(location.directory, fileSystem, () => true), null);

@@ -60,6 +60,13 @@ function writeRequest(child, request) {
   child.stdin.write(`${JSON.stringify(request)}\n`);
 }
 
+// npm installs Codex on Windows as a .cmd shim, which Windows starts only through cmd.exe, so there a command that is not an executable
+// runs through the shell with each word quoted; Windows paths cannot contain a double quote.
+function launch(command, args, platform = process.platform) {
+  if (platform !== "win32" || /\.(?:exe|com)$/i.test(command)) return { command, args, shell: false };
+  return { command: `"${command}"`, args: args.map((value) => `"${value}"`), shell: true };
+}
+
 function requestWithAppServer({ cwd, environment, spawnProcess = defaultSpawn, timeoutMs = CONFIG_TIMEOUT_MS }) {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -67,10 +74,12 @@ function requestWithAppServer({ cwd, environment, spawnProcess = defaultSpawn, t
     let outputBytes = 0;
     let configRequestSent = false;
     let serverInfo = null;
-    const child = spawnProcess(configuredCommand(environment), configuredArguments(environment), {
+    const started = launch(configuredCommand(environment), configuredArguments(environment));
+    const child = spawnProcess(started.command, started.args, {
       cwd,
       env: environment,
       stdio: ["pipe", "pipe", "ignore"],
+      shell: started.shell,
       windowsHide: true
     });
     const finish = (error, value) => {
@@ -262,4 +271,4 @@ export async function inspectCodexEffectiveConfig({
   }
 }
 
-export { normalizeConfigResponse };
+export { launch as codexLaunch, normalizeConfigResponse };
