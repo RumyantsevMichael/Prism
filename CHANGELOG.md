@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.21.1](https://github.com/RumyantsevMichael/Prism/compare/v0.21.0...v0.21.1) (2026-11-10)
+
+
+### Fixed
+
+* keep session-end hook timeouts within Codex's 3-second limit ([#172](https://github.com/RumyantsevMichael/Prism/issues/172)) ([7b67a01](https://github.com/RumyantsevMichael/Prism/commit/7b67a01f2416f17447b0147a7bef07c54dc8418b))
+* **review:** fit the contents panel and join markdown paragraphs ([#167](https://github.com/RumyantsevMichael/Prism/issues/167)) ([fb516bc](https://github.com/RumyantsevMichael/Prism/commit/fb516bc2ebd6aeccbafd9c68dcb49d0bce3056f5))
+
 ## [0.21.0](https://github.com/RumyantsevMichael/Prism/compare/v0.20.0...v0.21.0) (2026-11-10)
 
 
