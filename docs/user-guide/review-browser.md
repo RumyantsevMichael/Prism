@@ -249,6 +249,9 @@ Prism stores diagrams as PlantUML `.puml` source files, and the browser renders 
 Markdown links open the linked file or heading in the review.
 A link to a missing file or a target outside the project is marked as missing, and an external link opens in a new browser tab.
 A document with three or more headings gets a contents list that marks the current section.
+In a wide window the contents stay beside the text while it scrolls, and a list longer than the window scrolls on its own and keeps the current section in view.
+In a window 1100 pixels wide or narrower the contents sit above the text and fold open from their header.
+Consecutive lines of text render as one paragraph, as in CommonMark, so a document written one sentence per line reads as ordinary paragraphs.
 Each heading with text under it has a fold toggle beside it, and a link or contents entry that leads into a folded section opens it.
 Code in source files, Markdown code blocks, previews, and diagram source is highlighted by language.
 
@@ -261,7 +264,8 @@ A file's preview has a Show in side panel button, and Alt+click on a link does t
 The panel draws a PlantUML file, and the diagrams a document links, as its page does, fitted to the panel's width, with the same zoom and source controls.
 The side panel holds one file at a time, so opening another replaces it, and a link inside the panel opens its target in the panel.
 Open as tab opens the file in a tab that stays open, Esc or the close button closes the panel, and dragging its left edge sets its width.
-Graph, diagram, and document cards can be maximized, and Esc restores them.
+Graph, diagram, and document cards can be maximized with their Maximize button, and Esc restores them.
+A maximized document keeps its Restore button in view while it scrolls, in its contents header when it has contents.
 
 ## Find artifacts
 

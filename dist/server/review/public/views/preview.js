@@ -145,7 +145,7 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
     if (element.dataset.docLink) return { ref: element.dataset.docLink, anchor };
     if (element.dataset.artifact) return { ref: element.dataset.artifact, anchor };
     // An in-document anchor previews its section of the open document; contents entries need no preview.
-    return anchor && !element.closest(".doc-toc") && currentPath() ? { ref: currentPath(), anchor } : null;
+    return anchor && !element.closest("prism-contents") && currentPath() ? { ref: currentPath(), anchor } : null;
   }
 
   async function load({ ref, anchor }) {

@@ -85,9 +85,12 @@
 /* ---------- Documents and source files ---------- */
 
 .document-sheet {
+  --doc-sheet-pad: var(--prism-space-7);
+  /* The kit's contents rule reaches the sheet's edges. */
+  --prism-contents-inset: var(--doc-sheet-pad);
   position: relative;
   min-width: 0;
-  padding: var(--prism-space-7);
+  padding: var(--doc-sheet-pad);
   border: var(--prism-stroke) solid var(--prism-color-line);
   border-radius: var(--prism-radius-lg);
   background: var(--prism-color-surface);
@@ -176,68 +179,6 @@ mark.find-hit {
 .source-lines .tok-title { font-weight: var(--prism-font-weight-bold); }
 .source-lines .tok-inserted { color: var(--prism-color-diff-added); }
 .source-lines .tok-deleted { color: var(--prism-color-diff-removed); }
-
-/* A long document gets its contents beside it; at 1100px and below the contents fold above the text. */
-.has-toc {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) calc(var(--prism-sidebar-width) * 0.8);
-  column-gap: var(--prism-space-7);
-  align-items: start;
-}
-
-.has-toc > :not(.doc-toc) {
-  grid-column: 1;
-}
-
-.doc-toc {
-  position: sticky;
-  top: var(--prism-space-5);
-  grid-column: 2;
-  grid-row: 1 / span 40;
-  min-width: 0;
-  max-height: calc(100vh - var(--prism-pagebar-height) * 4);
-  overflow: auto;
-  padding: 0 0 0 var(--prism-space-5);
-  border-inline-start: var(--prism-stroke) solid var(--prism-color-line);
-  font-size: var(--prism-font-size-sm);
-}
-
-.doc-toc ol {
-  display: grid;
-  gap: var(--prism-space-1);
-  margin: var(--prism-space-2) 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.doc-toc a {
-  display: block;
-  padding: var(--prism-space-1) var(--prism-space-3);
-  border-radius: var(--prism-radius-sm);
-  color: var(--prism-color-ink-muted);
-  line-height: var(--prism-line-height-tight);
-  text-decoration: none;
-  overflow-wrap: anywhere;
-}
-
-.doc-toc a:hover {
-  background: var(--prism-color-hover);
-  color: var(--prism-color-ink);
-}
-
-.doc-toc a:focus-visible {
-  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
-  outline-offset: var(--prism-stroke);
-}
-
-.doc-toc a[aria-current="location"] {
-  background: var(--prism-color-selected);
-  color: var(--prism-color-accent-text);
-  font-weight: var(--prism-font-weight-semibold);
-}
-
-.doc-toc .toc-depth-1 { padding-inline-start: var(--prism-space-6); }
-.doc-toc .toc-depth-2 { padding-inline-start: var(--prism-space-8); }
 
 /* A foldable heading carries its toggle in the left gutter, so heading text keeps its alignment. */
 .document-content.has-folds {
@@ -355,19 +296,15 @@ body.has-maximized::after {
   position: fixed;
   inset: var(--prism-space-5);
   z-index: var(--prism-layer-drawer);
-  display: flex;
-  flex-direction: column;
   margin: 0;
   overflow: auto;
+  /* The maximized card scrolls itself, so the kit's contents stick at its top edge rather than below its padding. */
+  --prism-contents-top: calc(var(--doc-sheet-pad, 0px) * -1);
 }
 
-.is-maximized.has-toc {
-  display: grid;
-}
-
-.document-sheet > .maximize-control {
-  float: right;
-  margin: 0 0 var(--prism-space-3) var(--prism-space-4);
+.is-maximized:not(.document-sheet) {
+  display: flex;
+  flex-direction: column;
 }
 
 .is-maximized :is(.graph-viewport, .diagram-output) {
@@ -1259,27 +1196,6 @@ body.has-maximized::after {
 /* ---------- Narrow windows ---------- */
 
 @media (max-width: 1100px) {
-  .has-toc {
-    display: block;
-  }
-
-  .doc-toc {
-    position: static;
-    max-height: none;
-    margin-bottom: var(--prism-space-5);
-    padding: var(--prism-space-2) var(--prism-space-4);
-    border: var(--prism-stroke) solid var(--prism-color-line);
-    border-radius: var(--prism-radius-md);
-  }
-
-  .doc-toc:not(.is-open) ol {
-    display: none;
-  }
-
-  .is-maximized.has-toc {
-    display: flex;
-  }
-
   .split-layout {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1291,7 +1207,7 @@ body.has-maximized::after {
   }
 
   .document-sheet {
-    padding: var(--prism-space-5);
+    --doc-sheet-pad: var(--prism-space-5);
   }
 
   .diagram-output {

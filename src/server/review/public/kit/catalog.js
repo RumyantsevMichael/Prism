@@ -30,6 +30,15 @@ const tabsOf = (labels, selected = 0, extra = "") => `<prism-tabs label="Specime
 const choiceOf = (options, { label = "Your answer", value = "" } = {}) => `<prism-choice label="${html(label)}" name="${id("catalog-choice")}"${value ? ` value="${value}"` : ""}>${options}</prism-choice>`;
 const answers = `<prism-choice-option value="accept">Accept<span slot="detail">The slices start in order.</span></prism-choice-option><prism-choice-option value="changes" tone="danger">Request changes<span slot="detail">Design revises the contract.</span></prism-choice-option>`;
 
+// A document with its contents beside it: the contents list its sections, one of them current, and the document holds a short paragraph under each.
+function contentsOf(sections, { current = -1, tools = "", heading = "", open = true } = {}) {
+  const slug = (index) => id("catalog-section") + `-${index}`;
+  const ids = sections.map((_, index) => slug(index));
+  const links = sections.map((label, index) => `<li${index % 3 === 2 ? ' class="depth-1"' : ""}><a href="#${ids[index]}"${index === current ? ' aria-current="location"' : ""}>${html(label)}</a></li>`).join("");
+  const body = sections.map((label, index) => `<h3 id="${ids[index]}">${html(label)}</h3><p>A short paragraph under the section.</p>`).join("");
+  return `<div class="catalog-document"><prism-contents${heading ? ` heading="${html(heading)}"` : ""}${open ? " open" : ""}>${tools}<ol>${links}</ol></prism-contents><prism-doc>${body}</prism-doc></div>`;
+}
+
 const PHASES = ["requirements", "design", "frozen", "build", "review", "shipped"];
 const PHASE_NAMES = ["Requirements", "Design", "Frozen", "Build", "Review", "Shipped"];
 
@@ -380,6 +389,22 @@ const SPECIMENS = {
     "many-items": crumbs(Array.from({ length: 12 }, (_, index) => `Level ${index + 1}`)),
     "long-text": crumbs(["Roadmap", LONG, LONG]),
     "unbroken-name": crumbs(["Roadmap", UNBROKEN, "Retry timed-out requests until a total deadline"])
+  },
+  "prism-maximize": {
+    default: `<prism-maximize></prism-maximize>`,
+    maximized: `<prism-maximize maximized></prism-maximize>`,
+    floating: `<div class="catalog-document"><prism-maximize floating></prism-maximize><prism-doc><h3>Contract</h3><p>The button floats at the top end corner beside the first lines.</p></prism-doc></div>`,
+    "long-text": `<prism-panel heading="${LONG}" maximizable><p>${LONG}</p></prism-panel>`,
+    "unbroken-name": `<prism-panel heading="${UNBROKEN}" maximizable><p>${UNBROKEN}</p></prism-panel>`
+  },
+  "prism-contents": {
+    default: contentsOf(["Retries", "Deadline", "Backoff"]),
+    current: contentsOf(["Retries", "Deadline", "Backoff"], { current: 1 }),
+    "with-tools": contentsOf(["Retries", "Deadline", "Backoff"], { tools: `<prism-maximize slot="tools"></prism-maximize>` }),
+    folded: contentsOf(["Retries", "Deadline", "Backoff"], { open: false }),
+    "long-text": contentsOf([LONG, LONG, "Backoff"], { heading: LONG }),
+    "unbroken-name": contentsOf([UNBROKEN, "Deadline", UNBROKEN]),
+    "many-items": contentsOf(Array.from({ length: 40 }, (_, index) => `Section ${index + 1}`), { current: 0 })
   },
   "prism-doc": {
     default: `<prism-doc><h3>Contract</h3><p>The review server serves every file under the kit folder.</p></prism-doc>`,

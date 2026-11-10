@@ -16,7 +16,7 @@ export class PrismPanel extends Base {
       { name: "eyebrow", values: ["text"], default: "", description: "A small line above the heading, such as the kind of record." },
       { name: "variant", values: VARIANTS, default: "card", description: "card is a bordered surface, plain has no frame, inset is sunken, and island floats on the canvas with --prism-radius-island, --prism-shadow-island, and --prism-color-island-edge." },
       { name: "flush", values: ["boolean"], default: "false", description: "The body has no padding, for content that draws its own edges, such as a page bar." },
-      { name: "maximizable", values: ["boolean"], default: "false", description: "Adds a button named Maximize or Restore that toggles maximized and sends prism-maximize with detail.maximized." },
+      { name: "maximizable", values: ["boolean"], default: "false", description: "Adds a prism-maximize button, named Maximize or Restore, that toggles maximized and sends prism-maximize with detail.maximized." },
       { name: "maximized", values: ["boolean"], default: "false", description: "The panel fills the window." }
     ],
     states: ["card", "plain", "inset", "island", "tools-and-footer", "maximizable"],
@@ -80,19 +80,17 @@ export class PrismPanel extends Base {
 
     const maximizable = this.hasAttribute("maximizable");
     if (maximizable && !this.maximizeButton) {
-      this.maximizeButton = make(this, "prism-button", "prism-panel-maximize", { variant: "ghost", size: "sm" });
-      this.maximizeButton.append(make(this, "prism-icon"));
-      this.maximizeButton.addEventListener("click", () => this.toggleMaximized(!this.hasAttribute("maximized")));
+      this.maximizeButton = make(this, "prism-maximize", "prism-panel-maximize");
+      this.maximizeButton.addEventListener("prism-maximize-request", (event) => {
+        event.stopPropagation();
+        this.toggleMaximized(event.detail.maximized);
+      });
       this.header.append(this.maximizeButton);
     } else if (!maximizable && this.maximizeButton) {
       this.maximizeButton.remove();
       this.maximizeButton = null;
     }
-    if (this.maximizeButton) {
-      const maximized = this.hasAttribute("maximized");
-      setAttribute(this.maximizeButton, "label", maximized ? "Restore" : "Maximize");
-      setAttribute(this.maximizeButton.firstElementChild, "name", maximized ? "restore" : "maximize");
-    }
+    if (this.maximizeButton) toggleAttribute(this.maximizeButton, "maximized", this.hasAttribute("maximized"));
     const hasTools = this.tools.childElementCount > 0;
     this.tools.hidden = !hasTools;
     this.header.hidden = !heading && !eyebrow && !hasTools && !maximizable;
