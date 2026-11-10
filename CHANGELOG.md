@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.22.0](https://github.com/RumyantsevMichael/Prism/compare/v0.21.0...v0.22.0) (2026-11-10)
+
+
+### Added
+
+* refuse work on a slice without its holder's claim ([#173](https://github.com/RumyantsevMichael/Prism/issues/173)) ([c631ea1](https://github.com/RumyantsevMichael/Prism/commit/c631ea14fd10caef86e6b0b6103cad98cee82cb4))
+* **review:** group, rearrange and navigate tabs; keep preferences ([#171](https://github.com/RumyantsevMichael/Prism/issues/171)) ([593fc27](https://github.com/RumyantsevMichael/Prism/commit/593fc27c5419143ba3f98dc4d3adb40b57fca04a))
+* **review:** navigate the review app by places ([#177](https://github.com/RumyantsevMichael/Prism/issues/177)) ([10e2ef1](https://github.com/RumyantsevMichael/Prism/commit/10e2ef1d5b6bfb414cda92d63886d8f9b1925374))
+
+
+### Fixed
+
+* keep session-end hook timeouts within Codex's 3-second limit ([#172](https://github.com/RumyantsevMichael/Prism/issues/172)) ([7b67a01](https://github.com/RumyantsevMichael/Prism/commit/7b67a01f2416f17447b0147a7bef07c54dc8418b))
+* **review:** fit the contents panel and join markdown paragraphs ([#167](https://github.com/RumyantsevMichael/Prism/issues/167)) ([fb516bc](https://github.com/RumyantsevMichael/Prism/commit/fb516bc2ebd6aeccbafd9c68dcb49d0bce3056f5))
+
 ## [0.21.0](https://github.com/RumyantsevMichael/Prism/compare/v0.20.0...v0.21.0) (2026-11-10)
 
 
