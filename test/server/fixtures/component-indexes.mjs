@@ -60,7 +60,7 @@ export function fingerprint(entries) {
 }
 
 /**
- * A NativeSemanticRuntime whose helper runs in this process: build makes one function unit per `export function`, and search reads that index back.
+ * A NativeSemanticRuntime whose helper and index store run in this process: build makes one function unit per `export function`, and search reads that index back.
  * control.builds lists each build's files; control.hold(file) keeps every build that holds the file waiting until control.release(file);
  * control.fail(file, code) makes every build that holds the file fail with that code; control.cosine[file] and control.lexical[file] score search results,
  * which each index orders by lexicalScore from highest to lowest and then by path.
@@ -126,6 +126,7 @@ export async function fakeRuntime(storage) {
   };
   const helper = { request: async (method, args) => (method === "build" ? build(args) : search(args)) };
   runtime.helper = () => helper;
+  runtime.store = runtime.inProcessStore();
   return { runtime, control };
 }
 

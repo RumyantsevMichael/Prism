@@ -314,6 +314,17 @@ Each fallback also adds a line with the time, project, and reason to `fallbacks.
 It opens the system browser only when no review tab that can make changes is open, and such a tab shows the project or a notice with a link to it instead.
 When the shared app cannot start or `PRISM_REVIEW_APP=off` is set, `prism review` serves the review itself until you stop it with `Ctrl-C`.
 
+## Logs
+
+Every Prism process writes to one log file, `logs/prism.log` in the state directory above, so the review app, each session's MCP server, and their index builds leave one record.
+Each line is a JSON object with the time, level, event, process name and id, and the event's own fields.
+The log records each process start and stop, index builds with their phases, durations, and failures, review app requests that fail or take more than two seconds, MCP tool calls that fail, and uncaught errors.
+It also records each time a process stops answering for more than a second, with what it was doing at the time, such as the index phase of the component being built.
+Past 5 MiB the file moves to `prism.log.1`, replacing the older one.
+Set `PRISM_LOG_LEVEL` to `debug`, `info` (the default), `warn`, `error`, or `off`, and set `PRISM_LOG_DIR` to write the log to another folder.
+An MCP server also writes its warnings and errors to its error output, which the agent host keeps with its own logs.
+The log holds project paths, component names, and tool names, but no file contents, search queries, or tool arguments.
+
 ## Security
 
 The server binds to `127.0.0.1`, selects an available port, and uses an unguessable session URL.
