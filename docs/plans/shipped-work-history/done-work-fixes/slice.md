@@ -1,5 +1,8 @@
 # Fix done work inside its initiative
 
+> Shipped history: initiative `shipped-work-history` shipped on 2026-11-10, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 A defect in done work joins its unshipped initiative as a fix slice that leaves the done slice's records untouched and holds ship until it is done.

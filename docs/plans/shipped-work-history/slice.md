@@ -1,5 +1,8 @@
 # Shipped work as history
 
+> Shipped history: initiative `shipped-work-history` shipped on 2026-11-10, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 A shipped initiative's state reads and behaves as immutable history, and fixes to done work ship inside an unshipped initiative.

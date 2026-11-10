@@ -1,5 +1,8 @@
 # Workflow views on the kit
 
+> Shipped history: initiative `review-app-ui-kit` shipped on 2026-11-09, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Changes
 - change `src/server/review/public/views/util.js`: `card`, `evidenceChip`, `artifactChip`, and the other shared helpers return kit panels and chips, and name records by title and kind (clauses 69, 81, 82).
 - change `src/server/review/public/views/attention.js`: gates use kit panels, choices, fields, and buttons, name the claim holder who is waiting, list what to inspect by title and kind, and the Watch group lists live and expired claims (clauses 67, 69, 80, 81, 82).

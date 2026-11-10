@@ -1,5 +1,8 @@
 # Kit containers, claims, and content blocks
 
+> Shipped history: initiative `review-app-ui-kit` shipped on 2026-11-09, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Changes
 
 `kit-controls` registers a basic version of each element below that already exists, with its catalog entry, so that every kit tag is registered (clause 28); this slice gives each its full behavior.

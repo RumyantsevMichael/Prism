@@ -1,5 +1,8 @@
 # Link fixes to the shipped work they correct
 
+> Shipped history: initiative `shipped-work-history` shipped on 2026-11-10, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 A fix to shipped work is a new initiative that names what it corrects, and readers of the shipped initiative see it.
