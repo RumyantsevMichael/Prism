@@ -11,9 +11,12 @@ component "review page\nanswers through actions" as page
 component "attention view\nwhole status, recent changes" as view
 component "gate-wait and wait-for-gate-answers hook" as wait
 component "mcp\nwait_for_user_gate artifact,\nsaved status records,\nundone removals and moves" as mcp
-component "record-store-sync\nmerges bytes and status records\nby artifact identity,\nkeeps a removal unless the upstream\nedited the bytes, sends a contested\nmove back, records undone changes" as sync
+component "record-store-sync\nmerges bytes and status records\nby artifact identity, refuses or\nwithholds files above their bound,\nkeeps a removal unless the upstream\nedited the bytes, sends a contested\nmove back, records undone changes" as sync
 component "artifact-paths\nidentity form, identities of a tree\nuntil none is shared" as paths
-component "record-store\nshares identity files\nonly at artifact locations" as layout
+component "record-store\nshares identity files\nonly at artifact locations,\nbound of each store file kind" as layout
+component "store-json\ndepth check in memory\nbounded by depth" as json
+component "record readers\nstate, initiative, roadmap,\ndesign-view, verification,\nslice-design" as readers
+component "artifact-migration\nledgers within 16 MiB,\nsplit when longer" as migration
 
 tools --> status
 initiative --> status
@@ -30,4 +33,10 @@ tools --> sync
 tools --> paths
 sync --> paths
 sync --> layout
+readers --> layout
+readers --> json
+migration --> json
+migration --> layout
+mcp --> migration
+layout --> json
 @enduml

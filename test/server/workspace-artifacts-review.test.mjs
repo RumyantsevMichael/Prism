@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import os from "node:os";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, truncate, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, truncate, writeFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import test from "node:test";
@@ -880,4 +880,116 @@ test("clause 42: a merge rewrites location only in a comment of the form Prism w
   assert.equal(git(remote, "show", `main:artifacts/${to}`), "# Foo", "the moved artifact stays where the upstream moved it");
   const again = await syncRecordStoreNow(b);
   assert.equal(again.state, "ok", again.message);
+});
+
+// The bound on an artifact's comments: at most 1000 entries in its comment folder, which the comment action, every reader, and every sync apply.
+const LIMIT = 1000;
+const numbered = (number, overrides = {}) => syncedComment({ text: `Comment ${number}.`, entry: entryId(5000 + number), ...overrides });
+const commentLine = (number, overrides = {}) => `${JSON.stringify(numbered(number, overrides))}\n`;
+// Comment files numbered from first to last in an artifact's comment folder, written as files of their own.
+async function fillComments(folder, first, last) {
+  await mkdir(folder, { recursive: true });
+  for (let number = first; number <= last; number += 1) await writeFile(path.join(folder, commentName(number)), commentLine(number));
+}
+
+test("clause 41: a comment on an artifact whose comment folder already holds 1000 entries is refused with 409 comment_limit and stores nothing", async (context) => {
+  const { place, prism, review } = await project(context);
+  const written = await writeArtifact(prism, FILE, requirementFile("Billing"));
+  await fillComments(COMMENTS(place.store), 1, LIMIT - 1);
+  const last = await comment(review, { path: FILE, scope: "workspace", version: written.version, line: 1, text: "The thousandth." });
+  assert.equal(last.status, 200, JSON.stringify(last.body));
+  assert.equal((await commentFiles(place.store)).length, LIMIT);
+  const refusedComment = await comment(review, { path: FILE, scope: "workspace", version: written.version, line: 1, text: "One too many." });
+  assert.equal(refusedComment.status, 409, JSON.stringify(refusedComment.body));
+  assert.equal(refusedComment.body.code, "comment_limit", JSON.stringify(refusedComment.body));
+  assert.equal((await commentFiles(place.store)).length, LIMIT, "the refused comment stores nothing");
+  const read = ok(await prism.call("get_artifact", { path: FILE }));
+  assert.equal(read.totalComments, LIMIT, "every one of the 1000 comments is read");
+});
+
+test("clause 42: a reader takes no comment from a comment folder of more than 1000 entries, as from a damaged file, and Attention lists none of them", async (context) => {
+  const { place, prism, review } = await project(context);
+  await writeArtifact(prism, FILE, requirementFile("Billing"));
+  const folder = COMMENTS(place.store);
+  await fillComments(folder, 1, 1);
+  // The other entries are links to the first file, as one blob that a sync writes under many names.
+  for (let number = 2; number <= LIMIT + 1; number += 1) await link(path.join(folder, commentName(1)), path.join(folder, commentName(number)));
+  const read = ok(await prism.call("get_artifact", { path: FILE }));
+  assert.deepEqual([read.comments, read.totalComments, read.nextCommentOffset], [[], 0, null], "get_artifact takes no comment from a folder of 1001 entries");
+  const view = (await artifactView(review)).artifact;
+  assert.deepEqual([view.comments, view.totalComments], [[], 0], "nor does /api/artifact");
+  assert.deepEqual(await recentComments(review), [], "and Attention lists none of them");
+  await rm(path.join(folder, commentName(LIMIT + 1)));
+  assert.equal(ok(await prism.call("get_artifact", { path: FILE })).totalComments, LIMIT, "a folder of 1000 entries is read again");
+});
+
+test("clause 42: Attention's recent changes read only the comment folders of artifacts that the checkout sees", async (context) => {
+  const { place, prism, review } = await project(context);
+  const written = await writeArtifact(prism, FILE, requirementFile("Billing"));
+  const posted = await comment(review, { path: FILE, scope: "workspace", version: written.version, line: 1, text: "On billing." });
+  assert.equal(posted.status, 200, JSON.stringify(posted.body));
+  // A comment of the form Prism writes, in the folder of a location at which no artifact exists.
+  const gone = path.join(place.store, "artifact-comments", "requirements", "gone.md");
+  await placeComment(gone, commentName(1), syncedComment({ location: "requirements/gone.md", text: "On no artifact.", entry: entryId(77) }));
+  const ids = (await recentComments(review)).map((entry) => entry.id);
+  assert.ok(ids.includes(posted.body.applied.id), "the comment on an existing artifact is listed");
+  assert.equal(ids.includes(entryId(77)), false, "a comment folder of a location that holds no artifact is left out");
+});
+
+test("clause 42: a sync refuses an upstream that holds more than 1000 comment files in one comment folder, or a comment above 64 KiB, and takes a folder of 1000", { timeout: 240000 }, async (context) => {
+  const { syncRecordStoreNow } = await import("../../dist/server/workflow/record-store-sync.mjs");
+  const base = { "artifacts/requirements/billing.md": requirementFile("Billing"), "artifact-identity/requirements/billing.md": identityFile("0123456789abcdef0123456789abcdef") };
+  const folder = "artifact-comments/requirements/billing.md";
+  const many = (count) => Object.fromEntries(Array.from({ length: count }, (_, index) => [`${folder}/${commentName(index + 1)}`, commentLine(index + 1)]));
+  for (const [label, files, state] of [
+    ["1001 comment files", many(LIMIT + 1), "merge_failed"],
+    ["a comment above 64 KiB", { [`${folder}/${commentName(1)}`]: `${JSON.stringify(numbered(1)).slice(0, -1)}${" ".repeat(64 * 1024)}}\n` }, "merge_failed"],
+    ["1000 comment files", many(LIMIT), "ok"]
+  ]) {
+    const { a, b } = await rawStores(context, base);
+    await put(a, files);
+    push(a, label);
+    const synced = await syncRecordStoreNow(b);
+    assert.equal(synced.state, state, `${label}: ${synced.message}`);
+    const held = (await readdir(path.join(b, ...folder.split("/"))).catch(() => [])).length;
+    if (state === "merge_failed") {
+      assert.ok(synced.message.includes(folder), `the refusal of ${label} names the folder: ${synced.message}`);
+      assert.equal(held, 0, `${label} never reaches this machine's disk`);
+    } else assert.equal(held, LIMIT, "a folder of 1000 comments syncs");
+  }
+});
+
+test("clause 42: where this machine's comments would take a merged comment folder past 1000, the upstream's stay and the rest are saved and named, and a local folder past 1000 commits its first 1000", { timeout: 240000 }, async (context) => {
+  const { syncRecordStoreNow } = await import("../../dist/server/workflow/record-store-sync.mjs");
+  const folder = "artifact-comments/requirements/billing.md";
+  const base = { "artifacts/requirements/billing.md": requirementFile("Billing"), "artifact-identity/requirements/billing.md": identityFile("0123456789abcdef0123456789abcdef") };
+  for (let number = 1; number < LIMIT; number += 1) base[`${folder}/${commentName(number)}`] = commentLine(number);
+  // Each machine adds one comment to a folder of 999, so each stays within the bound and the merge of both would not.
+  const { remote, a, b } = await rawStores(context, base);
+  await put(a, { [`${folder}/${commentName(LIMIT)}`]: commentLine(LIMIT, { text: "From the upstream." }) });
+  push(a, "the thousandth comment");
+  const own = `${folder}/${commentName(LIMIT + 1)}`;
+  await put(b, { [own]: commentLine(LIMIT + 1, { text: "From this machine." }) });
+  const synced = await syncRecordStoreNow(b);
+  assert.equal(synced.state, "conflicts", synced.message);
+  const merged = headTree(b).filter((file) => file.startsWith(`${folder}/`));
+  assert.equal(merged.length, LIMIT, "the merged folder holds 1000 comments");
+  assert.ok(merged.includes(`${folder}/${commentName(LIMIT)}`), "the upstream's comment stays");
+  assert.equal(merged.includes(own), false, "this machine's comment past the bound is not merged");
+  const saved = (await savedCopies(b)).find((file) => file.endsWith(path.join(...own.split("/"))));
+  assert.ok(saved, "it is saved");
+  assert.equal(JSON.parse(await readFile(saved, "utf8")).text, "From this machine.");
+  assert.ok(JSON.stringify(synced.conflicts).includes(commentName(LIMIT + 1)), "and named");
+  assert.equal(remoteTree(remote).filter((file) => file.startsWith(`${folder}/`)).length, LIMIT, "the remote holds 1000 comments");
+
+  // A local folder of 1001 comment files, as files put there by hand, commits its first 1000 by file name and withholds the last.
+  const second = await rawStores(context, base);
+  const extra = [`${folder}/${commentName(LIMIT)}`, `${folder}/${commentName(LIMIT + 1)}`];
+  await put(second.b, { [extra[0]]: commentLine(LIMIT), [extra[1]]: commentLine(LIMIT + 1) });
+  const local = await syncRecordStoreNow(second.b);
+  assert.notEqual(local.state, "merge_failed", local.message);
+  assert.deepEqual((local.withheld ?? []).map((entry) => entry.path), [extra[1]], "the comment file past the first 1000 is withheld");
+  const pushed = remoteTree(second.remote).filter((file) => file.startsWith(`${folder}/`));
+  assert.equal(pushed.length, LIMIT);
+  assert.ok(pushed.includes(extra[0]) && !pushed.includes(extra[1]), "the first 1000 by file name reach the remote");
 });

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -1151,4 +1152,143 @@ test("clause 38: the accepted version is kept at approval and at design acceptan
   const plan = ok(await prism.call("get_artifact", { path: "docs/plans/reports/slice.md" }));
   assert.equal(plan.acceptedVersion, slice.version);
   assert.equal(plan.changedSinceAccepted, false);
+});
+
+// Store bounds: each kind of store file holds at most the bytes its kind allows, which every sync and every reader applies, and the depth check takes memory only by depth.
+const MiB = 1024 * 1024;
+// A file of exactly bytes bytes: the JSON prefix, then spaces, then a newline, so a reader would parse it were it not above its bound.
+const sized = (prefix, bytes) => `${prefix}${" ".repeat(bytes - prefix.length - 1)}\n`;
+const BASE_FILES = { "artifacts/requirements/billing.md": requirementFile("Billing"), "artifact-identity/requirements/billing.md": identityFile(OLD_ID) };
+
+test("clause 25: a sync refuses an upstream that holds a store file above its kind's bound, so the file never reaches this machine, and takes one at its bound", { timeout: 240000 }, async (context) => {
+  const over = [
+    ["artifact-identity/requirements/billing.md", sized(`{"id":"${LATER_ID}"}`, 257)],
+    ["repositories/api.json", sized('{"remotes":[]}', 64 * 1024 + 1)],
+    ["initiatives/reports/initiative.json", sized('{"schemaVersion":1}', MiB + 1)],
+    ["artifact-status/requirements/billing.md/status.json", sized('{"status":"Approved"}', 16 * MiB + 1)]
+  ];
+  for (const [file, contents] of over) {
+    const { a, b } = await rawStores(context, BASE_FILES);
+    await put(a, { [file]: contents });
+    push(a, `a ${file} above its bound`);
+    const synced = await syncRecordStoreNow(b);
+    assert.equal(synced.state, "merge_failed", `${file}: ${synced.state} ${synced.message}`);
+    assert.ok(synced.message.includes(file), `the refusal names ${file}: ${synced.message}`);
+    assert.notEqual(await readFile(path.join(b, file), "utf8").catch(() => null), contents, `${file} never reaches this machine's disk`);
+    assert.notEqual(atHead(b, file), contents.trimEnd(), `${file} is not merged into this machine's branch`);
+    assert.deepEqual(JSON.parse(atHead(b, "artifact-identity/requirements/billing.md")), { id: OLD_ID }, "the store stays as it was");
+  }
+  const at = [["artifact-identity/requirements/billing.md", sized(`{"id":"${LATER_ID}"}`, 256)], ["repositories/api.json", sized('{"remotes":[]}', 64 * 1024)]];
+  for (const [file, contents] of at) {
+    const { a, b } = await rawStores(context, BASE_FILES);
+    await put(a, { [file]: contents });
+    push(a, `a ${file} at its bound`);
+    const synced = await syncRecordStoreNow(b);
+    assert.equal(synced.state, "ok", `${file}: ${synced.message}`);
+    assert.equal(await readFile(path.join(b, file), "utf8"), contents, `${file} at its bound syncs`);
+  }
+});
+
+test("clause 25: a sync commits no local store file above its kind's bound and lists it under withheld, while every other change syncs", async (context) => {
+  const { remote, a, b } = await rawStores(context, BASE_FILES);
+  const big = sized(`{"id":"${LATER_ID}"}`, 257);
+  await put(b, { "artifacts/requirements/other.md": requirementFile("Other"), "artifact-identity/requirements/other.md": big, "artifacts/plans/foo/slice.md": "# Foo\n" });
+  const synced = await syncRecordStoreNow(b);
+  assert.notEqual(synced.state, "merge_failed", synced.message);
+  assert.deepEqual((synced.withheld ?? []).map((entry) => entry.path), ["artifact-identity/requirements/other.md"], "the file above its bound is withheld");
+  assert.match(synced.withheld[0].reason, /256 bytes/, "with its bound as the reason");
+  assert.equal(await readFile(path.join(b, "artifact-identity", "requirements", "other.md"), "utf8"), big, "and stays on disk");
+  const tree = remoteTree(remote);
+  assert.equal(tree.includes("artifact-identity/requirements/other.md"), false, "the remote never holds it");
+  assert.ok(tree.includes("artifacts/requirements/other.md") && tree.includes("artifacts/plans/foo/slice.md"), "every other change reaches the remote");
+  git(a, "pull", "-q", "origin", "main");
+  assert.equal(await stat(path.join(a, "artifact-identity", "requirements", "other.md")).catch(() => null), null, "and no other machine gets it");
+});
+
+test("clause 25: where a merge of both sides' versions would make a file exceed its kind's bound, the upstream's version stays and this machine's is saved and named", { timeout: 240000 }, async (context) => {
+  const lines = (letter) => Array.from({ length: 9 * 1024 }, (_, index) => `${letter} ${String(index).padStart(6, "0")} ${"x".repeat(1013)}\n`).join("");
+  const middle = "# Big\n\nThe middle line.\n";
+  const { remote, a, b } = await rawStores(context, { "artifacts/plans/big/notes.md": middle });
+  // Each side alone stays below the 16 MiB of an artifact, and a line merge of both would not.
+  const upstream = `${lines("a")}${middle}`;
+  const local = `${middle}${lines("b")}`;
+  await put(a, { "artifacts/plans/big/notes.md": upstream });
+  push(a, "grow at the top");
+  await put(b, { "artifacts/plans/big/notes.md": local });
+  const synced = await syncRecordStoreNow(b);
+  assert.equal(synced.state, "conflicts", synced.message);
+  assert.equal(await readFile(path.join(b, "artifacts", "plans", "big", "notes.md"), "utf8"), upstream, "the upstream's version stays");
+  assert.ok((await stat(path.join(b, "artifacts", "plans", "big", "notes.md"))).size <= 16 * MiB);
+  const saved = (await savedCopies(b)).find((file) => file.endsWith(path.join("artifacts", "plans", "big", "notes.md")));
+  assert.ok(saved, "this machine's version is saved");
+  assert.equal(await readFile(saved, "utf8"), local);
+  assert.ok(JSON.stringify(synced.conflicts).includes("artifacts/plans/big/notes.md"), "and named");
+  assert.equal(git(remote, "show", "main:artifacts/plans/big/notes.md").length, upstream.trimEnd().length, "the remote keeps the upstream's version");
+});
+
+// A move ledger of repository api that lists docs/plans/foo/slice.md as moved to the repository's scope, padded by a text field to exactly bytes bytes.
+function movedLedger(bytes) {
+  const head = `${JSON.stringify({ schemaVersion: 1, repository: "api", migratedAt: "2026-11-01T00:00:00.000Z", moved: [{ from: "docs/plans/foo/slice.md", to: "repositories/api/plans/foo/slice.md" }], kept: [] }).slice(0, -1)},"pad":"`;
+  const tail = '"}\n';
+  return `${head}${"x".repeat(bytes - head.length - tail.length)}${tail}`;
+}
+
+test("clause 25: a reader treats a ledger above its bound as a damaged ledger, which lists nothing, so the file it names moves again", async (context) => {
+  for (const [bytes, moves] of [[16 * MiB + 1, true], [16 * MiB, false]]) {
+    const place = await workspace(context);
+    const api = await checkout(place, "api", { files: { "docs/plans/foo/slice.md": "# Foo\n" } });
+    await mkdir(path.join(place.store, "artifact-migrations"), { recursive: true });
+    const ledger = movedLedger(bytes);
+    assert.equal(Buffer.byteLength(ledger), bytes);
+    await writeFile(path.join(place.store, "artifact-migrations", "2026-11-01T00-00-00-000Z-0123abcd.json"), ledger);
+    const prism = await server(context, place, api);
+    ok(await prism.call("get_artifact", {}));
+    const stored = await stat(path.join(place.store, "artifacts", "repositories", "api", "plans", "foo", "slice.md")).catch(() => null);
+    assert.equal(stored !== null, moves, moves ? "a ledger above 16 MiB lists nothing, so the file moves" : "a ledger at 16 MiB is read, so the file it lists as moved is not written into the store again");
+    await closeServers();
+  }
+});
+
+test("clause 25: the depth check of a store file within its bound takes memory only by nesting depth, so a ledger of millions of empty objects leaves the server answering", { timeout: 280000 }, async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api", { files: { "docs/plans/foo/slice.md": "# Foo\n" } });
+  await mkdir(path.join(place.store, "artifact-migrations"), { recursive: true });
+  // 12 MiB of empty objects, within the 16 MiB of a ledger: JSON.parse takes about 270 MiB of heap for it, and a check that queues one entry per object takes as much again.
+  const count = Math.floor(12 * MiB / 3);
+  await writeFile(path.join(place.store, "artifact-migrations", "2026-11-01T00-00-00-000Z-0123abcd.json"), `{"repository":"api","moved":[${"{},".repeat(count)}{}],"kept":[]}\n`);
+  const prism = await server(context, place, api, { env: { NODE_OPTIONS: "--max-old-space-size=512" } });
+  const answered = (call) => Promise.race([call.then(() => "answered", (error) => `failed: ${error?.message ?? error}`), new Promise((resolve) => setTimeout(() => resolve("no answer in 120 s"), 120000))]);
+  assert.equal(await answered(prism.call("get_artifact", {})), "answered", "the server answers the call that reads the ledger");
+  assert.equal(await answered(prism.call("get_roadmap", {})), "answered", "and still answers the next call");
+});
+
+test("clause 26: a move whose ledger would hold more than 16 MiB writes it as several ledger files of at most 16 MiB, which together list every kept file, and its report names each", { skip: process.platform === "win32" ? "names with control characters cannot be checked out on Windows" : false, timeout: 240000 }, async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api");
+  // 4000 tracked files whose names break the name form, each kept and listed in the ledger with a path that JSON writes as about 4800 bytes, added through Git's index in one step.
+  const control = (length) => "\u0001".repeat(length);
+  const folder = ["docs", "plans", control(200), control(200), control(200)].join("/");
+  await mkdir(path.join(api, ...folder.split("/")), { recursive: true });
+  const source = path.join(api, "source.md");
+  await writeFile(source, "# Kept\n");
+  const blob = git(api, "hash-object", "-w", "source.md");
+  const files = Array.from({ length: 4000 }, (_, index) => `${folder}/${control(180)} ${String(index).padStart(4, "0")}.md`);
+  for (const file of files) await link(source, path.join(api, ...file.split("/")));
+  await rm(source);
+  execFileSync("git", ["update-index", "-z", "--index-info"], { cwd: api, input: Buffer.concat(files.map((file) => Buffer.from(`100644 ${blob}\t${file}\0`))) });
+  git(api, "commit", "-q", "-m", "many kept files");
+  const prism = await server(context, place, api);
+  const said = notes(await prism.call("get_artifact", {}));
+  const names = (await readdir(path.join(place.store, "artifact-migrations"))).filter((name) => name.endsWith(".json"));
+  assert.ok(names.length >= 2, `the ledger is written as several files: ${names.join(", ")}`);
+  const kept = new Set();
+  for (const name of names) {
+    const target = path.join(place.store, "artifact-migrations", name);
+    assert.ok((await stat(target)).size <= 16 * MiB, `${name} holds at most 16 MiB`);
+    const entry = JSON.parse(await readFile(target, "utf8"));
+    assert.equal(entry.repository, "api");
+    for (const item of entry.kept) kept.add(item.path);
+    assert.ok(said.includes(name), `the report names ${name}`);
+  }
+  assert.deepEqual([...kept].sort(), [...files].sort(), "together they list every kept file");
 });
