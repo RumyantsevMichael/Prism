@@ -1,6 +1,6 @@
 {
   "name": "prism",
-  "version": "0.21.0",
+  "version": "0.20.0",
   "description": "Spec-driven engineering workflow with EARS requirements, ADRs, slices designed as frozen contracts with failing acceptance tests, verified implementation, and orchestration.",
   "author": {
     "name": "Michael Rumyantsev",
