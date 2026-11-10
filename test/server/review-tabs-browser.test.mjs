@@ -28,10 +28,11 @@ const shownPage = (page) => page.evaluate(() => new URL(location.href).searchPar
 const session = async (base) => (await fetch(`${base}/api/session`)).json();
 const sidebarItem = (page, name) => page.locator("#sidebar").getByRole("treeitem", { name: new RegExp(`^${name}`) });
 // Each entry sits in its place's sidebar, so the place is chosen on the rail first, with the same keys, since choosing Roadmap opens its page as its entry would.
+// The Roadmap place lists lanes, each a link to the Roadmap page, so its Now lane stands for the Roadmap's former entry.
 async function openFromSidebar(page, name, options = {}) {
   const place = page.getByRole("navigation", { name: "Places" }).getByRole("button", { name: new RegExp(`^${name === "Roadmap" ? "Roadmap" : "Knowledge"}`) });
   if ((await place.getAttribute("aria-pressed")) !== "true") await place.click(options);
-  await sidebarItem(page, name).click(options);
+  await sidebarItem(page, name === "Roadmap" ? "Now" : name).click(options);
 }
 const textStyle = (page, ref) => tab(page, ref).evaluate((host) => {
   const style = getComputedStyle(host.shadowRoot.querySelector(".text"));

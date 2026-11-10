@@ -107,8 +107,9 @@ test("clause 77: above 1100px the sidebar sits beside the page, and at 1100px an
     await drawer.waitFor();
     const box = await drawer.evaluate((element) => { const rect = element.getBoundingClientRect(); return { left: rect.left, width: rect.width, drawer: parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--prism-drawer-width")) }; });
     assert.ok(Math.abs(box.left) <= 1 && Math.abs(box.width - box.drawer) <= 1, `the drawer slides in from the left at --prism-drawer-width at ${width}px`);
+    // Roadmap on the drawer's rail opens the Roadmap page as its sidebar entry did, and the drawer closes once the page has opened.
     await drawer.getByRole("navigation", { name: "Places" }).getByRole("button", { name: /^Roadmap/ }).click();
-    await drawer.getByRole("treeitem", { name: /^Roadmap/ }).click();
+    await drawer.waitFor({ state: "hidden" });
     await waitForView(page);
     assert.equal(await page.getByRole("dialog").filter({ has: page.getByRole("tree") }).count(), 0, "choosing a page closes the drawer");
     assert.equal(await shownPage(page), "roadmap");

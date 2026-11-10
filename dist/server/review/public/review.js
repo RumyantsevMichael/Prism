@@ -413,7 +413,7 @@ tabStrip.addEventListener("prism-tab-close", (event) => closeTab(event.detail?.v
 
 // Opening a page shows it in a tab and pushes it onto the browser history, so Back, Forward, and the browser's own buttons move through the same pages.
 // An ordinary open replaces the preview tab; `keep` opens a kept tab instead, or keeps the preview, and a new tab goes right after the selected one.
-function openRef(path, { keep = false, fromHistory = false, keepDrawer = false, closeDrawerWhenShown = false } = {}) {
+function openRef(path, { keep = false, fromHistory = false, keepDrawer = false } = {}) {
   if (!path || !requireApp()) {
     return;
   }
@@ -441,12 +441,8 @@ function openRef(path, { keep = false, fromHistory = false, keepDrawer = false, 
   renderTabs();
   renderNavigation();
   const shown = showArtifact(path);
-  if (closeDrawerWhenShown) {
-    void shown.finally(() => {
-      if (selectedPath === path && navDrawer.isOpen) navDrawer.close();
-    });
-  }
   void saveSession().catch((error) => showToast(error.message));
+  return shown;
 }
 
 // Keeping the preview tab turns it into an ordinary tab, so the next link opens a new preview beside it.
@@ -1380,8 +1376,12 @@ function choosePlace(name, { fromRail = false, keep = false } = {}) {
   storePlace(name);
   renderNavigation();
   // Roadmap opens its page as a sidebar link would, in a kept tab from a Ctrl or Cmd click; in the drawer the place shows first,
-  // and the drawer closes once the page has opened, as it does after any page chosen in it.
-  if (fromRail && name === "roadmap") openRef("roadmap", { keep, keepDrawer: true, closeDrawerWhenShown: true });
+  // and the drawer closes once the page has opened and the person has seen the place switch, as it does after any page chosen in it.
+  if (fromRail && name === "roadmap") {
+    const drawn = navDrawer.isOpen;
+    const shown = openRef("roadmap", { keep, keepDrawer: true });
+    if (drawn) closeDrawerAfter(shown, "roadmap");
+  }
 }
 
 // The rail's place buttons, in the order of PLACES; the Attention button counts the recorded questions that wait for an answer.
@@ -2140,7 +2140,23 @@ function setSidebarCollapsed(collapsed, { remember = true } = {}) {
 }
 
 // The drawer places its children in its body a microtask after they arrive, so focus moves once the sidebar sits inside the open drawer.
+// How long the drawer keeps showing a place whose choice also opened a page, so the switch is seen before the drawer closes.
+const DRAWER_LINGER_MS = 700;
+// The pending close of the drawer after such a choice; opening or closing the drawer meanwhile cancels it.
+let drawerCloseTicket = null;
+
+function closeDrawerAfter(shown, path) {
+  const ticket = {};
+  drawerCloseTicket = ticket;
+  void Promise.allSettled([shown, new Promise((resolve) => setTimeout(resolve, DRAWER_LINGER_MS))]).then(() => {
+    if (drawerCloseTicket !== ticket) return;
+    drawerCloseTicket = null;
+    if (navDrawer.isOpen && selectedPath === path) navDrawer.close();
+  });
+}
+
 async function openDrawer() {
+  drawerCloseTicket = null;
   drawerPlaces.append(sidebar);
   navDrawer.show();
   await Promise.resolve();
@@ -2157,6 +2173,7 @@ function watchSearchWidth() {
 }
 
 function closeDrawer() {
+  drawerCloseTicket = null;
   if (sidebar.parentElement !== appShell) railDock.after(sidebar);
 }
 

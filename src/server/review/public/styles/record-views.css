@@ -1325,6 +1325,10 @@ a.code-link:hover {
   overflow-wrap: anywhere;
 }
 
+.superseded-line > prism-state {
+  flex: none;
+}
+
 .superseded-line > span {
   min-width: 0;
 }
