@@ -202,3 +202,13 @@ test("a takeover lock left long ago does not hold the slot", { skip: posixOnly }
   assert.equal(existsSync(pending), false);
   assert.equal(existsSync(lock), false);
 });
+
+// Pending answers only while a dialog is actually open; with no display, two simultaneous requests both find no dialog.
+test("two simultaneous requests without a display both answer confirmation_unavailable", async (t) => {
+  const folder = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-confirm-race-")));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const env = { PATH: "/nonexistent", PRISM_REVIEW_APP_DIR: path.join(folder, "app") };
+  const { confirmLaunch } = await module();
+  const ask = () => confirmLaunch({ initiative: "reports", host: "claude-code", checkout: "/srv/x", env, platform: "linux", now: Date.now() }).then(() => "resolved", (error) => error.code);
+  assert.deepEqual(await Promise.all([ask(), ask()]), ["confirmation_unavailable", "confirmation_unavailable"]);
+});

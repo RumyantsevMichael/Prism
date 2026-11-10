@@ -144,6 +144,11 @@ async function takeOverAbandoned(file) {
   }
 }
 
+/** Whether a confirmation dialog of this machine is open now, in this process or another. */
+async function dialogOpen(env) {
+  return openHere > 0 || (await holderIsLive(launchesFile(env, PENDING_FILE)));
+}
+
 /** Takes this machine's one dialog slot, or returns null while another dialog is open. */
 async function takePendingSlot(env, now) {
   // Taken before any await, so two requests of this process never both pass.
@@ -332,15 +337,21 @@ export async function confirmLaunch({ initiative, host, checkout, env = process.
   await prepareLaunchesDirectory(env);
   const window = await launchWindow({ env, now });
   if (window) return { asked: false, windowEndsAt: window.endsAt };
+  const pending = () => new LaunchError("confirmation_pending", "Another launch is waiting for your confirmation.");
+  const cooldown = () => new LaunchError("confirmation_cooldown", "You declined a launch moments ago; wait a little before launching again.");
+  // Pending answers only while a dialog is actually open; otherwise this request gets the answer any other request would.
+  if (await dialogOpen(env)) throw pending();
+  if (await coolingDown(env, now)) throw cooldown();
+  const text = confirmationText({ label: definition.label, initiative, checkout });
+  const dialog = await nativeDialog({ text, env, platform });
+  if (dialog instanceof LaunchError) throw dialog;
   const release = await takePendingSlot(env, now);
-  if (!release) throw new LaunchError("confirmation_pending", "Another launch is waiting for your confirmation.");
+  if (!release) throw pending();
   try {
-    if (await coolingDown(env, now)) {
-      throw new LaunchError("confirmation_cooldown", "You declined a launch moments ago; wait a little before launching again.");
-    }
-    const text = confirmationText({ label: definition.label, initiative, checkout });
-    const dialog = await nativeDialog({ text, env, platform });
-    if (dialog instanceof LaunchError) throw dialog;
+    // Checked again with the slot held: a dialog that ended meanwhile may have opened the window or started the cool-down.
+    const meanwhile = await launchWindow({ env, now });
+    if (meanwhile) return { asked: false, windowEndsAt: meanwhile.endsAt };
+    if (await coolingDown(env, now)) throw cooldown();
     const shownAt = Date.now();
     const outcome = await runDialog(dialog);
     // The cool-down runs from the dialog's end, on the request's clock.
