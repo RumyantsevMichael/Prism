@@ -153,6 +153,35 @@ for (const width of [390, 1440]) {
     assert.equal(removed.more, false);
     assert.equal(removed.wide, false, "the page does not scroll sideways");
     if (process.env.PRISM_SHOTS) await page.screenshot({ path: `${process.env.PRISM_SHOTS}/comments-${width}.png` });
+
+    // Focus on a comment that More comments listed stays on that comment while the card redraws for another arriving comment, and never moves into the comment form.
+    await page.locator('[data-comment-id]').filter({ hasText: "Comment 41." }).focus();
+    await comment("Comment 43.");
+    await until(() => document.querySelector("#artifact-comments-heading")?.textContent === "43 comments", "another arriving comment is counted");
+    await page.waitForTimeout(500);
+    assert.equal((await card()).focus, "Comment 41.", "a redraw keeps focus on the comment it was on");
+    await page.keyboard.type("j");
+    assert.equal(await page.evaluate(() => document.querySelector("[data-comment-form] input")?.value), "", "a typed key never reaches the comment form");
+    assert.deepEqual(page.errors, []);
+  });
+
+  test(`at ${width} px the page never starts a poll while its last poll still runs`, { skip: noBrowser, timeout: 120000 }, async (context) => {
+    const { prism, review } = await project(context);
+    await writeArtifact(prism, FILE, requirementFile("Billing"));
+    const page = await writableTab(context, review, width);
+    const counts = { index: { now: 0, most: 0, started: 0 }, artifact: { now: 0, most: 0, started: 0 } };
+    const kind = (request) => { const name = new URL(request.url()).pathname; return name.endsWith("/api/index") ? "index" : name.endsWith("/api/artifact") ? "artifact" : null; };
+    page.on("request", (request) => { const count = counts[kind(request)]; if (count) { count.now += 1; count.started += 1; count.most = Math.max(count.most, count.now); } });
+    const done = (request) => { const count = counts[kind(request)]; if (count) count.now -= 1; };
+    page.on("requestfinished", done);
+    page.on("requestfailed", done);
+    // Each poll's first request answers only after 4 s, far longer than the 1.5 s between polls.
+    await page.route((url) => url.pathname.endsWith("/api/index"), async (route) => { await new Promise((resolve) => setTimeout(resolve, 4000)); await route.continue().catch(() => {}); });
+    await page.waitForTimeout(13000);
+    assert.ok(counts.index.started >= 2, `the page went on polling: ${JSON.stringify(counts)}`);
+    assert.equal(counts.index.most, 1, `polls never overlap: ${JSON.stringify(counts)}`);
+    assert.ok(counts.artifact.most <= 1, `reads of the open file never overlap: ${JSON.stringify(counts)}`);
+    await page.unrouteAll({ behavior: "ignoreErrors" });
     assert.deepEqual(page.errors, []);
   });
 }

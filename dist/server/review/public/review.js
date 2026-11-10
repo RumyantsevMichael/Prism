@@ -1203,8 +1203,16 @@ function endRebuild(memory) {
       if (sections[index] && (sections[index].getAttribute("summary") ?? "") === summary) sections[index].open = open;
     });
   }
-  if (memory.focusKey && !artifact.contains(document.activeElement)) [...artifact.querySelectorAll("[data-focus-key]")].find((control) => control.dataset.focusKey === memory.focusKey)?.focus({ preventScroll: true });
-  if (memory.focus >= 0 && !artifact.contains(document.activeElement)) controlsOf(artifact)[memory.focus]?.focus({ preventScroll: true });
+  // Focus that a view named with data-focus-key comes back by that name, and a comment, which is no control, takes it without entering the tab order.
+  // A comment is never found again by position, since a list that grew or shrank would move focus to another control: one that is gone hands focus to the More comments button when one is listed.
+  const keyed = (key) => [...artifact.querySelectorAll("[data-focus-key]")].find((control) => control.dataset.focusKey === key);
+  const comment = memory.focusKey?.startsWith("comment:") === true;
+  if (memory.focusKey && !artifact.contains(document.activeElement)) {
+    const found = keyed(memory.focusKey) ?? (comment ? keyed("more-comments") : null);
+    if (found?.dataset.commentId !== undefined) found.tabIndex = -1;
+    found?.focus({ preventScroll: true });
+  }
+  if (!comment && memory.focus >= 0 && !artifact.contains(document.activeElement)) controlsOf(artifact)[memory.focus]?.focus({ preventScroll: true });
   workspace.scrollTop = memory.top;
   if (pendingAnchor?.path === memory.path) {
     scrollToAnchor(pendingAnchor.anchor);
@@ -1610,7 +1618,9 @@ async function initialize() {
     if (url && url !== location.href) location.href = url;
   });
   void refreshProjects();
-  setInterval(refreshProjects, 5000);
+  // The project list is checked 5 s after its last check ended, so checks never overlap.
+  const checkProjects = () => refreshProjects().catch(() => {}).finally(() => setTimeout(checkProjects, 5000));
+  setTimeout(checkProjects, 5000);
   createIndexingStatus({
     root: document.getElementById("indexing"),
     button: document.getElementById("indexing-button"),
@@ -1800,7 +1810,8 @@ async function initialize() {
     await showArtifact(selectedPath);
   }
   let polls = 0;
-  setInterval(async () => {
+  // Each poll starts 1.5 s after the last one ended, never while it still runs, so a slow answer never piles up requests that hold the page's connections.
+  const poll = async () => {
     // Shown action lists check their listing every few seconds, so a change an agent made shows without a reload.
     if (++polls % 3 === 0 && connection !== "stopped") document.dispatchEvent(new CustomEvent("prism:poll"));
     try {
@@ -1821,14 +1832,17 @@ async function initialize() {
           synchronizeSession(snapshot);
         }
         // A failed probe leaves the open view as it is rather than replacing it with an error.
-        if (sidePanel.isOpen()) void sidePanel.refresh();
+        const panel = sidePanel.isOpen() ? sidePanel.refresh().catch(() => {}) : null;
         if (selectedPath) {
           await showArtifact(selectedPath);
         }
+        await panel;
       }
     } catch {
     }
-  }, 1500);
+    setTimeout(poll, 1500);
+  };
+  setTimeout(poll, 1500);
 }
 
 initialize().catch((error) => {

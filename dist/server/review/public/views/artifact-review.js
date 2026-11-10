@@ -79,7 +79,8 @@ function keepLinesInView(box, state) {
 function commentHtml(comment, version) {
   const host = comment.author?.host ? `<span class="muted">${escapeHtml(comment.author.host)}</span>` : "";
   const older = comment.version && comment.version !== version ? chip("On an earlier version") : "";
-  return `<li class="artifact-comment" data-comment-id="${escapeHtml(String(comment.id))}">
+  // A comment that More comments gave focus keeps it by its key while the page redraws the card, as the page restores focus by data-focus-key.
+  return `<li class="artifact-comment" data-comment-id="${escapeHtml(String(comment.id))}" data-focus-key="comment:${escapeHtml(String(comment.id))}">
     <div class="artifact-comment-head">
       <span class="artifact-comment-author">${escapeHtml(comment.author?.name ?? "An unknown person")}</span>${host}
       ${chip(`Line ${escapeHtml(String(comment.line))}`)}${older}

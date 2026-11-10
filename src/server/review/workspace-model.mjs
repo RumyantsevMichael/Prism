@@ -623,7 +623,7 @@ async function approvalGates(projectRoot) {
 async function artifactChanges(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   if ((config.workspace?.store ?? null) === null) return [];
-  return appliedArtifactActions(projectRoot).catch(() => []);
+  return appliedArtifactActions(projectRoot, { latest: RECENT_CHANGES_LIMIT }).catch(() => []);
 }
 
 // What a gate's attached record is, so the page names it by title and kind with the counts that matter for the answer.

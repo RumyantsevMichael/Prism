@@ -1250,8 +1250,9 @@ const appliedEntry = (item) => {
  * The review app's applied actions on the store artifacts the checkout sees: those that the status records of its requirements and ADRs keep, such as an approval's gate.answer,
  * and the comments, each read from its own file, each as its history entry with initiative null and artifact { path, scope }, since such an action belongs to no initiative;
  * an entry is listed only in the form Prism writes and once its time is no more than a few minutes ahead of the clock, and an entry that two records keep is listed once.
+ * latest, when given, reads of each artifact's comments only the newest that many by time and then entry id, which are all a list of the newest that many entries can show.
  */
-export async function appliedArtifactActions(projectRoot) {
+export async function appliedArtifactActions(projectRoot, { latest = Infinity } = {}) {
   return refusing(async () => {
     await configuration(projectRoot);
     const seen = await seenScopes(projectRoot);
@@ -1265,7 +1266,7 @@ export async function appliedArtifactActions(projectRoot) {
         if (applied && !aheadOfClock(applied.at, now) && !listed.has(applied.id)) listed.set(applied.id, { ...applied, initiative: null, artifact: { path: entry.path, scope: entry.scope } });
       }
     }
-    for (const comment of await appliedComments(seen, now)) if (!listed.has(comment.id)) listed.set(comment.id, comment);
+    for (const comment of await appliedComments(seen, now, { latest })) if (!listed.has(comment.id)) listed.set(comment.id, comment);
     return [...listed.values()];
   });
 }

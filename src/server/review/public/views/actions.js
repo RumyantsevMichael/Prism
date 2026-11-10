@@ -427,14 +427,18 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
   };
   panels.add(panel);
   // Another tab's change, or the page's periodic check, refreshes the listing; a list whose element left the page stops listening.
-  const onChange = () => {
+  // A periodic check that comes while the last one still reads is skipped, so slow listings never pile up requests.
+  let checking = null;
+  const onChange = (event) => {
     if (!root.isConnected) {
       document.removeEventListener("prism:action", onChange);
       document.removeEventListener("prism:poll", onChange);
       panels.delete(panel);
       return;
     }
-    void refresh();
+    if (event?.type !== "prism:poll") { void refresh(); return; }
+    if (checking) return;
+    checking = refresh().catch(() => {}).finally(() => { checking = null; });
   };
   document.addEventListener("prism:action", onChange);
   document.addEventListener("prism:poll", onChange);
