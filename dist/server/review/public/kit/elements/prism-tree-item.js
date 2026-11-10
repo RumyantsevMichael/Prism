@@ -134,6 +134,14 @@ export class PrismTreeItem extends Base {
     return this.childItems.length > 0;
   }
 
+  /** Whether this leaf keeps the twisty's room: another item at its level, under the same parent, has child items, or its branching tree says top items may. */
+  besideParent() {
+    // A branching tree's top items may hold children, so a top leaf keeps the room even when this tree, one group of a longer list, has no parent.
+    if (!this.parentItem && this.tree?.hasAttribute("branching")) return true;
+    const siblings = this.parentElement ? [...this.parentElement.children] : [];
+    return siblings.some((node) => node !== this && node.tagName === "PRISM-TREE-ITEM" && node.hasChildItems);
+  }
+
   get parentItem() {
     return this.parentElement?.closest("prism-tree-item") ?? null;
   }
@@ -168,7 +176,9 @@ export class PrismTreeItem extends Base {
     setAttribute(this.row, "href", href || null);
     const hasStart = this.start.childNodes.length > 0;
     this.start.hidden = !hasStart;
-    this.twisty.classList.toggle("is-gone", !parent && hasStart);
+    // A leaf with a glyph starts with its glyph only when no item beside it has children; beside a parent it keeps the twisty's room,
+    // so the labels of one level line up and a leaf never reads as the parent of the item after it.
+    this.twisty.classList.toggle("is-gone", !parent && hasStart && !this.besideParent());
     const hasEnd = this.end.childNodes.length > 0;
     this.end.hidden = !hasEnd;
     // The label comes first in the name, so the item is found by its title; a glyph's name, such as a state, follows the end content.

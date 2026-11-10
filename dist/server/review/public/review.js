@@ -1284,9 +1284,10 @@ function treeItem(value, label, { selected = false, expanded = false, start = []
   return item;
 }
 
-function tree(label, items) {
+function tree(label, items, { branching = false } = {}) {
   const holder = document.createElement("prism-tree");
   holder.setAttribute("label", label);
+  holder.toggleAttribute("branching", branching);
   holder.append(...items);
   return holder;
 }
@@ -1620,7 +1621,8 @@ function workNavigation({ scope }) {
     }
     if (!rows.length) continue;
     shown += rows.length;
-    parts.push(section(group.label, rows.length), tree(group.label, rows));
+    // Initiatives with one slice and with several line up across the groups, so none reads as another's parent.
+    parts.push(section(group.label, rows.length), tree(group.label, rows, { branching: true }));
   }
   if (!shown) parts.push(element("p", "nav-note", typed ? `No work matches "${typed}".` : "Nothing is designed and unshipped."));
   if (scope.kind === "initiative" && scope.valid === false && (navigation.places?.work?.groups ?? []).some((group) => group.initiatives.some((entry) => entry.id === scope.id))) parts.push(element("p", "nav-note", "The initiative record is invalid."));

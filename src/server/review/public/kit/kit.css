@@ -839,7 +839,8 @@ prism-tree-item {
   gap: var(--prism-space-3);
   min-width: 0;
   height: var(--prism-row-height);
-  padding: 0 var(--prism-space-3) 0 calc(var(--prism-space-3) + var(--prism-tree-level, 0) * var(--prism-space-6));
+  /* Each level steps in by the twisty and its gap, so a child's glyph sits exactly under its parent's glyph. */
+  padding: 0 var(--prism-space-3) 0 calc(var(--prism-space-3) + var(--prism-tree-level, 0) * (var(--prism-icon-size-xs) + var(--prism-space-3)));
   border-radius: var(--prism-radius-sm);
   color: var(--prism-color-ink-muted);
   text-decoration: none;
@@ -888,7 +889,7 @@ prism-tree-item[aria-expanded="true"]:focus-visible > .prism-tree-row {
   visibility: hidden;
 }
 
-/* A leaf with a glyph starts with the glyph, as its parent's glyph sits after its twisty one level up. */
+/* A leaf with a glyph among leaves starts with the glyph, as its parent's glyph sits after its twisty one level up; beside a parent it keeps the twisty's room. */
 .prism-tree-twisty.is-gone {
   display: none;
 }
