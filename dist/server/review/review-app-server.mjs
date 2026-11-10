@@ -25,6 +25,7 @@ import {
   writeProjectRoots
 } from "./review-app-discovery.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
+import { errorFields, log } from "../log.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { createProjectReview, isTrustedHost, normalizeTabs, readBody, send, sendUnavailable, serveOutsideSession, wantsPage } from "./review-server.mjs";
 import { loadAttention } from "./workspace-model.mjs";
@@ -456,7 +457,19 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     response.end(body);
   }
 
+  // A request that takes longer than this is logged, by its route without the viewer credential, so a stalled app leaves a trace.
+  const SLOW_REQUEST_MS = 2000;
+  const routeOf = (request) => {
+    let pathname;
+    try { pathname = new URL(request.url, "http://127.0.0.1").pathname; } catch { return "<invalid>"; }
+    return pathname.startsWith(viewerPrefix()) ? `<viewer>${pathname.slice(viewerPrefix().length)}` : pathname.startsWith("/control/") ? pathname : "<other>";
+  };
   const server = createServer(async (request, response) => {
+    const started = performance.now();
+    response.once("finish", () => {
+      const ms = performance.now() - started;
+      if (ms >= SLOW_REQUEST_MS) log.warn("slow_request", { method: request.method, route: routeOf(request), status: response.statusCode, ms: Math.round(ms) });
+    });
     try {
       if (!isTrustedHost(request.headers.host)) {
         send(response, 403, "Unknown host");
@@ -505,6 +518,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       }
       await project.review.handle(request, response, match[2] || "/", url);
     } catch (error) {
+      log.warn("request_failed", { method: request.method, route: routeOf(request), status: error.status ?? 400, ...errorFields(error) });
       if (response.headersSent) {
         response.destroy();
       } else {

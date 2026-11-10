@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { jsonLine, readJsonLines } from "./json-lines.mjs";
 import { pluginURL } from "./plugin-root.mjs";
+import { errorFields, log, startProcessLog } from "./log.mjs";
 import { ACTIVE_OPERATIONS_SCHEMA } from "./workflow/active-operations.mjs";
 import { assertInput } from "./workflow/artifact-schema.mjs";
 import { CONSERVATION_TOOLS, callConservationTool } from "./conservation/conservation-tools.mjs";
@@ -54,6 +55,8 @@ import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, f
 // PRISM_REVIEW_APP=off keeps this session on its own review server, as tests and plugin checkouts under development need.
 const reviewServers = createReviewServerPool(reviewAppDisabled() ? {} : { app: { directory: reviewAppDirectory(), evidenceDirectory: conservationStore.directory, intelligenceDirectory: nativeSemanticRuntime.directory, recordStoreDirectory: managedStoresDirectory() } });
 const pluginManifest = JSON.parse(await readFile(pluginURL(".codex-plugin/plugin.json"), "utf8"));
+// The host reads this process's stdout as the protocol, so the log goes to the shared Prism log file, and warnings also to stderr, which hosts keep.
+startProcessLog("mcp", { version: pluginManifest.version, cwd: process.cwd() }, { mirror: true });
 
 function decisionDataDirectory(argumentsValue) {
   const configured = process.env.PLUGIN_DATA || process.env.CLAUDE_PLUGIN_DATA;
@@ -1299,6 +1302,7 @@ if (process.env.CLAUDE_PROJECT_DIR) {
 // so a call cancelled before its result is written gets no response, and the saved versions its notes would name stay pending for the next result the host reads.
 const callsInProgress = new Set();
 const cancelledCalls = new Set();
+const callNames = new Map();
 
 const input = readJsonLines(process.stdin);
 input.on("line", async (line) => {
@@ -1322,10 +1326,13 @@ input.on("line", async (line) => {
       callsInProgress.add(request.id);
       const meta = request.params?._meta;
       const { name, arguments: argumentsValue } = request.params ?? {};
+      callNames.set(request.id, name);
+      const started = performance.now(), done = log.doing(`call:${request.id}`, String(name));
       const value = await withCallSession(meta, async () => {
         const agent = await callAgent(meta).catch(() => undefined);
         return withCallAgent(agent, async () => withPersonChanges(name, argumentsValue, await callTool(name, argumentsValue, meta, request.id)));
-      });
+      }).finally(done);
+      log.debug("tool_call", { tool: name, ms: Math.round(performance.now() - started), ...(value?.isError ? { isError: true } : {}) });
       // A cancelled request gets no response, so it carries no notes either; nor does a result made once the host closed input, which ends the session.
       if (value.structuredContent?.status === "cancelled" || cancelledCalls.has(request.id)) return;
       if (closing) { await result(request.id, value); return; }
@@ -1342,6 +1349,7 @@ input.on("line", async (line) => {
       failure(request.id, -32601, `Method not found: ${request.method}`);
     }
   } catch (error) {
+    log.warn("request_failed", { method: request?.method, ...(callNames.has(request?.id) ? { tool: callNames.get(request.id) } : {}), ...errorFields(error) });
     if (request?.id !== undefined && !cancelledCalls.has(request.id)) {
       const data = stateErrorData(error);
       failure(request.id, -32603, errorMessage(error, data), data);
@@ -1350,6 +1358,7 @@ input.on("line", async (line) => {
     if (request?.method === "tools/call") {
       callsInProgress.delete(request.id);
       cancelledCalls.delete(request.id);
+      callNames.delete(request.id);
     }
   }
 });
@@ -1360,6 +1369,7 @@ const CLOSE_GRACE_MS = 5000;
 let closing = false;
 input.on("close", async () => {
   closing = true;
+  log.info("process_stopping", { reason: "input closed" });
   const deadline = setTimeout(() => process.exit(0), CLOSE_GRACE_MS);
   deadline.unref();
   try {
@@ -1369,6 +1379,7 @@ input.on("close", async () => {
     stopClaimRenewals();
     await Promise.all([nativeSemanticRuntime.close(), reviewServers.close(), Promise.allSettled([...endingWaits])]);
   } finally {
+    await log.flush();
     process.exit(0);
   }
 });

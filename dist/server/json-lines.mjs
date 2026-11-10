@@ -2,27 +2,30 @@
 import { EventEmitter } from "node:events";
 function readJsonLines(stream) {
   const reader = new EventEmitter();
-  let pending = "";
+  let parts = [];
   let closed = false;
   const emitLine = (line) => reader.emit("line", line.endsWith("\r") ? line.slice(0, -1) : line);
   const close = () => {
     if (closed) return;
     closed = true;
-    if (pending) emitLine(pending);
-    pending = "";
+    const rest = parts.join("");
+    parts = [];
+    if (rest) emitLine(rest);
     reader.emit("close");
   };
   stream.setEncoding("utf8");
   stream.on("data", (chunk) => {
-    pending += chunk;
     let start = 0;
-    let end = pending.indexOf("\n");
+    let end = chunk.indexOf("\n");
     while (end !== -1) {
-      emitLine(pending.slice(start, end));
+      parts.push(chunk.slice(start, end));
+      const line = parts.join("");
+      parts = [];
+      emitLine(line);
       start = end + 1;
-      end = pending.indexOf("\n", start);
+      end = chunk.indexOf("\n", start);
     }
-    pending = pending.slice(start);
+    if (start < chunk.length) parts.push(chunk.slice(start));
   });
   stream.on("end", close);
   stream.on("close", close);

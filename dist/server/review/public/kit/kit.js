@@ -48,6 +48,8 @@ import { PrismPhaseBar } from "./elements/prism-phase-bar.js";
 import { PrismState } from "./elements/prism-state.js";
 import { PrismKbd } from "./elements/prism-kbd.js";
 import { PrismTable } from "./elements/prism-table.js";
+import { PrismMaximize } from "./elements/prism-maximize.js";
+import { PrismContents } from "./elements/prism-contents.js";
 
 /**
  * Every kit element class; each carries a static `tag` and a static `catalog` of
@@ -78,6 +80,7 @@ export const KIT_ELEMENTS = [
   PrismOption,
   PrismChoice,
   PrismChoiceOption,
+  PrismMaximize,
   PrismPanel,
   PrismTree,
   PrismTreeItem,
@@ -94,6 +97,7 @@ export const KIT_ELEMENTS = [
   PrismStep,
   PrismBreadcrumbs,
   PrismDoc,
+  PrismContents,
   PrismCode,
   PrismInbox,
   PrismInboxItem,

@@ -2094,6 +2094,178 @@ prism-doc img {
   border-radius: var(--prism-radius-md);
 }
 
+/* ---------- prism-maximize: the icon button that maximizes a region and restores it ---------- */
+
+prism-maximize {
+  display: inline-flex;
+  flex: none;
+}
+
+/* In a region without a header the button floats at the top end corner, beside the region's first lines, and sticks while the region scrolls. */
+prism-maximize[floating] {
+  position: sticky;
+  top: 0;
+  z-index: var(--prism-layer-raised);
+  float: inline-end;
+  margin: 0 0 var(--prism-space-3) var(--prism-space-4);
+}
+
+/* ---------- prism-contents: a document's contents, beside it on a wide window and above it, folded, on a narrow one ---------- */
+
+/* The box that holds the contents and the document lays them out side by side; the contents column runs the box's full height. */
+:has(> prism-contents) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) calc(var(--prism-sidebar-width) * 0.8);
+  column-gap: var(--prism-space-7);
+  align-items: start;
+}
+
+:has(> prism-contents) > :not(prism-contents) {
+  grid-column: 1;
+}
+
+prism-contents {
+  display: block;
+  grid-column: 2;
+  grid-row: 1 / span 40;
+  align-self: stretch;
+  min-width: 0;
+  margin-block: calc(var(--prism-contents-inset, 0px) * -1);
+  border-inline-start: var(--prism-stroke) solid var(--prism-color-line);
+  font-size: var(--prism-font-size-sm);
+}
+
+/* The header and list stick inside the full-height column and fit the visible part of the scrolling element, which fit() measures. */
+.prism-contents-body {
+  position: sticky;
+  top: var(--prism-contents-top, 0px);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  max-height: var(--prism-contents-fit, 100vh);
+  padding: var(--prism-contents-inset, 0px) 0 var(--prism-contents-inset, 0px) var(--prism-space-5);
+}
+
+.prism-contents-head {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--prism-space-3);
+  min-height: var(--prism-control-height-sm);
+}
+
+.prism-contents-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-inline: var(--prism-space-3);
+  color: var(--prism-color-ink-muted);
+  font-weight: var(--prism-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.prism-contents-toggle {
+  display: none;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.prism-contents-tools {
+  display: flex;
+  flex: none;
+  gap: var(--prism-space-2);
+  margin-inline-start: auto;
+}
+
+.prism-contents-tools:empty {
+  display: none;
+}
+
+/* Only the list scrolls, so the header never scrolls away. */
+.prism-contents-list {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.prism-contents-list ol {
+  display: grid;
+  gap: var(--prism-space-1);
+  margin: var(--prism-space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.prism-contents-list a {
+  display: block;
+  padding: var(--prism-space-1) var(--prism-space-3);
+  border-radius: var(--prism-radius-sm);
+  color: var(--prism-color-ink-muted);
+  line-height: var(--prism-line-height-tight);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.prism-contents-list a:hover {
+  background: var(--prism-color-hover);
+  color: var(--prism-color-ink);
+}
+
+/* The list clips its overflow, so the focus ring is drawn inside the link. */
+.prism-contents-list a:focus-visible {
+  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
+  outline-offset: calc(var(--prism-stroke-strong) * -1);
+}
+
+.prism-contents-list a[aria-current="location"] {
+  background: var(--prism-color-selected);
+  color: var(--prism-color-accent-text);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.prism-contents-list .depth-1 { padding-inline-start: var(--prism-space-6); }
+.prism-contents-list .depth-2 { padding-inline-start: var(--prism-space-8); }
+
+@media (max-width: 1100px) {
+  :has(> prism-contents) {
+    display: block;
+  }
+
+  prism-contents {
+    margin: 0 0 var(--prism-space-5);
+    border: var(--prism-stroke) solid var(--prism-color-line);
+    border-radius: var(--prism-radius-md);
+    background: var(--prism-color-surface);
+  }
+
+  .prism-contents-body {
+    position: static;
+    max-height: none;
+    padding: var(--prism-space-2) var(--prism-space-4);
+  }
+
+  .prism-contents-title {
+    display: none;
+  }
+
+  .prism-contents-toggle {
+    display: inline-flex;
+  }
+
+  prism-contents:not([open]) .prism-contents-list {
+    display: none;
+  }
+
+  prism-contents[pinned] {
+    position: sticky;
+    top: var(--prism-contents-top, 0px);
+    z-index: var(--prism-layer-raised);
+  }
+
+  prism-contents[pinned] .prism-contents-body {
+    max-height: var(--prism-contents-fit, 100vh);
+  }
+}
+
 /* ---------- prism-code: a code block with a line-number gutter ---------- */
 
 prism-code {
