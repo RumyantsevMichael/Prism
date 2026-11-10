@@ -36,7 +36,8 @@ export async function closeServers() {
   await Promise.all([...running].map((close) => close()));
 }
 
-export const git = (cwd, ...args) => execFileSync("git", args, { cwd, stdio: "pipe" }).toString().trim();
+// A store file may hold up to 16 MiB, so Git output is taken up to well past that.
+export const git = (cwd, ...args) => execFileSync("git", args, { cwd, stdio: "pipe", maxBuffer: 256 * 1024 * 1024 }).toString().trim();
 
 /** The workflow configuration of a checkout: a store, optional Repository and Store sync lines, and a test command that passes. */
 export function workflowConfig({ store = "../store", repository, sync } = {}) {

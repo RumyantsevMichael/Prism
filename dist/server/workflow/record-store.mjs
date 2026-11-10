@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { lstat, mkdir, open, readdir, readFile, realpath, rename, rm, rmdir, stat } from "node:fs/promises";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import path from "node:path";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
@@ -27,7 +27,6 @@ const HOUSEKEEPING = Object.freeze({
   ".gitattributes": "# Prism writes these records through its MCP tools; hosts collapse them in pull request diffs.\n/roadmap.json linguist-generated=true gitlab-generated\n/initiatives/** linguist-generated=true gitlab-generated\n",
   ".gitignore": "# Transient lock and write files of Prism records, and the store's sync state.\n*.lock\n.*.tmp\n/.prism-sync/\n"
 });
-const RECORD_MAX_BYTES = 64 * 1024 * 1024;
 const ENTRY_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 // A checkout can bring legacy records back, so a migration result is trusted only briefly.
 const MIGRATION_TTL_MS = 5000;
@@ -124,6 +123,30 @@ export function isStoreFile(relative) {
   if (key?.kind !== "runs") return key !== null && key.kind !== "roadmap";
   // A run entry is one file of its own below the slice's runs folder.
   return names.length === 6 && names[5].endsWith(".json") && ENTRY_ID.test(names[5].slice(0, -".json".length));
+}
+
+const KiB = 1024, MiB = 1024 * KiB;
+/**
+ * The most bytes that a store file of each kind holds, well above the largest file of that kind that Prism writes, which every reader and every sync applies,
+ * since anyone who can push to a store can push files of any size; no JSON kind is bounded above 16 MiB, which a JSON parse reads within a server's heap.
+ */
+export const STORE_FILE_BOUNDS = Object.freeze({
+  artifact: 16 * MiB, accepted: 16 * MiB, status: 16 * MiB, identity: 256, comment: 64 * KiB, ledger: 16 * MiB, migration: 16 * MiB, registration: 64 * KiB,
+  roadmap: MiB, initiative: MiB, state: MiB, "change-map": MiB, review: 4 * MiB, "design-view": 4 * MiB, "frozen-tests": 4 * MiB, claim: 64 * KiB, runs: 4 * MiB
+});
+/** The most comment files that one artifact's comment folder holds. */
+export const COMMENTS_PER_ARTIFACT_MAX = 1000;
+
+/** The bound of a store file kind as a person reads it, such as 256 bytes, 64 KiB, or 16 MiB. */
+export const boundText = (bytes) => bytes % MiB === 0 ? `${bytes / MiB} MiB` : bytes % KiB === 0 ? `${bytes / KiB} KiB` : `${bytes} bytes`;
+
+/** The most bytes that the store file at a store-relative path holds, or null for a file that takes no bound, such as the README, license, and housekeeping files that Prism never reads. */
+export function storeFileBound(relative) {
+  if (typeof relative !== "string" || !isStoreFile(relative) || Object.hasOwn(HOUSEKEEPING, relative)) return null;
+  const top = relative.split("/")[0];
+  const kind = { [ARTIFACTS]: "artifact", [ARTIFACT_ACCEPTED]: "accepted", [ARTIFACT_STATUS]: "status", [ARTIFACT_IDENTITY]: "identity", [ARTIFACT_COMMENTS]: "comment", [ARTIFACT_MIGRATIONS]: "ledger", migrations: "migration", [REPOSITORIES]: "registration" }[top]
+    ?? parseRecordPath(`${RECORD_DIRECTORY}/${relative}`)?.kind;
+  return STORE_FILE_BOUNDS[kind] ?? null;
 }
 
 /**
@@ -318,6 +341,15 @@ async function regularFile(target) {
   }
 }
 
+/**
+ * The bytes of a store file, opened without following a link, or null when it does not exist; its size is checked from the opened file before any byte is read,
+ * so a file above max throws artifact_too_large with tooLarge true and is never read, and its reader treats it as it treats a damaged file of its kind.
+ */
+export async function readStoreFileBytes(target, max) { return readBytes(target, max); }
+
+/** The revision of a record above its kind's bound, which is never read: a hash of its size, so an update that names it replaces that damaged record and no other. */
+export const oversizedRevision = (error) => createHash("sha256").update(`oversized:${error.size}`).digest("hex");
+
 async function readBytes(target, max) {
   let handle;
   try { handle = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW || 0)); }
@@ -329,7 +361,7 @@ async function readBytes(target, max) {
   try {
     const info = await handle.stat();
     if (!info.isFile()) throw fail("invalid_path", "A record must be a regular file.");
-    if (info.size > max) throw fail("artifact_too_large", `The record exceeds ${max} bytes.`);
+    if (info.size > max) throw fail("artifact_too_large", `The record holds ${info.size} bytes, above the ${boundText(max)} that a store file of its kind may hold, so it is read as a damaged record.`, { tooLarge: true, size: info.size, bound: max });
     return await handle.readFile();
   } finally { await handle.close(); }
 }
@@ -375,7 +407,7 @@ async function legacyRecords(root, store, config) {
 async function legacyRootSlice(root, store, directory, initiative) {
   for (const candidate of [path.join(root, directory, RECORD_FILES.initiative), physical(store, recordPath({ kind: "initiative", initiative }))]) {
     try {
-      const record = parseStoreJson(await readFile(candidate, "utf8"));
+      const record = parseStoreJson((await readBytes(candidate, STORE_FILE_BOUNDS.initiative))?.toString("utf8") ?? "null");
       const found = Object.entries(record?.slices ?? {}).find(([, slice]) => slice?.parent === null)?.[0];
       if (found && SLUG_PATTERN.test(found)) return found;
     } catch { /* A missing or unreadable record falls back to the initiative identifier. */ }
@@ -441,7 +473,7 @@ async function readLedger(store) {
   const ledger = { records: new Set(), repositories: new Set() };
   for (const name of names) {
     let entry;
-    try { entry = parseStoreJson(await readFile(path.join(directory, name), "utf8")); }
+    try { entry = parseStoreJson((await readBytes(path.join(directory, name), STORE_FILE_BOUNDS.migration))?.toString("utf8") ?? "null"); }
     catch { continue; }
     // A file from before the ledger names the repository it migrated, without the paths.
     if (LEGACY_MARKER.test(name)) ledger.repositories.add(name.slice(0, -".json".length));
@@ -723,7 +755,7 @@ async function storedFrozenTests(store) {
   catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
   for (const name of names) {
     let record;
-    try { record = parseStoreJson((await readBytes(physical(store, recordPath({ kind: "initiative", initiative: name })), RECORD_MAX_BYTES))?.toString("utf8") ?? "null"); }
+    try { record = parseStoreJson((await readBytes(physical(store, recordPath({ kind: "initiative", initiative: name })), STORE_FILE_BOUNDS.initiative))?.toString("utf8") ?? "null"); }
     catch { continue; }
     for (const slice of Object.values(record?.slices ?? {})) {
       for (const test of Array.isArray(slice?.design?.frozenTests) ? slice.design.frozenTests : []) {
@@ -849,8 +881,8 @@ export async function locateRecord(projectRootPath, key) {
   return (await locate(projectRootPath, key)).located;
 }
 
-/** Read a record's bytes, or null when it does not exist. */
-export async function readRecord(projectRootPath, key, { maxBytes = RECORD_MAX_BYTES } = {}) {
+/** Read a record's bytes, or null when it does not exist; a record above its kind's bound throws artifact_too_large unread, which its reader treats as a damaged record. */
+export async function readRecord(projectRootPath, key, { maxBytes = STORE_FILE_BOUNDS[key?.kind] ?? STORE_FILE_BOUNDS.artifact } = {}) {
   const { located } = await locate(projectRootPath, key);
   return { ...located, bytes: await readBytes(located.target, maxBytes) };
 }
@@ -919,7 +951,7 @@ export async function appendRecord(projectRootPath, key, id, entry) {
 }
 
 /** List the entries of a list key in id order. */
-export async function listRecordEntries(projectRootPath, key, { maxBytes = 1024 * 1024 } = {}) {
+export async function listRecordEntries(projectRootPath, key, { maxBytes = STORE_FILE_BOUNDS.runs } = {}) {
   const { located } = await locate(projectRootPath, key);
   let names = [];
   try { names = (await readdir(located.target)).filter((name) => name.endsWith(".json") && ENTRY_ID.test(name.slice(0, -5))).sort(); }
@@ -991,7 +1023,7 @@ export async function sliceDocumentFolder(projectRootPath, initiative, slice) {
   if (directory === null) return null;
   requireSlug(slice, "slice");
   const store = await recordStoreOf(root);
-  const bytes = await readBytes(physical(store, recordPath({ kind: "initiative", initiative })), 1024 * 1024).catch(() => null);
+  const bytes = await readBytes(physical(store, recordPath({ kind: "initiative", initiative })), STORE_FILE_BOUNDS.initiative).catch(() => null);
   let rootSlice = initiative;
   try {
     const found = bytes && Object.entries(parseStoreJson(bytes.toString("utf8"))?.slices ?? {}).find(([, value]) => value?.parent === null)?.[0];

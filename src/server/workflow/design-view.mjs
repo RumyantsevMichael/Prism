@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { assertInput } from "./artifact-schema.mjs";
-import { inArtifactStore, listStoreArtifacts, locateRecord, readArtifactBytes, readArtifactText, readRecord, sliceDocumentFolder, withRecordLock, writeRecord } from "./record-store.mjs";
+import { inArtifactStore, listStoreArtifacts, locateRecord, readArtifactBytes, readArtifactText, readRecord, readStoreFileBytes, sliceDocumentFolder, STORE_FILE_BOUNDS, withRecordLock, writeRecord } from "./record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 import { checkFolderDiagrams, diagramProblems } from "./diagram-check.mjs";
 import { acceptedDesign, readFrozenTestOf } from "./slice-design.mjs";
@@ -126,7 +126,7 @@ async function designSource(root, initiative, slice) {
 async function governingDesign(root, initiative, slice, own) {
   if (own.source !== null && contractClauses(own.source).length) return { slug: slice, design: own };
   let slices = {};
-  try { slices = parseStoreJson(await readFile((await locateRecord(root, { kind: "initiative", initiative })).target, "utf8"))?.slices ?? {}; }
+  try { slices = parseStoreJson((await readStoreFileBytes((await locateRecord(root, { kind: "initiative", initiative })).target, STORE_FILE_BOUNDS.initiative))?.toString("utf8") ?? "null")?.slices ?? {}; }
   catch { return { slug: slice, design: own }; }
   const seen = new Set([slice]);
   for (let parent = slices[slice]?.parent; parent && !seen.has(parent); parent = slices[parent]?.parent) {
@@ -214,7 +214,7 @@ export async function updateDesignView(input) {
 
 async function storedView(root, initiative, slice) {
   try {
-    const { bytes } = await readRecord(root, { kind: "design-view", initiative, slice }, { maxBytes: 4 * 1024 * 1024 });
+    const { bytes } = await readRecord(root, { kind: "design-view", initiative, slice });
     return bytes === null ? null : parseStoreJson(bytes.toString("utf8"));
   } catch { return { invalid: true }; }
 }

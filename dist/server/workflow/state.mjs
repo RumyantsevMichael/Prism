@@ -5,7 +5,7 @@ import { mkdir, readFile, realpath, rm, lstat } from "node:fs/promises";
 import path from "node:path";
 import { withArtifactLock as withStateLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { inArtifactStore, locateRecord, moveLegacyRecords, readArtifactText, sliceDocumentFolder, writeArtifactText, writeRecord } from "./record-store.mjs";
+import { inArtifactStore, locateRecord, moveLegacyRecords, oversizedRevision, readArtifactText, readStoreFileBytes, sliceDocumentFolder, STORE_FILE_BOUNDS, writeArtifactText, writeRecord } from "./record-store.mjs";
 import { canonicalJson, mergeOrder, mergeScalars, mergeUnit, MergeConflict, parseVersions } from "./record-merge.mjs";
 import { revisionMismatch } from "./revision.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
@@ -698,8 +698,12 @@ function validateChanges(changes) {
 async function loadState(statePath) {
   let contents;
   try {
-    contents = await readFile(statePath, "utf8");
+    // The state is read without following a link and only within its kind's bound, so a larger file reads as a damaged one, unread.
+    const bytes = await readStoreFileBytes(statePath, STORE_FILE_BOUNDS.state);
+    if (bytes === null) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    contents = bytes.toString("utf8");
   } catch (caught) {
+    if (caught.tooLarge) return { exists: true, revision: oversizedRevision(caught), contents: "", state: null, valid: false, errors: [`state: ${caught.message}`], warnings: [] };
     if (caught.code === "ENOENT") {
       return {
         exists: false,

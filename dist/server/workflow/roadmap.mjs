@@ -11,7 +11,7 @@ import { readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 import { resolveArtifactPath } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { revisionMismatch } from "./revision.mjs";
-import { inArtifactStore, locateRecord, moveLegacyRecords, readRecord, writeRecord } from "./record-store.mjs";
+import { inArtifactStore, locateRecord, moveLegacyRecords, oversizedRevision, readRecord, readStoreFileBytes, writeRecord } from "./record-store.mjs";
 import { mergeHistory, mergeKeyed, mergeOrder, mergeScalars, MergeConflict, parseVersions } from "./record-merge.mjs";
 import { ComponentError, listComponents, listsComponents, readComponents } from "./components.mjs";
 import { latestDependentsRun } from "./slice-design.mjs";
@@ -178,12 +178,13 @@ export function mergeRoadmapRecord(versions) {
 async function loadRoadmap(resolved) {
   let contents;
   try {
-    contents = await readFile(resolved.target);
+    // The record is read without following a link and only within its 1 MiB bound, so a larger file reads as a damaged record, unread.
+    contents = await readStoreFileBytes(resolved.target, RECORD_MAX_BYTES);
   } catch (error) {
-    if (error.code === "ENOENT") return { exists: false, revision: null, record: null, valid: true, errors: [] };
+    if (error.tooLarge) return { exists: true, revision: oversizedRevision(error), record: null, valid: false, errors: [error.message] };
     throw error;
   }
-  if (contents.length > RECORD_MAX_BYTES) throw fail("artifact_too_large", "The roadmap record exceeds 1 MiB.");
+  if (contents === null) return { exists: false, revision: null, record: null, valid: true, errors: [] };
   const revision = createHash("sha256").update(contents).digest("hex");
   let raw;
   try {
@@ -486,7 +487,7 @@ export async function updateRoadmap(input) {
     for (const operation of mutating) record.history.push({ actor, operation: operation.op, ...(operation.id ? { id: operation.id } : {}), at });
     record.history = record.history.slice(-HISTORY_LIMIT);
     const contents = serializeRoadmap(record);
-    if (mutating.length && contents !== (await readFile(resolved.target, "utf8").catch(() => null))) {
+    if (mutating.length && contents !== ((await readStoreFileBytes(resolved.target, RECORD_MAX_BYTES).catch(() => null))?.toString("utf8") ?? null)) {
       await writeRecord(resolved.root, { kind: "roadmap" }, contents);
     }
     const projection = markdown(record, resolved.recordName);

@@ -110,8 +110,36 @@ A sync never commits a file that another machine could not take, and every other
 
 - A file Prism shares whose name holds more than 200 bytes or whose path holds more than 512 stays on disk and out of every commit.
 - A file whose Git object fails the checks that another machine's fetch or first clone applies, such as a `.gitattributes` with a line over 2048 bytes, stays on disk, and the branch keeps its earlier version.
+- A file larger than its kind's limit in the table below stays on disk, and the branch keeps its earlier version, if it has one.
+- A comment folder that holds more than 1000 comment files commits its first 1000 by file name, and the rest stay on disk.
 
 The sync's status lists each such file under `withheld` with the reason, and its message names the path, so rename, shorten, or fix the file, and the next sync commits it.
+
+Every kind of file that a store shares and Prism reads has a size limit well above the largest file of that kind that Prism writes:
+
+| Kind | Store path | Limit |
+| --- | --- | --- |
+| Artifact | `artifacts/<location>` | 16 MiB |
+| Accepted bytes | `artifact-accepted/<hash>` | 16 MiB |
+| Status record | `artifact-status/<location>/status.json` | 16 MiB |
+| Identity file | `artifact-identity/<location>` | 256 bytes |
+| Comment | `artifact-comments/<location>/<name>.json` | 64 KiB |
+| Move ledger | `artifact-migrations/<name>.json` | 16 MiB |
+| Record migration file | `migrations/<name>.json` | 16 MiB |
+| Registration | `repositories/<repository>.json` | 64 KiB |
+| Roadmap record, initiative record, coordination state, change map | `roadmap.json`, `initiatives/<initiative>/initiative.json`, `initiatives/<initiative>/state.json`, `initiatives/<initiative>/slices/<slice>/change-map.json` | 1 MiB |
+| Review ledger, design view, kept frozen tests, run entry | `review.json`, `design-view.json`, `frozen-tests.json`, and `runs/<id>.json` below `initiatives/<initiative>/slices/<slice>/` | 4 MiB |
+| Claim | `initiatives/<initiative>/claims/<slice>.json` | 64 KiB |
+
+A file's comments are limited too: a file takes at most 1000 comments, so its comment folder holds at most 1000 comment files.
+The `README` and license files at the store's root and the `.gitattributes` and `.gitignore` that Prism writes there take no limit, since Prism never reads them.
+Prism treats a file larger than its limit as a damaged file of its kind and reads none of it: a status record reads as one that no gate changed, a ledger or record migration file lists nothing, a comment is no comment, a comment folder of more than 1000 entries holds no comment, and `get_artifact` refuses such an artifact with `artifact_too_large`.
+No Prism write makes a file larger than its limit, and a move whose ledger would pass 16 MiB writes it as several ledger files, which its report names.
+
+A sync refuses an upstream whose branch holds a file larger than its kind's limit, or a comment folder of more than 1000 comment files, with `merge_failed` and a message that names the path, and the store stays as it was, so no reader on this machine ever loads the file.
+To recover, shrink or remove that file, or remove comment files from that folder, on the remote's branch from a separate clone, as for an entry that no store may hold, and the next sync of each machine merges again.
+When both machines made one file larger and their merge would pass its limit, the file keeps the other machine's version, and this machine's is saved under `.prism-sync/conflicts/` and named as a line conflict is.
+When the comments that both machines added would take a comment folder past 1000, the folder keeps every comment of the other machine and then this machine's by file name up to 1000, and each of the rest is saved under `.prism-sync/conflicts/` and named to the agent.
 When another machine changes or removes a file whose version this machine withheld, the next sync takes the other machine's version, saves this machine's under `.prism-sync/conflicts/`, names it as a conflict, and keeps syncing.
 Prism keeps sharing the store's `.gitattributes`, which Git hosts read to collapse records in pull request diffs, because this check keeps every version of it that a sync commits one that every machine can fetch.
 Before every push, Prism also checks every object that the push would send with those checks, because an object the remote holds stays in its history even after a later commit removes the file.
@@ -355,7 +383,7 @@ The list shows saved records, while a saved artifact is named in the next tool r
 | `no_upstream` | A path store's branch has no upstream, so Prism only commits locally; a remote store sets its upstream on its first sync instead. | Set an upstream with `git branch --set-upstream-to`. |
 | `not_a_repository` | Sync is on, but the store is not the top of a Git checkout. | Clone the store, or turn sync off. |
 | `fetch_failed` or `push_rejected` | The remote could not be reached, sent an object that fails Git's object checks, refused the push, or kept moving for three attempts. | Check access to the remote; Prism retries on the next write or read, and a commit whose objects fail the checks needs removing from the remote's history. |
-| `merge_failed` | A file other than a record or an artifact conflicted, a record or an artifact stayed locked through every attempt, the store's branch and its upstream share no commit, the merge would hold a file Prism does not write and a file Prism writes whose paths differ only in letter case, or the upstream's branch or the branch to push holds an entry that no store may hold, such as a symbolic link, a submodule link, the sync folder, a name that Windows refuses, a path that is not UTF-8, a name too long for some machine, or two paths that differ only in letter case, or the push would send an object that fails Git's object checks. | Read the status message; a busy record clears on its own, an entry that no store may hold needs a commit on the remote's branch, made from a separate clone, that removes the path the message names, and an object that fails the checks needs the commit that holds it taken off the store's branch. |
+| `merge_failed` | A file other than a record or an artifact conflicted, a record or an artifact stayed locked through every attempt, the store's branch and its upstream share no commit, the merge would hold a file Prism does not write and a file Prism writes whose paths differ only in letter case, or the upstream's branch holds a file larger than its kind's limit or a comment folder of more than 1000 comment files, the upstream's branch or the branch to push holds an entry that no store may hold, such as a symbolic link, a submodule link, the sync folder, a name that Windows refuses, a path that is not UTF-8, a name too long for some machine, or two paths that differ only in letter case, or the push would send an object that fails Git's object checks. | Read the status message; a busy record clears on its own, an entry that no store may hold, a file over its limit, or a comment folder over 1000 needs a commit on the remote's branch, made from a separate clone, that removes or shrinks the path the message names, and an object that fails the checks needs the commit that holds it taken off the store's branch. |
 | `git_failed` | Git failed for another reason, such as a leftover `.git/index.lock`, or this machine's Git is older than 2.25. | Fix the store with Git, or update Git; Prism never deletes Git's locks. |
 
 ## Cloud sessions

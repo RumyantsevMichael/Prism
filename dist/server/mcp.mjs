@@ -1278,7 +1278,10 @@ function artifactMoveNote(move) {
     sections.push({ header: `${plural(total, "tracked file")} in the checkout still ${total === 1 ? "names" : "name"} the former path of a file moved now or earlier, or a configured folder that lost files, by line; the configured paths stay the artifacts' addresses, so update only text that tells readers to open these files in the checkout:`, entries });
   }
   if (!sections.length && !fixed.length) return null;
-  const ledger = move.ledger ? ` and the ledger ${shownPath(`${ARTIFACT_MIGRATIONS}/${move.ledger}`)} in the record store at ${store} lists every move and kept file` : "";
+  // A long move writes its ledger as several files, and the closing line names each, which together list every move and kept file.
+  const ledgers = (Array.isArray(move.ledger) ? move.ledger : move.ledger ? [move.ledger] : []).map((name) => shownPath(`${ARTIFACT_MIGRATIONS}/${name}`));
+  const ledger = ledgers.length === 1 ? ` and the ledger ${ledgers[0]} in the record store at ${store} lists every move and kept file`
+    : ledgers.length ? ` and the ledger files ${ledgers.slice(0, -1).join(", ")} and ${ledgers.at(-1)} in the record store at ${store} together list every move and kept file` : "";
   const closing = (count) => `Prism left ${count} more ${count === 1 ? "entry" : "entries"} out of this report to keep it short${ledger}.`;
   const bytes = (line) => Buffer.byteLength(line, "utf8") + 1;
   // Room for the closing line, which names the ledger and counts what was left out, and for every header and fixed line, which say what moved and what stayed and how many.

@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { writeAtomically } from "./artifact-store.mjs";
 import { ARTIFACT_MIGRATIONS, ARTIFACT_NAME_FORM, artifactAddress, artifactLocation, malformedArtifactName, repositoryScope, WORKSPACE_SCOPE } from "./artifact-paths.mjs";
 import { hasStatus, writtenStatus } from "./artifact-status.mjs";
-import { resolveArtifactFile, resolveLedgerFile, withArtifactStoreLock } from "./record-store.mjs";
+import { resolveArtifactFile, resolveLedgerFile, STORE_FILE_BOUNDS, withArtifactStoreLock } from "./record-store.mjs";
 import { scheduleRecordSync } from "./record-store-sync.mjs";
 import { roadmapViewOf } from "./roadmap.mjs";
 import { generatedNotice } from "./projection.mjs";
@@ -346,7 +346,8 @@ async function ledgersOf(storeBase, repository) {
   catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
   for (const name of names) {
     let entry;
-    try { entry = parseStoreJson((await fileBytes(folder, name, 64 * 1024 * 1024))?.toString("utf8") ?? "null"); }
+    // A ledger above its bound reads as a damaged ledger, unread, which lists nothing.
+    try { entry = parseStoreJson((await fileBytes(folder, name, STORE_FILE_BOUNDS.ledger))?.toString("utf8") ?? "null"); }
     catch { continue; }
     if (entry?.repository !== repository) continue;
     for (const move of Array.isArray(entry.moved) ? entry.moved : []) {
@@ -378,7 +379,7 @@ async function ledgersOf(storeBase, repository) {
  * or { repository, store, unlisted: true } when Git cannot list the checkout's files:
  * moved lists { from, to } from checkout path to location below artifacts/, earlier lists the files moved earlier in the same form, kept lists { path, reason, location?, other?, size? },
  * passed lists the assume-unchanged entries and unmerged paths that the report names, as { path, reason } with reason assume_unchanged or unmerged, which no ledger names, untracked lists checkout paths,
- * references lists { file, lines, more }, and ledger names the ledger file the move wrote, or null; retry: true says that the ledger could not confirm some moves, whose files stay for a later move.
+ * references lists { file, lines, more }, and ledger lists the names of the ledger files the move wrote, or is null; retry: true says that the ledger could not confirm some moves, whose files stay for a later move.
  */
 export async function migrateArtifacts({ root, kinds, store, repository, pull = null, named = null, prepare }) {
   const listing = await checkoutListing(root, kinds);
@@ -643,17 +644,35 @@ async function decideRoadmapView(seen, access, file, address, size, { moved, kee
   else keep(file, "view_differs", { location: current.location });
 }
 
-// One ledger file names the repository, each move, and each kept file, written before any checkout file is removed; a move that kept only files that an earlier ledger already kept for the same reason writes none.
+// A move's ledger names the repository, each move, and each kept file, written before any checkout file is removed; a move that kept only files that an earlier ledger already kept for the same reason writes none.
+// A ledger whose entries would take more than the bound of a ledger file is written as several files, each of at most that bound, which together list every move and kept file.
 async function writeLedger(seen, ledger, moved, kept) {
   if (!moved.length && kept.every((entry) => ledger.kept.has(`${entry.path}\0${entry.reason}`))) return null;
   const at = new Date().toISOString();
-  const name = `${at.replace(/[:.]/g, "-")}-${randomBytes(4).toString("hex")}.json`;
-  const target = await resolveLedgerFile(seen, name);
-  await mkdir(path.dirname(target), { recursive: true });
-  const entries = { moved: moved.map(({ from, to }) => ({ from, to })), kept: [...kept].sort(byPath) };
-  await writeAtomically(target, `${JSON.stringify({ schemaVersion: LEDGER_SCHEMA, repository: seen.repository, migratedAt: at, ...entries }, null, 2)}\n`);
+  const text = (part) => `${JSON.stringify({ schemaVersion: LEDGER_SCHEMA, repository: seen.repository, migratedAt: at, moved: part.moved, kept: part.kept }, null, 2)}\n`;
+  const parts = ledgerParts({ moved: moved.map(({ from, to }) => ({ from, to })), kept: [...kept].sort(byPath) }, text);
+  const names = [];
+  for (const part of parts) {
+    const name = `${at.replace(/[:.]/g, "-")}-${randomBytes(4).toString("hex")}.json`;
+    const target = await resolveLedgerFile(seen, name);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeAtomically(target, part.text);
+    names.push(name);
+  }
   if (seen.store.sync) scheduleRecordSync(seen.store.base);
-  return name;
+  return names.sort();
+}
+
+// The entries of a ledger split into parts whose text, as text writes it, holds at most a ledger file's bound: [{ moved, kept, text }], one part when they fit, never an empty part beside another.
+function ledgerParts(entries, text) {
+  const whole = text(entries);
+  if (Buffer.byteLength(whole) <= STORE_FILE_BOUNDS.ledger) return [{ ...entries, text: whole }];
+  const items = [...entries.moved.map((item) => ["moved", item]), ...entries.kept.map((item) => ["kept", item])];
+  // An entry no ledger file can hold alone would never fit, which the name and path bounds of the files a move takes rule out.
+  if (items.length < 2) throw new Error("A ledger entry exceeds the bound of a ledger file.");
+  const half = Math.ceil(items.length / 2);
+  const part = (list) => ({ moved: list.filter(([kind]) => kind === "moved").map(([, item]) => item), kept: list.filter(([kind]) => kind === "kept").map(([, item]) => item) });
+  return [...ledgerParts(part(items.slice(0, half)), text), ...ledgerParts(part(items.slice(half)), text)];
 }
 
 /**
@@ -739,15 +758,19 @@ async function finishMove(seen, listing, decided, report, { proceed = () => true
   }, decided.real);
 }
 
-// The moves that a ledger file of the repository names, as from and to joined by a null character, or null when it cannot be read.
-async function ledgerMoves(seen, name) {
-  if (name === null) return null;
+// The moves that the ledger files of a move of the repository name together, as from and to joined by a null character, or null when one of them cannot be read.
+async function ledgerMoves(seen, names) {
+  if (!names?.length) return null;
+  const moves = new Set();
   try {
-    const file = await resolveLedgerFile(seen, name);
-    const entry = parseStoreJson((await fileBytes(path.dirname(file), path.basename(file), 64 * 1024 * 1024))?.toString("utf8") ?? "null");
-    if (entry?.repository !== seen.repository || !Array.isArray(entry.moved)) return null;
-    return new Set(entry.moved.filter((move) => typeof move?.from === "string" && typeof move.to === "string").map((move) => `${move.from}\0${move.to}`));
+    for (const name of names) {
+      const file = await resolveLedgerFile(seen, name);
+      const entry = parseStoreJson((await fileBytes(path.dirname(file), path.basename(file), STORE_FILE_BOUNDS.ledger))?.toString("utf8") ?? "null");
+      if (entry?.repository !== seen.repository || !Array.isArray(entry.moved)) return null;
+      for (const move of entry.moved) if (typeof move?.from === "string" && typeof move.to === "string") moves.add(`${move.from}\0${move.to}`);
+    }
   } catch { return null; }
+  return moves;
 }
 
 /**

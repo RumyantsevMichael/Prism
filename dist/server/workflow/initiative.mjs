@@ -10,7 +10,7 @@ import { resolveArtifactPath } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { revisionMismatch } from "./revision.mjs";
-import { inArtifactStore, listClaimRecords, listInitiatives, listStoreArtifacts, locateRecord, moveLegacyRecords, readArtifactText, readRecord, recordStoreOf, removeInitiativeRecords, removeRecord, withRecordLock, writeRecord } from "./record-store.mjs";
+import { inArtifactStore, listClaimRecords, listInitiatives, listStoreArtifacts, locateRecord, moveLegacyRecords, oversizedRevision, readArtifactText, readRecord, readStoreFileBytes, recordStoreOf, removeInitiativeRecords, removeRecord, withRecordLock, writeRecord } from "./record-store.mjs";
 import { ARTIFACT_NAME_FORM, artifactAddress as artifactAddressOf, collideInLetterCase, wellFormedName } from "./artifact-paths.mjs";
 import { acceptArtifactVersions, ArtifactError, storeArtifactLocation } from "./store-artifacts.mjs";
 import { syncRecordStoreNow } from "./record-store-sync.mjs";
@@ -199,12 +199,13 @@ export function mergeInitiativeRecord(versions) {
 async function loadRecord(resolved) {
   let contents;
   try {
-    contents = await readFile(resolved.target);
+    // The record is read without following a link and only within its 1 MiB bound, so a larger file reads as a damaged record, unread.
+    contents = await readStoreFileBytes(resolved.target, RECORD_MAX_BYTES);
   } catch (error) {
-    if (error.code === "ENOENT") return { exists: false, revision: null, record: null, valid: true, errors: [], analysis: null };
+    if (error.tooLarge) return { exists: true, revision: oversizedRevision(error), text: "", record: null, valid: false, errors: [error.message], analysis: null };
     throw error;
   }
-  if (contents.length > RECORD_MAX_BYTES) throw fail("artifact_too_large", "The initiative record exceeds 1 MiB.");
+  if (contents === null) return { exists: false, revision: null, record: null, valid: true, errors: [], analysis: null };
   const revision = revisionOf(contents);
   const text = contents.toString("utf8");
   let raw;
@@ -940,7 +941,8 @@ async function withClaimsLock(resolved, action) {
 const claimKey = (resolved, slug) => ({ kind: "claim", initiative: resolved.initiative, slice: slug });
 
 async function readClaim(resolved, slug) {
-  const { bytes } = await readRecord(resolved.root, claimKey(resolved, slug), { maxBytes: 64 * 1024 });
+  // A claim above its bound reads as a damaged claim, which holds no claim.
+  const { bytes } = await readRecord(resolved.root, claimKey(resolved, slug)).catch((error) => { if (error.tooLarge) return { bytes: null }; throw error; });
   return bytes === null ? null : parseClaim(slug, bytes).claim ?? null;
 }
 
