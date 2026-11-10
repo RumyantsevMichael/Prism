@@ -138,6 +138,8 @@ export const STORE_FILE_BOUNDS = Object.freeze({
 });
 /** The most comment files that one artifact's comment folder holds. */
 export const COMMENTS_PER_ARTIFACT_MAX = 1000;
+/** The most files that a store's tree holds, far above the files that Prism writes for a workspace, so every machine lists and holds a store's tree in bounded memory and time. */
+export const STORE_TREE_FILES_MAX = 250000;
 
 /** The bound of a store file kind as a person reads it, such as 256 bytes, 64 KiB, or 16 MiB. */
 export const boundText = (bytes) => bytes % MiB === 0 ? `${bytes / MiB} MiB` : bytes % KiB === 0 ? `${bytes / KiB} KiB` : `${bytes} bytes`;

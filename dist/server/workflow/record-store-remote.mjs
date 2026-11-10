@@ -3,7 +3,7 @@ import { cp, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promise
 import path from "node:path";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { gitTransportPath } from "./git-local-repository.mjs";
-import { describeOversizedEntry, describeUnsafeEntry, gitTimeoutMs, gitTooOld, gitUrlText, helperForRepository, localRemoteRepository, markManagedStore, oversizedStoreEntry, runGit, unsafeStoreEntry, writeCommitFiles } from "./record-store-sync.mjs";
+import { describeOversizedEntry, describeUnsafeEntry, unsafeEntryFix, gitTimeoutMs, gitTooOld, gitUrlText, helperForRepository, localRemoteRepository, markManagedStore, oversizedStoreEntry, runGit, unsafeStoreEntry, writeCommitFiles } from "./record-store-sync.mjs";
 import { legacyStoresDirectory, managedStoreId, managedStoresDirectory, normalizeRemote, remoteLabel, withoutCredentials } from "./remote-url.mjs";
 
 // A record store named by its remote lives in a clone Prism keeps in its application folder, one per remote, shared by every checkout and host that names it.
@@ -117,7 +117,7 @@ async function cloneOnce(directory, id, target, configured, unavailable) {
       const head = await runGit(temporary, ["rev-parse", "--verify", "--quiet", "HEAD"]);
       if (head.ok) {
         const unsafe = await unsafeStoreEntry(temporary, head.text);
-        if (unsafe) throw unavailable(`Its branch holds ${describeUnsafeEntry(unsafe)}, so it was not cloned. Remove that path from the remote's branch.`);
+        if (unsafe) throw unavailable(`Its branch holds ${describeUnsafeEntry(unsafe)}, so it was not cloned. ${unsafeEntryFix(unsafe)}`);
         const over = await oversizedStoreEntry(temporary, head.text);
         if (over) throw unavailable(`Its branch holds ${await describeOversizedEntry(over)}, so it was not cloned. Shrink or remove ${over.folder ? "comment files of that folder" : "that file"} on the remote's branch.`);
         await writeCommitFiles(temporary, head.text).catch((error) => { throw unavailable(`Git could not write its files: ${withoutCredentials(error.message)}`); });
