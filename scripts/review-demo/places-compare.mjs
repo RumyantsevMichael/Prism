@@ -440,6 +440,11 @@ async function startDemo(parent) {
       try {
         const discovery = JSON.parse(await readFile(path.join(appDirectory, "review-app.json"), "utf8"));
         process.kill(discovery.pid);
+        // The app logs its stop into the app folder as it exits, so the folder is removed only once the app has gone.
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          try { process.kill(discovery.pid, 0); } catch { break; }
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
       } catch {
       }
     }
@@ -519,7 +524,7 @@ async function main() {
   } finally {
     await browser.close();
     await demo?.close();
-    await rm(parent, { recursive: true, force: true });
+    await rm(parent, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
   if (failure) fail(failure);
   const differing = pairs.filter((pair) => pair.differences.length).length;

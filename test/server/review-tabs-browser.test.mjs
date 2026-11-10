@@ -267,7 +267,7 @@ test("dragging a tab or Ctrl+Shift+arrows move it, Escape puts a dragged tab bac
   const page = await openPage(browser, reviewUrl(base, "attention"), { viewport: { width: 1440, height: 900 } });
   await waitForView(page);
   for (const name of ["Roadmap", "Requirements", "Decisions"]) {
-    await sidebarItem(page, name).click({ modifiers: ["Control"] });
+    await openFromSidebar(page, name, { modifiers: ["Control"] });
     await settled(page, base, name.toLowerCase());
   }
   const order = async () => (await tabs(page)).map((item) => item.replace(/[*(].*$/, ""));
