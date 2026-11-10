@@ -1369,7 +1369,9 @@ function decorateMaximize(path) {
       button.setAttribute("size", "sm");
       button.className = "maximize-control";
       button.dataset.maximize = key;
-      const tools = card.querySelector(".diagram-tools");
+      button.append(document.createElement("prism-icon"));
+      // The control is an icon button, as on the kit's maximizable panel; a document with contents carries it in the contents header, which stays in view.
+      const tools = card.querySelector(":scope .diagram-tools, :scope > .doc-toc .doc-toc-head");
       if (tools) tools.appendChild(button);
       else card.prepend(button);
       button.addEventListener("click", () => setMaximized(path, state.maximized === key ? null : key));
@@ -1377,12 +1379,14 @@ function decorateMaximize(path) {
     const maximized = state.maximized === key;
     found ||= maximized;
     card.classList.toggle("is-maximized", maximized);
-    button.textContent = maximized ? "Restore" : "Maximize";
+    button.setAttribute("label", maximized ? "Restore" : "Maximize");
+    button.firstElementChild?.setAttribute("name", maximized ? "restore" : "maximize");
     button.setAttribute("pressed", String(maximized));
     button.setAttribute("tip", maximized ? "Restore (Esc)" : "Fill the window");
   });
   if (!found) state.maximized = null;
   document.body.classList.toggle("has-maximized", found);
+  markCurrentSection(artifact, workspace.getBoundingClientRect().top);
 }
 
 function setMaximized(path, key) {
@@ -1876,11 +1880,19 @@ async function initialize() {
   thisProject = data;
   showPrivateServer(data.privateServer);
   let sectionFrame = 0;
-  workspace.addEventListener("scroll", () => {
-    if (!rebuilding && renderedPath && renderedPath === selectedPath) scrollPositions.set(renderedPath, workspace.scrollTop);
+  const followSections = () => {
     cancelAnimationFrame(sectionFrame);
     sectionFrame = requestAnimationFrame(() => markCurrentSection(artifact, workspace.getBoundingClientRect().top));
+  };
+  workspace.addEventListener("scroll", () => {
+    if (!rebuilding && renderedPath && renderedPath === selectedPath) scrollPositions.set(renderedPath, workspace.scrollTop);
+    followSections();
   }, { passive: true });
+  // A maximized document scrolls inside its own card, and the window size sets how much of the contents fits, so both follow the current section too.
+  artifact.addEventListener("scroll", (event) => {
+    if (event.target.classList?.contains("is-maximized")) followSections();
+  }, { passive: true, capture: true });
+  window.addEventListener("resize", followSections, { passive: true });
   // Choosing another project opens its review page; opening the menu refreshes the list first.
   projectPoller = createPoller({ run: refreshProjects, interval: 5000 });
   projectButton.addEventListener("click", () => void projectPoller.now());

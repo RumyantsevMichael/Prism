@@ -85,9 +85,10 @@
 /* ---------- Documents and source files ---------- */
 
 .document-sheet {
+  --doc-sheet-pad: var(--prism-space-7);
   position: relative;
   min-width: 0;
-  padding: var(--prism-space-7);
+  padding: var(--doc-sheet-pad);
   border: var(--prism-stroke) solid var(--prism-color-line);
   border-radius: var(--prism-radius-lg);
   background: var(--prism-color-surface);
@@ -178,6 +179,8 @@ mark.find-hit {
 .source-lines .tok-deleted { color: var(--prism-color-diff-removed); }
 
 /* A long document gets its contents beside it; at 1100px and below the contents fold above the text. */
+/* Beside the text the contents column runs the full height of the sheet, so its rule meets the sheet's edges,
+   and the list inside it stays in view while the document scrolls, scrolling on its own only when it is longer than the visible part. */
 .has-toc {
   display: grid;
   grid-template-columns: minmax(0, 1fr) calc(var(--prism-sidebar-width) * 0.8);
@@ -190,16 +193,54 @@ mark.find-hit {
 }
 
 .doc-toc {
-  position: sticky;
-  top: var(--prism-space-5);
   grid-column: 2;
   grid-row: 1 / span 40;
+  align-self: stretch;
   min-width: 0;
-  max-height: calc(100vh - var(--prism-pagebar-height) * 4);
-  overflow: auto;
-  padding: 0 0 0 var(--prism-space-5);
+  margin-block: calc(var(--doc-sheet-pad) * -1);
   border-inline-start: var(--prism-stroke) solid var(--prism-color-line);
   font-size: var(--prism-font-size-sm);
+}
+
+.doc-toc-body {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  max-height: var(--doc-toc-fit, 100vh);
+  padding: var(--doc-sheet-pad) 0 var(--doc-sheet-pad) var(--prism-space-5);
+}
+
+/* The header stays put and only the list scrolls, so the title and the Maximize control never scroll away. */
+.doc-toc-body > ol {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.doc-toc-head {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-height: var(--prism-control-height-sm);
+}
+
+.doc-toc-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-inline: var(--prism-space-3);
+  color: var(--prism-color-ink-muted);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.doc-toc-toggle {
+  display: none;
+}
+
+.doc-toc-head > .maximize-control {
+  flex: none;
+  margin-inline-start: auto;
 }
 
 .doc-toc ol {
@@ -227,7 +268,7 @@ mark.find-hit {
 
 .doc-toc a:focus-visible {
   outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
-  outline-offset: var(--prism-stroke);
+  outline-offset: calc(var(--prism-stroke-strong) * -1);
 }
 
 .doc-toc a[aria-current="location"] {
@@ -365,7 +406,24 @@ body.has-maximized::after {
   display: grid;
 }
 
+.is-maximized.document-sheet {
+  display: block;
+}
+
+.is-maximized.document-sheet.has-toc {
+  display: grid;
+}
+
+/* A maximized sheet scrolls itself, so its contents stick at its top edge rather than below its padding. */
+.is-maximized .doc-toc-body {
+  top: calc(var(--doc-sheet-pad) * -1);
+}
+
+/* A document without contents floats its control at its top corner, and the control stays in view while the document scrolls. */
 .document-sheet > .maximize-control {
+  position: sticky;
+  top: 0;
+  z-index: var(--prism-layer-raised);
   float: right;
   margin: 0 0 var(--prism-space-3) var(--prism-space-4);
 }
@@ -1264,20 +1322,43 @@ body.has-maximized::after {
   }
 
   .doc-toc {
-    position: static;
-    max-height: none;
-    margin-bottom: var(--prism-space-5);
-    padding: var(--prism-space-2) var(--prism-space-4);
+    margin: 0 0 var(--prism-space-5);
     border: var(--prism-stroke) solid var(--prism-color-line);
     border-radius: var(--prism-radius-md);
+    background: var(--prism-color-surface);
+  }
+
+  .doc-toc-body {
+    position: static;
+    max-height: none;
+    padding: var(--prism-space-2) var(--prism-space-4);
+  }
+
+  .doc-toc-title {
+    display: none;
+  }
+
+  .doc-toc-toggle {
+    display: inline-flex;
   }
 
   .doc-toc:not(.is-open) ol {
     display: none;
   }
 
-  .is-maximized.has-toc {
-    display: flex;
+  /* A maximized document keeps its contents bar, with the Restore control, at the top while it scrolls. */
+  .is-maximized .doc-toc {
+    position: sticky;
+    top: calc(var(--doc-sheet-pad) * -1);
+    z-index: var(--prism-layer-raised);
+  }
+
+  .is-maximized .doc-toc-body {
+    max-height: var(--doc-toc-fit, 100vh);
+  }
+
+  .is-maximized.document-sheet.has-toc {
+    display: block;
   }
 
   .split-layout {
@@ -1291,7 +1372,7 @@ body.has-maximized::after {
   }
 
   .document-sheet {
-    padding: var(--prism-space-5);
+    --doc-sheet-pad: var(--prism-space-5);
   }
 
   .diagram-output {
