@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, constants, open, readFile, rm, stat } from "node:fs/promises";
+import { access, constants, link, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
 import { hostDefinition } from "./launch-hosts.mjs";
@@ -14,6 +14,8 @@ export const COOLDOWN_MS = 30 * 1000;
 export const DIALOG_MS = 120 * 1000;
 // A dialog that has not ended this long after its own timeout is ended and counted as unanswered.
 const DIALOG_BACKSTOP_MS = DIALOG_MS + 10 * 1000;
+// A pending record is held this long at most; an older one belongs to a process that ended without releasing it.
+const PENDING_STALE_MS = DIALOG_BACKSTOP_MS * 2;
 const WINDOW_FILE = "window.json";
 const COOLDOWN_FILE = "confirmation-cooldown.json";
 const PENDING_FILE = "confirmation-pending.json";
@@ -85,37 +87,52 @@ function processRuns(pid) {
   }
 }
 
+async function holderIsLive(file) {
+  const holder = await readJson(file);
+  if (!holder) {
+    // A record that cannot be read yet may still be written by another process; only an old one is abandoned.
+    try {
+      return Date.now() - (await stat(file)).mtimeMs < PENDING_STALE_MS;
+    } catch (error) {
+      return error.code !== "ENOENT";
+    }
+  }
+  const startedAt = Date.parse(holder.startedAt);
+  return processRuns(holder.pid) && Number.isFinite(startedAt) && Date.now() - startedAt < PENDING_STALE_MS;
+}
+
 /** Takes this machine's one dialog slot, or returns null while another dialog is open. */
 async function takePendingSlot(env, now) {
+  // Taken before any await, so two requests of this process never both pass.
   if (openHere > 0) return null;
+  openHere += 1;
   const file = launchesFile(env, PENDING_FILE);
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    let handle;
-    try {
-      handle = await open(file, "wx", 0o600);
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-      const holder = await readJson(file);
-      const startedAt = Date.parse(holder?.startedAt);
-      const fresh = Number.isFinite(startedAt) && Date.now() - startedAt < DIALOG_BACKSTOP_MS * 2;
-      if (holder && processRuns(holder.pid) && fresh) return null;
-      // The process that held the slot ended without releasing it.
-      await rm(file, { force: true });
-      continue;
+  // The record is written in full under a private name, then linked into place, so no process ever reads it half written.
+  const draft = `${file}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}`;
+  let taken = false;
+  try {
+    await writeFile(draft, `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), requestedAt: new Date(now).toISOString() })}\n`, { mode: 0o600, flag: "wx" });
+    for (let attempt = 0; attempt < 2 && !taken; attempt += 1) {
+      try {
+        await link(draft, file);
+        taken = true;
+      } catch (error) {
+        if (error.code !== "EEXIST") throw error;
+        if (await holderIsLive(file)) break;
+        // The process that held the slot ended without releasing it.
+        await rm(file, { force: true });
+      }
     }
-    try {
-      await handle.writeFile(`${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), requestedAt: new Date(now).toISOString() })}\n`);
-    } finally {
-      await handle.close();
-    }
-    openHere += 1;
-    return async () => {
-      openHere -= 1;
-      const holder = await readJson(file);
-      if (holder?.pid === process.pid) await rm(file, { force: true });
-    };
+  } finally {
+    await rm(draft, { force: true });
+    if (!taken) openHere -= 1;
   }
-  return null;
+  if (!taken) return null;
+  return async () => {
+    openHere -= 1;
+    const holder = await readJson(file);
+    if (holder?.pid === process.pid) await rm(file, { force: true });
+  };
 }
 
 async function executableFile(file) {
@@ -232,18 +249,17 @@ function runDialog(dialog) {
     }
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGTERM");
+      // A forced kill, which a dialog cannot ignore, so the one-dialog slot is always released.
+      child.kill("SIGKILL");
     }, dialog.killAfterMs);
+    const done = (result) => {
+      clearTimeout(timer);
+      resolve(result);
+    };
     child.stdout.on("data", (chunk) => { if (stdout.length < 64 * 1024) stdout += chunk; });
     child.stderr.on("data", (chunk) => { if (stderr.length < 64 * 1024) stderr += chunk; });
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      resolve({ code: null, stdout, stderr: stderr || error.message, timedOut, spawnError: error });
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code, stdout, stderr, timedOut });
-    });
+    child.on("error", (error) => done({ code: null, stdout, stderr: stderr || error.message, timedOut, spawnError: error }));
+    child.on("close", (code) => done({ code, stdout, stderr, timedOut }));
   });
 }
 
@@ -266,7 +282,10 @@ export async function confirmLaunch({ initiative, host, checkout, env = process.
     const text = confirmationText({ label: definition.label, initiative, checkout });
     const dialog = await nativeDialog({ text, env, platform });
     if (dialog instanceof LaunchError) throw dialog;
+    const shownAt = Date.now();
     const outcome = await runDialog(dialog);
+    // The cool-down runs from the dialog's end, on the request's clock.
+    const endedAt = now + (Date.now() - shownAt);
     if (outcome.spawnError) throw unavailable(`${path.basename(dialog.command)} could not be started`);
     const answer = dialog.read(outcome);
     if (answer instanceof LaunchError) throw answer;
@@ -274,7 +293,7 @@ export async function confirmLaunch({ initiative, host, checkout, env = process.
       const opened = await openWindow(env, now);
       return { asked: true, windowEndsAt: opened.endsAt };
     }
-    await startCooldown(env, now);
+    await startCooldown(env, endedAt);
     if (answer === "declined") throw new LaunchError("confirmation_declined", "You declined the launch.");
     throw new LaunchError("confirmation_timeout", "Nobody answered the confirmation within 2 minutes.");
   } finally {
