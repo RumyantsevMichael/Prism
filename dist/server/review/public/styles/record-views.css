@@ -1303,187 +1303,29 @@ a.code-link:hover {
   font-weight: var(--prism-font-weight-bold);
 }
 
-/* ---------- A superseded initiative's page names, below its title, what superseded it and why ---------- */
+/* ---------- Knowledge's entry points and Diagrams: the pages lay out the kit's library table ---------- */
 
-.superseded-note {
-  display: flex;
-  flex-direction: column;
-  gap: var(--prism-space-3);
-  min-width: 0;
-  max-width: var(--prism-measure);
-  margin: 0 0 var(--prism-space-2);
-}
-
-.superseded-line {
-  display: flex;
-  align-items: center;
-  gap: var(--prism-space-2);
-  min-width: 0;
-  margin: 0;
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-md);
-  overflow-wrap: anywhere;
-}
-
-.superseded-glyph {
-  display: inline-flex;
-  flex: none;
-}
-
-.superseded-line > span {
-  min-width: 0;
-}
-
-.superseded-reason {
-  margin: 0;
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-sm);
-  overflow-wrap: anywhere;
-}
-
-.superseded-by {
-  text-decoration: none;
-}
-
-.superseded-by:hover {
-  text-decoration: underline;
-}
-
-/* ---------- Knowledge's entry points: Touched by my work and Changed this week ---------- */
-
-/* The lead line sits right under the page's title, as the mockup's page subtitle does, so it takes back the header's bottom margin. */
-.knowledge-lead {
-  margin: calc(var(--prism-space-5) * -1) 0 0;
-  color: var(--prism-color-ink-muted);
-  overflow-wrap: anywhere;
-}
-
-.knowledge-lead + .knowledge-table {
+/* A library table stands a small gap further below the line under the title than the page's usual gap, as the mockup's table stands below its page subtitle. */
+.artifact-header + .structured-view > :is(.knowledge-table, .diagram-list):first-child {
   margin-top: var(--prism-space-2);
 }
 
-.knowledge-lead b {
-  color: var(--prism-color-ink);
-  font-weight: var(--prism-font-weight-semibold);
-}
-
-/* One bordered list: a head row of column names, then each group's head and its records, as the mockup draws Touched by my work. */
 .knowledge-table {
-  min-width: 0;
-  border: var(--prism-stroke) solid var(--prism-color-line);
-  border-radius: var(--prism-radius-lg);
-  overflow: hidden;
+  --prism-lib-columns: minmax(0, 2fr) 120px 140px minmax(0, 1fr);
 }
 
-.knowledge-row {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) 120px 140px minmax(0, 1fr);
-  align-items: center;
-  gap: var(--prism-space-5);
-  min-width: 0;
-  min-height: calc(var(--prism-row-height) + var(--prism-space-5));
-  padding: var(--prism-space-2) var(--prism-space-5);
-  border-top: var(--prism-stroke) solid var(--prism-color-line);
+.knowledge-table.is-undated {
+  --prism-lib-columns: minmax(0, 1fr) 120px;
 }
 
-.knowledge-row:hover {
-  background: var(--prism-color-hover);
+.diagram-list {
+  --prism-lib-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
-.knowledge-row.is-head {
-  min-height: 0;
-  padding-top: var(--prism-space-3);
-  padding-bottom: var(--prism-space-3);
-  border-top: 0;
-  background: var(--prism-color-sunken);
-}
-
-.knowledge-table.is-changed .knowledge-row {
-  grid-template-columns: minmax(0, 2fr) 120px 140px minmax(0, 1fr);
-}
-
-.knowledge-table.is-undated .knowledge-row {
-  grid-template-columns: minmax(0, 1fr) 120px;
-}
-
-.knowledge-title {
-  display: flex;
-  align-items: center;
-  gap: var(--prism-space-3);
-  min-width: 0;
-}
-
-/* A long title, author, or reason wraps rather than ending in an ellipsis, since a plain link has no tooltip to show the rest. */
-.knowledge-title > a,
-.knowledge-title > span {
-  min-width: 0;
-  font-weight: var(--prism-font-weight-medium);
-  overflow-wrap: anywhere;
-}
-
-.knowledge-kind {
-  flex: none;
-  color: var(--prism-color-ink-muted);
-}
-
-.knowledge-cell {
-  min-width: 0;
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-sm);
-  overflow-wrap: anywhere;
-}
-
-.knowledge-why {
-  min-width: 0;
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-xs);
-  overflow-wrap: anywhere;
-}
-
-.knowledge-group {
-  display: flex;
-  align-items: center;
-  gap: var(--prism-space-3);
-  min-width: 0;
-  padding: var(--prism-space-3) var(--prism-space-5);
-  border-top: var(--prism-stroke) solid var(--prism-color-line);
-  background: var(--prism-color-raised);
-}
-
-.knowledge-group-name {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: var(--prism-space-3);
-  margin: 0;
-  font-size: var(--prism-font-size-md);
-  font-weight: var(--prism-font-weight-semibold);
-}
-
-.knowledge-group-source {
-  min-width: 0;
-  margin-left: auto;
-  overflow: hidden;
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.knowledge-nothing,
 .knowledge-note {
-  margin: 0;
+  margin: var(--prism-space-4) 0 0;
   color: var(--prism-color-ink-muted);
   font-size: var(--prism-font-size-sm);
-}
-
-.knowledge-nothing {
-  padding: var(--prism-space-3) var(--prism-space-5);
-  border-top: var(--prism-stroke) solid var(--prism-color-line);
-}
-
-.knowledge-table + .knowledge-note {
-  margin-top: var(--prism-space-4);
 }
 
 .knowledge-subhead {
@@ -1512,40 +1354,4 @@ a.code-link:hover {
 .knowledge-owner {
   color: var(--prism-color-ink-muted);
   font-size: var(--prism-font-size-sm);
-}
-
-/* On a phone a record keeps its title on its own line, and its kind, status, and why it is listed share the line below. */
-@media (max-width: 720px) {
-  .knowledge-row,
-  .knowledge-table.is-changed .knowledge-row,
-  .knowledge-table.is-undated .knowledge-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--prism-space-1) var(--prism-space-4);
-    padding-top: var(--prism-space-3);
-    padding-bottom: var(--prism-space-3);
-  }
-
-  .knowledge-row > :first-child {
-    flex: 1 0 100%;
-    min-width: 0;
-  }
-
-  .knowledge-table .knowledge-row.is-head {
-    display: none;
-  }
-
-  .knowledge-row .knowledge-why,
-  .knowledge-row .knowledge-cell {
-    flex: 0 1 auto;
-  }
-
-  .knowledge-group {
-    flex-wrap: wrap;
-  }
-
-  .knowledge-group-source {
-    flex-basis: 100%;
-    margin-left: 0;
-  }
 }

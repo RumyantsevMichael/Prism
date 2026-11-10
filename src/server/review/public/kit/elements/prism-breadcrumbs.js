@@ -8,8 +8,11 @@ export class PrismBreadcrumbs extends Base {
   static tag = "prism-breadcrumbs";
   static catalog = {
     purpose: "The trail of the current page's place, initiative, and slice as a breadcrumb navigation, whose crumbs shorten when they do not fit.",
-    options: [{ name: "<a> children", values: ["links"], default: "", description: "The crumbs in order; the last is the current page. Replacing the children replaces the trail." }],
-    states: ["default", "one-crumb"],
+    options: [
+      { name: "<a> children", values: ["links"], default: "", description: "The crumbs in order; the last is the current page. Replacing the children replaces the trail." },
+      { name: "current-only", values: ["boolean", "narrow"], default: "", description: "Shows only the current page, without a separator before it; narrow does so only in a phone-width window." }
+    ],
+    states: ["default", "one-crumb", "current-only"],
     keyboard: ["Each crumb is a link that Tab reaches; a shortened crumb shows its full text in the tooltip on keyboard focus."]
   };
 

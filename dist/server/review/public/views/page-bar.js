@@ -35,6 +35,8 @@ export function createPageBar({ root, onBack, onForward, onOpen, onPlace = () =>
   history.append(back, forward);
   const trail = document.createElement("prism-breadcrumbs");
   trail.className = "page-bar-trail";
+  // In a phone-width window the bar reads Back, Forward, then the page alone.
+  trail.setAttribute("current-only", "narrow");
   const actions = document.createElement("div");
   actions.className = "page-bar-actions";
   root.replaceChildren(history, trail, actions);

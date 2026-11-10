@@ -1,4 +1,4 @@
-import { artifactChip, artifactLink, badge, bindLinks, card, emptyState, escapeHtml, plural, stat, summaryPanel } from "./util.js";
+import { artifactChip, artifactLink, badge, bindLinks, card, emptyState, escapeHtml, pageSub, plural, setPageSub, stat, summaryPanel } from "./util.js";
 
 const STATUS_TONES = { approved: "success", accepted: "success", draft: "warning", proposed: "info", superseded: "neutral", deprecated: "neutral", rejected: "danger" };
 
@@ -31,17 +31,19 @@ function decisions(data, ctx) {
 // The diagrams of the plans and decisions folders by name, each with the slice, initiative, or decision it belongs to, in the server's order.
 export function renderDiagrams(data, ctx) {
   const diagrams = data?.diagrams ?? [];
-  if (!diagrams.length) return card("Diagrams", emptyState("No diagrams yet", "No PlantUML file exists in the plans or decisions folders."));
-  return card(plural(diagrams.length, "diagram"), `<div class="table-wrap"><table class="data-table diagram-table"><thead><tr><th>Diagram</th><th>Belongs to</th></tr></thead><tbody>${diagrams.map((diagram) => `<tr>
-    <td>${artifactLink(diagram.path, ctx, diagram.name)}</td>
-    <td class="muted">${escapeHtml(diagram.owner.title)}</td>
-  </tr>`).join("")}</tbody></table></div>`, { eyebrow: "Diagrams" });
+  if (!diagrams.length) return { sub: "", body: emptyState("No diagrams yet", "No PlantUML file exists in the plans or decisions folders.") };
+  const rows = diagrams.map((diagram) => `<div class="prism-lib-row"><span><span class="prism-lib-title"><prism-icon class="prism-lib-kind" name="diagram" size="sm" aria-hidden="true"></prism-icon>${artifactLink(diagram.path, ctx, diagram.name)}</span></span><span class="prism-lib-cell">${escapeHtml(diagram.owner.title)}</span></div>`).join("");
+  return {
+    sub: pageSub(escapeHtml(`${plural(diagrams.length, "diagram")} in the plans and decisions folders, each with what it belongs to.`)),
+    body: `<prism-lib-table class="diagram-list"><div class="prism-lib-row is-head" aria-hidden="true"><span>Diagram</span><span>Belongs to</span></div>${rows}</prism-lib-table>`
+  };
 }
 
 export function render(container, entity, ctx) {
   const data = entity.data;
   if (entity.kind === "diagrams") {
-    container.innerHTML = renderDiagrams(data, ctx);
+    const { sub, body } = renderDiagrams(data, ctx);
+    container.innerHTML = setPageSub(container, sub, ctx) ? body : `${sub}${body}`;
     bindLinks(container, ctx);
     return;
   }

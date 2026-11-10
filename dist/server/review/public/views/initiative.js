@@ -2,7 +2,7 @@ import { activeDetails } from "./coordination-state.js";
 import { applyWidths, progressBar } from "./entities.js";
 import { stateBadge } from "./roadmap.js";
 import { enablePanZoom, graphCard, renderGraph } from "./graph.js";
-import { artifactChip, badge, bindLinks, card, emptyNote, escapeHtml, keyValues, plural, requirementLinks, shortDate, summaryPanel } from "./util.js";
+import { artifactChip, badge, bindLinks, card, emptyNote, escapeHtml, keyValues, pageSub, plural, requirementLinks, setPageSub, shortDate, summaryPanel } from "./util.js";
 import { runTotalsHtml } from "./run-totals.js";
 import { codeChip } from "./code-location.js";
 import { claimChip, claimOf } from "./claims.js";
@@ -116,11 +116,9 @@ function supersededNote(data) {
   const date = shortDate(decision.at, { year: true });
   const by = data.supersededBy;
   const ref = by ? `initiative:${by.id}` : null;
-  const link = by ? ` by <a class="superseded-by" href="./review?artifact=${encodeURIComponent(ref)}" data-artifact="${escapeHtml(ref)}">${escapeHtml(by.title)}</a>` : "";
-  return `<div class="superseded-note">
-      <p class="superseded-line"><span class="superseded-glyph" aria-hidden="true"><prism-state state="superseded"></prism-state></span><span>Superseded${date ? ` ${escapeHtml(date)}` : ""}${link}</span></p>
-      ${decision.reason ? `<p class="superseded-reason">${escapeHtml(decision.reason)}</p>` : ""}
-    </div>`;
+  const link = by ? ` by <a href="./review?artifact=${encodeURIComponent(ref)}" data-artifact="${escapeHtml(ref)}">${escapeHtml(by.title)}</a>` : "";
+  const line = pageSub(`Superseded${date ? ` ${escapeHtml(date)}` : ""}${link}`, { glyph: '<prism-state state="superseded"></prism-state>' });
+  return `<div class="prism-page-subs">${line}${decision.reason ? pageSub(escapeHtml(decision.reason), { detail: true }) : ""}</div>`;
 }
 
 export async function render(container, entity, ctx) {
@@ -145,13 +143,7 @@ export async function render(container, entity, ctx) {
       ${data.runTotals ? runTotalsHtml(data.runTotals.initiative, "initiative") : ""}`);
   // The superseded note stands in the page head, right below the title, or at the top of the page when the page has no head.
   const note = supersededNote(data);
-  const titles = container.parentElement?.querySelector(".artifact-header > div:first-child");
-  titles?.querySelector(".superseded-note")?.remove();
-  if (note && titles) {
-    titles.insertAdjacentHTML("beforeend", note);
-    bindLinks(titles.querySelector(".superseded-note"), ctx);
-  }
-  const lead = note && !titles ? note : "";
+  const lead = setPageSub(container, note, ctx) ? "" : note;
   // The settings belong to the initiative whatever state its record is in, so every branch that has an action target shows them.
   const settings = '<div data-initiative-settings></div>';
   const mountSettings = () => mountInitiativeSettings(container.querySelector("[data-initiative-settings]"), { target: `initiative:${data.id}`, eyebrow: "Orchestration of every slice", ctx });

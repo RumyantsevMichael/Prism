@@ -17,9 +17,10 @@ export class PrismTreeItem extends Base {
       { name: "href", values: ["URL"], default: "", description: "The item's address: the row becomes a link that a middle-click or a Ctrl or Cmd click opens in a new browser tab and the context menu can copy." },
       { name: "tip", values: ["text"], default: "", description: "The tooltip's text on hover and keyboard focus, such as the full label with the item's status." },
       { name: "slot=\"start\"", values: ["children"], default: "", description: "A glyph before the label, such as an icon, a state, or a phase; a leaf with one gives up the twisty's room." },
-      { name: "slot=\"end\"", values: ["children"], default: "", description: "Content after the label, such as a count or a claim." }
+      { name: "slot=\"end\"", values: ["children"], default: "", description: "Content after the label, such as a count or a claim." },
+      { name: "span.prism-tree-flag", values: ["kit class"], default: "", description: "A word in slot=\"end\" that flags the row, such as Blocked in the danger tone; with is-muted it names a settled fact, such as Superseded." }
     ],
-    states: ["leaf", "collapsed", "expanded", "selected", "glyphs", "link"],
+    states: ["leaf", "collapsed", "expanded", "selected", "glyphs", "link", "flag"],
     keyboard: ["The tree moves focus between items; Enter or a click selects an item.", "A click on the twisty expands or collapses the item.", "A Ctrl, Cmd, or Shift click or a middle-click on an item with an href opens its address in the browser instead of selecting it."]
   };
 

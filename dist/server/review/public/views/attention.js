@@ -1,4 +1,4 @@
-import { artifactChip, artifactLink, badge, bindLinks, chip, emptyState, escapeHtml, messageHtml, plural, stat } from "./util.js";
+import { artifactChip, artifactLink, badge, bindLinks, chip, emptyState, escapeHtml, messageHtml, pageSub, plural, setPageSub, stat } from "./util.js";
 import { recordKind, recordLabel } from "./entities.js";
 import { claimAttributes } from "./claims.js";
 import { isExpired } from "./claim-index.js";
@@ -552,11 +552,7 @@ let pendingSelection = null;
 
 // The filter's name and count above its items, with the way back to everything, in the page head.
 function filterLine(container, text, ctx) {
-  const head = container.parentElement?.querySelector(".artifact-header > div:first-child");
-  if (!head) return;
-  head.querySelector(".attention-filter")?.remove();
-  head.insertAdjacentHTML("beforeend", `<p class="attention-filter"><span>${escapeHtml(text)}</span> <a class="title-link" href="./review?artifact=attention" data-artifact="attention">Show everything</a></p>`);
-  bindLinks(head.querySelector(".attention-filter"), ctx);
+  setPageSub(container, pageSub(escapeHtml(text), { end: '<a href="./review?artifact=attention" data-artifact="attention">Show everything</a>' }), ctx);
 }
 
 const where = (item) => [item.initiative?.title, item.slice?.title].filter(Boolean);
@@ -583,10 +579,10 @@ function filteredItem({ kind, item }, ctx) {
   }[item.type]?.() ?? { icon: "info", tone: "neutral", title: escapeHtml(item.type), ref: null, sub: "", chip: [kind, "neutral"] };
   const linked = look.ref && ctx.hasArtifact(look.ref);
   const select = look.select ? ` data-attention-select="${escapeHtml(look.select)}"` : "";
-  const title = linked ? `<a class="title-link attention-row-title" href="./review?artifact=${encodeURIComponent(look.ref)}" data-artifact="${escapeHtml(look.ref)}"${select}>${look.title}</a>` : `<span class="attention-row-title">${look.title}</span>`;
-  const time = look.at ? `<time class="attention-row-time" datetime="${escapeHtml(look.at)}">${escapeHtml(shortAgo(look.at))}</time>` : '<span class="attention-row-time"></span>';
-  const action = linked ? `<prism-button size="sm" class="attention-row-action" data-artifact="${escapeHtml(look.ref)}"${select}>${escapeHtml(look.action ?? "Open")}</prism-button>` : '<span class="attention-row-action"></span>';
-  return `<li class="attention-row"><span class="prism-inbox-tile" data-tone="${escapeHtml(look.tone)}"><prism-icon name="${escapeHtml(look.icon)}" size="sm"></prism-icon></span><span class="attention-row-text">${title}${look.sub ? `<span class="attention-row-sub">${look.sub}</span>` : ""}</span><prism-chip class="attention-row-kind" tone="${escapeHtml(look.chip[1])}">${escapeHtml(look.chip[0])}</prism-chip>${time}${action}</li>`;
+  const title = linked ? `<a href="./review?artifact=${encodeURIComponent(look.ref)}" data-artifact="${escapeHtml(look.ref)}"${select}>${look.title}</a>` : look.title;
+  const time = look.at ? `<time slot="time" datetime="${escapeHtml(look.at)}">${escapeHtml(shortAgo(look.at))}</time>` : "";
+  const action = linked ? `<prism-button slot="action" size="sm" data-artifact="${escapeHtml(look.ref)}"${select}>${escapeHtml(look.action ?? "Open")}</prism-button>` : "";
+  return `<prism-row icon="${escapeHtml(look.icon)}" tone="${escapeHtml(look.tone)}">${title}${look.sub ? `<span slot="description">${look.sub}</span>` : ""}<prism-chip slot="kind" tone="${escapeHtml(look.chip[1])}">${escapeHtml(look.chip[0])}</prism-chip>${time}${action}</prism-row>`;
 }
 
 function bindSelection(container) {
@@ -600,7 +596,7 @@ function bindSelection(container) {
 function renderFiltered(container, filter, ctx) {
   filterLine(container, `${filter.label} · ${filter.items.length} of ${filter.total} ${filter.total === 1 ? "item" : "items"}`, ctx);
   container.innerHTML = filter.items.length
-    ? `<ul class="attention-rows" aria-label="${escapeHtml(filter.label)}">${filter.items.map((entry) => filteredItem(entry, ctx)).join("")}</ul>`
+    ? `<div class="prism-rows" role="list" aria-label="${escapeHtml(filter.label)}">${filter.items.map((entry) => filteredItem(entry, ctx)).join("")}</div>`
     : `<div class="attention-nothing">${emptyState("Nothing here waits on you", `No item of ${filter.label} needs you now.`)}</div>`;
   bindSelection(container);
   bindLinks(container, ctx);
@@ -613,12 +609,12 @@ function renderAnswered(container, answered, ctx) {
     container.innerHTML = `<div class="attention-nothing">${emptyState("Nothing answered this week", "No question was answered or closed in the last 7 days.")}</div>`;
     return;
   }
-  container.innerHTML = `<ul class="attention-rows" aria-label="Answered in the last 7 days">${answered.map((item) => {
+  container.innerHTML = `<div class="prism-rows" role="list" aria-label="Answered in the last 7 days">${answered.map((item) => {
     const place = [item.initiative ? artifactLink(`initiative:${item.initiative.id}`, ctx, item.initiative.title) : "", item.slice && item.initiative ? artifactLink(`slice:${item.initiative.id}/${item.slice.slug}`, ctx, item.slice.title) : ""].filter(Boolean).join(" · ");
     const outcome = item.answer ? given(item) : `${badge("Closed by the agent")}${item.reason ? ` <span>${escapeHtml(item.reason)}</span>` : ""}`;
     const tone = item.answer ? (item.answer.choice === "request-changes" ? "danger" : "success") : "neutral";
-    return `<li class="attention-row is-answered"><span class="prism-inbox-tile" data-tone="${tone}"><prism-icon name="${item.answer ? "check-circle" : "close"}" size="sm"></prism-icon></span><span class="attention-row-text"><span class="attention-row-title">${escapeHtml(item.question)}</span>${place ? `<span class="attention-row-sub">${place}</span>` : ""}<span class="attention-row-outcome">${outcome}</span></span><prism-chip class="attention-row-kind" tone="${item.answer ? "success" : "neutral"}">${item.answer ? "Answered" : "Closed"}</prism-chip><time class="attention-row-time" datetime="${escapeHtml(item.at ?? "")}">${escapeHtml(shortAgo(item.at))}</time><span class="attention-row-action"></span></li>`;
-  }).join("")}</ul>`;
+    return `<prism-row wrap icon="${item.answer ? "check-circle" : "close"}" tone="${tone}">${escapeHtml(item.question)}${place ? `<span slot="description">${place}</span>` : ""}<span slot="detail">${outcome}</span><prism-chip slot="kind" tone="${item.answer ? "success" : "neutral"}">${item.answer ? "Answered" : "Closed"}</prism-chip><time slot="time" datetime="${escapeHtml(item.at ?? "")}">${escapeHtml(shortAgo(item.at))}</time></prism-row>`;
+  }).join("")}</div>`;
   bindLinks(container, ctx);
 }
 

@@ -106,7 +106,7 @@ export function outline(side) {
   const middle = (element) => { const b = box(element); return b ? round(b.top + b.height / 2 - origin.top) : null; };
   const controls = "a, button, prism-button, [role=button]";
   const isCurrent = (element) => element.getAttribute("aria-current") === "page" || element.getAttribute("aria-pressed") === "true" || element.hasAttribute("pressed") || Boolean(element.shadowRoot && deep(element.shadowRoot).some((node) => node.getAttribute("aria-pressed") === "true"));
-  const hasCount = (element) => deepAll(element, ".rail-badge, .badge, .count, .nav-count, prism-badge").some((badge) => visible(badge) && text(badge) !== "");
+  const hasCount = (element) => deepAll(element, ".rail-badge, .badge, .count, .prism-group-count, prism-badge").some((badge) => visible(badge) && text(badge) !== "");
   const sidebarButtons = [...root.querySelectorAll(controls)].filter((element) => /^(Collapse|Expand) the sidebar/.test(nameOf(element)));
   const sidebarButton = sidebarButtons.find(visible) ?? null;
 
@@ -151,7 +151,7 @@ export function outline(side) {
   for (const element of sidebar ? deepAll(sidebar, `h3, [role=heading][aria-level="3"], ${side.row}`) : []) {
     if (!visible(element)) continue;
     if (!element.matches(side.row)) {
-      const label = [...element.childNodes].filter((node) => !(node.nodeType === 1 && node.matches(".count, .nav-count, .badge, prism-badge"))).map((node) => node.textContent).join(" ").replace(/\s+/g, " ").trim();
+      const label = [...element.childNodes].filter((node) => !(node.nodeType === 1 && node.matches(".count, .prism-group-count, .badge, prism-badge"))).map((node) => node.textContent).join(" ").replace(/\s+/g, " ").trim();
       group = { heading: label, count: hasCount(element), optional: element.hasAttribute("data-optional"), fixed: [], first: null };
       groups.push(group);
       continue;

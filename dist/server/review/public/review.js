@@ -1183,9 +1183,9 @@ function tree(label, items) {
 
 // A group of a place's sidebar starts with its name as a level 3 heading, and its count when it has one.
 function section(label, count = null) {
-  const heading = element("h3", "nav-section");
+  const heading = element("h3", "prism-group-heading");
   heading.append(element("span", "", label));
-  if (count !== null) heading.append(element("span", "nav-count", String(count)));
+  if (count !== null) heading.append(element("span", "prism-group-count", String(count)));
   return heading;
 }
 
@@ -1513,8 +1513,8 @@ function workNavigation({ scope }) {
   }
   if (!shown) parts.push(element("p", "nav-note", typed ? `No work matches "${typed}".` : "Nothing is designed and unshipped."));
   if (scope.kind === "initiative" && scope.valid === false && (navigation.places?.work?.groups ?? []).some((group) => group.initiatives.some((entry) => entry.id === scope.id))) parts.push(element("p", "nav-note", "The initiative record is invalid."));
-  const foot = element("p", "nav-foot");
-  const glyph = element("span", "nav-foot-glyph");
+  const foot = element("p", "prism-foot-note");
+  const glyph = element("span", "prism-foot-note-glyph");
   glyph.append(kitElement("prism-icon", { name: "clock", size: "xs" }));
   foot.append(glyph, element("span", "", "Shipped work moves to History. Emerging and unplanned items stay on the Roadmap."));
   parts.push(foot);

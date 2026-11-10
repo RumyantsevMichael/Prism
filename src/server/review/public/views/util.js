@@ -94,6 +94,33 @@ export function chip(html, { tone = "", meta = "", tip = "", attributes = "" } =
 }
 
 /** A kit empty state with its heading and an optional line below it. */
+/**
+ * A line under the page's title, a kit prism-page-sub: `html` is its text, which may name things in <b>,
+ * `glyph` the markup of a glyph that leads it, `end` the markup that ends it, such as a link, and `detail` a quieter line.
+ */
+export function pageSub(html, { glyph = "", end = "", detail = false } = {}) {
+  const slotted = (markup, slot) => markup.replace(/^<([a-z][\w-]*)/, `<$1 slot="${slot}"`);
+  return `<prism-page-sub${detail ? " detail" : ""}>${glyph ? slotted(glyph, "glyph") : ""}${html}${end ? slotted(end, "end") : ""}</prism-page-sub>`;
+}
+
+/**
+ * Puts `html`, one element of page-sub lines or nothing, under the title in the page head above `container`, in place of the lines an earlier draw put there,
+ * and binds its links; it answers false when the page has no head, so the caller can put the lines at the top of the page instead.
+ */
+export function setPageSub(container, html, ctx) {
+  const head = container.parentElement?.querySelector(".artifact-header > div:first-child");
+  if (!head) return false;
+  head.querySelector(":scope > [data-page-sub]")?.remove();
+  if (!html) return true;
+  const holder = document.createElement("div");
+  holder.innerHTML = html.trim();
+  const node = holder.firstElementChild;
+  node.setAttribute("data-page-sub", "");
+  head.append(node);
+  bindLinks(node, ctx);
+  return true;
+}
+
 export function emptyState(heading, text = "") {
   return `<prism-empty-state heading="${escapeHtml(heading)}">${text ? `<p>${escapeHtml(text)}</p>` : ""}</prism-empty-state>`;
 }

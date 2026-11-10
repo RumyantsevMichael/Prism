@@ -226,7 +226,7 @@
   min-width: 0;
 }
 
-.catalog-stage > :is(prism-tabs, prism-menu, prism-field, prism-choice, prism-panel, prism-tree, prism-listbox, prism-stepper, prism-banner, prism-empty-state, prism-meter, prism-doc, prism-code, prism-disclosure, prism-breadcrumbs, prism-claim[variant="strip"], .catalog-narrow) {
+.catalog-stage > :is(prism-tabs, prism-menu, prism-field, prism-choice, prism-panel, prism-tree, prism-listbox, prism-stepper, prism-banner, prism-empty-state, prism-meter, prism-doc, prism-code, prism-disclosure, prism-breadcrumbs, prism-claim[variant="strip"], prism-page-sub, prism-lib-table, .prism-rows, .prism-page-subs, .prism-group-heading, .prism-foot-note, .catalog-narrow) {
   flex: 1 1 100%;
   min-width: 0;
 }
@@ -237,6 +237,11 @@
 
 .catalog-narrow {
   max-width: 12rem;
+}
+
+/* The library table's specimens set the columns a page would. */
+.catalog-lib-columns {
+  --prism-lib-columns: minmax(0, 2fr) 120px 140px minmax(0, 1fr);
 }
 
 /* Design values */
