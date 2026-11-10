@@ -46,6 +46,27 @@ export const placeButton = (scope, name) => rail(scope).getByRole("button", { na
 export const sidebar = (page) => page.locator("#sidebar");
 export const drawer = (page) => page.getByRole("dialog", { name: "Navigation" });
 export const placeTitle = (scope) => scope.getByRole("heading", { level: 2 }).first();
+/**
+ * Reads `read` until it returns `expected`, or returns its last reading after `timeout` for the caller's assertion to report,
+ * so a test waits for a result that arrives from the server instead of reading the page after a fixed pause.
+ */
+export async function eventually(read, expected, { timeout = 10000 } = {}) {
+  const until = Date.now() + timeout;
+  for (;;) {
+    const value = await read();
+    if (JSON.stringify(value) === JSON.stringify(expected) || Date.now() > until) return value;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+/**
+ * The place the page names once it has loaded: the sidebar names no place until the review page knows the current one,
+ * so this waits for the place head's title instead of reading the page after a fixed pause.
+ */
+export async function shownPlace(page) {
+  await page.waitForFunction(() => Boolean(document.querySelector("#place-head .prism-place-head-title")?.textContent.trim()), null, { timeout: 15000 });
+  return (await placeTitle(sidebar(page)).innerText()).trim();
+}
 export const groupHeadings = async (scope) => (await scope.getByRole("heading", { level: 3 }).allInnerTexts()).map((text) => text.replace(/\s+\d+\s*$/, "").replace(/\s+/g, " ").trim());
 export const item = (scope, name) => scope.getByRole("treeitem", { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) }).first();
 /** The row of a tree item, its own link without its children, so a click lands on it even while it is expanded. */
