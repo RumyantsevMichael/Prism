@@ -7,6 +7,7 @@ import { checkout, eventually, isolateGit, notes, ok, remoteFile, server, synced
 // Store sync of an artifact that one machine moved, to another scope or by a removal and a write of similar text, while the other machine changed it.
 // A move to another scope takes the artifact's identity to the new location and leaves nothing at the old one, so the other machine's change merges into the moved artifact as if it had been made there;
 // a removal and a write of similar text create another artifact with another identity, so the old path keeps the upstream file and saves the local one, and no machine's bytes are lost.
+// A removal stands against every change of the other machine that left the bytes as they were, gives way only to an edit of them, and every removal or move that a sync undid is named.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 const { syncRecordStoreNow: syncRecordStore, takeSavedConflicts } = await import("../../dist/server/workflow/record-store-sync.mjs");
@@ -219,4 +220,46 @@ test("a saved version that a stopped sync never named is named by the next tool 
   assert.equal(notes(await onB.call("get_artifact", { path: "docs/plans" })), "", "the next result names it no more");
   const later = await server(context, place.b, await checkout(place.b, "admin"));
   assert.equal(notes(await later.call("get_artifact", { path: "docs/plans" })).includes(savedAs), false, "a server started later names it no more");
+});
+
+// A removal is undone only by an edit of the file's text that reached the store first, and a sync names each removal or move of this machine that it undid.
+const undone = async (store) => (await takeSavedConflicts()).filter((item) => item.store === store && (item.undoneRemoval || item.undoneMove)).map(({ undoneRemoval, undoneMove, movedTo }) => undoneRemoval ? { removal: undoneRemoval } : { move: undoneMove, movedTo });
+
+test("a local removal stands against an upstream move to another scope that left the text as it was, and nothing is saved or named as undone", async (context) => {
+  const { place, onA, onB, version } = await shared(context);
+  await moveScope(onA, version);
+  ok(await onB.call("update_artifact", { operations: [{ op: "remove", path: FILE, expectedVersion: version }] }));
+  assert.equal((await syncRecordStore(place.storeA)).state, "ok");
+  const merged = await syncRecordStore(place.storeB);
+  assert.equal(merged.state, "ok", merged.message);
+  assert.deepEqual(await files(path.join(place.storeB, "artifacts")), {}, "the removal stands");
+  assert.equal(remoteFile(place.remote, "artifacts/repositories/api/plans/foo/slice.md"), null, "and reaches the remote");
+  assert.deepEqual(await saved(place.storeB), {});
+  assert.deepEqual(await undone(place.storeB), []);
+});
+
+test("an upstream edit of the text undoes a local removal, and the removal is named once", async (context) => {
+  const { place, onA, onB, version } = await shared(context);
+  await edit(onA, version, "Line two.", "Line two from a.");
+  ok(await onB.call("update_artifact", { operations: [{ op: "remove", path: FILE, expectedVersion: version }] }));
+  assert.equal((await syncRecordStore(place.storeA)).state, "ok");
+  const merged = await syncRecordStore(place.storeB);
+  assert.equal(merged.state, "ok", merged.message);
+  assert.deepEqual(await files(path.join(place.storeB, "artifacts")), { "plans/foo/slice.md": BASE.replace("Line two.", "Line two from a.") }, "the edited file is back");
+  assert.ok(await text(path.join(place.storeB, IDENTITY)), "with its identity");
+  assert.deepEqual(await saved(place.storeB), {}, "and nothing is saved");
+  assert.deepEqual(await undone(place.storeB), [{ removal: "plans/foo/slice.md" }]);
+  assert.deepEqual(await undone(place.storeB), [], "a later read names it no more");
+});
+
+test("where both machines moved an artifact to different scopes it takes the upstream's, and this machine's move is named as undone", async (context) => {
+  const { place, onA, onB, version } = await shared(context);
+  await moveScope(onA, version);
+  await moveScope(onB, version);
+  assert.equal((await syncRecordStore(place.storeA)).state, "ok");
+  const merged = await syncRecordStore(place.storeB);
+  assert.equal(merged.state, "ok", merged.message);
+  assert.deepEqual(await files(path.join(place.storeB, "artifacts")), { "repositories/api/plans/foo/slice.md": BASE });
+  assert.ok(await text(path.join(place.storeB, MOVED_IDENTITY)), "the identity stays with it");
+  assert.deepEqual(await undone(place.storeB), [{ move: "repositories/api/plans/foo/slice.md", movedTo: "repositories/web/plans/foo/slice.md" }]);
 });

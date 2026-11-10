@@ -230,7 +230,9 @@ export async function readSavedConflict(base, savedAs) {
  * in stores this process uses, that this process has not reported before and that a sync saved since this process started or that no tool result has carried yet:
  * { record, savedAs, at } for a record, { store, location, savedAs, at } for an artifact, whose location is its path below artifacts/ in the store at store,
  * { store, statusOf, savedAs, at } for a status record and { store, commentOn, savedAs, at } for a comment, each naming the location of the artifact it belongs to,
- * and { store, file, savedAs, at } for any other file the store shares, such as its .gitattributes.
+ * and { store, file, savedAs, at } for any other file the store shares, such as its .gitattributes; an artifact, status record, or comment that holds another machine's change, which the merge took out where this machine's removal stood, also carries theirs true.
+ * Ahead of each stamp's copies come the local changes its merge undid and no copy names: { store, undoneRemoval, folder, at } for a removal that gave way, naming the location that holds the artifact again,
+ * and { store, undoneMove, movedTo, folder, at } for a move sent elsewhere, naming the location that keeps the artifact and the one this machine moved it to, with folder the store's conflicts folder.
  * A tool result that carries them confirms them with confirmSavedConflicts, which clears their pending notices.
  */
 export async function takeSavedConflicts() {
@@ -247,22 +249,38 @@ export async function takeSavedConflicts() {
       if (reported.has(key) || !(at >= PROCESS_START || pending.has(stamp))) continue;
       reported.add(key);
       const notice = pending.has(stamp) ? syncPath(base, NOTICES, stamp) : null;
+      const about = await readAbout(base, stamp);
+      const when = new Date(at).toISOString();
       const items = (await savedFiles(path.join(directory, stamp), (file) => isSavedFile(file) || shareable(file))).map((file) => {
         const savedAs = path.join(directory, stamp, ...file.split("/"));
-        const when = new Date(at).toISOString();
-        if (isArtifactFile(file)) return { store: base, location: file.slice(ARTIFACTS.length + 1), savedAs, at: when };
+        const whose = about.theirs.has(file) ? { theirs: true } : {};
+        if (isArtifactFile(file)) return { store: base, location: file.slice(ARTIFACTS.length + 1), savedAs, at: when, ...whose };
         if (isRecordFile(file)) return { record: `.prism/${file}`, savedAs, at: when };
         // A status record or comment is named by the artifact location it belongs to, so the result names the artifact's path and scope.
         const location = derivedLocation(file);
-        if (location !== null) return file.startsWith(`${ARTIFACT_STATUS}/`) ? { store: base, statusOf: location, savedAs, at: when } : { store: base, commentOn: location, savedAs, at: when };
+        if (location !== null) return file.startsWith(`${ARTIFACT_STATUS}/`) ? { store: base, statusOf: location, savedAs, at: when, ...whose } : { store: base, commentOn: location, savedAs, at: when, ...whose };
         return { store: base, file, savedAs, at: when };
       });
+      // The local changes that the stamp's merge undid come first, as the result names them first.
+      items.unshift(...about.undone.map((change) => ({ store: base, ...("removal" in change ? { undoneRemoval: change.removal } : { undoneMove: change.move, movedTo: change.movedTo }), folder: directory, at: when })));
       // A stamp that holds only claims and registrations, which other results report, has nothing to carry.
       if (notice && !items.length) await rm(notice, { force: true });
       for (const item of items) { if (notice) notices.set(item, notice); reportKeys.set(item, key); found.push(item); }
     }
   }
   return found;
+}
+
+// A location as the sync folder's own notes name one: a store path below artifacts/ that leads nowhere else.
+const noteLocation = (location) => typeof location === "string" && location.length > 0 && location.split("/").every((part) => part && part !== "." && part !== "..");
+const undoneForm = (change) => change !== null && typeof change === "object" && (noteLocation(change.removal) || (noteLocation(change.move) && noteLocation(change.movedTo)));
+
+// What a conflict stamp's copies are and which local changes its merge undid, from the note beside it, or nothing for a stamp without one or with a note of any other form.
+async function readAbout(base, stamp) {
+  const value = await readFile(aboutPath(base, stamp), "utf8").then(JSON.parse).catch(() => null);
+  const theirs = Array.isArray(value?.theirs) ? value.theirs.filter((file) => typeof file === "string") : [];
+  const undone = Array.isArray(value?.undone) ? value.undone.filter(undoneForm).map((change) => noteLocation(change.removal) ? { removal: change.removal } : { move: change.move, movedTo: change.movedTo }) : [];
+  return { theirs: new Set(theirs), undone };
 }
 
 // The pending notice of each saved version that takeSavedConflicts returned, and the key that marks its stamp reported.
@@ -1168,7 +1186,9 @@ async function merge(base, author, options, run) {
     const at = copies.findIndex(([candidate]) => candidate === file);
     if (at < 0) copies.push([file, entry]); else copies[at] = [file, entry];
   }
-  return replaceFiles(base, run, { from: head.text, to: commit, copies }, options);
+  // A saved copy of the upstream's change, which the merge took out where this machine's removal stood, is named as the other machine's change.
+  const theirsSaved = new Set(copies.filter(([file, entry]) => placed.theirs.has(file) && placed.saved.get(file) === entry).map(([file]) => file));
+  return replaceFiles(base, run, { from: head.text, to: commit, copies, theirs: theirsSaved, undone: placed.undone }, options);
 }
 
 /**
@@ -1176,11 +1196,13 @@ async function merge(base, author, options, run) {
  * { applied, conflicts }, where conflicts lists the saved versions, as a sync status names them, of the files the merge replaced.
  * copies lists [path, entry] for each local version to save, with entry null for a conflicted path where the local side holds no file.
  * run.heldBack maps each file whose local version the sync withheld to that version, which the replacement takes as the file's own bytes; a replaced one is withheld no more.
+ * theirs names the copied paths that hold the upstream's change rather than a local version, and undone lists the local changes that the target does not keep and no copy names,
+ * which the stage carries so that the next tool results name them once the branch moved.
  */
-async function replaceFiles(base, run, { from, to, copies }, options) {
+async function replaceFiles(base, run, { from, to, copies, theirs = new Set(), undone = [] }, options) {
   const held = run.heldBack ?? new Map();
-  if (!copies.length) return { applied: await apply(base, from, to, options, {}, held), conflicts: [] };
-  const stage = await stageLocal(base, copies, { from, to });
+  if (!copies.length && !undone.length) return { applied: await apply(base, from, to, options, {}, held), conflicts: [] };
+  const stage = await stageLocal(base, copies, { from, to, theirs, undone });
   const applied = await apply(base, from, to, options, { replacing: (file) => markReplaced(stage, file) }, held);
   if (applied) for (const [file, entry] of copies) if (entry && held.get(file) === entry) { held.delete(file); run.withheld?.delete(file); }
   return { applied, conflicts: await settleStage(base, stage, applied) };
@@ -1273,14 +1295,18 @@ async function placedEntry(base, role, entry, from, to) {
  * The shared entries of the merge base and both sides with every artifact's files, its bytes, its status record, and its comments, placed in each tree at the one location that the merge gives the artifact's identity,
  * so a path merge takes each change as if both sides had made it there: a file only one side changed takes that side's version, and one both changed merges by lines or keeps the upstream's.
  * The merge gives an identity the location at which both sides hold it, else the one to which one side moved it while the other kept it where the base held it,
- * else the upstream's where both moved it, else the one at which the only side that holds it holds it, unless that side holds it as the base did, so the other side's removal stands
- * and its files leave every tree, and every other location is left as the side that moved the artifact away or removed it left it.
- * Where two identities would take one location, it keeps the one the upstream holds there, over a local removal of it, which gives way so every upstream change to it merges in;
- * the other goes to where the upstream holds it, or, when the upstream holds it nowhere else, leaves the merge,
- * and each of its local files that the base does not hold alike and that differs from what the location keeps is saved.
+ * else the upstream's where both moved it, else, where only one side holds it, the one at which that side holds it, unless the other side's removal of it stands, so it takes none:
+ * the upstream's removal stands wherever this machine holds the artifact as the base did, and a change this machine made to it meets the removal at its location and is saved,
+ * while this machine's removal stands against every upstream change that left the artifact's bytes as the base held them, whose changed files are saved,
+ * and gives way only to an upstream edit of its bytes, after which this side holds it there as the base did, so every upstream change to it merges in.
+ * Every other location is left as the side that moved the artifact away or removed it left it.
+ * Where two identities would take one location, it keeps the one the upstream holds there; the other goes to where the upstream holds it,
+ * or, when the upstream holds it nowhere else, leaves the merge, and each of its local files that the base does not hold alike and that differs from what the location keeps is saved.
  * A file whose placed path would exceed the bounds of a store path is not placed: a side's version that the base does not hold alike is saved instead.
  * Identity files take no part in the path merge; placedIdentities gives back the one of each artifact the merge keeps.
- * Returns { original, local, upstream, saved, identities }, the trees as Map(path, entry), saved as Map(path, entry) of the files to save under their own paths, and what placedIdentities reads.
+ * Returns { original, local, upstream, saved, theirs, undone, identities }: the trees as Map(path, entry), saved as Map(path, entry) of the files to save under their own paths,
+ * theirs as the Set of saved paths that hold the upstream's change rather than this machine's, undone as the changes of this machine that the merge does not keep and that no saved copy names,
+ * { removal: location } for a removal that gave way and { move: location, movedTo } for a move to another location that the merge sent elsewhere, and what placedIdentities reads.
  */
 async function placeByIdentity(base, original, local, upstream) {
   const trees = { original, local, upstream };
@@ -1296,11 +1322,19 @@ async function placeByIdentity(base, original, local, upstream) {
     const [mine, was] = [groups[name].get(location), location === at("original", id) ? groups.original.get(location) : undefined];
     return Boolean(mine && was) && mine.size === was.size && [...mine].every(([role, [, entry]]) => sameEntry(was.get(role)?.[1], entry));
   };
+  // Whether a side changed an artifact's bytes from the base's, wherever it holds it; a change of its status record, its comments, or its location alone leaves them.
+  const editedBytes = (name, id) => groups[name].get(at(name, id))?.get("artifact")?.[1]?.object !== groups.original.get(at("original", id))?.get("artifact")?.[1]?.object;
   const final = new Map();
+  // The artifacts whose removal stands while the upstream changed something other than their bytes, and those whose local removal gave way to an upstream edit of their bytes.
+  const standing = new Set();
+  const gaveWay = new Set();
   for (const id of new Set([...identities.local.where.keys(), ...identities.upstream.where.keys()])) {
     const [was, ours, theirs] = ["original", "local", "upstream"].map((name) => at(name, id));
     if (ours !== null && theirs !== null) final.set(id, ours === theirs || ours === was ? theirs : theirs === was ? ours : theirs);
-    else if (!unchanged(ours !== null ? "local" : "upstream", id)) final.set(id, ours ?? theirs);
+    else if (ours !== null) { if (!unchanged("local", id)) final.set(id, ours); }
+    else if (was === null) final.set(id, theirs);
+    else if (editedBytes("upstream", id)) { final.set(id, theirs); gaveWay.add(id); }
+    else standing.add(id);
   }
   // Two identities meet at one location only where one side holds each there; the upstream's keeps it.
   const dropped = new Set();
@@ -1331,14 +1365,26 @@ async function placeByIdentity(base, original, local, upstream) {
     return found && from !== location ? placedEntry(base, role, found, from, location) : found;
   };
   const saved = new Map();
-  const save = (file, entry) => { if (!saved.has(file)) saved.set(file, entry); };
+  const theirs = new Set();
+  // The locations at which a local file of an artifact that left the merge is saved, whose saved copy also names a local removal that gave way there.
+  const savedAt = new Set();
+  const save = (file, entry, name, location) => {
+    if (saved.has(file)) return;
+    saved.set(file, entry);
+    if (name === "upstream") theirs.add(file); else savedAt.add(location);
+  };
   const later = [];
   for (const name of ["original", "local", "upstream"]) {
     for (const [location, group] of groups[name]) {
       const id = identities[name].ids.get(location);
       // A status record or comment whose location holds no artifact in this tree stays where it is, for the merge to save if no artifact is left there.
       if (id === undefined) { for (const [file, entry] of group.values()) if (!placed[name].has(file)) placed[name].set(file, entry); continue; }
-      // An artifact that the merge gives no location, which a side holds only as the base did while the other removed it, leaves every tree, so the removal stands and its location is left as the remover left it.
+      // An artifact whose local removal stands leaves every tree, so its location is left as this machine left it, and each file in which the upstream changed it is saved.
+      if (standing.has(id)) {
+        if (name === "upstream") for (const [role, [file, entry]] of group) if (!sameEntry(await baseFile(id, role, location), entry)) save(file, entry, name, location);
+        continue;
+      }
+      // An artifact that the merge gives no location, which this machine holds only as the base did while the upstream removed it, leaves every tree, so the removal stands and its location is left as the upstream left it.
       if (!final.has(id) && !dropped.has(id)) continue;
       const to = dropped.has(id) ? null : final.get(id);
       for (const [role, [file, entry]] of group) {
@@ -1351,24 +1397,33 @@ async function placeByIdentity(base, original, local, upstream) {
           const views = role === "artifact" && keeps && [await entryBytes(base, entry), await entryBytes(base, keeps)].every((bytes) => bytes?.includes(GENERATED_VIEW));
           if (sameEntry(keeps, entry) || views) continue;
         }
-        if (name === "local" || to !== null) save(file, entry);
+        if (name === "local" || to !== null) save(file, entry, name, location);
       }
     }
   }
   for (const [name, target, entry] of later) placed[name].set(target, entry);
-  // Where the location that two artifacts would take keeps the upstream's, a local removal of it gives way: this side then holds it there as the base did, so every change the upstream made to it merges in.
-  for (const [location, id] of contested) {
-    if (dropped.has(id) || final.get(id) !== location || at("local", id) !== null) continue;
-    const from = at("original", id);
-    for (const [role] of from === null ? [] : groups.original.get(from)) {
+  // A local removal that gave way to an upstream edit of the artifact's bytes: this side then holds it where the merge keeps it as the base did, so each of its files takes the upstream's version there.
+  // A path at which this side now holds a folder, or below a file it holds, stays as it is, so the merge settles that clash as it settles every other one, for the upstream's file.
+  const undone = [];
+  const clashes = (target) => folders(target).some((folder) => placed.local.has(folder)) || [...placed.local.keys()].some((file) => file.startsWith(`${target}/`));
+  for (const id of gaveWay) {
+    const location = final.get(id);
+    for (const [role] of groups.original.get(at("original", id))) {
       const target = rolePath(role, location);
       const entry = await baseFile(id, role, location);
-      if (entry && storePathFits(target) && !placed.local.has(target)) placed.local.set(target, entry);
+      if (entry && storePathFits(target) && !placed.local.has(target) && !clashes(target)) placed.local.set(target, entry);
     }
+    // A local file that left the merge at that location is saved, and its saved copy names the removal; any other removal that gave way is named on its own.
+    if (!savedAt.has(location)) undone.push({ removal: location });
+  }
+  // A local move that the merge did not keep, while it keeps the artifact at another location, as where both sides moved it or where the location it was moved to keeps the upstream's artifact.
+  for (const id of identities.local.where.keys()) {
+    const [was, ours] = [at("original", id), at("local", id)];
+    if (was !== null && ours !== was && final.has(id) && !dropped.has(id) && final.get(id) !== ours) undone.push({ move: final.get(id), movedTo: ours });
   }
   const kept = new Map();
   for (const [id, location] of final) if (!dropped.has(id)) kept.set(location, id);
-  return { ...placed, saved, identities: { trees: { local, upstream }, of: identities, kept } };
+  return { ...placed, saved, theirs, undone, identities: { trees: { local, upstream }, of: identities, kept } };
 }
 
 /**
@@ -1495,7 +1550,7 @@ function conflictCopies(local, upstream, conflicted) {
  * The stage's record names the commit the branch held and the target commit, and is written last, so a stage without one never held every copy and is dropped.
  * Each file the replacement is about to replace or remove is named in the stage's replaced record first, so a stage that a stopped sync left is settled for exactly the files it replaced.
  */
-async function stageLocal(base, copies, { from, to }) {
+async function stageLocal(base, copies, { from, to, theirs = new Set(), undone = [] }) {
   const folder = syncPath(base, "saving", `${Date.now()}-${process.pid}`);
   await rm(folder, { recursive: true, force: true });
   const conflicts = [];
@@ -1504,12 +1559,12 @@ async function stageLocal(base, copies, { from, to }) {
     const target = path.join(folder, "files", ...file.split("/"));
     await mkdir(path.dirname(target), { recursive: true });
     await writeAtomically(target, await entryBytes(base, entry));
-    conflicts.push({ path: file, saved: true });
+    conflicts.push({ path: file, saved: true, ...(theirs.has(file) ? { theirs: true } : {}) });
   }
   await mkdir(folder, { recursive: true });
   await writeAtomically(path.join(folder, REPLACED_RECORD), "[]\n");
-  await writeAtomically(path.join(folder, STAGE_RECORD), `${JSON.stringify({ from, to, conflicts })}\n`);
-  return { folder, from, to, conflicts, replaced: [] };
+  await writeAtomically(path.join(folder, STAGE_RECORD), `${JSON.stringify({ from, to, conflicts, undone })}\n`);
+  return { folder, from, to, conflicts, undone, replaced: [] };
 }
 
 const STAGE_RECORD = "stage.json";
@@ -1541,38 +1596,55 @@ async function settleStage(base, stage, moved) {
     const [now, copy] = await Promise.all([fileBytes(path.join(base, ...conflict.path.split("/"))), fileBytes(copyOf(conflict.path))]);
     if (copy !== null && !sameBytes(now, copy)) kept.push(conflict);
   }
-  if (!kept.length) return dropSaved(stage);
+  // The local changes that the merge undid are named only once the branch moved to it; otherwise the next merge finds them again.
+  const undone = moved ? stage.undone ?? [] : [];
+  if (!kept.length && !undone.length) return dropSaved(stage);
   for (const conflict of stage.conflicts) if (conflict.saved && !kept.includes(conflict)) await rm(copyOf(conflict.path), { force: true });
-  return publishSaved(base, { folder: stage.folder, conflicts: kept });
+  return publishSaved(base, { folder: stage.folder, conflicts: kept, undone });
 }
 
 /**
  * Move a folder of saved copies into the conflicts folder under a new conflict stamp, with a pending notice of that stamp written first,
  * so the next tool result of every Prism server that uses the store names them, whether the server ran when they were saved or started later: the stamp.
  */
-async function publishCopies(base, source) {
+async function publishCopies(base, source, about = null) {
   await mkdir(syncPath(base, "conflicts"), { recursive: true });
   await mkdir(syncPath(base, NOTICES), { recursive: true });
-  const taken = (name) => Promise.all([syncPath(base, "conflicts", name), syncPath(base, NOTICES, name)].map((target) => lstat(target).then(() => true, () => false))).then((found) => found.some(Boolean));
+  // A stage that saved no copy but names undone changes publishes an empty folder of copies, so its stamp is reported as every other one is.
+  await mkdir(source, { recursive: true });
+  const taken = (name) => Promise.all([syncPath(base, "conflicts", name), syncPath(base, NOTICES, name), aboutPath(base, name)].map((target) => lstat(target).then(() => true, () => false))).then((found) => found.some(Boolean));
   // Two saves within one millisecond take the next free stamp.
   for (let attempt = 0; ; attempt++) {
     const candidate = new Date(Date.now() + attempt).toISOString().replace(/[:.]/g, "-");
     if (await taken(candidate)) continue;
+    // What the copies are, and which changes the merge undid, is written before the stamp's copies appear, so no report of them goes without it.
+    if (about) {
+      await mkdir(syncPath(base, ABOUT), { recursive: true });
+      await writeAtomically(aboutPath(base, candidate), `${JSON.stringify(about)}\n`);
+    }
     await writeAtomically(syncPath(base, NOTICES, candidate), `${JSON.stringify({ at: new Date().toISOString() })}\n`);
     try { await rename(source, syncPath(base, "conflicts", candidate)); return candidate; }
     catch (error) {
       await rm(syncPath(base, NOTICES, candidate), { force: true });
+      await rm(aboutPath(base, candidate), { force: true });
       if (!["EEXIST", "ENOTEMPTY", "EPERM"].includes(error.code) || attempt >= 100) throw error;
     }
   }
 }
 
+// Beside each conflict stamp that needs it, the sync folder keeps what the stamp's copies are and which local changes its merge undid:
+// { theirs: [path], undone: [{ removal } | { move, movedTo }] }, with theirs naming the saved paths that hold another machine's change rather than this machine's.
+const ABOUT = "conflict-notes";
+const aboutPath = (base, stamp) => syncPath(base, ABOUT, `${stamp}.json`);
+
 /**
  * Move a stage's copies into the conflicts folder under a new conflict stamp, so every Prism server that uses the store, one started since the stage was made among them, reports them once:
  * the stage's conflicts as a sync status lists them, with savedAs relative to the store.
  */
-async function publishSaved(base, { folder, conflicts }) {
-  const stamp = conflicts.some((conflict) => conflict.saved) ? await publishCopies(base, path.join(folder, "files")) : null;
+async function publishSaved(base, { folder, conflicts, undone = [] }) {
+  const theirs = conflicts.filter((conflict) => conflict.saved && conflict.theirs).map((conflict) => conflict.path);
+  const about = theirs.length || undone.length ? { theirs, undone } : null;
+  const stamp = conflicts.some((conflict) => conflict.saved) || undone.length ? await publishCopies(base, path.join(folder, "files"), about) : null;
   await rm(folder, { recursive: true, force: true });
   return conflicts.map(({ path: file, saved }) => ({ path: file, savedAs: saved ? `${SYNC_DIRECTORY}/conflicts/${stamp}/${file}` : null }));
 }
@@ -1595,6 +1667,10 @@ async function recoverSaved(base) {
   for (const name of await readdir(syncPath(base, NOTICES)).catch(() => [])) {
     if (!(await lstat(syncPath(base, "conflicts", name)).then(() => true, () => false))) await rm(syncPath(base, NOTICES, name), { force: true });
   }
+  // A note about a stamp whose copies never appeared, as when a sync stopped before it moved them, is removed too.
+  for (const name of await readdir(syncPath(base, ABOUT)).catch(() => [])) {
+    if (!name.endsWith(".json") || !(await lstat(syncPath(base, "conflicts", name.slice(0, -".json".length))).then(() => true, () => false))) await rm(syncPath(base, ABOUT, name), { force: true });
+  }
   let names = [];
   try { names = (await readdir(syncPath(base, "saving"))).sort(); } catch { return []; }
   const conflicts = [];
@@ -1607,7 +1683,8 @@ async function recoverSaved(base) {
       continue;
     }
     // The record is the sync folder's own, and still names only paths a store shares, so no check of a stage reads outside the store.
-    const valid = Array.isArray(stage?.conflicts) && stage.conflicts.every((conflict) => typeof conflict?.path === "string" && (isSavedFile(conflict.path) || shareable(conflict.path)) && conflict.path.split("/").every((part) => part && part !== "." && part !== ".."));
+    const valid = Array.isArray(stage?.conflicts) && stage.conflicts.every((conflict) => typeof conflict?.path === "string" && (isSavedFile(conflict.path) || shareable(conflict.path)) && conflict.path.split("/").every((part) => part && part !== "." && part !== ".."))
+      && (stage.undone === undefined || (Array.isArray(stage.undone) && stage.undone.every(undoneForm)));
     const saved = valid ? stage.conflicts.filter((conflict) => conflict.saved) : [];
     if (!valid || (saved.length && !copies)) { await rm(folder, { recursive: true, force: true }); continue; }
     const moved = typeof stage.to === "string" && (await git(base, ["merge-base", "--is-ancestor", stage.to, "HEAD"])).ok;
@@ -1617,7 +1694,7 @@ async function recoverSaved(base) {
       replaced = [];
       for (const conflict of saved) if (!sameBytes(await fileBytes(path.join(base, ...conflict.path.split("/"))), await fileBytes(path.join(folder, "files", ...conflict.path.split("/"))))) replaced.push(conflict.path);
     }
-    conflicts.push(...await settleStage(base, { folder, conflicts: stage.conflicts, replaced: replaced.filter((file) => typeof file === "string") }, moved));
+    conflicts.push(...await settleStage(base, { folder, conflicts: stage.conflicts, undone: stage.undone ?? [], replaced: replaced.filter((file) => typeof file === "string") }, moved));
   }
   await rmdir(syncPath(base, "saving")).catch(() => {});
   return conflicts;

@@ -1194,6 +1194,13 @@ async function savedArtifactWhere(store, location, argumentsValue) {
   return named?.path ? `${named.path} in scope ${named.scope.label}` : `artifacts/${location} in the record store at ${store}${named ? `, scope ${named.scope.label}` : ""}`;
 }
 
+// A local move that a store sync sent elsewhere, named by the path and scope label that the store keeps the artifact at and the scope label this machine moved it to.
+async function undoneMoveLine(item, argumentsValue) {
+  const projectRoot = await requestedProjectRoot(argumentsValue ?? {}).catch(() => null);
+  const movedTo = projectRoot ? await artifactAtLocation(projectRoot, item.store, item.movedTo).catch(() => null) : null;
+  return `- ${await savedArtifactWhere(item.store, item.undoneMove, argumentsValue)}, which this machine moved to scope ${movedTo?.scope.label ?? `artifacts/${item.movedTo}`}`;
+}
+
 // Whether the store at storeBase holds an artifact at a location below artifacts/.
 const holdsArtifact = (storeBase, location) => readFile(path.join(storeBase, "artifacts", ...location.split("/"))).then(() => true, () => false);
 
@@ -1215,7 +1222,9 @@ const SAVED_FOLDER = `${path.sep}.prism-sync${path.sep}conflicts${path.sep}`;
 async function savedFilesNote(sections) {
   if (!sections.length) return [];
   const bytes = (line) => Buffer.byteLength(line, "utf8") + 1;
+  // A local change that a sync undid has no saved copy, so it names the store's sync folder for its saved copies as it is.
   const folders = [...new Set(sections.flatMap((section) => section.items).map((item) => {
+    if (!item.savedAs) return item.folder;
     const at = item.savedAs.lastIndexOf(SAVED_FOLDER);
     return at < 0 ? path.dirname(item.savedAs) : item.savedAs.slice(0, at + SAVED_FOLDER.length - 1);
   }))];
@@ -1298,12 +1307,26 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
   // The other notes are taken first, so the move's removals come as close as they can before the result is written.
   const taken = await takeSavedConflicts().catch(() => []);
   const saved = taken.filter((item) => item.record);
-  const artifacts = taken.filter((item) => item.location);
+  const removals = taken.filter((item) => item.undoneRemoval);
+  const moves = taken.filter((item) => item.undoneMove);
+  // Another machine's change that a sync took out where this machine's removal stood is named apart, since it is no change of this machine's.
+  const theirs = taken.filter((item) => item.theirs);
+  const artifacts = taken.filter((item) => item.location && !item.theirs);
   const files = taken.filter((item) => item.file);
   // A status record that changed on both sides keeps the upstream one while its artifact stays; one, or a comment, whose artifact the store no longer holds left the store.
   const derived = [];
-  for (const item of taken.filter((item) => item.statusOf || item.commentOn)) derived.push({ item, kept: Boolean(item.statusOf) && await holdsArtifact(item.store, item.statusOf) });
+  for (const item of taken.filter((item) => (item.statusOf || item.commentOn) && !item.theirs)) derived.push({ item, kept: Boolean(item.statusOf) && await holdsArtifact(item.store, item.statusOf) });
   const sections = [];
+  // The local removals and moves that a sync undid come first, since each is a deliberate change of this machine that the store no longer shows.
+  if (removals.length) {
+    sections.push({ header: `Store sync undid this machine's removal of ${plural(removals.length, "artifact")}, because another machine edited ${removals.length === 1 ? "its" : "their"} text, as approving a file does, before this machine's removal reached the store; the store holds ${removals.length === 1 ? "it" : "them"} again with the other machine's changes. Read each one again with get_artifact and remove it again with update_artifact if the removal still matters.`, items: removals, line: async (item) => `- ${await savedArtifactWhere(item.store, item.undoneRemoval, argumentsValue)}` });
+  }
+  if (moves.length) {
+    sections.push({ header: `Store sync undid this machine's move of ${plural(moves.length, "artifact")} to another scope, because another machine moved ${moves.length === 1 ? "it" : "them"} elsewhere, or kept its own file at the path this machine moved ${moves.length === 1 ? "it" : "them"} to, before this machine's move reached the store; the store keeps each in the first scope named below, with this machine's other changes to it. Read each one again with get_artifact and move it again with move_scope if the move still matters.`, items: moves, line: (item) => undoneMoveLine(item, argumentsValue) });
+  }
+  if (theirs.length) {
+    sections.push({ header: `Store sync saved ${plural(theirs.length, "change")} that another machine made to an artifact that this machine had removed, which left the file's text as it was, such as a comment or an approval asked; this machine's removal stands, so the store holds no such artifact, or holds the file that this machine wrote or moved to its path, and saved ${theirs.length === 1 ? "that change" : "those changes"} beside the store. Tell the person, and redo what still matters on an artifact the store holds.`, items: theirs, line: async (item) => `- ${item.location ? await savedArtifactWhere(item.store, item.location, argumentsValue) + ` (the other machine's version: ${item.savedAs})` : await savedDerivedLine(item, argumentsValue)}` });
+  }
   if (saved.length) {
     sections.push({ header: `Store sync found ${plural(saved.length, "record")} that someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each record again and redo the change through Prism's tools if it still matters.`, items: saved, line: async (item) => `- ${item.record} (this machine's version: ${item.savedAs})` });
   }

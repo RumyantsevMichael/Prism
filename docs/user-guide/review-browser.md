@@ -250,8 +250,8 @@ Agents read the comments with the file through `get_artifact`.
 A file's comments belong to it: when an agent moves the file to another scope its comments move with it, and when an agent removes the file its comments are removed with it, so a new file at the same path starts without them.
 A comment you are still typing stays in the form when the file moves to another scope, and Comment then sends it to the file in its new scope.
 A comment made on one machine while another machine moves the file follows the file once the two machines' stores have synced.
-A comment made on one machine while another machine removes the file leaves the store when they sync, also when that machine then writes or moves another file to the same path, is saved beside this machine's store, and is named with its line and text to the agent in its next Prism result, so nothing you wrote is lost and it never shows on the later file.
-When your comment reached the store first, and the other machine had removed the file and written another at its path, the file you commented on stays at the path with your comment, and the other machine's later file is saved and named to its agent instead.
+A comment made on one machine while another machine removes the file leaves the store when they sync, whichever machine synced first, also when that machine then writes or moves another file to the same path, which keeps the path.
+The comment is saved in the sync folder of the machine whose sync met the two changes and is named with its line and text to the agent in that machine's next Prism result, so nothing you wrote is lost and it never shows on the later file.
 The notes that name saved files hold at most 32 KiB in one result; when a sync saves more, the note counts the files it leaves out and names the store's `.prism-sync` folder, which holds every saved copy.
 The card and Recent changes on Attention take only comments and approvals in the form Prism writes them, so a damaged file that a sync brings shows nowhere, and Recent changes lists an entry dated more than five minutes ahead of this machine's clock only once that time comes.
 
