@@ -239,9 +239,17 @@
   max-width: 12rem;
 }
 
-/* The library table's specimens set the columns a page would. */
+/* The library table's specimens set the columns a page would; its default, grouped, and no-source specimens take the whole row, so a wide window shows the columns and the narrow specimens show the table reflowing on its own width. */
 .catalog-lib-columns {
   --prism-lib-columns: minmax(0, 2fr) 120px 140px minmax(0, 1fr);
+}
+
+.catalog-lib-pair {
+  --prism-lib-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+#entry-prism-lib-table .catalog-specimen:is([data-specimen="default"], [data-specimen="grouped"], [data-specimen="no-source"]) {
+  grid-column: 1 / -1;
 }
 
 /* Design values */

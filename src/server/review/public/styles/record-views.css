@@ -1318,40 +1318,7 @@ a.code-link:hover {
   --prism-lib-columns: minmax(0, 1fr) 120px;
 }
 
+.knowledge-table.is-slices,
 .diagram-list {
   --prism-lib-columns: minmax(0, 1fr) minmax(0, 1fr);
-}
-
-.knowledge-note {
-  margin: var(--prism-space-4) 0 0;
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-sm);
-}
-
-.knowledge-subhead {
-  margin: var(--prism-space-5) 0 var(--prism-space-3);
-  font-size: var(--prism-font-size-md);
-  font-weight: var(--prism-font-weight-semibold);
-}
-
-.knowledge-slices {
-  display: grid;
-  gap: var(--prism-space-3);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.knowledge-slices > li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--prism-space-1) var(--prism-space-4);
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.knowledge-owner {
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-sm);
 }

@@ -42,10 +42,11 @@ const inboxQuestion = `<prism-inbox-item value="question" icon="question" tone="
 const rowsOf = (rows) => `<div class="prism-rows" role="list" aria-label="Specimen rows">${rows}</div>`;
 const rowGate = `<prism-row icon="gate" tone="accent"><a href="#entry-prism-row">Retry timed-out requests until a total deadline</a><span slot="description">Harden request retries · Design gate</span><prism-chip slot="kind" tone="accent">Question</prism-chip><time slot="time" datetime="2026-11-10T09:58:00Z">now</time><prism-button slot="action" size="sm">Answer</prism-button></prism-row>`;
 
-// A library table with its head row, its rows of [title, icon, kind, third, fourth], and a group head.
-const libTable = (columns, body) => `<prism-lib-table class="catalog-lib-columns"><div class="prism-lib-row is-head" aria-hidden="true">${columns.map((column) => `<span>${html(column)}</span>`).join("")}</div>${body}</prism-lib-table>`;
+// A library table with its head row, its rows of [title, icon, kind, third, fourth], and a group head with or without its source.
+const libTable = (columns, body, columnsClass = "catalog-lib-columns") => `<prism-lib-table class="${columnsClass}"><div class="prism-lib-row is-head" aria-hidden="true">${columns.map((column) => `<span>${html(column)}</span>`).join("")}</div>${body}</prism-lib-table>`;
 const libRows = (rows, { plainThird = false } = {}) => rows.map(([title, icon, kind, third, fourth]) => `<div class="prism-lib-row"><span><span class="prism-lib-title"><prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon><a href="#entry-prism-lib-table">${title}</a></span></span><span class="prism-lib-cell">${kind}</span>${plainThird ? `<span>${third}</span>` : `<span class="prism-lib-cell">${third}</span>`}<span class="prism-lib-cell is-detail">${fourth}</span></div>`).join("");
-const libGroup = (label, count, source) => `<div class="prism-lib-group"><h4 class="prism-lib-group-name">${label} <prism-badge tone="neutral">${count}</prism-badge></h4><span class="prism-lib-group-source">${source}</span></div>`;
+const libGroup = (label, count, source = "") => `<div class="prism-lib-group"><h4 class="prism-lib-group-name">${label} <prism-badge tone="neutral">${count}</prism-badge></h4>${source ? `<span class="prism-lib-group-source">${source}</span>` : ""}</div>`;
+const libPairs = (rows) => rows.map(([title, icon, second]) => `<div class="prism-lib-row"><span><span class="prism-lib-title"><prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon><a href="#entry-prism-lib-table">${title}</a></span></span><span class="prism-lib-cell">${second}</span></div>`).join("");
 
 // A kit button that opens the dialog after it, through the catalog's data-opens wiring.
 function opener(caption, dialog) {
@@ -483,6 +484,7 @@ const third = 3;</code></pre></prism-code>`,
     default: libTable(["Title", "Kind", "Changed", "By"], libRows([["Retry requirements", "list", "Requirement", "2 h ago", "Ada Lovelace"], ["Bound retries by a total deadline", "scale", "Decision", "1 d ago", "Grace Hopper"]])),
     grouped: libTable(["Title", "Kind", "Status", "Why it is here"], `${libGroup("The contract cites", 2, "from the slice's design")}${libRows([["Retry requirements", "list", "Requirement", "<prism-chip tone=\"success\">Approved</prism-chip>", "Section 1"], ["Retry deadline", "book", "Glossary term", "<prism-chip>Defined</prism-chip>", "Clause 1"]], { plainThird: true })}`),
     "empty-group": libTable(["Title", "Kind", "Status", "Why it is here"], `${libGroup("This work changes", 0, "planned by the design or changed by the verified result")}<p class="prism-lib-nothing">Nothing yet.</p>`),
+    "no-source": libTable(["Slice", "Initiative"], `${libGroup("In progress", 2)}${libPairs([["Emit retry metrics", "branch", "Harden request retries"], [UNBROKEN, "branch", LONG]])}`, "catalog-lib-pair"),
     "many-items": libTable(["Title", "Kind", "Changed", "By"], libRows(Array.from({ length: 14 }, (_, index) => [index % 5 ? `Record ${index + 1}` : `${UNBROKEN}-${index + 1}`, "list", "Requirement", `${index + 1} h ago`, "Ada Lovelace"]))),
     "long-text": libTable(["Title", "Kind", "Status", "Why it is here"], `${libGroup(LONG, 1, LONG)}${libRows([[LONG, "list", LONG, LONG, LONG]])}`),
     "unbroken-name": libTable(["Title", "Kind", "Status", "Why it is here"], `${libGroup(UNBROKEN, 1, UNBROKEN)}${libRows([[UNBROKEN, "file", UNBROKEN, UNBROKEN, UNBROKEN]])}`)

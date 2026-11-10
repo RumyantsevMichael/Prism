@@ -36,5 +36,11 @@ test("the screens' sidebar headings, notes, flags, rows, tables, and page lines 
   assert.ok(!/<prism-badge[^>]*>Blocked</.test(catalog), "the catalog draws Blocked as the Work sidebar does");
   for (const name of [".prism-group-heading", ".prism-foot-note", "prism-row {", "prism-page-sub {", "prism-lib-table {", "prism-breadcrumbs[current-only"]) assert.ok(kit.includes(name), `kit.css styles ${name}`);
   const styles = (await Promise.all((await readdir(path.join(PUBLIC, "styles"))).map((name) => readFile(path.join(PUBLIC, "styles", name), "utf8")))).join("\n");
-  for (const name of [".nav-section", ".nav-foot", ".attention-row", ".knowledge-row", ".knowledge-lead", ".superseded-line", ".attention-filter"]) assert.ok(!styles.includes(name), `styles/ no longer draws ${name}`);
+  for (const name of [".nav-section", ".nav-foot", ".attention-row", ".knowledge-row", ".knowledge-lead", ".superseded-line", ".attention-filter", ".knowledge-subhead", ".knowledge-slices", ".knowledge-owner", ".knowledge-note"]) assert.ok(!styles.includes(name), `styles/ no longer draws ${name}`);
+});
+
+test("the library table reflows on its own width as well as on a phone-width window, so a narrow column of a wide window still reads", async () => {
+  const kit = await readFile(path.join(PUBLIC, "kit/kit.css"), "utf8");
+  assert.match(kit, /prism-lib-table \{[^}]*container: prism-lib-table \/ inline-size;/);
+  assert.match(kit, /@container prism-lib-table \(max-width: [^)]+\) \{\s*\.prism-lib-row \{\s*display: flex;/);
 });

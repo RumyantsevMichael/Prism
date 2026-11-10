@@ -1,5 +1,5 @@
 import { agoText, exactTime } from "../kit/claim-time.js";
-import { artifactLink, bindLinks, emptyState, escapeHtml, pageSub, plural, setPageSub } from "./util.js";
+import { artifactLink, bindLinks, emptyState, escapeHtml, pageSub, setPageSub } from "./util.js";
 
 // Knowledge's two entry points: Touched by my work, the records behind the open slice, and Changed this week, the records changed in the last 7 days.
 
@@ -39,8 +39,8 @@ function head(columns) {
   return `<div class="prism-lib-row is-head" aria-hidden="true">${columns.map((column) => `<span>${escapeHtml(column)}</span>`).join("")}</div>`;
 }
 
-function groupHead(label, count, source) {
-  return `<div class="prism-lib-group"><h2 class="prism-lib-group-name">${escapeHtml(label)} <prism-badge tone="neutral">${count}</prism-badge></h2><span class="prism-lib-group-source">${escapeHtml(source)}</span></div>`;
+function groupHead(label, count, source = "") {
+  return `<div class="prism-lib-group"><h2 class="prism-lib-group-name">${escapeHtml(label)} <prism-badge tone="neutral">${count}</prism-badge></h2>${source ? `<span class="prism-lib-group-source">${escapeHtml(source)}</span>` : ""}</div>`;
 }
 
 // A quiet cell holds a value in the table's smaller muted text, and a detail cell a still smaller one; a plain cell keeps its content's own look.
@@ -54,8 +54,9 @@ const table = (className, html) => `<prism-lib-table class="${className}">${html
  */
 export function renderTouched(answer, inProgress, ctx) {
   if (!answer) {
+    const rows = inProgress.map((entry) => `<div class="prism-lib-row">${plain(`<span class="prism-lib-title"><prism-icon class="prism-lib-kind" name="branch" size="sm" aria-hidden="true"></prism-icon>${artifactLink(`slice:${entry.initiative.id}/${entry.slice.slug}`, ctx, entry.slice.title)}</span>`)}${cell(escapeHtml(entry.initiative.title))}</div>`).join("");
     const slices = inProgress.length
-      ? `<h2 class="knowledge-subhead">In progress</h2><ul class="knowledge-slices">${inProgress.map((entry) => `<li>${artifactLink(`slice:${entry.initiative.id}/${entry.slice.slug}`, ctx, entry.slice.title)}<span class="knowledge-owner">${escapeHtml(entry.initiative.title)}</span></li>`).join("")}</ul>`
+      ? table("knowledge-table is-slices", `${head(["Slice", "Initiative"])}${groupHead("In progress", inProgress.length)}${rows}`)
       : emptyState("No slice is in progress.");
     return { sub: pageSub(escapeHtml(NO_SLICE)), body: slices };
   }
@@ -66,10 +67,11 @@ export function renderTouched(answer, inProgress, ctx) {
       : '<p class="prism-lib-nothing">Nothing yet.</p>';
     return `${groupHead(label, group.records.length, source)}${rows}`;
   }).join("");
-  const unreadable = answer.verifiedUnreadable ? '<p class="knowledge-note">The verified result could not be read.</p>' : "";
+  // A verified result that could not be read is said in a quieter line under the page's line.
+  const line = pageSub(`Records behind the slice you have open: <b>${escapeHtml(answer.initiative.title)}</b>, slice <b>${escapeHtml(answer.slice.title)}</b>`);
   return {
-    sub: pageSub(`Records behind the slice you have open: <b>${escapeHtml(answer.initiative.title)}</b>, slice <b>${escapeHtml(answer.slice.title)}</b>`),
-    body: `${table("knowledge-table", `${head(["Title", "Kind", "Status", "Why it is here"])}${groups}`)}${unreadable}`
+    sub: answer.verifiedUnreadable ? `<div class="prism-page-subs">${line}${pageSub("The verified result could not be read.", { detail: true })}</div>` : line,
+    body: table("knowledge-table", `${head(["Title", "Kind", "Status", "Why it is here"])}${groups}`)
   };
 }
 
@@ -83,7 +85,7 @@ function changedWhen(record) {
 export function renderChanged(data, ctx) {
   if (!data.available) {
     const undated = data.undated.length
-      ? `<h2 class="knowledge-subhead">${escapeHtml(plural(data.undated.length, "record"))} could not be dated</h2>${table("knowledge-table is-undated", `${head(["Title", "Kind"])}${data.undated.map((record) => `<div class="prism-lib-row">${plain(titleCell(record, ctx))}${cell(escapeHtml(kindText(record)))}</div>`).join("")}`)}`
+      ? table("knowledge-table is-undated", `${head(["Title", "Kind"])}${groupHead("Could not be dated", data.undated.length)}${data.undated.map((record) => `<div class="prism-lib-row">${plain(titleCell(record, ctx))}${cell(escapeHtml(kindText(record)))}</div>`).join("")}`)
       : "";
     return { sub: pageSub(escapeHtml(`Change history is unavailable: ${data.reason}.`)), body: undated };
   }

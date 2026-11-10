@@ -2422,8 +2422,9 @@ prism-code > pre > code {
 
 /* ---------- prism-lib-table: one bordered list of records with a head row, group heads, and rows ---------- */
 
-/* A page sets its columns with --prism-lib-columns on the table; a phone-width window keeps a record's title on its own line and the rest on the line below. */
+/* A page sets its columns with --prism-lib-columns on the table; a phone-width window, or a table narrower than its columns need, keeps a record's title on its own line and the rest on the line below. */
 prism-lib-table {
+  container: prism-lib-table / inline-size;
   display: block;
   min-width: 0;
   border: var(--prism-stroke) solid var(--prism-color-line);
@@ -2542,6 +2543,39 @@ prism-lib-table {
 }
 
 @media (max-width: 720px) {
+  .prism-lib-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--prism-space-1) var(--prism-space-4);
+    padding-top: var(--prism-space-3);
+    padding-bottom: var(--prism-space-3);
+  }
+
+  .prism-lib-row > :first-child {
+    flex: 1 0 100%;
+    min-width: 0;
+  }
+
+  .prism-lib-row.is-head {
+    display: none;
+  }
+
+  .prism-lib-row > .prism-lib-cell {
+    flex: 0 1 auto;
+  }
+
+  .prism-lib-group {
+    flex-wrap: wrap;
+  }
+
+  .prism-lib-group-source {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+}
+
+/* The same layout answers the table's own width, so a table in a narrow column of a wide window, such as a catalog stage, still reads; the app's pages are wider than this at every window wider than a phone. */
+@container prism-lib-table (max-width: 600px) {
   .prism-lib-row {
     display: flex;
     flex-wrap: wrap;
