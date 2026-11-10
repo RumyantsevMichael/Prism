@@ -164,12 +164,15 @@ async function folderFull(target) {
 // A listing stands while the folder's own stamp is unchanged, for at most a few seconds, and then each file is checked by its stamp, so only a new or changed file is read again;
 // a read of one page of comments then reads only that page's files, and the time order of the rest comes from the listing.
 const LISTING_TRUSTED_MS = 5000;
+// Attention lists only the newest comments of all folders, each read again before it is shown, so it takes an unchanged folder's listing for longer and checks each file's stamp less often.
+const ATTENTION_TRUSTED_MS = 60000;
 // A change within this long before a listing may share its stamp with a later one on a file system whose clock is coarse, so such a listing is never reused.
 const RACY_MS = 1000;
 // The listings kept: never fewer than the comment folders that the last read of Attention took, so its next read finds each folder's listing again.
 const LISTINGS_KEPT = 256;
 let listingsKept = LISTINGS_KEPT;
-const STAMPS_AT_ONCE = 64;
+// Few stamps at once, so a recheck of a large folder leaves room in the file thread pool for the person's own requests.
+const STAMPS_AT_ONCE = 16;
 const listings = new Map();
 // A read of a folder that another read is already making shares that read, so concurrent pages make one check of a folder rather than one each.
 const inFlight = new Map();
@@ -194,22 +197,22 @@ const racy = (info, now) => now - Number(info.mtimeMs) < RACY_MS || now - Number
  * The comments of one folder, oldest first, as { name, at, entry }, from the listing this process keeps of it; fresh reads every file again.
  * A missing folder, or a link or other entry in its place, holds none.
  */
-function commentOrder(target, location, { fresh = false } = {}) {
-  const key = `${fresh ? "fresh" : "kept"}\0${location}\0${target}`;
+function commentOrder(target, location, { fresh = false, trustedMs = LISTING_TRUSTED_MS } = {}) {
+  const key = `${fresh ? "fresh" : trustedMs}\0${location}\0${target}`;
   if (inFlight.has(key)) return inFlight.get(key);
-  const reading = readOrder(target, location, fresh).finally(() => inFlight.delete(key));
+  const reading = readOrder(target, location, fresh, trustedMs).finally(() => inFlight.delete(key));
   inFlight.set(key, reading);
   return reading;
 }
 
-async function readOrder(target, location, fresh) {
+async function readOrder(target, location, fresh, trustedMs) {
   // The folder's stamp is taken before its names are read, so a change during the read leaves a stamp that the next read finds changed.
   const folder = await lstatOrNull(target);
   if (!folder?.isDirectory()) { listings.delete(target); return []; }
   const stamp = stampOf(folder);
   const kept = listings.get(target)?.location === location ? listings.get(target) : null;
   const now = Date.now();
-  if (!fresh && kept?.stamp === stamp && !kept.racy && now - kept.checked < LISTING_TRUSTED_MS) return kept.order;
+  if (!fresh && kept?.stamp === stamp && !kept.racy && now - kept.checked < trustedMs) return kept.order;
   let listed;
   try { listed = await boundedNames(target); }
   catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return []; throw error; }
@@ -312,7 +315,7 @@ export async function addComment(seen, scope, address, { version, line, text, au
  * latest, when given, keeps only the newest that many comments of all the folders by time and then entry id, the order in which Recent changes lists them,
  * chosen from the folders' listings before any comment file is read, so a read costs the listings, kept between reads, and at most latest file reads.
  */
-export async function appliedComments(seen, now = Date.now(), { latest = Infinity, artifacts = [] } = {}) {
+export async function appliedComments(seen, now = Date.now(), { latest = Infinity, artifacts = [], resolve = (relative) => resolveStatusFile(seen, relative) } = {}) {
   // The listing of every folder this read takes stays kept for the next one, so no read evicts a listing that the same read or the next one needs.
   listingsKept = Math.max(LISTINGS_KEPT, artifacts.length + 64);
   const candidates = [];
@@ -320,9 +323,9 @@ export async function appliedComments(seen, now = Date.now(), { latest = Infinit
     const address = artifactAddress(seen.kinds, file);
     if (address === null) continue;
     const location = artifactLocation(scope, address);
-    const target = await resolveStatusFile(seen, `${ARTIFACT_COMMENTS}/${location}`).catch(() => null);
+    const target = await resolve(`${ARTIFACT_COMMENTS}/${location}`).catch(() => null);
     if (!target) continue;
-    for (const item of await commentOrder(target, location)) if (!aheadOfClock(item.at, now)) candidates.push({ item, target, location, file, scope });
+    for (const item of await commentOrder(target, location, { trustedMs: ATTENTION_TRUSTED_MS })) if (!aheadOfClock(item.at, now)) candidates.push({ item, target, location, file, scope });
   }
   const newest = latest < candidates.length ? candidates.sort((left, right) => byText(left.item.at, right.item.at) || byText(left.item.entry, right.item.entry)).slice(-latest) : candidates;
   const entries = [];

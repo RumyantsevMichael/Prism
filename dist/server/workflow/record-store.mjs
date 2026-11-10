@@ -1123,6 +1123,43 @@ export async function resolveStatusFile(seen, relative) {
   return target;
 }
 
+/**
+ * A resolver of store-relative paths below the status folders for one read of many artifacts, such as one Attention read: it makes the checks that resolveStatusFile makes,
+ * with each folder's link check and real path taken once for the resolver's life, so a read of a thousand artifacts checks each shared folder once rather than once for each artifact.
+ * It is meant for a single read, during which a folder that changes is read as it was at its first check.
+ */
+export function statusFileResolver(seen) {
+  const kinds = new Map(), reals = new Map();
+  const kindOf = (target) => {
+    if (!kinds.has(target)) kinds.set(target, lstat(target).then((info) => info.isSymbolicLink() ? "link" : "present", (error) => { if (["ENOENT", "ENOTDIR"].includes(error.code)) return "missing"; throw error; }));
+    return kinds.get(target);
+  };
+  const realOf = (target) => { if (!reals.has(target)) reals.set(target, realpath(target)); return reals.get(target); };
+  return async (relative) => {
+    const top = relative.split("/")[0];
+    if (![ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY].includes(top)) throw fail("invalid_path", "A status file lies outside the store's status folders.");
+    const folder = path.join(seen.store.base, top);
+    const target = path.join(seen.store.base, ...relative.split("/"));
+    if (!inside(folder, target) || target === folder) throw fail("invalid_path", "The status location resolves outside the store's status folders.");
+    let current = seen.store.base;
+    for (const part of path.relative(seen.store.base, target).split(path.sep)) {
+      current = path.join(current, part);
+      const kind = await kindOf(current);
+      if (kind === "missing") break;
+      if (kind === "link") throw fail("invalid_path", "An artifact location in the record store passes through a symbolic link, which Prism does not follow.");
+    }
+    for (let parent = path.dirname(target); ; parent = path.dirname(parent)) {
+      try {
+        if (!inside(seen.store.contain, await realOf(parent))) throw fail("invalid_path", "The record location resolves outside the record store.");
+        return target;
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+        if (path.dirname(parent) === parent) throw fail("invalid_path", "The record location cannot be resolved inside the record store.");
+      }
+    }
+  };
+}
+
 /** The file of a ledger name below artifact-migrations/ in a seen store, after the checks that resolveArtifactFile makes. */
 export async function resolveLedgerFile(seen, name) {
   if (!ARTIFACT_LEDGER_FILE.test(name)) throw fail("invalid_path", "An artifact ledger file has a time and a random suffix as its name.");

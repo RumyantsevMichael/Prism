@@ -8,7 +8,7 @@ import { assertInput } from "./artifact-schema.mjs";
 import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_NAME_FORM, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, IDENTITY_FILE_MAX, identityContent, identityOf, kindInScope, letterCaseKey, locationArtifact, locationIdentity, malformedArtifactName, newIdentity, normalizeArtifactPath, repositoryScope, uniqueIdentities, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
 import { acceptedLocation, answerApproval, askApproval, hasStatus, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion } from "./artifact-status.mjs";
 import { ComponentError, readComponents } from "./components.mjs";
-import { checkArtifactFolders, noteToolCallWrite, recordStoreOf, resolveArtifactFile, resolveStatusFile, seenScopes, withArtifactStoreLock } from "./record-store.mjs";
+import { checkArtifactFolders, noteToolCallWrite, recordStoreOf, resolveArtifactFile, resolveStatusFile, seenScopes, statusFileResolver, withArtifactStoreLock } from "./record-store.mjs";
 import { pruneArtifactFolders, scheduleRecordSync } from "./record-store-sync.mjs";
 import { artifactKinds, readWorkflowConfig } from "./workflow-config.mjs";
 import { parseStoreJson } from "./store-json.mjs";
@@ -141,13 +141,19 @@ const notRegular = () => fail("invalid_path", "An artifact in the record store m
  * Whether every name of a location below the artifacts folder equals the name of an entry of its folder exactly.
  * A case-insensitive file system, the default on macOS and Windows, opens a stored Plan.md for plan.md, so only a location whose names all match counts as found.
  */
-async function exactLocation(base, target) {
+// With memo, a Map that one read of many artifacts shares, each folder's names are read once for that read.
+async function exactLocation(base, target, memo = null) {
   let folder = base;
   for (const name of path.relative(base, target).split(path.sep)) {
     let names;
-    try { names = await readdir(folder); }
-    catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return false; throw error; }
-    if (!names.includes(name)) return false;
+    try {
+      if (memo === null) names = await readdir(folder);
+      else {
+        if (!memo.has(folder)) memo.set(folder, readdir(folder).then((listed) => new Set(listed)));
+        names = await memo.get(folder);
+      }
+    } catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return false; throw error; }
+    if (!names.includes?.(name) && !names.has?.(name)) return false;
     folder = path.join(folder, name);
   }
   return true;
@@ -158,7 +164,7 @@ async function exactLocation(base, target) {
  * or "under_file" when a folder above it is a file; a link or special file is refused with invalid_path.
  * With base, the artifacts folder, a location that some name matches only in letter case is "missing".
  */
-async function locationKind(target, base = null) {
+async function locationKind(target, base = null, memo = null) {
   let info;
   try { info = await lstat(target); }
   catch (error) {
@@ -166,7 +172,7 @@ async function locationKind(target, base = null) {
     if (error.code === "ENOTDIR") return "under_file";
     throw error;
   }
-  if (base !== null && !(await exactLocation(base, target))) return "missing";
+  if (base !== null && !(await exactLocation(base, target, memo))) return "missing";
   if (info.isSymbolicLink()) throw fail("invalid_path", "An artifact in the record store is a symbolic link, which Prism does not follow.");
   if (info.isDirectory()) return "folder";
   if (!info.isFile()) throw notRegular();
@@ -178,8 +184,8 @@ async function locationKind(target, base = null) {
  * The location is checked before it is opened, and opened without blocking, so a pipe never holds a read or the store's lock.
  * With base, the artifacts folder, a location that some name matches only in letter case holds no file; a listing's locations come from folder entries and need no base.
  */
-async function readStored(target, base = null) {
-  if ((await locationKind(target, base)) !== "file") return null;
+async function readStored(target, base = null, memo = null) {
+  if ((await locationKind(target, base, memo)) !== "file") return null;
   let handle;
   try { handle = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0)); }
   catch (error) {
@@ -290,10 +296,11 @@ async function holdings(seen, folder, given) {
 async function listing(seen, folder, given) {
   const found = await holdings(seen, folder, given);
   const artifacts = [];
+  const resolve = manyReads(seen);
   for (const entry of found.slice(0, LIST_MAX)) {
     const record = await readStored(entry.target);
     if (record === null) continue;
-    const status = hasStatus(entry.kind) ? { status: (await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path))).status } : {};
+    const status = hasStatus(entry.kind) ? { status: (await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path), resolve)).status } : {};
     artifacts.push({ path: entry.path, scope: entry.scope, kind: entry.kind, version: record.version, bytes: record.size, ...status });
   }
   return { artifacts, truncated: found.length > LIST_MAX };
@@ -317,8 +324,10 @@ const resolveAgain = (seen, target) => baseFor(seen, target) === seen.base
  * The status record of an artifact in a scope, or the record of an artifact that no gate changed yet when none is stored.
  * A location that holds no regular file, such as a link someone placed there, holds no record, so a read never follows it and never fails on it.
  */
-async function statusRecordOf(seen, scope, address) {
-  const held = await resolveStatusFile(seen, statusRecordLocation(scope, address)).then((target) => readStored(target, baseFor(seen, target))).catch(() => null);
+// A read of many artifacts passes one resolver from manyReads, so each shared folder is checked and listed once for all of them.
+const manyReads = (seen) => Object.assign(statusFileResolver(seen), { names: new Map() });
+async function statusRecordOf(seen, scope, address, resolve = (relative) => resolveStatusFile(seen, relative)) {
+  const held = await resolve(statusRecordLocation(scope, address)).then((target) => readStored(target, baseFor(seen, target), resolve.names ?? null)).catch(() => null);
   return parseRecord(address.kind, held?.bytes ?? null);
 }
 
@@ -1219,8 +1228,9 @@ export async function pendingApprovalGates(projectRoot) {
 
 async function seenPendingGates(seen) {
   const gates = [];
+  const resolve = manyReads(seen);
   for (const entry of await statusHoldings(seen)) {
-    const record = await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path));
+    const record = await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path), resolve);
     if (!record.pending.length) continue;
     const current = await readStored(entry.target).catch(() => null);
     for (const gate of record.pending) gates.push({ ...gate, artifact: { path: entry.path, scope: entry.scope }, recorded: record.status, current: current?.version ?? null, changed: current?.version !== gate.version });
@@ -1259,8 +1269,9 @@ export async function appliedArtifactActions(projectRoot, { latest = Infinity } 
     const listed = new Map();
     // An entry dated more than a few minutes after this machine's clock waits, so no file stays at the top of the list by a time to come.
     const now = Date.now();
+    const resolve = manyReads(seen);
     for (const entry of await statusHoldings(seen)) {
-      const record = await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path));
+      const record = await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path), resolve);
       for (const item of record.history) {
         const applied = appliedEntry(item);
         if (applied && !aheadOfClock(applied.at, now) && !listed.has(applied.id)) listed.set(applied.id, { ...applied, initiative: null, artifact: { path: entry.path, scope: entry.scope } });
@@ -1268,7 +1279,7 @@ export async function appliedArtifactActions(projectRoot, { latest = Infinity } 
     }
     // Only the comment folders of the artifacts that the checkout sees are read, so a folder at a location that holds no artifact costs nothing.
     const artifacts = (await holdings(seen, "", null)).map(({ path: file, scope }) => ({ path: file, scope }));
-    for (const comment of await appliedComments(seen, now, { latest, artifacts })) if (!listed.has(comment.id)) listed.set(comment.id, comment);
+    for (const comment of await appliedComments(seen, now, { latest, artifacts, resolve })) if (!listed.has(comment.id)) listed.set(comment.id, comment);
     return [...listed.values()];
   });
 }
@@ -1284,8 +1295,9 @@ export async function approvalGatesWithIds(projectRoot, ids) {
     const seen = await seenScopes(projectRoot);
     const gates = [];
     if (!wanted.size) return gates;
+    const resolve = manyReads(seen);
     for (const entry of await statusHoldings(seen)) {
-      const record = await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path));
+      const record = await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path), resolve);
       for (const gate of waitableGates(record)) if (wanted.has(gate.id)) gates.push({ artifact: { path: entry.path, scope: entry.scope }, gate: { ...gate, artifact: entry.path } });
     }
     return gates;
@@ -1300,8 +1312,9 @@ export async function storeArtifactStatuses(projectRoot, folder = "") {
     if (normalized === null) throw notAnArtifact(folder);
     const seen = await seenScopes(projectRoot);
     const statuses = [];
+    const resolve = manyReads(seen);
     for (const entry of await statusHoldings(seen)) {
-      if (below(normalized, entry.path)) statuses.push({ path: entry.path, scope: entry.scope, status: (await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path))).status });
+      if (below(normalized, entry.path)) statuses.push({ path: entry.path, scope: entry.scope, status: (await statusRecordOf(seen, entry.scope, artifactAddress(seen.kinds, entry.path), resolve)).status });
     }
     return statuses;
   });
