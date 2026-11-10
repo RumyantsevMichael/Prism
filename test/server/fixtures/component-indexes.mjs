@@ -62,6 +62,8 @@ export function fingerprint(entries) {
 /**
  * A NativeSemanticRuntime whose helper runs in this process: build makes one function unit per `export function`, and search reads that index back.
  * control.builds lists each build's files; control.hold(file) keeps every build that holds the file waiting until control.release(file);
+ * control.reached(file) settles once a build that holds the file has started waiting on its hold, so a test can observe a component while it prepares
+ * without depending on how long the builds queued before it take;
  * control.fail(file, code) makes every build that holds the file fail with that code; control.cosine[file] and control.lexical[file] score search results,
  * which each index orders by lexicalScore from highest to lowest and then by path.
  */
@@ -70,6 +72,11 @@ export async function fakeRuntime(storage) {
   const runtime = new NativeSemanticRuntime({ directory: storage, manifestPath });
   runtime.assets = async () => ({ runtime: "fake-runtime", modelDirectory: "fake-model", modelIdentity: "fake-model", assetIdentity: "fake-assets" });
   const holds = new Map();
+  const reached = new Map();
+  const arrival = (file) => {
+    if (!reached.has(file)) { let resolve; const promise = new Promise((done) => { resolve = done; }); reached.set(file, { promise, resolve }); }
+    return reached.get(file);
+  };
   const failures = new Map();
   const control = {
     builds: [],
@@ -78,13 +85,14 @@ export async function fakeRuntime(storage) {
     lexical: {},
     hold(file) { let release; const promise = new Promise((resolve) => { release = resolve; }); holds.set(file, { promise, release }); },
     release(file) { holds.get(file)?.release(); holds.delete(file); },
+    reached(file) { return arrival(file).promise; },
     fail(file, code) { failures.set(file, code); },
     recover(file) { failures.delete(file); }
   };
   const build = async (args) => {
     const files = args.files.map((file) => file.file).sort();
     control.builds.push({ files, previousEmbeddings: Object.keys(args.previousEmbeddings || {}).sort() });
-    for (const file of files) if (holds.has(file)) await holds.get(file).promise;
+    for (const file of files) if (holds.has(file)) { arrival(file).resolve(); await holds.get(file).promise; }
     for (const file of files) if (failures.has(file)) {
       const code = failures.get(file);
       throw Object.assign(new Error(code === "resource_limit" ? "Native preparation exceeded its 30 minute operation limit." : "The native helper exited before completing its request."), { code });

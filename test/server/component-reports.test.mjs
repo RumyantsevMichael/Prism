@@ -56,6 +56,9 @@ test("clause 12: a report while a component prepares names the component it left
   const { root, storage } = await project(t, { files: REPORT_FILES });
   const { runtime, control } = await fakeRuntime(storage);
   control.hold("packages/app/is.ts");
+  // The report is read once app's build has started, so the net build before it cannot still be finishing when the call's bound ends.
+  await prepareNativeProvider(root, options(runtime, 0));
+  await control.reached("packages/app/is.ts");
   const found = await findSameNameUnits({ projectRoot: root }, options(runtime, 300));
   assert.equal(found.status, "partial");
   assert.deepEqual(found.groups, []);
