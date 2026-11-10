@@ -1,5 +1,8 @@
 # The Attention place
 
+> Shipped history: initiative `review-app-places` shipped on 2026-11-10, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 Attention filters by kind and by initiative, lists failed verifications, and shows what was answered this week.
 
 ## Changes
