@@ -1,0 +1,14 @@
+@startuml
+title code-clones: units and dependencies
+component "code-clones.mjs\nenableCode, codeTree, codeFile, codeComponents" as clones
+component "review-app-server.mjs\nPUT code switch" as app
+component "workspace-sync.mjs\nfetch code clones" as sync
+component "review-server.mjs\ncode routes, repositories" as review
+component "code.js\ncode pages with branch labels" as page
+component "components.mjs\nparse a branch's declaration" as components
+app ..> clones
+sync ..> clones
+review ..> clones
+clones ..> components
+page ..> review
+@enduml

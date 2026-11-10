@@ -1,0 +1,8 @@
+@startuml
+title store-identity: units and dependencies
+component "remote-url.mjs\nstoreIdentity, managedStoreId, legacyStoreId" as url
+component "record-store-remote.mjs\nclone folder and 0.20 rename" as remote
+component "machine-checkouts.mjs\ncheckout list" as checkouts
+remote ..> url
+checkouts ..> url
+@enduml

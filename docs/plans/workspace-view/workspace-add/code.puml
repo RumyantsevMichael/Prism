@@ -1,0 +1,14 @@
+@startuml
+title workspace-add: units and dependencies
+component "added-workspaces.mjs\naddWorkspace, removeWorkspace" as added
+component "record-store-remote.mjs\nclone without a checkout" as remote
+component "remote-url.mjs\ncredentialsIn" as url
+component "review-app-server.mjs\nPOST and DELETE /api/workspaces" as app
+component "workspaces.mjs\nadded entries" as workspaces
+component "review.js\nAdd and Remove workspace forms" as page
+app ..> added
+added ..> remote
+added ..> url
+workspaces ..> added
+page ..> app
+@enduml

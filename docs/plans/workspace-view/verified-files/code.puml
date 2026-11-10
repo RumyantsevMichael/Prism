@@ -1,0 +1,8 @@
+@startuml
+title verified-files: units and dependencies
+component "verification.mjs\nrun files and host" as verification
+component "git-objects.mjs\nchangedBlobs" as objects
+component "roadmap.mjs\nship slices and noShipCommit" as roadmap
+verification ..> objects
+roadmap ..> verification
+@enduml
