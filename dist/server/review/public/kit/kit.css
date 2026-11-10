@@ -1485,7 +1485,10 @@ prism-field[variant="bare"] > .prism-field-control {
   font-size: var(--prism-font-size-lg);
 }
 
-prism-field[variant="bare"] > .prism-field-control::-webkit-search-cancel-button {
+/* Bare and filter fields draw no native search clear button or decoration; Escape clears them instead. */
+prism-field:is([variant="bare"], [variant="filter"]) > .prism-field-control::-webkit-search-cancel-button,
+prism-field:is([variant="bare"], [variant="filter"]) > .prism-field-control::-webkit-search-decoration {
+  appearance: none;
   display: none;
 }
 
