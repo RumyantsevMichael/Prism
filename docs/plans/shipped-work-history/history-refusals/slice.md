@@ -1,5 +1,8 @@
 # Refuse changes to shipped history
 
+> Shipped history: initiative `shipped-work-history` shipped on 2026-11-10, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 Every Prism tool refuses to change a shipped initiative's state and keeps its records.

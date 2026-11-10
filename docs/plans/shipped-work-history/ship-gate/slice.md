@@ -1,5 +1,8 @@
 # Ship only finished work and keep its roadmap entry
 
+> Shipped history: initiative `shipped-work-history` shipped on 2026-11-10, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 Ship refuses open work, a ready-to-ship report says why not, and a shipped roadmap entry keeps its content.

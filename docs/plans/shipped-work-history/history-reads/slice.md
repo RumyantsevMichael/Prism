@@ -1,5 +1,8 @@
 # Read shipped work as history
 
+> Shipped history: initiative `shipped-work-history` shipped on 2026-11-10, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 Ship marks slice documents as history, and every read of a shipped initiative, also one shipped earlier, says it is history, when it shipped, and which slice documents changed after ship.

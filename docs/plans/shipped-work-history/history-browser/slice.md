@@ -1,5 +1,8 @@
 # Label shipped history in the review browser
 
+> Shipped history: initiative `shipped-work-history` shipped on 2026-11-10, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 The review browser labels a shipped initiative, its slices, and its slice documents as history, names a document changed after ship, and shows every action on them as unavailable.

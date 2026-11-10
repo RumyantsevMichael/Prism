@@ -1,5 +1,8 @@
 # Run workflow sessions over shipped history and fixes
 
+> Shipped history: initiative `shipped-work-history` shipped on 2026-11-10, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 Workflow sessions route defects to the right initiative, treat shipped material as history, and run fixes, and the common terms, ADRs, and user guide say so.
