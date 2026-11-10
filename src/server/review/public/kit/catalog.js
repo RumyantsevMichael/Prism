@@ -228,6 +228,12 @@ const SPECIMENS = {
     "long-text": choiceOf(`<prism-choice-option value="a">${LONG}</prism-choice-option>`),
     "unbroken-name": choiceOf(`<prism-choice-option value="a">${UNBROKEN}</prism-choice-option>`)
   },
+  "prism-segmented": {
+    default: `<prism-segmented label="View"><span value="board">Board</span><span value="list">List</span><span value="graph">Graph</span></prism-segmented>`,
+    chosen: `<prism-segmented label="View" value="list"><span value="board">Board</span><span value="list">List</span><span value="graph">Graph</span></prism-segmented>`,
+    "long-text": `<div class="catalog-narrow"><prism-segmented label="${LONG}" value="a"><span value="a">${LONG}</span><span value="b">${LONG}</span></prism-segmented></div>`,
+    "unbroken-name": `<div class="catalog-narrow"><prism-segmented label="Unbroken" value="u"><span value="u">${UNBROKEN}</span><span value="v">List</span></prism-segmented></div>`
+  },
   "prism-stat": {
     default: `<prism-stat label="Open findings" value="3" hint="2 high"></prism-stat>`,
     tone: `<prism-stat label="Failing tests" value="12" tone="danger"></prism-stat><prism-stat label="Passing" value="48" tone="success"></prism-stat>`,

@@ -20,7 +20,8 @@ import { DENSITIES, savePreferences, THEMES } from "./kit/preferences.js";
 import { shownActionEntries } from "./views/actions.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
 import { currentPhase } from "./views/slice.js";
-import { messageHtml } from "./views/util.js";
+import { messageHtml, shortDate } from "./views/util.js";
+import { LANES, laneHeading, ROADMAP_VIEWS } from "./views/roadmap.js";
 import { createPoller, deadline, POLL_DEADLINE_MS } from "./views/poller.js";
 import { createEventRelay } from "./views/event-relay.js";
 
@@ -294,8 +295,9 @@ function updateLocation(path, push = false) {
   } else {
     url.searchParams.delete("artifact");
   }
-  // A place= address chose the place when the page loaded; the place is stored, so the address leaves it out from then on.
+  // A place= address chose the place when the page loaded; the place is stored, so the address leaves it out from then on, as it does a lane= address once its lane showed.
   url.searchParams.delete("place");
+  url.searchParams.delete("lane");
   if (push) {
     pages.index += 1;
     pages.top = pages.index;
@@ -411,7 +413,7 @@ tabStrip.addEventListener("prism-tab-close", (event) => closeTab(event.detail?.v
 
 // Opening a page shows it in a tab and pushes it onto the browser history, so Back, Forward, and the browser's own buttons move through the same pages.
 // An ordinary open replaces the preview tab; `keep` opens a kept tab instead, or keeps the preview, and a new tab goes right after the selected one.
-function openRef(path, { keep = false, fromHistory = false, keepDrawer = false } = {}) {
+function openRef(path, { keep = false, fromHistory = false, keepDrawer = false, closeDrawerWhenShown = false } = {}) {
   if (!path || !requireApp()) {
     return;
   }
@@ -438,7 +440,12 @@ function openRef(path, { keep = false, fromHistory = false, keepDrawer = false }
   setBusy(true);
   renderTabs();
   renderNavigation();
-  void showArtifact(path);
+  const shown = showArtifact(path);
+  if (closeDrawerWhenShown) {
+    void shown.finally(() => {
+      if (selectedPath === path && navDrawer.isOpen) navDrawer.close();
+    });
+  }
   void saveSession().catch((error) => showToast(error.message));
 }
 
@@ -1348,6 +1355,15 @@ function storePlace(name) {
   }
 }
 
+// The view the Roadmap page shows, which only the Roadmap place's sidebar switches, and a lane whose heading the next drawn board scrolls into view.
+let roadmapView = "board";
+let pendingLane = null;
+{
+  const address = new URLSearchParams(location.search);
+  const lane = address.get("lane");
+  if (address.get("artifact") === "roadmap" && LANES.some(([name]) => name === lane)) pendingLane = { path: "roadmap", lane };
+}
+
 const addressedPlace = new URLSearchParams(location.search).get("place");
 let currentPlace = placeNamed(addressedPlace) ? addressedPlace : readStoredPlace() ?? DEFAULT_PLACE;
 if (placeNamed(addressedPlace)) storePlace(addressedPlace);
@@ -1363,8 +1379,9 @@ function choosePlace(name, { fromRail = false, keep = false } = {}) {
   currentPlace = name;
   storePlace(name);
   renderNavigation();
-  // Roadmap opens its page as its sidebar entry would, in a kept tab from a Ctrl or Cmd click, and the drawer stays open, as it does for every place.
-  if (fromRail && name === "roadmap") openRef("roadmap", { keep, keepDrawer: true });
+  // Roadmap opens its page as a sidebar link would, in a kept tab from a Ctrl or Cmd click; in the drawer the place shows first,
+  // and the drawer closes once the page has opened, as it does after any page chosen in it.
+  if (fromRail && name === "roadmap") openRef("roadmap", { keep, keepDrawer: true, closeDrawerWhenShown: true });
 }
 
 // The rail's place buttons, in the order of PLACES; the Attention button counts the recorded questions that wait for an answer.
@@ -1503,9 +1520,57 @@ function workNavigation({ scope }) {
   return parts;
 }
 
-// The Roadmap place shows its page as current on the rail and in its head, so its one entry leads to the page without a selected row.
+// The Roadmap place's view switch stays one element across renders, so the arrow keys keep their focus on it while the sidebar redraws.
+let roadmapViewSwitch = null;
+const LANE_VALUE = "roadmap-lane:";
+
+function roadmapViews() {
+  if (!roadmapViewSwitch) {
+    roadmapViewSwitch = kitElement("prism-segmented", { label: "View", class: "nav-views" });
+    roadmapViewSwitch.append(...ROADMAP_VIEWS.map(([value, label]) => kitElement("span", { value }, label)));
+    roadmapViewSwitch.addEventListener("change", (event) => {
+      event.stopPropagation();
+      showRoadmapView(event.detail?.value);
+    });
+  }
+  roadmapViewSwitch.setAttribute("value", roadmapView);
+  return roadmapViewSwitch;
+}
+
+// Switching the view redraws the Roadmap page in it, and opens the page when another one shows, keeping the drawer open as a place's choice does.
+function showRoadmapView(view) {
+  if (!ROADMAP_VIEWS.some(([name]) => name === view)) return;
+  roadmapView = view;
+  renderNavigation();
+  openRef("roadmap", { keepDrawer: true });
+}
+
+// A lane link opens the Roadmap's board with that lane's heading in view, and scrolls to it again while the board shows.
+function showLane(lane, { keep = false } = {}) {
+  if (!LANES.some(([name]) => name === lane)) return;
+  roadmapView = "board";
+  pendingLane = { path: "roadmap", lane };
+  openRef("roadmap", { keep });
+}
+
+function revealLane() {
+  const heading = laneHeading(artifact, pendingLane.lane);
+  pendingLane = null;
+  if (!heading) return;
+  workspace.scrollTop += heading.getBoundingClientRect().top - workspace.getBoundingClientRect().top - 16;
+}
+
+/**
+ * Roadmap: the choice of the page's view, Board, List, or Graph, marked with the view the page shows, then one entry per lane with its open initiatives;
+ * a lane entry is a link to the board at that lane.
+ */
 function roadmapNavigation() {
-  return [tree("Roadmap", [treeItem("roadmap", "Roadmap", { start: [navIcon("roadmap")] })])];
+  const open = (navigation.initiatives ?? []).filter((item) => item.band && item.state !== "shipped" && item.state !== "superseded" && item.state !== "unlisted");
+  const lanes = LANES.map(([lane, band]) => {
+    const count = open.filter((item) => item.band === band).length;
+    return treeItem(`${LANE_VALUE}${lane}`, band, { start: [navIcon("roadmap")], end: [meta(String(count))], tip: `${band} · ${count} open ${count === 1 ? "initiative" : "initiatives"}`, href: `./review?artifact=roadmap&lane=${lane}` });
+  });
+  return [section("View"), roadmapViews(), section("Lanes"), tree("Lanes", lanes)];
 }
 
 function knowledgeNavigation() {
@@ -1519,14 +1584,26 @@ function knowledgeNavigation() {
   ])];
 }
 
-// The initiatives with a shipped or superseded decision, each leading to its page.
+/**
+ * History: every initiative with a shipped or superseded decision, newest decision first, each leading to its page with the decision's date;
+ * a superseded one carries a muted mark, and its tooltip names what superseded it.
+ */
 function historyNavigation() {
-  const settled = (navigation.initiatives ?? []).filter((item) => item.place === "history");
+  const settled = navigation.places?.history ?? [];
   if (!settled.length) return [element("p", "nav-note", "Nothing has shipped yet.")];
-  return [tree("History", settled.map((item) => {
-    const ref = `initiative:${item.id}`;
-    const stateWord = STATE_WORDS[item.state] ?? item.state;
-    return treeItem(ref, item.title, { selected: selectedPath === ref, start: [kitElement("prism-state", { state: item.state, label: stateWord })], tip: `${item.title} · ${stateWord}` });
+  const titles = new Map((navigation.initiatives ?? []).map((item) => [item.id, item.title]));
+  return [tree("History", settled.map((entry) => {
+    const ref = `initiative:${entry.id}`;
+    const date = shortDate(entry.at);
+    const superseded = entry.decision === "superseded";
+    const end = [];
+    if (superseded) end.push(element("span", "prism-tree-flag is-muted", "Superseded"));
+    if (date) end.push(meta(date));
+    const by = superseded && entry.by ? ` by ${titles.get(entry.by) ?? entry.by}` : "";
+    const tip = `${entry.title} · ${superseded ? "Superseded" : "Shipped"}${date ? ` ${date}` : ""}${by}`;
+    // The glyph names the state only for shipped work, since the Superseded mark already says it.
+    const glyph = kitElement("prism-state", { state: superseded ? "superseded" : "shipped", label: superseded ? null : "Shipped", "aria-hidden": superseded ? "true" : null });
+    return treeItem(ref, entry.title, { selected: selectedPath === ref, start: [glyph], end, tip });
   }))];
 }
 
@@ -1541,7 +1618,7 @@ function renderNavigation() {
   for (const rail of [shellRail, drawerRail]) renderRail(rail, attention.gates ?? 0);
   const entity = Boolean(parseEntityRef(selectedPath ?? ""));
   const claims = claimIndex ? [...claimIndex.live(), ...claimIndex.expired()].map((claim) => [claim.ref, claim.expiresAt, claim.label]) : [];
-  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", attentionMoreOpen]);
+  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", attentionMoreOpen, roadmapView]);
   if (key === navigationKey) return;
   navigationKey = key;
   const focused = document.activeElement?.closest?.("prism-tree-item");
@@ -1721,6 +1798,7 @@ function endRebuild(memory) {
     scrollToAnchor(pendingAnchor.anchor);
     pendingAnchor = null;
   }
+  if (pendingLane?.path === memory.path) revealLane();
   if (pendingFind?.path === memory.path) {
     if (!highlightText(pendingFind.text)) showToast("The match is not visible in this view; try the Raw view.");
     pendingFind = null;
@@ -1924,6 +2002,9 @@ function viewContext(path, state) {
   return {
     path,
     state,
+    // The Roadmap page's view as its place's sidebar chose it, and the lane a lane link asks it to show.
+    roadmapView,
+    lane: pendingLane?.path === path ? pendingLane.lane : null,
     escapeHtml,
     showToast,
     fetchArtifact: (artifactPath) => fetchJson(`./api/artifact?path=${encodeURIComponent(artifactPath)}`),
@@ -2272,6 +2353,7 @@ async function initialize() {
   navRoot.addEventListener("prism-select", (event) => {
     const ref = event.detail?.value;
     if (ref && Object.hasOwn(NAVIGATION_ACTIONS, ref)) NAVIGATION_ACTIONS[ref]();
+    else if (ref?.startsWith(LANE_VALUE)) showLane(ref.slice(LANE_VALUE.length), { keep: navKeep });
     else if (ref) openRef(ref, { keep: navKeep });
     navKeep = false;
   });

@@ -1302,3 +1302,44 @@ a.code-link:hover {
   color: var(--prism-color-warning);
   font-weight: var(--prism-font-weight-bold);
 }
+
+/* ---------- A superseded initiative's page names, below its title, what superseded it and why ---------- */
+
+.superseded-note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  max-width: var(--prism-measure);
+  margin: 0 0 var(--prism-space-2);
+}
+
+.superseded-line {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-md);
+  overflow-wrap: anywhere;
+}
+
+.superseded-line > span {
+  min-width: 0;
+}
+
+.superseded-reason {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.superseded-by {
+  text-decoration: none;
+}
+
+.superseded-by:hover {
+  text-decoration: underline;
+}

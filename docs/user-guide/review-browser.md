@@ -42,9 +42,11 @@ The rail at the left edge switches between five places, and the sidebar beside i
 Its sidebar lists **Everything**, then under **By kind** **Questions**, **Review findings**, **Failed verifications**, **Blocked work**, **Ready to ship**, and **Problems**, each with its count, also at 0, then under **By work** the three initiatives with the most items and a row such as `2 more` that shows the rest below it, and under **Answered** **Answered in the last 7 days**.
 **Work** lists each initiative that has an initiative record and is neither shipped nor superseded, with its slices, under the groups **In progress**, **Blocked**, **Designed, not started**, and **Not on the roadmap**, each with its count, and leaves out an empty group.
 An initiative is **Blocked** when one of its slices is blocked and none is in progress or claimed, and it keeps the roadmap's order inside its group; initiatives that are not on the roadmap go by title.
-**Roadmap** leads to the Roadmap, and choosing it on the rail also opens the Roadmap page.
+**Roadmap** switches the Roadmap page between **Board**, **List**, and **Graph** under **View**, marking the view the page shows, and lists **Now**, **Next**, **Later**, and **Parked** under **Lanes**, each with its count of open initiatives; choosing it on the rail also opens the Roadmap page.
+A lane opens the board with that lane's heading scrolled into view, also again while the board is open, and its address, such as `review?artifact=roadmap&lane=parked`, does the same in a new window.
 **Knowledge** lists Requirements, Decisions, and the Glossary with their counts.
-**History** lists the shipped and superseded initiatives.
+**History** lists the shipped and superseded initiatives, newest decision first, each with the decision's date, such as `9 Nov`, or `14 Jun 2025` in another year, and a muted `Superseded` mark on superseded ones; hover or focus a row to see when it shipped, or when it was superseded and by which initiative.
+It says `Nothing has shipped yet.` while there is none.
 Choosing any other place leaves the open page as it is, and the place stays while you change tabs, follow links, use the palette, or go back.
 The browser remembers the current place, so a reload or a new window shows it again, and an address with `place=work`, or another place's name, chooses that place.
 The page bar's trail starts with the place of the open page, and choosing that crumb makes the place current without leaving the page.
@@ -193,10 +195,11 @@ In a repository without components, the root component's rebuild prepares the ch
 
 ## Roadmap, initiatives, and slices
 
-The roadmap shows initiatives as a board, a list, or a dependency graph.
-The board has one lane per band and one column per state, and each card shows its priority rank within its band.
-Click a lane to collapse it.
+The roadmap shows initiatives as a board, a list, or a dependency graph, chosen under **View** in the Roadmap place's sidebar, which is the only place to switch them.
+The board stacks one full-width lane per band in priority order, an empty band on one line, and each card shows its priority rank within its band and its state.
+Click a lane's arrow to collapse it.
 Shipped and superseded initiatives appear only with "Show shipped and superseded".
+A superseded initiative's page says below its title when it was superseded and by which initiative, linked, and the decision's reason.
 
 An initiative page shows its slices as a board, a list, or a graph.
 The board has one column per slice status, and the card of an active slice also shows its activity, workers, and review lanes.

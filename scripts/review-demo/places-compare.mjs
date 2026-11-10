@@ -127,7 +127,7 @@ export function outline(side) {
     if (names.contains("label") || names.contains("prism-tree-label")) return "label";
     if (names.contains("flag")) return "flag";
     if (names.contains("avatar") || names.contains("stack") || element.matches("prism-avatar, prism-claim")) return "holder";
-    if (names.contains("meta") || names.contains("count") || element.matches("prism-badge") || /^[\d/\s]+$/.test(text(element)) && text(element) !== "") return "count";
+    if (names.contains("meta") || names.contains("nav-meta") || names.contains("count") || element.matches("prism-badge") || /^[\d/\s]+$/.test(text(element)) && text(element) !== "") return "count";
     return text(element) ? "flag" : "glyph";
   };
   // A row's parts in order; a kit row keeps its leading glyphs in a start slot and its trailing ones in an end slot.

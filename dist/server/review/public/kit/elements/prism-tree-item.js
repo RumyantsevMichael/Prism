@@ -74,14 +74,19 @@ export class PrismTreeItem extends Base {
     this.prepend(this.row);
     this.append(this.group);
     // Child items go to the group, slot="end" children to the end of the row; text and anything else stays out of the row.
+    // The end's parts are read as separate words in the item's name, such as "Superseded 9 Nov", so a space stands between them; the row's flex layout draws none.
+    const toEnd = (node) => {
+      if (this.end.lastElementChild) this.end.append(this.ownerDocument.createTextNode(" "));
+      this.end.append(node);
+    };
     const place = () => {
       for (const node of [...this.childNodes]) {
         if (node === this.row || node === this.group) continue;
         if (node.nodeType === 1 && node.tagName === "PRISM-TREE-ITEM") this.group.append(node);
         else if (node.nodeType === 1 && node.getAttribute("slot") === "start") this.start.append(node);
-        else if (node.nodeType === 1 && node.getAttribute("slot") === "end") this.end.append(node);
+        else if (node.nodeType === 1 && node.getAttribute("slot") === "end") toEnd(node);
         else if (node.nodeType === 3 && !node.textContent.trim()) node.remove();
-        else this.end.append(node);
+        else toEnd(node);
       }
       this.sync();
       this.tree?.schedule();

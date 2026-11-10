@@ -330,6 +330,53 @@ prism-menu-group[layout="segmented"] prism-menu-item {
   flex: 1 1 0;
 }
 
+/* ---------- prism-segmented: a few views or modes as one switch; the chosen segment stands on the surface ---------- */
+prism-segmented {
+  display: inline-flex;
+  align-self: flex-start;
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--prism-space-1);
+  border: var(--prism-stroke) solid var(--prism-color-line-control);
+  border-radius: var(--prism-radius-sm);
+  background: var(--prism-color-sunken);
+}
+
+.prism-segment {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: calc(var(--prism-control-height) - 2 * var(--prism-space-1) - 2 * var(--prism-stroke));
+  padding: 0 var(--prism-space-4);
+  border: 0;
+  border-radius: var(--prism-radius-xs);
+  background: none;
+  color: var(--prism-color-ink-muted);
+  font: inherit;
+  font-size: var(--prism-font-size-sm);
+  font-weight: var(--prism-font-weight-medium);
+  cursor: pointer;
+}
+
+.prism-segment-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-segment:hover {
+  color: var(--prism-color-ink);
+}
+
+.prism-segment[aria-checked="true"] {
+  background: var(--prism-color-surface);
+  color: var(--prism-color-ink);
+  box-shadow: var(--prism-shadow-lift);
+}
+
 /* A theme preview draws a small window in the theme it names, from that theme's own tokens; a system preview shows light and dark side by side. */
 .prism-theme-preview {
   display: grid;
@@ -884,6 +931,12 @@ prism-tree-item[selected] > .prism-tree-row > .prism-tree-start,
   color: var(--prism-color-danger);
   font-size: var(--prism-font-size-xs);
   font-weight: var(--prism-font-weight-semibold);
+}
+
+/* A muted flag names a settled fact, such as `Superseded`, without a warning or danger tone. */
+.prism-tree-flag.is-muted {
+  color: var(--prism-color-ink-muted);
+  font-weight: var(--prism-font-weight-medium);
 }
 
 /* A tree in a rail shows each top item's glyph alone, with its count badge on the glyph; the label becomes the tooltip. */

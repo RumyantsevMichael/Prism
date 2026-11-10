@@ -19,6 +19,7 @@ import { PrismField } from "./elements/prism-field.js";
 import { PrismOption } from "./elements/prism-option.js";
 import { PrismChoice } from "./elements/prism-choice.js";
 import { PrismChoiceOption } from "./elements/prism-choice-option.js";
+import { PrismSegmented } from "./elements/prism-segmented.js";
 import { PrismStat } from "./elements/prism-stat.js";
 import { PrismMeter } from "./elements/prism-meter.js";
 import { PrismSpinner } from "./elements/prism-spinner.js";
@@ -77,6 +78,7 @@ export const KIT_ELEMENTS = [
   PrismOption,
   PrismChoice,
   PrismChoiceOption,
+  PrismSegmented,
   PrismPanel,
   PrismTree,
   PrismTreeItem,

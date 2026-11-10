@@ -314,6 +314,8 @@ async function computeInitiativeView(projectRoot, id) {
     recordPath: await recordFile(projectRoot, { kind: "initiative", initiative: id }),
     statePath: await recordFile(projectRoot, { kind: "state", initiative: id }),
     roadmapItem: roadmap.items.find((item) => item.id === id) ?? null,
+    // A superseded initiative's page names the initiative that superseded it by its title.
+    supersededBy: supersedingItem(roadmap, id),
     exists: loaded.exists,
     valid: loaded.valid,
     errors: loaded.errors,
@@ -325,6 +327,13 @@ async function computeInitiativeView(projectRoot, id) {
     slices,
     config: { paths: config.paths }
   };
+}
+
+function supersedingItem(roadmap, id) {
+  const decision = roadmap.items.find((item) => item.id === id)?.decision;
+  if (decision?.kind !== "superseded" || !decision.by) return null;
+  const by = roadmap.items.find((item) => item.id === decision.by);
+  return { id: decision.by, title: by?.title ?? decision.by };
 }
 
 // A designed slice's change map is derived from its verified result; opening the slice starts a derivation the server has not finished yet.
@@ -723,8 +732,21 @@ async function computeNavigation(projectRoot) {
     diagnostics: config.diagnostics,
     index: await searchIndex(projectRoot, config, roadmap, glossary),
     // Each place's own navigation data, by the place's name, for the places that need more than the lists above.
-    places: { attention: attentionPlace(attention), work: await workGroups(projectRoot, listedInitiatives) }
+    places: { attention: attentionPlace(attention), work: await workGroups(projectRoot, listedInitiatives), history: historyEntries(roadmap) }
   };
+}
+
+// History's entries: every initiative with a shipped or superseded decision, newest decision first, with what superseded it when the decision names it.
+function historyEntries(roadmap) {
+  const settled = (roadmap.items ?? []).filter((item) => item.decision?.kind === "shipped" || item.decision?.kind === "superseded");
+  const time = (item) => {
+    const value = Date.parse(item.decision.at ?? "");
+    return Number.isFinite(value) ? value : -Infinity;
+  };
+  return settled
+    .map((item, order) => ({ item, order }))
+    .sort((left, right) => time(right.item) - time(left.item) || left.order - right.order)
+    .map(({ item }) => ({ id: item.id, title: item.title, decision: item.decision.kind, at: item.decision.at ?? null, by: item.decision.kind === "superseded" ? item.decision.by ?? null : null }));
 }
 
 // Work's groups in their order, each initiative once and an empty group left out: work not on the roadmap, then blocked work that nobody is

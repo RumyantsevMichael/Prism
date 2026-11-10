@@ -372,6 +372,12 @@ h3.nav-section > .nav-count {
   margin: var(--prism-space-2) 0;
 }
 
+/* A place's view switch, such as the Roadmap's Board, List, and Graph, lines up with the rows' text below its heading. */
+.nav-views {
+  flex: none;
+  margin: 0 var(--prism-space-3);
+}
+
 /* A place's closing note says where the rest of the work went, in a quiet tone below its groups. */
 .nav-foot {
   display: flex;

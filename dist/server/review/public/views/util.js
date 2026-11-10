@@ -51,6 +51,19 @@ export function formatTime(value) {
 }
 
 // The source names the file a card reads, in a quiet label beside the title; the workflow views name records by kind instead.
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * A decision's date as `<day> <month>`, with the year when it is not the current year or when `year` asks for it, such as `9 Nov` or `14 Jun 2025`;
+ * an unreadable time gives an empty text.
+ */
+export function shortDate(value, { year = false, now = new Date() } = {}) {
+  const day = new Date(value ?? "");
+  if (!value || Number.isNaN(day.getTime())) return "";
+  const shown = `${day.getDate()} ${MONTHS[day.getMonth()]}`;
+  return year || day.getFullYear() !== now.getFullYear() ? `${shown} ${day.getFullYear()}` : shown;
+}
+
 export function cardSource(source) {
   return source ? `<span class="card-source">${escapeHtml(source)}</span>` : "";
 }
