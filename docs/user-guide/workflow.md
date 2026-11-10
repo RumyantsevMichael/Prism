@@ -8,7 +8,7 @@ Each slice is designed when it is next, implemented in fresh agent sessions agai
 | Stage | Skill | Result |
 |---|---|---|
 | Shape | `prism:ideate` | Approved EARS requirement files and a roadmap entry, or a decision to stop |
-| Triage a bug | `prism:triage` | A reproduction and the Approved requirements it breaks, with a roadmap entry, or a hand-off to ideate |
+| Triage a bug | `prism:triage` | A reproduction and the Approved requirements it breaks, with a defect on the done slice of an unshipped initiative or a roadmap entry, or a hand-off to ideate |
 | Run an initiative | `prism:orchestrate` | One root slice, then each slice in turn |
 | Design | `prism:design` | A frozen contract, probed assumptions, and failing acceptance tests, or a split into child slices |
 | Implement | `prism:implement` | Working code for one step of a designed slice, committed |
@@ -309,8 +309,11 @@ The review setting decides review marks when a design is accepted: `all` marks e
 
 ## Defects
 
-Defect repair stays outside this workflow.
-Reproduce and diagnose a defect against the existing specification, and change the specification only when the required behavior must change too.
+`prism:triage` reproduces a reported defect, finds the Approved requirements it breaks, and routes the fix by where the broken work lies.
+A defect in done work of an initiative that has not shipped joins that initiative: triage reports it on the done slice with `report_defect` and returns the initiative, the slice, and the defect id, and orchestration designs and runs the fix slice before the initiative ships.
+A defect in a shipped initiative's work becomes a new initiative whose `corrects` names the shipped initiative and each slice whose work the fix corrects.
+Any other defect becomes a new initiative with the broken requirements, and a report that no Approved requirement covers goes to `prism:ideate`.
+Triage, design, implementation, and review sessions take current intent only from Approved requirements, Accepted ADRs, the glossary, and feature files, and cite a shipped initiative's contracts, slice documents, frozen tests, and reviews only as history.
 
 A defect in a done slice of an initiative that has not shipped is fixed inside that initiative as new work.
 Report it with `update_initiative` `report_defect` `{ slug, requirements, summary }` on the done slice, which records it as `d1`, `d2`, and so on, and refuses a slice that is not done with `validation_failed`.

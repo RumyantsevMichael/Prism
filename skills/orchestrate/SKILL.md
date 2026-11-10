@@ -46,7 +46,7 @@ When a Prism result carries a [person change notice](../workflow/SKILL.md#common
 
 ## 3. Design each scope
 
-A scope is the root slice, or a part that a split design created; design it when its dependencies are done.
+A scope is the root slice, a part that a split design created, or a fix scope, a done slice whose defect `get_initiative` lists under `derived.unfinishedFixes` with status `not-designed`; design it when its dependencies are done.
 
 1. Call `update_initiative` with a `claim` operation for the scope, so no other agent starts it, and when Prism refuses the claim with `slice_claimed`, leave the scope to the holder it names and continue with another eligible scope or slice.
 2. Run `design` for the scope in a fresh child agent, passing its slug, its folder, and any reproduction that triage returned.
@@ -97,7 +97,8 @@ On resume, continue an `in-progress` slice with a fresh implementation session b
 
 - When every leaf is done:
   1. Run the dependents' run of each contract scope that has no `passed` entry in `get_initiative`'s `dependents`.
-  2. Call `update_roadmap` with a `ship` operation for the initiative; when it refuses with `dependents_blocked`, run the dependents' run again of each listed scope whose `reason` is `not_run` or `stale` and call `ship` again, then report each scope whose `reason` is `failed` or whose new run did not pass to the user with its `blocked` components and stop until a later dependents' run passes.
-  3. Move facts that later work needs from the initiative's slice folders into requirements, ADRs, or user documentation.
-  4. Keep the slice folders and the initiative's records, because they are the initiative's history.
+  2. Call `update_roadmap` with a `ship` operation for the initiative; when it refuses with `open_work`, act on and `resolve` each listed gate, accept or revise each listed proposal, and end or wait out each listed claim, and when it refuses with `fixes_unfinished`, design and run each listed fix through sections 3 and 4, then call `ship` again.
+  3. When `ship` refuses with `dependents_blocked`, run the dependents' run again of each listed scope whose `reason` is `not_run` or `stale` and call `ship` again, then report each scope whose `reason` is `failed` or whose new run did not pass to the user with its `blocked` components and stop until a later dependents' run passes.
+  4. Move facts that later work needs from the initiative's slice folders into requirements, ADRs, or user documentation.
+  5. Keep the slice folders and the initiative's records, because they are the initiative's history, and when commit is on, commit the slice documents that ship lists under `historyMarks` apart from other changes.
 - When work must pause, call `checkpoint_pause` with the initiative, the current revision, the active slice, recovery content that names the next action, and the state changes.

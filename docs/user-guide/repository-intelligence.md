@@ -713,7 +713,7 @@ A record holds only counts, durations, timestamps, coverage marks, the host, rol
 Cost that no Prism call attributes creates no record and stays in the local session totals.
 
 Prism never changes or replaces a record, so recording the same run again leaves the existing file as it is.
-Records stay after coordination cleanup removes an initiative's plans folder and coordination state.
+Records stay when `remove_records` removes a superseded initiative's records, and a shipped initiative keeps its plans folder and coordination state as history.
 The first record also writes `.prism/.gitignore`, which ignores only transient `*.lock` and `.*.tmp` files, so the records themselves can be committed.
 Files under `.prism/initiatives/` and `.prism/.gitignore` never count as source in repository snapshots, so a record written while a review is open does not make that review stale.
 
