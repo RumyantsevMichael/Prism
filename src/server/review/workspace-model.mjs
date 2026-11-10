@@ -498,9 +498,11 @@ async function computeAttention(projectRoot) {
   const claims = [];
   // The person's applied actions: every initiative history of these records, and this checkout's own index history, which no other checkout shares.
   const changes = (await readIndexHistory(projectRoot).catch(() => ({ history: [] }))).history.map((entry) => ({ ...entry, initiative: null }));
+  const titles = new Map();
   for (const id of ids) {
     const snapshot = await initiativeSnapshot(projectRoot, config, id, items.get(id));
     const initiative = { id, title: snapshot.title };
+    titles.set(id, snapshot.title);
     const state = snapshot.state;
     // The Watch group lists every live and expired claim, read-only, beside the agent-side signals.
     const claimed = await claimedSlices(projectRoot, id);
@@ -537,6 +539,11 @@ async function computeAttention(projectRoot) {
     for (const [slug, slice] of Object.entries(slices)) {
       if (slice.status === "blocked") watch.push({ type: "blocked", initiative, slice: { slug, title: slice.title } });
     }
+    for (const [slug, slice] of Object.entries(slices)) {
+      if (slice.status === "done") continue;
+      const failed = await failedVerification(projectRoot, id, slug);
+      if (failed) watch.push({ type: "failed-verification", initiative, slice: { slug, title: slice.title }, ...failed });
+    }
     for (const slug of Object.keys(slices)) {
       const ledger = await recordFile(projectRoot, { kind: "review", initiative: id, slice: slug });
       const source = await readText(projectRoot, ledger);
@@ -558,19 +565,82 @@ async function computeAttention(projectRoot) {
   if (roadmap.error) needsYou.push({ type: "roadmap-problem", path: config.paths.roadmap, message: roadmap.error });
   else if (!roadmap.exists && config.paths.roadmap) needsYou.push({ type: "roadmap-missing", path: roadmap.recordPath });
   else if (roadmap.exists && !roadmap.valid) needsYou.push({ type: "roadmap-problem", path: roadmap.recordPath, message: roadmap.errors.join(" ") });
-  for (const id of roadmap.unlisted) needsYou.push({ type: "unlisted", initiative: { id, title: id } });
+  for (const id of roadmap.unlisted) needsYou.push({ type: "unlisted", initiative: { id, title: titles.get(id) ?? id } });
   for (const question of roadmap.openQuestions ?? []) needsYou.push({ type: "open-question", text: question });
   for (const diagnostic of config.diagnostics) needsYou.push({ type: "config", code: diagnostic.code, message: diagnostic.message });
-  const blockingOrder = (entry) => ({ "record-problem": 0, blocked: 1, findings: entry.blocking ? 2 : 3, "ready-to-ship": 4, active: 5 })[entry.type] ?? 6;
+  const blockingOrder = (entry) => ({ "record-problem": 0, blocked: 1, "failed-verification": 2, findings: entry.blocking ? 3 : 4, "ready-to-ship": 5, active: 6 })[entry.type] ?? 7;
   watch.sort((left, right) => blockingOrder(left) - blockingOrder(right));
   answered.sort((left, right) => newestFirst(left.answer.answeredAt, right.answer.answeredAt));
   // The newest closed questions come first, across initiatives, so the list stays short.
   earlier.sort((left, right) => newestFirst(left.closedAt, right.closedAt));
+  const answeredThisWeek = recentlyAnswered(answered, earlier);
   const recentChanges = changes.sort((left, right) => historyOrder(right, left)).slice(0, RECENT_CHANGES_LIMIT);
   // Live claims lapse first first, then expired ones, the most recently lapsed first.
   const ends = (claim) => Date.parse(claim.expiresAt ?? "") || 0;
   claims.sort((left, right) => Number(left.expired) - Number(right.expired) || (left.expired ? ends(right) - ends(left) : ends(left) - ends(right)));
-  return { needsYou, answered, earlier: earlier.slice(0, 20), watch, claims, recentChanges, gateCount: needsYou.filter((item) => item.type === "gate").length };
+  return { needsYou, answered, earlier: earlier.slice(0, 20), watch, claims, recentChanges, gateCount: needsYou.filter((item) => item.type === "gate").length, answeredThisWeek };
+}
+
+// A slice's latest verification run when it failed, so Attention lists it until a later run passes or the slice is done.
+async function failedVerification(projectRoot, id, slug) {
+  const run = await latestVerification(projectRoot, id, slug).catch(() => null);
+  if (!run || run.passed !== false) return null;
+  return { reason: run.reason ?? null, failingCount: Number.isInteger(run.failingCount) ? run.failingCount : null, finishedAt: run.finishedAt ?? null };
+}
+
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+// The questions answered or closed in the last 7 days that the records keep, newest first by the time of the answer or the closing.
+function recentlyAnswered(answered, closed) {
+  const since = Date.now() - WEEK_MS;
+  const entries = [
+    ...answered.map((gate) => ({ gate, at: gate.answer?.answeredAt ?? null })),
+    ...closed.map((gate) => ({ gate, at: gate.closedAt ?? gate.answer?.answeredAt ?? null }))
+  ].filter(({ at }) => Date.parse(at ?? "") >= since);
+  entries.sort((left, right) => newestFirst(left.at, right.at));
+  return entries.map(({ gate, at }) => ({ id: gate.id ?? null, kind: gate.kind ?? null, question: gate.question, initiative: gate.initiative, slice: gate.slice ?? null, answer: gate.answer ?? null, reason: gate.reason ?? null, at }));
+}
+
+// Attention's kinds in the sidebar's order, each item of the page under one kind; a claim, an agent at work, and an answered question are none of them.
+export const ATTENTION_KINDS = Object.freeze(["questions", "findings", "failed", "blocked", "ready", "problems"]);
+const ATTENTION_KIND_OF = Object.freeze({
+  gate: "questions", "pending-note": "questions",
+  findings: "findings", "failed-verification": "failed", blocked: "blocked", "ready-to-ship": "ready",
+  "record-problem": "problems", "roadmap-problem": "problems", "roadmap-missing": "problems", unlisted: "problems", "open-question": "problems", config: "problems"
+});
+// Attention's work entries listed before the row that shows the rest.
+const ATTENTION_WORK_SHOWN = 3;
+
+/** Every item of Attention with its kind, in the page's order: what needs the person, then what to watch. */
+export function attentionItems(attention) {
+  return [...attention.needsYou, ...attention.watch].flatMap((item) => ATTENTION_KIND_OF[item.type] ? [{ kind: ATTENTION_KIND_OF[item.type], item }] : []);
+}
+
+// Attention's sidebar: the count of every kind, the initiatives with items, most first and ties by title, and this week's answered questions.
+function attentionPlace(attention) {
+  const items = attentionItems(attention);
+  const kinds = Object.fromEntries(ATTENTION_KINDS.map((kind) => [kind, items.filter((entry) => entry.kind === kind).length]));
+  const work = new Map();
+  for (const { item } of items) {
+    if (!item.initiative?.id) continue;
+    const entry = work.get(item.initiative.id) ?? { id: item.initiative.id, title: item.initiative.title ?? item.initiative.id, count: 0 };
+    entry.count += 1;
+    work.set(entry.id, entry);
+  }
+  const ordered = [...work.values()].sort((left, right) => right.count - left.count || left.title.localeCompare(right.title) || left.id.localeCompare(right.id));
+  return { everything: items.length, questions: attention.gateCount, kinds, work: ordered, shown: ATTENTION_WORK_SHOWN, answered: attention.answeredThisWeek.length };
+}
+
+// A filtered page of Attention: the items of one kind or of one initiative, with the filter's name and the total it is part of.
+async function attentionPage(projectRoot, page) {
+  const attention = await loadAttention(projectRoot);
+  if (page === "answered") return { answered: attention.answeredThisWeek };
+  const items = attentionItems(attention);
+  const work = /^work\/(.+)$/.exec(page);
+  const shown = work ? items.filter(({ item }) => item.initiative?.id === work[1]) : items.filter((entry) => entry.kind === page);
+  let label = PLACE_PAGE_LABELS.attention[page];
+  if (work) label = shown[0]?.item.initiative.title ?? (await loadRoadmapView(projectRoot).catch(() => ({ items: [] }))).items.find((item) => item.id === work[1])?.title ?? work[1];
+  return { filter: { key: page, label, total: items.length, items: shown } };
 }
 
 // What a gate's attached record is, so the page names it by title and kind with the counts that matter for the answer.
@@ -653,7 +723,7 @@ async function computeNavigation(projectRoot) {
     diagnostics: config.diagnostics,
     index: await searchIndex(projectRoot, config, roadmap, glossary),
     // Each place's own navigation data, by the place's name, for the places that need more than the lists above.
-    places: { work: await workGroups(projectRoot, listedInitiatives) }
+    places: { attention: attentionPlace(attention), work: await workGroups(projectRoot, listedInitiatives) }
   };
 }
 
@@ -770,7 +840,7 @@ async function knownInitiative(projectRoot, id) {
 // the trail of a page of a place starts with the place's crumb, and a page of no place keeps its trail from Files.
 export async function entityContext(projectRoot, ref) {
   const parsed = parseEntityRef(ref);
-  if (parsed?.kind === "attention" || parsed?.kind === "roadmap") return { trail: [placeCrumb(parsed.kind, ref)], scope: { kind: "global" }, place: parsed.kind };
+  if (ref === "attention" || ref === "roadmap") return { trail: [placeCrumb(ref, ref)], scope: { kind: "global" }, place: ref };
   if (parsed?.kind === "requirements" || parsed?.kind === "decisions") return { trail: [placeCrumb("knowledge"), { ref, label: SECTION_LABELS[parsed.kind] }], scope: await libraryScope(projectRoot, parsed.kind), place: "knowledge" };
   if (parsed?.kind === "glossary") return { trail: [placeCrumb("knowledge"), { ref, label: "Glossary" }], scope: { kind: "global" }, place: "knowledge" };
   if (parsed?.kind === "initiative" || parsed?.kind === "slice") return initiativeContext(projectRoot, parsed.id, { slug: parsed.kind === "slice" ? parsed.slug : null });
@@ -779,7 +849,8 @@ export async function entityContext(projectRoot, ref) {
   if (prefixed) {
     const [, place, page] = prefixed;
     const entry = place === "attention" ? placeCrumb("attention", "attention") : placeCrumb("knowledge");
-    return { trail: [entry, { ref, label: PLACE_PAGE_LABELS[place][page] ?? page }], scope: { kind: "global" }, place };
+    const label = place === "attention" && page.startsWith("work/") ? (await attentionPage(projectRoot, page)).filter.label : PLACE_PAGE_LABELS[place][page] ?? page;
+    return { trail: [entry, { ref, label }], scope: { kind: "global" }, place };
   }
   const config = await readWorkflowConfig(projectRoot);
   const fileCrumb = { ref, label: path.posix.basename(ref) };
@@ -810,7 +881,10 @@ export async function entityContext(projectRoot, ref) {
 // Entity tabs name Prism concepts rather than files, so they never collide with artifact paths, which always carry an extension.
 export function parseEntityRef(ref) {
   if (SECTION_REFS.includes(ref)) return { kind: ref };
-  let match = /^initiative:([A-Za-z0-9_-]+)$/.exec(ref ?? "");
+  // Attention's filtered pages: one kind, one initiative's items, or the questions answered this week.
+  let match = /^attention:(questions|findings|failed|blocked|ready|problems|answered|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
+  if (match) return { kind: "attention", page: match[1] };
+  match = /^initiative:([A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "initiative", id: match[1] };
   match = /^slice:([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "slice", id: match[1], slug: match[2] };
@@ -843,7 +917,7 @@ async function initiativeCode(projectRoot, view) {
 export async function loadEntity(projectRoot, ref, options = {}) {
   const parsed = parseEntityRef(ref);
   if (!parsed) throw new Error(`Unknown entity reference: ${ref}`);
-  if (parsed.kind === "attention") return { ref, kind: "attention", data: await loadAttention(projectRoot) };
+  if (parsed.kind === "attention") return { ref, kind: "attention", data: parsed.page ? await attentionPage(projectRoot, parsed.page) : await loadAttention(projectRoot) };
   if (parsed.kind === "roadmap") return { ref, kind: "roadmap", data: await loadRoadmapView(projectRoot) };
   if (parsed.kind === "requirements" || parsed.kind === "decisions") return { ref, kind: parsed.kind, data: await loadLibrary(projectRoot, parsed.kind) };
   if (parsed.kind === "glossary") return { ref, kind: "glossary", data: await loadGlossary(projectRoot) };

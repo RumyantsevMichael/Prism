@@ -1385,6 +1385,117 @@ a.inspect-tile:focus-visible {
   font-size: var(--prism-font-size-xs);
 }
 
+/* ---------- Attention filtered to one kind or one initiative, and this week's answered questions ---------- */
+
+/* The filter's name and count sit under the page title, with the way back beside them. */
+.attention-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--prism-space-2) var(--prism-space-4);
+  min-width: 0;
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-md);
+}
+
+.attention-filter > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.attention-filter .title-link {
+  color: var(--prism-color-accent-text);
+  font-weight: var(--prism-font-weight-regular);
+}
+
+/* The rows share their columns, so kinds, times, and actions line up down the list. */
+.attention-rows {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-lg);
+  list-style: none;
+}
+
+.attention-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+  gap: var(--prism-space-5);
+  min-width: 0;
+  padding: var(--prism-space-3) var(--prism-space-5);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.attention-row:first-child {
+  border-top: 0;
+}
+
+.attention-row .prism-inbox-tile {
+  width: calc(var(--prism-avatar-size) + var(--prism-space-2));
+  height: calc(var(--prism-avatar-size) + var(--prism-space-2));
+}
+
+.attention-row.is-answered .prism-inbox-tile {
+  align-self: start;
+}
+
+.attention-row-text {
+  display: grid;
+  min-width: 0;
+}
+
+.attention-row-title {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: var(--prism-font-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attention-row-sub {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* An answered question shows the answer or the closing reason in full below where it belongs. */
+.attention-row.is-answered .attention-row-title {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.attention-row-outcome {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  margin-top: var(--prism-space-2);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.attention-row-kind {
+  justify-self: start;
+}
+
+.attention-row-time {
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 /* ---------- Narrow windows ---------- */
 
 @media (max-width: 1100px) {
@@ -1394,6 +1505,16 @@ a.inspect-tile:focus-visible {
 }
 
 @media (max-width: 720px) {
+  /* On a phone a row keeps its tile, its text, and its action, and leaves out its kind and its time. */
+  .attention-rows {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .attention-row-kind,
+  .attention-row-time {
+    display: none;
+  }
+
   .attention-stats {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));

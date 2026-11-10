@@ -89,6 +89,19 @@ let availableArtifacts = new Set();
 let prismRecords = new Set();
 // Open pages whose file was moved or deleted, or whose entity no longer resolves, as the server's snapshot reports them.
 let missingTabs = new Set();
+// Attention's kinds in the sidebar's order, each with its icon; every kind shows its count, also at 0.
+const ATTENTION_KINDS = [
+  ["questions", "Questions", "gate"],
+  ["findings", "Review findings", "eye"],
+  ["failed", "Failed verifications", "flask"],
+  ["blocked", "Blocked work", "warning"],
+  ["ready", "Ready to ship", "check-circle"],
+  ["problems", "Problems", "warning"]
+];
+// The row of By work that shows the initiatives past the first few; choosing it shows or hides them below it.
+const ATTENTION_MORE = "attention:more";
+let attentionMoreOpen = false;
+
 let navigation = { attention: {}, glossary: {}, diagnostics: [], index: [], initiatives: [] };
 let currentContext = null;
 let contextSnapshot = "";
@@ -1091,11 +1104,21 @@ function pageLabel(path) {
     const named = describe(path);
     return named.code ? path : named.label === named.kind ? named.kind : `${named.kind} · ${named.label}`;
   }
+  if (parsed.page) return attentionPageLabel(path, parsed.page);
   if (ENTITY_LABELS[parsed.kind]) return ENTITY_LABELS[parsed.kind];
   const indexed = navigation.index?.find((entry) => entry.ref === path)?.label;
   if (indexed) return indexed;
   if (currentContext?.ref === path) return currentContext.value.trail.at(-1)?.label ?? path;
   return parsed.kind === "slice" ? parsed.slug : parsed.id;
+}
+
+// A filtered page of Attention is named by its filter: a kind, Answered in the last 7 days, or an initiative's title.
+function attentionPageLabel(path, page) {
+  if (currentContext?.ref === path) return currentContext.value.trail.at(-1)?.label ?? path;
+  const kind = [...ATTENTION_KINDS, ["answered", "Answered in the last 7 days"]].find(([name]) => name === page);
+  if (kind) return kind[1];
+  const id = page.replace(/^work\//, "");
+  return navigation.places?.attention?.work?.find((entry) => entry.id === id)?.title ?? navigation.initiatives?.find((item) => item.id === id)?.title ?? id;
 }
 
 // The trail of the page's place, initiative, and slice by title; a record of Prism's ends with its kind, since the crumbs before it name its owner.
@@ -1373,12 +1396,32 @@ const PLACE_NAVIGATION = {
   history: historyNavigation
 };
 
+/**
+ * Attention: Everything, each kind with its count, the initiatives with the most items and a row for the rest, and this week's answered questions;
+ * each entry opens Attention filtered to it, and the workflow settings warnings follow as a note.
+ */
 function attentionNavigation() {
-  const attention = navigation.attention ?? {};
-  const others = (attention.needsYou ?? 0) - (attention.gates ?? 0);
-  const tip = `${attention.gates ?? 0} recorded ${attention.gates === 1 ? "question" : "questions"} and ${others} other ${others === 1 ? "item" : "items"} need you`;
-  const end = attention.needsYou ? [kitElement("prism-badge", { variant: "count", solid: true, tip }, String(attention.needsYou))] : [];
-  const parts = [tree("Attention", [treeItem("attention", "Everything", { selected: selectedPath === "attention", start: [navIcon("bell")], end })])];
+  const place = navigation.places?.attention ?? {};
+  const kinds = place.kinds ?? {};
+  const count = (value) => [meta(String(value ?? 0))];
+  const row = (ref, label, icon, value, tip = null) => treeItem(ref, label, { selected: selectedPath === ref, start: [navIcon(icon)], end: count(value), tip });
+  const parts = [tree("Everything", [row("attention", "Everything", "bell", place.everything)])];
+  parts.push(section("By kind"), tree("By kind", ATTENTION_KINDS.map(([kind, label, icon]) => row(`attention:${kind}`, label, icon, kinds[kind]))));
+  const work = place.work ?? [];
+  if (work.length) {
+    const shown = place.shown ?? 3;
+    const workRow = (entry) => row(`attention:work/${entry.id}`, entry.title, "tree", entry.count, `${entry.title} · ${entry.count} ${entry.count === 1 ? "item" : "items"}`);
+    const rows = work.slice(0, shown).map(workRow);
+    const rest = work.slice(shown);
+    if (rest.length) {
+      const total = rest.reduce((sum, entry) => sum + entry.count, 0);
+      const tip = `${attentionMoreOpen ? "Hide" : "Show"} ${rest.length} more ${rest.length === 1 ? "initiative" : "initiatives"}`;
+      rows.push(treeItem(ATTENTION_MORE, `${rest.length} more`, { start: [navIcon("more")], end: count(total), tip, href: null }));
+      if (attentionMoreOpen) rows.push(...rest.map(workRow));
+    }
+    parts.push(section("By work"), tree("By work", rows));
+  }
+  parts.push(section("Answered"), tree("Answered", [row("attention:answered", "Answered in the last 7 days", "check-circle", place.answered)]));
   if (navigation.diagnostics?.length) {
     const warnings = document.createElement("prism-disclosure");
     warnings.className = "nav-diagnostics";
@@ -1394,6 +1437,14 @@ function attentionNavigation() {
   }
   return parts;
 }
+
+// Sidebar rows that change the sidebar instead of opening a page, by their value.
+const NAVIGATION_ACTIONS = {
+  [ATTENTION_MORE]: () => {
+    attentionMoreOpen = !attentionMoreOpen;
+    renderNavigation();
+  }
+};
 
 // Work's filter field stays one element across renders, so typing in it keeps its focus and its text while the groups below it change.
 let workFilterField = null;
@@ -1490,7 +1541,7 @@ function renderNavigation() {
   for (const rail of [shellRail, drawerRail]) renderRail(rail, attention.gates ?? 0);
   const entity = Boolean(parseEntityRef(selectedPath ?? ""));
   const claims = claimIndex ? [...claimIndex.live(), ...claimIndex.expired()].map((claim) => [claim.ref, claim.expiresAt, claim.label]) : [];
-  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? ""]);
+  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", attentionMoreOpen]);
   if (key === navigationKey) return;
   navigationKey = key;
   const focused = document.activeElement?.closest?.("prism-tree-item");
@@ -2220,7 +2271,8 @@ async function initialize() {
   }, { capture: true });
   navRoot.addEventListener("prism-select", (event) => {
     const ref = event.detail?.value;
-    if (ref) openRef(ref, { keep: navKeep });
+    if (ref && Object.hasOwn(NAVIGATION_ACTIONS, ref)) NAVIGATION_ACTIONS[ref]();
+    else if (ref) openRef(ref, { keep: navKeep });
     navKeep = false;
   });
   navRoot.addEventListener("dblclick", (event) => {

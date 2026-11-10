@@ -1,4 +1,4 @@
-import { artifactChip, badge, bindLinks, chip, emptyState, escapeHtml, messageHtml, plural, stat } from "./util.js";
+import { artifactChip, artifactLink, badge, bindLinks, chip, emptyState, escapeHtml, messageHtml, plural, stat } from "./util.js";
 import { recordKind, recordLabel } from "./entities.js";
 import { claimAttributes } from "./claims.js";
 import { isExpired } from "./claim-index.js";
@@ -468,7 +468,7 @@ function noteEntry(item, ctx) {
   const roadmapLink = artifactChip("roadmap", ctx, "Roadmap");
   const describe = {
     "pending-note": () => ({ kind: "Pending item", icon: "document", tone: "neutral", title: escapeHtml(item.text), text: "", where: location(item, ctx), meta: item.initiative?.title ?? "" }),
-    unlisted: () => ({ kind: "Needs prioritization", icon: "roadmap", tone: "warning", title: `${escapeHtml(item.initiative.id)} is not on the roadmap`, text: `${escapeHtml(item.initiative.id)} has an initiative record but no roadmap entry. Ask the agent to run <code>roadmap</code>.`, where: location(item, ctx), meta: "Needs prioritization" }),
+    unlisted: () => ({ kind: "Needs prioritization", icon: "roadmap", tone: "warning", title: `${escapeHtml(item.initiative.title ?? item.initiative.id)} is not on the roadmap`, text: `${escapeHtml(item.initiative.title ?? item.initiative.id)} has an initiative record but no roadmap entry. Ask the agent to run <code>roadmap</code>.`, where: location(item, ctx), meta: "Needs prioritization" }),
     "open-question": () => ({ kind: "Roadmap question", icon: "roadmap", tone: "neutral", title: escapeHtml(item.text), text: "", where: roadmapLink, meta: "Open question on the roadmap" }),
     "roadmap-missing": () => ({ kind: "No roadmap", icon: "warning", tone: "warning", title: "No roadmap", text: "No roadmap record exists yet. Ask the agent to run <code>setup</code>.", where: "", meta: "Roadmap" }),
     "roadmap-problem": () => ({ kind: "Roadmap problem", icon: "warning", tone: "danger", title: "The roadmap has a problem", text: messageHtml(item.message), where: roadmapLink, meta: "Roadmap problem" }),
@@ -494,6 +494,7 @@ function watchEntry(item, ctx) {
     blocked: () => ({ icon: "warning", tone: "danger", title: "The slice is blocked", meta: slice, head: badge("blocked", "danger"), text: "The slice is blocked." }),
     findings: () => ({ icon: "flask", tone: item.blocking ? "danger" : "warning", title: item.blocking ? plural(item.blocking, "blocking finding") : plural(item.unresolved, "open finding"), meta: `Review ledger · ${slice}`, head: item.blocking ? badge(plural(item.blocking, "blocking finding"), "danger") : badge(plural(item.unresolved, "open finding"), "warning"), text: artifactChip(item.path, ctx, "Open the findings board") }),
     active: () => ({ icon: "agent", tone: "info", title: `${escapeHtml(item.workers.join(", ") || "An agent")} ${item.activity === "design" ? "is designing" : "is implementing"}`, meta: `${slice}${item.label ? ` · ${item.label}` : ""}`, head: badge("active", "info"), text: `${escapeHtml(item.activity)}${item.label ? ` · ${escapeHtml(item.label)}` : ""} · ${escapeHtml(item.workers.join(", "))}` }),
+    "failed-verification": () => ({ icon: "flask", tone: "danger", title: `${escapeHtml(slice)} failed verification`, meta: failedReason(item), head: badge("failed verification", "danger"), text: `${escapeHtml(failedReason(item))}${item.finishedAt ? ` · ${when(item.finishedAt)}` : ""}` }),
     "ready-to-ship": () => ({ icon: "check-circle", tone: "success", title: "Ready to ship", meta: slice, head: badge("ready to ship", "success"), text: "Every slice is done; the orchestrator records the ship decision at graduation." }),
     "record-problem": () => ({ icon: "warning", tone: "danger", title: "A record has a problem", meta: recordName(item.path, ctx) ?? "Record", head: badge("record problem", "danger"), text: `${artifactChip(item.path, ctx, recordName(item.path, ctx) ?? undefined)} ${escapeHtml(item.message)}` })
   }[item.type];
@@ -502,6 +503,22 @@ function watchEntry(item, ctx) {
     row: { icon: row.icon, tone: row.tone, title: row.title, meta: escapeHtml(row.meta) },
     detail: detailSheet({ className: `watch-${escapeHtml(item.type)}`, head: `${row.head}<span class="attention-where">${where}</span>`, title: row.title, body: row.text ? `<p class="watch-detail">${row.text}</p>` : "" })
   };
+}
+
+// A failed verification run's reason in words, with the number of failing tests when the run names them.
+const RUN_REASONS = {
+  command_failed: "The tests failed",
+  timed_out: "The tests timed out",
+  cancelled: "The run was cancelled",
+  tracked_files_changed: "The run changed tracked files",
+  frozen_tests_changed: "The frozen tests changed",
+  start_content_missing: "The slice's start content is missing",
+  component_boundary: "The change crossed its component's boundary"
+};
+
+export function failedReason(item) {
+  const words = RUN_REASONS[item.reason] ?? "The run failed";
+  return Number.isInteger(item.failingCount) && item.failingCount > 0 ? `${words}, ${plural(item.failingCount, "test")} failed` : words;
 }
 
 // A claim in the Watch group: who holds which slice for what, and how long it has left or since when it lapsed; it offers no action.
@@ -530,8 +547,90 @@ function group(id, label, entries, { count = entries.length, tone = "neutral" } 
   </section>`;
 }
 
+// A question chosen on a filtered page opens Everything with that question picked, so it can be answered there.
+let pendingSelection = null;
+
+// The filter's name and count above its items, with the way back to everything, in the page head.
+function filterLine(container, text, ctx) {
+  const head = container.parentElement?.querySelector(".artifact-header > div:first-child");
+  if (!head) return;
+  head.querySelector(".attention-filter")?.remove();
+  head.insertAdjacentHTML("beforeend", `<p class="attention-filter"><span>${escapeHtml(text)}</span> <a class="title-link" href="./review?artifact=attention" data-artifact="attention">Show everything</a></p>`);
+  bindLinks(head.querySelector(".attention-filter"), ctx);
+}
+
+const where = (item) => [item.initiative?.title, item.slice?.title].filter(Boolean);
+
+// One item of a filtered page: its kind tile, its title as a link to where it is handled, where it belongs and what it is, its kind, and its time.
+function filteredItem({ kind, item }, ctx) {
+  const slice = item.slice?.title ?? "";
+  const sliceRef = item.slice && item.initiative ? `slice:${item.initiative.id}/${item.slice.slug}` : null;
+  const initiativeRef = item.initiative ? `initiative:${item.initiative.id}` : null;
+  const plain = (...parts) => parts.filter(Boolean).map(escapeHtml).join(" · ");
+  const look = {
+    gate: () => ({ icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: KIND_LOOK[item.kind]?.tone ?? "info", title: escapeHtml(item.question), ref: "attention", select: `gate:${item.id}`, sub: plain(...where(item), GATE_LABELS[item.kind] ?? item.kind), chip: ["Question", "accent"], at: item.askedAt, action: "Answer" }),
+    "pending-note": () => ({ icon: "document", tone: "neutral", title: escapeHtml(item.text), ref: initiativeRef, sub: plain(item.initiative?.title, "pending item"), chip: ["Question", "accent"] }),
+    findings: () => ({ icon: "eye", tone: "warning", title: escapeHtml(slice), ref: ctx.hasArtifact(item.path) ? item.path : sliceRef, sub: plain(item.initiative?.title, item.blocking ? plural(item.blocking, "blocking finding") : plural(item.unresolved, "open finding")), chip: ["Finding", "warning"] }),
+    "failed-verification": () => ({ icon: "flask", tone: "danger", title: `${escapeHtml(slice)} failed verification`, ref: sliceRef, sub: plain(item.initiative?.title, failedReason(item)), chip: ["Failed verification", "danger"], at: item.finishedAt }),
+    blocked: () => ({ icon: "warning", tone: "danger", title: `${escapeHtml(slice)} is blocked`, ref: sliceRef, sub: plain(item.initiative?.title, "blocked slice"), chip: ["Blocked", "danger"] }),
+    "ready-to-ship": () => ({ icon: "check-circle", tone: "success", title: `${escapeHtml(item.initiative.title)} is ready to ship`, ref: initiativeRef, sub: "Every slice is done", chip: ["Ready to ship", "success"] }),
+    "record-problem": () => ({ icon: "warning", tone: "danger", title: `${escapeHtml(recordName(item.path, ctx) ?? "A record")} has a problem`, ref: ctx.hasArtifact(item.path) ? item.path : initiativeRef, sub: [escapeHtml(item.initiative?.title ?? ""), messageHtml(item.message ?? "")].filter(Boolean).join(" · "), chip: ["Problem", "danger"] }),
+    unlisted: () => ({ icon: "roadmap", tone: "warning", title: `${escapeHtml(item.initiative.title)} is not on the roadmap`, ref: initiativeRef, sub: "It has an initiative record but no roadmap entry", chip: ["Problem", "warning"] }),
+    "open-question": () => ({ icon: "roadmap", tone: "neutral", title: escapeHtml(item.text), ref: "roadmap", sub: "Open question on the roadmap", chip: ["Problem", "warning"] }),
+    "roadmap-missing": () => ({ icon: "warning", tone: "warning", title: "No roadmap", ref: null, sub: "No roadmap record exists yet; ask the agent to run setup", chip: ["Problem", "warning"] }),
+    "roadmap-problem": () => ({ icon: "warning", tone: "danger", title: "The roadmap has a problem", ref: "roadmap", sub: messageHtml(item.message ?? ""), chip: ["Problem", "danger"] }),
+    config: () => ({ icon: "warning", tone: "warning", title: "Check the workflow settings", ref: null, sub: messageHtml(item.message ?? ""), chip: ["Problem", "warning"] })
+  }[item.type]?.() ?? { icon: "info", tone: "neutral", title: escapeHtml(item.type), ref: null, sub: "", chip: [kind, "neutral"] };
+  const linked = look.ref && ctx.hasArtifact(look.ref);
+  const select = look.select ? ` data-attention-select="${escapeHtml(look.select)}"` : "";
+  const title = linked ? `<a class="title-link attention-row-title" href="./review?artifact=${encodeURIComponent(look.ref)}" data-artifact="${escapeHtml(look.ref)}"${select}>${look.title}</a>` : `<span class="attention-row-title">${look.title}</span>`;
+  const time = look.at ? `<time class="attention-row-time" datetime="${escapeHtml(look.at)}">${escapeHtml(shortAgo(look.at))}</time>` : '<span class="attention-row-time"></span>';
+  const action = linked ? `<prism-button size="sm" class="attention-row-action" data-artifact="${escapeHtml(look.ref)}"${select}>${escapeHtml(look.action ?? "Open")}</prism-button>` : '<span class="attention-row-action"></span>';
+  return `<li class="attention-row"><span class="prism-inbox-tile" data-tone="${escapeHtml(look.tone)}"><prism-icon name="${escapeHtml(look.icon)}" size="sm"></prism-icon></span><span class="attention-row-text">${title}${look.sub ? `<span class="attention-row-sub">${look.sub}</span>` : ""}</span><prism-chip class="attention-row-kind" tone="${escapeHtml(look.chip[1])}">${escapeHtml(look.chip[0])}</prism-chip>${time}${action}</li>`;
+}
+
+function bindSelection(container) {
+  container.addEventListener("click", (event) => {
+    const chosen = event.target.closest?.("[data-attention-select]");
+    if (chosen) pendingSelection = chosen.dataset.attentionSelect;
+  }, { capture: true });
+}
+
+// Attention filtered to one kind or one initiative: only its items, as rows that open where each is handled.
+function renderFiltered(container, filter, ctx) {
+  filterLine(container, `${filter.label} · ${filter.items.length} of ${filter.total} ${filter.total === 1 ? "item" : "items"}`, ctx);
+  container.innerHTML = filter.items.length
+    ? `<ul class="attention-rows" aria-label="${escapeHtml(filter.label)}">${filter.items.map((entry) => filteredItem(entry, ctx)).join("")}</ul>`
+    : `<div class="attention-nothing">${emptyState("Nothing here waits on you", `No item of ${filter.label} needs you now.`)}</div>`;
+  bindSelection(container);
+  bindLinks(container, ctx);
+}
+
+// The questions answered or closed in the last 7 days, newest first, each with where it belongs and the answer or the reason it was closed.
+function renderAnswered(container, answered, ctx) {
+  filterLine(container, `Answered in the last 7 days · ${plural(answered.length, "question")}`, ctx);
+  if (!answered.length) {
+    container.innerHTML = `<div class="attention-nothing">${emptyState("Nothing answered this week", "No question was answered or closed in the last 7 days.")}</div>`;
+    return;
+  }
+  container.innerHTML = `<ul class="attention-rows" aria-label="Answered in the last 7 days">${answered.map((item) => {
+    const place = [item.initiative ? artifactLink(`initiative:${item.initiative.id}`, ctx, item.initiative.title) : "", item.slice && item.initiative ? artifactLink(`slice:${item.initiative.id}/${item.slice.slug}`, ctx, item.slice.title) : ""].filter(Boolean).join(" · ");
+    const outcome = item.answer ? given(item) : `${badge("Closed by the agent")}${item.reason ? ` <span>${escapeHtml(item.reason)}</span>` : ""}`;
+    const tone = item.answer ? (item.answer.choice === "request-changes" ? "danger" : "success") : "neutral";
+    return `<li class="attention-row is-answered"><span class="prism-inbox-tile" data-tone="${tone}"><prism-icon name="${item.answer ? "check-circle" : "close"}" size="sm"></prism-icon></span><span class="attention-row-text"><span class="attention-row-title">${escapeHtml(item.question)}</span>${place ? `<span class="attention-row-sub">${place}</span>` : ""}<span class="attention-row-outcome">${outcome}</span></span><prism-chip class="attention-row-kind" tone="${item.answer ? "success" : "neutral"}">${item.answer ? "Answered" : "Closed"}</prism-chip><time class="attention-row-time" datetime="${escapeHtml(item.at ?? "")}">${escapeHtml(shortAgo(item.at))}</time><span class="attention-row-action"></span></li>`;
+  }).join("")}</ul>`;
+  bindLinks(container, ctx);
+}
+
 export function render(container, entity, ctx) {
+  if (entity.data.filter) return renderFiltered(container, entity.data.filter, ctx);
+  if (entity.ref === "attention:answered") return renderAnswered(container, entity.data.answered ?? [], ctx);
   const data = entity.data;
+  if (pendingSelection) {
+    ctx.state.selected = pendingSelection;
+    ctx.state.pane = "detail";
+    pendingSelection = null;
+  }
   const drafts = (ctx.state.drafts ??= {});
   const answered = data.answered ?? [];
   const earlier = data.earlier ?? [];

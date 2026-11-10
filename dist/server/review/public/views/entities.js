@@ -19,10 +19,13 @@ const VIEWS = {
   glossary: () => import("./library.js")
 };
 
-// Mirrors the server's entity references: sections, initiative:<id>, and slice:<id>/<slug>.
+// Mirrors the server's entity references: sections, Attention's filtered pages, initiative:<id>, and slice:<id>/<slug>.
 export function parseEntityRef(ref) {
   if (SECTIONS.includes(ref)) return { kind: ref };
-  let match = /^initiative:([A-Za-z0-9_-]+)$/.exec(ref ?? "");
+  // Attention's filtered pages: one kind, one initiative's items, or the questions answered this week.
+  let match = /^attention:(questions|findings|failed|blocked|ready|problems|answered|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
+  if (match) return { kind: "attention", page: match[1] };
+  match = /^initiative:([A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "initiative", id: match[1] };
   match = /^slice:([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "slice", id: match[1], slug: match[2] };
@@ -84,6 +87,7 @@ export function recordLabel(path, titles = new Map()) {
 
 export function entityLabel(entity) {
   const data = entity.data;
+  if (entity.kind === "attention" && entity.ref !== "attention") return { title: "Attention", lead: null, subtitle: null };
   if (entity.kind === "attention") return { title: "Attention", lead: "Answer here or in the agent's conversation; the agent picks the answer up on its own.", subtitle: null };
   if (entity.kind === "roadmap") return { eyebrow: "Roadmap", title: "Roadmap", lead: data.serves || null, subtitle: data.recordPath ?? null };
   if (entity.kind === "initiative") return { eyebrow: "Initiative", title: data.roadmapItem?.title ?? data.id, subtitle: data.recordPath };
