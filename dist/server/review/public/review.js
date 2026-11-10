@@ -1715,7 +1715,7 @@ function renderNavigation() {
   for (const rail of [shellRail, drawerRail]) renderRail(rail, attention.gates ?? 0);
   const entity = Boolean(parseEntityRef(selectedPath ?? ""));
   const claims = claimIndex ? [...claimIndex.live(), ...claimIndex.expired()].map((claim) => [claim.ref, claim.expiresAt, claim.label]) : [];
-  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", knowledgeQuery(), knowledgeResults, attentionMoreOpen, roadmapView, lastSlice, touchedCount]);
+  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", knowledgeQuery(), knowledgeResults, attentionMoreOpen, roadmapView, currentPlace === "knowledge" ? [lastSlice, touchedCount] : null]);
   if (key === navigationKey) return;
   navigationKey = key;
   const focused = document.activeElement?.closest?.("prism-tree-item");
@@ -2030,7 +2030,8 @@ function noteTouched(slice, answer) {
   const count = answer ? answer.groups.reduce((sum, group) => sum + group.records.length, 0) : null;
   if (count === touchedCount) return;
   touchedCount = count;
-  renderNavigation();
+  // Only Knowledge shows the count, so another place's sidebar is not rebuilt for it.
+  if (currentPlace === "knowledge") renderNavigation();
 }
 
 async function showArtifact(path) {
