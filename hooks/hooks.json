@@ -165,12 +165,12 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-session-trace.mjs\"",
-            "timeout": 5
+            "timeout": 3
           },
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/keep-orchestrator-role.mjs\"",
-            "timeout": 5
+            "timeout": 3
           }
         ]
       }
