@@ -251,6 +251,8 @@ export async function nativeDialog({ text, env = process.env, platform = process
       command: osascript,
       args: ["-e", "on run argv", "-e", OSASCRIPT_DIALOG, "-e", "end run", text],
       env,
+      // A start failure is an osascript error: its message stands in for the standard error.
+      readsStartFailure: true,
       killAfterMs: DIALOG_BACKSTOP_MS,
       read: ({ code, stdout, stderr, timedOut }) => {
         if (timedOut) return "unanswered";
@@ -270,6 +272,7 @@ export async function nativeDialog({ text, env = process.env, platform = process
       command: powershell,
       args: ["-NoProfile", "-NonInteractive", "-Command", POWERSHELL_COMMAND],
       env: { ...env, PRISM_LAUNCH_CONFIRM_TEXT: text },
+      readsStartFailure: true,
       killAfterMs: DIALOG_BACKSTOP_MS,
       read: ({ code, timedOut }) => {
         if (timedOut) return "unanswered";
@@ -356,7 +359,7 @@ export async function confirmLaunch({ initiative, host, checkout, env = process.
     const outcome = await runDialog(dialog);
     // The cool-down runs from the dialog's end, on the request's clock.
     const endedAt = now + (Date.now() - shownAt);
-    if (outcome.spawnError) throw unavailable(`${path.basename(dialog.command)} could not be started`);
+    if (outcome.spawnError && !dialog.readsStartFailure) throw unavailable(`${path.basename(dialog.command)} could not be started`);
     const answer = dialog.read(outcome);
     if (answer instanceof LaunchError) throw answer;
     if (answer === "confirmed") {
