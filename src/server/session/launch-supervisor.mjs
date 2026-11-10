@@ -2,14 +2,18 @@
 // The detached supervisor of one run of a launched session: node launch-supervisor.mjs <launch folder> <cause> <token>.
 // It starts the run's host in the checkout with its own environment, which the starter prepared, reads the host's output,
 // renews the heartbeat in the launch record, and records the run's end with the host's exit code and signal.
+// It watches its launch folder for a stop request that names its run, and then ends the host and every process it started.
 // It names its launch folder on its command line, so any process on this machine can find it.
 import { spawn } from "node:child_process";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { readLaunchRecord, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
+import { endProcessTree, stopGraceMs } from "./process-tree.mjs";
+import { readLaunchRecord, readStopRequest, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
 import { hostArguments, redactSessionId, resolveHost, streamReader, validHostSessionId } from "./launch-hosts.mjs";
 
 const STDERR_KEEP = 64 * 1024;
 const OUTPUT_DRAIN_MS = 2000;
+const STOP_POLL_MS = 100;
 
 export async function superviseRun({ folder, cause, token, env = process.env }) {
   let queue = Promise.resolve();
@@ -38,6 +42,9 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
   }
   const args = hostArguments({ host: record.host, initiative: record.initiative, hostSessionId: record.hostSessionId, resume });
   const number = record.runs.length + 1;
+  const graceMs = stopGraceMs(env);
+  // The launch folder lies in <review app folder>/launches/, whose review-app.json names the review app that a stop spares.
+  const reviewAppFolder = path.dirname(path.dirname(path.resolve(folder)));
   let stderr = Buffer.alloc(0);
   const reader = streamReader(record.host, {
     hostSessionId: record.hostSessionId,
@@ -49,6 +56,11 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
     let started = false;
     let heartbeat = null;
     let spoke = false;
+    let exited = false;
+    let stopping = null;
+    let stopPoll = null;
+    let markExited;
+    const hostEnded = new Promise((done) => { markExited = done; });
     let markSpawned;
     const spawned = new Promise((done) => { markSpawned = done; });
     const ended = new Promise((resolve) => {
@@ -61,12 +73,29 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
         const at = new Date().toISOString();
         update((current) => {
           delete current.startFailure;
-          current.runs.push({ number, cause, token, supervisorPid: process.pid, hostPid: child.pid, startedAt: at, heartbeatAt: at, outputAt: null, endedAt: null, exit: null, refusals: [], hostError: null, stderr: null });
+          current.runs.push({ number, cause, token, supervisorPid: process.pid, hostPid: child.pid, startedAt: at, heartbeatAt: at, outputAt: null, endedAt: null, exit: null, refusals: [], hostError: null, stderr: null, stopGraceMs: graceMs, stopRequestedAt: null });
         }).then(() => markSpawned(true));
         heartbeat = setInterval(() => update((current) => {
           const run = current.runs.find((entry) => entry.token === token);
           if (run && !run.endedAt) run.heartbeatAt = new Date().toISOString();
         }), HEARTBEAT_MS);
+        // A stop request counts only for this run's token; the stop is recorded before the host is asked to end.
+        let checking = false;
+        stopPoll = setInterval(async () => {
+          if (checking || stopping || exited) return;
+          checking = true;
+          try {
+            const request = await readStopRequest(folder);
+            if (request?.token !== token || stopping || exited) return;
+            const requestedAt = new Date().toISOString();
+            stopping = update((current) => {
+              const run = current.runs.find((entry) => entry.token === token);
+              if (run && !run.endedAt && !run.stopRequestedAt) run.stopRequestedAt = requestedAt;
+            }).then(() => endProcessTree({ pid: child.pid, running: () => !exited, ended: hostEnded, graceMs, reviewAppFolder })).catch(() => {});
+          } finally {
+            checking = false;
+          }
+        }, STOP_POLL_MS);
       });
       child.stdout.on("data", (chunk) => {
         reader.push(chunk);
@@ -89,8 +118,13 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
         child.stderr.once("close", one);
       });
       child.once("exit", async (code, signal) => {
+        exited = true;
+        markExited();
+        clearInterval(stopPoll);
         if (!started) return;
         const endedAt = new Date().toISOString();
+        // The end is recorded only once the stop has ended every listed process, so a stopped view means the tree is gone.
+        if (stopping) await stopping;
         await Promise.race([drained, new Promise((done) => setTimeout(done, OUTPUT_DRAIN_MS))]);
         reader.end();
         clearInterval(heartbeat);

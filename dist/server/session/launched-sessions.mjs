@@ -8,27 +8,32 @@ import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { listInitiatives } from "../workflow/record-store.mjs";
 import { readRoadmap } from "../workflow/roadmap.mjs";
 import { hostAvailability, hostDefinition, hostEnvironment, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
+import { stopGraceMs } from "./process-tree.mjs";
 import {
   LAUNCH_ID_PATTERN,
   LaunchError,
+  SUPERVISION_LOST,
   createLaunchFolder,
   expired,
+  lastRunStatus,
   launchFolder,
   launchRunning,
   launchView,
   launchesDirectory,
   listLaunchRecords,
   newLaunchId,
+  readStopRequest,
   prepareLaunchesDirectory,
   readLaunchRecord,
   removeLaunchFolder,
   storeLocation,
   voidToken,
   withRunStartLock,
-  writeLaunchRecord
+  writeLaunchRecord,
+  writeStopRequest
 } from "./launch-records.mjs";
 
-// Starting, listing, and resuming launched sessions: headless host sessions that Prism runs for one initiative on this machine.
+// Starting, listing, resuming, and stopping launched sessions: headless host sessions that Prism runs for one initiative on this machine.
 // Each run runs under a detached supervisor, so the session outlives the process that started it.
 
 export { hostAvailability, LaunchError };
@@ -38,6 +43,8 @@ const START_TIMEOUT_MS = 15000;
 const LOCK_TIMEOUT_MS = 30000;
 const POLL_MS = 25;
 const FIRST_OUTPUT_WAIT_MS = 5000;
+// A stop resolves at most this long after the grace period, once the run's end is recorded.
+const STOP_SETTLE_MS = 5000;
 
 const refuse = (code, message) => new LaunchError(code, message);
 const runningMessage = (initiative) => `A launched session of ${initiative} is running on this machine.`;
@@ -166,6 +173,38 @@ export async function resumeLaunch({ id, env = process.env, cause = "person" }) 
     if (!resolved?.available) throw refuse("host_unavailable", resolved?.reason ?? `Unknown host ${record.host}.`);
     return startRun({ folder, record, env, cause: cause === "gate" ? "gate" : "person" });
   });
+}
+
+/**
+ * Asks a launched session's supervisor to stop through its launch folder, so any process on this machine can ask,
+ * and answers the launch view in state stopped once the supervisor has recorded the run's end.
+ */
+export async function stopLaunch({ id, env = process.env }) {
+  const unknown = () => refuse("unknown_launch", `No launched session ${String(id)} exists on this machine.`);
+  if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) throw unknown();
+  const folder = launchFolder(env, id);
+  if (!(await readLaunchRecord(folder))) throw unknown();
+  const run = await withLaunchLock(env, async () => {
+    const record = await readLaunchRecord(folder);
+    if (!record) throw unknown();
+    const status = lastRunStatus(record);
+    if (status === "lost") throw refuse("supervision_lost", SUPERVISION_LOST);
+    if (status !== "running") throw refuse("launch_not_running", "The session is not running.");
+    const last = record.runs.at(-1);
+    if ((await readStopRequest(folder))?.token !== last.token) await writeStopRequest(folder, last.token);
+    return last;
+  });
+  const grace = Number.isSafeInteger(run.stopGraceMs) && run.stopGraceMs >= 0 ? run.stopGraceMs : stopGraceMs(env);
+  const deadline = Date.now() + grace + STOP_SETTLE_MS;
+  for (;;) {
+    const record = await readLaunchRecord(folder);
+    if (!record) throw unknown();
+    const current = record.runs.find((entry) => entry.token === run.token);
+    if (current?.endedAt) return launchView(record);
+    if (lastRunStatus(record) === "lost") throw refuse("supervision_lost", SUPERVISION_LOST);
+    if (Date.now() >= deadline) throw refuse("stop_timeout", `The session did not stop within ${Math.ceil((grace + STOP_SETTLE_MS) / 1000)} seconds; its supervisor keeps ending it.`);
+    await new Promise((resolve) => setTimeout(resolve, POLL_MS * 4));
+  }
 }
 
 /** Every launched session of this machine whose checkout shares the record store of projectRoot, the most recently launched first. */

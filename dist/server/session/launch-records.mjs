@@ -12,6 +12,8 @@ import { hostDefinition, redactSessionId, resumeCommandOf } from "./launch-hosts
 
 export const LAUNCH_ID_PATTERN = /^launch-[0-9a-f]{16}$/;
 const RECORD_FILE = "launch.json";
+// A stop request names the token of the run it stops, so a request never reaches a later run.
+const STOP_FILE = "stop.json";
 export const HEARTBEAT_MS = 5000;
 export const HEARTBEAT_STALE_MS = 60000;
 export const RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
@@ -97,6 +99,23 @@ export async function writeLaunchRecord(folder, record) {
   await writeAtomically(path.join(folder, RECORD_FILE), `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
 }
 
+/** Asks the supervisor of the run with this token to stop; the caller holds the launch lock. */
+export async function writeStopRequest(folder, token) {
+  await writeAtomically(path.join(folder, STOP_FILE), `${JSON.stringify({ token, requestedAt: new Date().toISOString() })}\n`, { mode: 0o600 });
+}
+
+/** The stop request of the launch folder: { token, requestedAt }, or null. */
+export async function readStopRequest(folder) {
+  try {
+    const info = await lstat(path.join(folder, STOP_FILE));
+    if (!info.isFile()) return null;
+    const value = JSON.parse(await readFile(path.join(folder, STOP_FILE), "utf8"));
+    return value && typeof value.token === "string" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Every launch folder on this machine with its record: [{ folder, record }], skipping unreadable ones. */
 export async function listLaunchRecords(env) {
   const directory = launchesDirectory(env);
@@ -175,6 +194,7 @@ function stateOf(record, status, label) {
   const run = record.runs.at(-1);
   if (status === "running") return { state: "running", reason: null };
   if (status === "lost") return { state: "failed", reason: SUPERVISION_LOST };
+  if (run.stopRequestedAt) return { state: "stopped", reason: null };
   const stderr = lastErrorLine(run.stderr);
   const tail = stderr ? ` ${stderr}` : "";
   if (run.exit?.signal) return { state: "failed", reason: `${label} ended by signal ${run.exit.signal}.${tail}` };
