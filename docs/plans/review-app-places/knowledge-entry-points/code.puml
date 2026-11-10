@@ -1,0 +1,16 @@
+@startuml
+title knowledge-entry-points - units
+component "record-changes.mjs\nrecordChanges" as Changes
+component "touched-records.mjs\ntouchedRecords" as Touched
+component "review-server.mjs\nGET /api/touched, /api/changed" as Server
+component "views/knowledge.js\nrenderTouched, renderChanged" as Pages
+component "review.js lastSlice" as Last
+component "design-view.mjs\nplannedChanges, contractClauses" as Design
+component "git" as Git
+Changes --> Git : log and status of record files
+Touched --> Design : clauses and Changes lines
+Server --> Changes
+Server --> Touched
+Pages --> Server
+Pages --> Last : slice last selected
+@enduml

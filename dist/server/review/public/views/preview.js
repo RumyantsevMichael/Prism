@@ -43,6 +43,10 @@ function entitySummary(entity) {
     body = `<p class="chip-row"><prism-badge variant="status">${escapeHtml(data.slice.status)}</prism-badge><span class="muted">${escapeHtml(data.initiativeTitle)}</span></p>${data.slice.outcome ? `<p>${escapeHtml(data.slice.outcome)}</p>` : ""}`;
   } else if (entity.kind === "roadmap") {
     body = `<p>${escapeHtml(data.serves || "")}</p><p class="muted">${data.items?.length ?? 0} initiatives</p>`;
+  } else if (entity.kind === "attention" && data.filter) {
+    body = `<p class="muted">${escapeHtml(data.filter.label)} · ${escapeHtml(String(data.filter.items.length))} of ${escapeHtml(String(data.filter.total))} items</p>`;
+  } else if (entity.kind === "attention" && data.answered && !data.needsYou) {
+    body = `<p class="muted">${escapeHtml(String(data.answered.length))} answered or closed in the last 7 days</p>`;
   } else if (entity.kind === "attention") {
     body = `<p class="muted">${escapeHtml(String(data.gateCount ?? 0))} recorded questions</p>`;
   } else if (Array.isArray(data.entries)) {

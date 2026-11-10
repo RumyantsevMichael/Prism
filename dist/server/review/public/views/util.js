@@ -4,6 +4,21 @@ export function escapeHtml(value) {
   return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
+// A path under .prism/ or a JSON file name inside a sentence, without the punctuation that ends the sentence.
+const CODE_SUBJECT = /\.prism\/\S*?(?=[.,;:!?)]*(?:\s|$))|[\w.-]*[\w-]\.json\b/g;
+
+/** A message as HTML, with each path under .prism/ and each JSON file name in code marked data-code-subject. */
+export function messageHtml(text) {
+  const value = String(text ?? "");
+  let html = "";
+  let last = 0;
+  for (const match of value.matchAll(CODE_SUBJECT)) {
+    html += `${escapeHtml(value.slice(last, match.index))}<code data-code-subject>${escapeHtml(match[0])}</code>`;
+    last = match.index + match[0].length;
+  }
+  return html + escapeHtml(value.slice(last));
+}
+
 export function shortId(value) {
   return typeof value === "string" && value.length > 14 ? `${value.slice(0, 8)}…${value.slice(-4)}` : String(value ?? "");
 }
@@ -36,6 +51,19 @@ export function formatTime(value) {
 }
 
 // The source names the file a card reads, in a quiet label beside the title; the workflow views name records by kind instead.
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * A decision's date as `<day> <month>`, with the year when it is not the current year or when `year` asks for it, such as `9 Nov` or `14 Jun 2025`;
+ * an unreadable time gives an empty text.
+ */
+export function shortDate(value, { year = false, now = new Date() } = {}) {
+  const day = new Date(value ?? "");
+  if (!value || Number.isNaN(day.getTime())) return "";
+  const shown = `${day.getDate()} ${MONTHS[day.getMonth()]}`;
+  return year || day.getFullYear() !== now.getFullYear() ? `${shown} ${day.getFullYear()}` : shown;
+}
+
 export function cardSource(source) {
   return source ? `<span class="card-source">${escapeHtml(source)}</span>` : "";
 }
@@ -66,6 +94,33 @@ export function chip(html, { tone = "", meta = "", tip = "", attributes = "" } =
 }
 
 /** A kit empty state with its heading and an optional line below it. */
+/**
+ * A line under the page's title, a kit prism-page-sub: `html` is its text, which may name things in <b>,
+ * `glyph` the markup of a glyph that leads it, `end` the markup that ends it, such as a link, and `detail` a quieter line.
+ */
+export function pageSub(html, { glyph = "", end = "", detail = false } = {}) {
+  const slotted = (markup, slot) => markup.replace(/^<([a-z][\w-]*)/, `<$1 slot="${slot}"`);
+  return `<prism-page-sub${detail ? " detail" : ""}>${glyph ? slotted(glyph, "glyph") : ""}${html}${end ? slotted(end, "end") : ""}</prism-page-sub>`;
+}
+
+/**
+ * Puts `html`, one element of page-sub lines or nothing, under the title in the page head above `container`, in place of the lines an earlier draw put there,
+ * and binds its links; it answers false when the page has no head, so the caller can put the lines at the top of the page instead.
+ */
+export function setPageSub(container, html, ctx) {
+  const head = container.parentElement?.querySelector(".artifact-header > div:first-child");
+  if (!head) return false;
+  head.querySelector(":scope > [data-page-sub]")?.remove();
+  if (!html) return true;
+  const holder = document.createElement("div");
+  holder.innerHTML = html.trim();
+  const node = holder.firstElementChild;
+  node.setAttribute("data-page-sub", "");
+  head.append(node);
+  bindLinks(node, ctx);
+  return true;
+}
+
 export function emptyState(heading, text = "") {
   return `<prism-empty-state heading="${escapeHtml(heading)}">${text ? `<p>${escapeHtml(text)}</p>` : ""}</prism-empty-state>`;
 }
@@ -87,6 +142,14 @@ export function artifactChip(path, ctx, label = path) {
     return `<prism-chip tip="Not a reviewable artifact"${code}>${escapeHtml(label)}</prism-chip>`;
   }
   return `<prism-chip interactive tone="accent" data-artifact="${escapeHtml(path)}"${code}>${escapeHtml(label)}</prism-chip>`;
+}
+
+/** A record's title as a link to its page, so the browser can open it in a new tab or window and copy its address; a path that is not reviewable stays text. */
+export function artifactLink(path, ctx, label = path) {
+  if (!path) return "";
+  const code = label === path && !/^(?:initiative|slice):/.test(path) ? " data-code-subject" : "";
+  if (!ctx.hasArtifact(path)) return `<span class="muted"${code}>${escapeHtml(label)}</span>`;
+  return `<a class="title-link" href="./review?artifact=${encodeURIComponent(path)}" data-artifact="${escapeHtml(path)}"${code}>${escapeHtml(label)}</a>`;
 }
 
 /**

@@ -15,7 +15,8 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { entityContext, entityExists, forgetWorkspace, loadClaims, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
+import { entityContext, entityExists, forgetWorkspace, loadClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords } from "./workspace-model.mjs";
+import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 import { readPreferences, writePreferences } from "./review-preferences.mjs";
@@ -916,6 +917,20 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       send(response, 200, JSON.stringify(await loadEvidence(projectRoot, url.searchParams.get("id"), evidenceStore())), "application/json; charset=utf-8");
     } else if (route === "/api/indexing" && request.method === "GET") {
       send(response, 200, JSON.stringify(await indexingStatus()), "application/json; charset=utf-8");
+    } else if (route === "/api/records/search" && request.method === "GET") {
+      // The Knowledge search: requirements, decisions, glossary terms, and diagrams whose title or text holds every word.
+      send(response, 200, JSON.stringify(await searchRecords(projectRoot, url.searchParams.get("q"))), "application/json; charset=utf-8");
+    } else if (route === "/api/touched" && request.method === "GET") {
+      // Touched by my work: the records behind one slice, what its contract cites and what its work changes.
+      try {
+        send(response, 200, JSON.stringify(await touchedRecords(projectRoot, url.searchParams.get("slice"))), "application/json; charset=utf-8");
+      } catch (error) {
+        if (!(error instanceof TouchedError)) throw error;
+        send(response, error.status, JSON.stringify({ code: error.code, error: error.message }), "application/json; charset=utf-8");
+      }
+    } else if (route === "/api/changed" && request.method === "GET") {
+      // Changed this week: the record files changed in the last 7 days, read from Git on each request.
+      send(response, 200, JSON.stringify(await loadRecordChanges(projectRoot)), "application/json; charset=utf-8");
     } else if (route === "/api/search") {
       send(response, 200, JSON.stringify(await searchArtifacts(projectRoot, url.searchParams.get("q"))), "application/json; charset=utf-8");
     } else if (route === "/api/artifact") {
