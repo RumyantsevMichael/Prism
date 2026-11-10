@@ -475,15 +475,16 @@ function validateClosed(value, errors) {
       addError(errors, entryPath, "must be a closed user gate");
       return;
     }
-    const { closedAt, reason, ...gate } = entry;
+    const { closedAt, reason, choice, ...gate } = entry;
     validateGate(gate, entryPath, errors);
+    if (choice !== undefined && (gate.kind !== "decision" || !(gate.options ?? []).some((option) => option?.id === choice))) addError(errors, `${entryPath}.choice`, "must be the id of one of the decision gate's options");
     if (typeof closedAt !== "string" || Number.isNaN(Date.parse(closedAt))) addError(errors, `${entryPath}.closedAt`, "must be an ISO timestamp");
     if (reason !== undefined && (typeof reason !== "string" || !reason.trim() || reason.length > REASON_LIMIT)) addError(errors, `${entryPath}.reason`, `must be a non-empty reason of at most ${REASON_LIMIT} characters`);
   });
 }
 
-function closedGate(gate, reason) {
-  return { ...gate, closedAt: new Date().toISOString(), ...(reason ? { reason } : {}) };
+function closedGate(gate, reason, choice) {
+  return { ...gate, closedAt: new Date().toISOString(), ...(reason ? { reason } : {}), ...(choice === undefined ? {} : { choice }) };
 }
 
 // Replacing the pending list may drop answered gates, but an unanswered question is withdrawn only through resolve with a reason.
@@ -534,7 +535,7 @@ function applyGateOperations(pending, operations) {
       next.push(gate);
       opened.push({ id: gate.id, kind: gate.kind, slice: gate.slice ?? null });
     } else if (operation.op === "resolve") {
-      const unknown = Object.keys(operation).filter((key) => !["op", "id", "reason"].includes(key));
+      const unknown = Object.keys(operation).filter((key) => !["op", "id", "reason", "choice"].includes(key));
       if (unknown.length) {
         throw error("invalid_changes", `gateOperations[${index}] has unsupported fields: ${unknown.join(", ")}.`);
       }
@@ -549,7 +550,11 @@ function applyGateOperations(pending, operations) {
       if (!next[position].answer && !reason) {
         throw error("invalid_changes", `gateOperations[${index}] resolves the unanswered gate ${operation.id}; give a reason, such as the user's answer in the conversation or why the question no longer applies.`);
       }
-      closed.push(closedGate(next[position], reason));
+      // A choice the user gave in the conversation stays on the closed gate, so a later operation can act on it.
+      if (operation.choice !== undefined && (next[position].kind !== "decision" || !(next[position].options ?? []).some((option) => option?.id === operation.choice))) {
+        throw error("invalid_changes", `gateOperations[${index}].choice must be the id of one of the options of the decision gate ${operation.id}.`);
+      }
+      closed.push(closedGate(next[position], reason, operation.choice));
       next.splice(position, 1);
     } else {
       throw error("invalid_changes", `gateOperations[${index}].op must be ask or resolve.`);

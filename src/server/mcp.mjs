@@ -349,7 +349,7 @@ function stateErrorData(error) {
     return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "state", "progress", "diagnostics", "claim", "syncState", "entry", "components", "component", "dependency", "cycle", "slice", "paths", "folder", "scope", "waiting", "scopes", "gates", "claims", "proposals", "fixes", "initiative", "shippedAt"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
   }
   if (error?.name !== "CoordinationStateError") {
-    if (["validation_failed", "invalid_path", "lock_timeout", "stale_snapshot", "preparation_failed", "unsupported_runtime", "corrupt_asset", "resource_limit", "incomplete_structure", "evidence_missing", "gate_blocked", "revision_conflict"].includes(error.code)) return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "expectedSnapshot", "currentSnapshot", "evidenceId"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
+    if (["validation_failed", "invalid_path", "lock_timeout", "stale_snapshot", "preparation_failed", "unsupported_runtime", "corrupt_asset", "resource_limit", "incomplete_structure", "evidence_missing", "gate_blocked", "revision_conflict", "deferral_refused"].includes(error.code)) return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "expectedSnapshot", "currentSnapshot", "evidenceId"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
     return undefined;
   }
   const data = { code: error.code };
@@ -799,7 +799,7 @@ const tools = [
             },
             gateOperations: {
               type: "array",
-              description: "Record a user gate with ask before asking the user, and remove it with resolve after acting on the user's answer, giving a reason when the gate has no browser answer. The user may answer in the conversation or in the review browser, which records the answer on the gate in state.pending. The result lists the ids of opened gates.",
+              description: "Record a user gate with ask before asking the user, and remove it with resolve after acting on the user's answer, giving a reason when the gate has no browser answer and, for a decision gate answered in the conversation, the chosen option's id as choice. The user may answer in the conversation or in the review browser, which records the answer on the gate in state.pending. The result lists the ids of opened gates.",
               items: {
                 oneOf: [
                   {
@@ -833,7 +833,7 @@ const tools = [
                     type: "object",
                     required: ["op", "id"],
                     additionalProperties: false,
-                    properties: { op: { const: "resolve" }, id: { type: "string", minLength: 1 }, reason: { type: "string", minLength: 1, maxLength: 1000, description: "Required for an unanswered gate: the user's answer in the conversation, or why the question no longer applies. The review browser shows it with the closed question." } }
+                    properties: { op: { const: "resolve" }, id: { type: "string", minLength: 1 }, choice: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$", description: "For a decision gate the user answered in the conversation: the id of the option they chose, which the closed gate keeps as choice." }, reason: { type: "string", minLength: 1, maxLength: 1000, description: "Required for an unanswered gate: the user's answer in the conversation, or why the question no longer applies. The review browser shows it with the closed question." } }
                   }
                 ]
               }

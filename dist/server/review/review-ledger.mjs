@@ -39,27 +39,84 @@ const UPDATE_REVIEW_SCHEMA = obj({ ...common, delivery: str, actor: obj({ id: st
   obj({ op: { const: "submit_lane" }, lane: str, status: { enum: ["CLEAN", "FINDINGS"] } }),
   obj({ op: { const: "carry_lane" }, lane: str, fromWave: str }),
   obj({ op: { const: "carry_assessments" }, lane: str, fromWave: str, ids: arr(str) }, ["op", "lane", "fromWave"]),
-  obj({ op: { const: "accept_wave" } }),
+  obj({ op: { const: "accept_wave" }, gate: str, deferrals: { ...arr(obj({ finding: str, followUp: { type: "string", maxLength: 8192 } }), 100), minItems: 1 } }, ["op"]),
   obj({ op: { const: "import_legacy" }, path: str }),
   obj({ op: { const: "regenerate_markdown" } })
 ] }) }, ["projectRoot", "initiative", "slice", "expectedRevision", "actor", "operations"]);
 const CHECK_REVIEW_GATE_SCHEMA = obj({ ...sliceIdentity, expectedRevision: hashField, gate: { enum: ["implementation", "completion"] } }, ["projectRoot", "initiative", "slice", "gate"]);
 const lastWave = (review) => review.waves.at(-1);
 const FREE_REVIEW_WAVES = 2;
+const UNRESOLVED = ["OPEN", "IN PROGRESS", "FIXED", "REOPENED"];
+const unresolvedFindings = (review) => review.findings.filter((item) => item.mode === "implementation-review" && UNRESOLVED.includes(item.status));
+const closedFinding = (finding) => finding.status === "VERIFIED" || finding.status === "DEFERRED";
+const reviewWaves = (review, acceptedAt) => review.waves.filter((item) => item.mode === "implementation-review" && (item.startedAt ?? acceptedAt) >= acceptedAt);
+const gateChose = (gate, option) => gate.answer?.choice === option || gate.choice === option;
+async function sliceGates(input) {
+  const state = (await readCoordinationState({ projectRoot: input.projectRoot, initiative: input.initiative })).state;
+  return [...state?.pending ?? [], ...state?.closed ?? []];
+}
+async function currentGate(input, review, acceptedAt, id) {
+  const latest = reviewWaves(review, acceptedAt).at(-1), start = latest ? latest.startedAt ?? acceptedAt : acceptedAt;
+  const gate = (await sliceGates(input)).find((item) => item.id === id);
+  return gate && gate.kind === "decision" && gate.slice === input.slice && (gate.askedAt ?? "") >= start ? gate : null;
+}
 async function assertReviewMayContinue(input, review, next, acceptedAt) {
-  const fromContract = review.findings.filter((item) => item.mode === "implementation-review" && item.clause && item.status !== "VERIFIED" && (item.history[0]?.at ?? "") >= acceptedAt);
+  const fromContract = review.findings.filter((item) => item.mode === "implementation-review" && item.clause && !closedFinding(item) && (item.history[0]?.at ?? "") >= acceptedAt);
   if (fromContract.length) {
     const clauses = [...new Set(fromContract.map((item) => item.clause))].join(", ");
     throw conservationError("gate_blocked", `Findings ${fromContract.map((item) => item.id).join(", ")} name contract clauses (${clauses}), so the contract needs revision: call verify_slice with contractDefects for those clauses and return the slice to design instead of starting another wave.`, { problems: fromContract.map((item) => ({ code: "contract_defect_found", finding: item.id, clause: item.clause })) });
   }
-  const waves = review.waves.filter((item) => item.mode === "implementation-review" && (item.startedAt ?? acceptedAt) >= acceptedAt);
+  const waves = reviewWaves(review, acceptedAt);
   if (waves.length < FREE_REVIEW_WAVES) return;
   if (!next.afterGate) throw conservationError("gate_blocked", `The slice had ${waves.length} review waves since its design was accepted. Ask the user a decision gate for this slice whether to continue the review, return the slice to design, or narrow it, and pass the answered gate's id as afterGate.`, { problems: [{ code: "review_loop_limit", waves: waves.length }] });
   if (review.waves.some((item) => item.afterGate === next.afterGate)) throw conservationError("gate_blocked", "Each further review wave needs its own answered decision gate.");
-  const state = (await readCoordinationState({ projectRoot: input.projectRoot, initiative: input.initiative })).state;
-  const gate = [...state?.pending ?? [], ...state?.closed ?? []].find((item) => item.id === next.afterGate);
+  const gate = (await sliceGates(input)).find((item) => item.id === next.afterGate);
   const asked = gate?.askedAt ?? "", lastStart = waves.at(-1)?.startedAt ?? acceptedAt;
   if (!gate || gate.kind !== "decision" || gate.slice !== input.slice || !(gate.answer || gate.closedAt) || asked < lastStart) throw conservationError("gate_blocked", `afterGate must name a decision gate for slice ${input.slice} that was asked after the last review wave started and that the user answered.`);
+}
+const FOLLOW_UP_LIMIT = 500;
+async function deferFindings(input, review, wave, gateId, deferrals, actor, at) {
+  const design = await acceptedDesign(input.projectRoot, input.initiative, input.slice);
+  const gate = await currentGate(input, review, design?.acceptedAt ?? "", gateId);
+  const unresolved = unresolvedFindings(review), named = new Map(deferrals.map((item) => [item.finding, item]));
+  const position = (id) => {
+    const index = review.findings.findIndex((item) => item.id === id);
+    return index === -1 ? review.findings.length + deferrals.findIndex((item) => item.finding === id) : index;
+  };
+  const groups = { gate_invalid: [], finding_not_unresolved: [], severity_not_low: [], follow_up_missing: [] };
+  const add = (code, finding, message) => groups[code].push({ code, finding, message });
+  if (!gate || !gateChose(gate, "accept-deferred")) for (const item of deferrals) add("gate_invalid", item.finding, `the gate ${gateId} is not a decision gate of slice ${input.slice}, asked since the latest review wave started, that chose accept-deferred`);
+  for (const item of deferrals) {
+    const finding = unresolved.find((entry) => entry.id === item.finding);
+    if (!finding) add("finding_not_unresolved", item.finding, "the finding is not an unresolved implementation-review finding of this slice");
+    else if (finding.severity !== "low") add("severity_not_low", item.finding, `the finding has ${finding.severity} severity, and only low findings can be deferred`);
+  }
+  for (const finding of unresolved) {
+    const followUp = named.get(finding.id)?.followUp.trim();
+    if (followUp === void 0) add("follow_up_missing", finding.id, "the unresolved finding is not deferred, so it needs a deferral with a follow-up or a fix");
+    else if (!followUp || followUp.length > FOLLOW_UP_LIMIT) add("follow_up_missing", finding.id, `the follow-up must be a non-empty reference of at most ${FOLLOW_UP_LIMIT} characters`);
+  }
+  const problems = Object.values(groups).flatMap((group) => group.sort((a, b) => position(a.finding) - position(b.finding)));
+  if (problems.length) throw conservationError("deferral_refused", `The review wave cannot be accepted with these deferrals: ${problems.map((item) => `${item.finding}: ${item.message}`).join("; ")}.`, { problems });
+  for (const item of deferrals) {
+    const finding = review.findings.find((entry) => entry.id === item.finding), followUp = item.followUp.trim();
+    finding.status = "DEFERRED";
+    finding.deferral = { gate: gateId, followUp, wave: wave.id, actor, at };
+    finding.history.push({ actor, status: "DEFERRED", wave: wave.id, at, evidence: followUp });
+  }
+}
+function refuseDeferred(finding) {
+  if (finding.status === "DEFERRED") throw conservationError("gate_blocked", `The finding ${finding.id} was deferred by the decision gate ${finding.deferral?.gate} with the follow-up ${finding.deferral?.followUp}, so it cannot change status or be revised.`);
+}
+const deferredFindings = (review) => review.findings.filter((item) => item.status === "DEFERRED").map((item) => ({ id: item.id, severity: item.severity, title: item.title, gate: item.deferral?.gate, followUp: item.deferral?.followUp, wave: item.deferral?.wave }));
+function deferredLane(review, wave, lane) {
+  const open = review.findings.filter((item) => item.mode === wave.mode && item.lane === lane.id && item.status !== "VERIFIED");
+  return open.length > 0 && open.every((item) => item.status === "DEFERRED");
+}
+function asReviewed(finding) {
+  if (finding.status !== "DEFERRED") return finding;
+  const { deferral: _, ...rest } = finding, history = finding.history.filter((entry) => entry.status !== "DEFERRED");
+  return { ...rest, status: history.at(-1)?.status ?? "OPEN", history };
 }
 const raisedIn = (finding) => finding.history[0]?.wave;
 const laneOf = (wave, lane) => {
@@ -79,7 +136,7 @@ function laneDigest(review, wave, lane) {
     inputs: verifiedTreeWave(wave) ? [wave.tree, wave.base ?? null] : [wave.deltaRevision, wave.baselineId, wave.snapshotId, wave.comparisonId],
     lane: { id: lane.id, reviewer: lane.reviewer, coverage: lane.coverage },
     independent: lane.reviewer !== review.coordinator && !review.deliveryWorkers.includes(lane.reviewer) && !review.exchangeWorkers.includes(lane.reviewer),
-    findings: review.findings.filter((item) => item.mode === wave.mode && item.lane === lane.id),
+    findings: review.findings.filter((item) => item.mode === wave.mode && item.lane === lane.id).map(asReviewed),
     assessments: review.assessments.filter((item) => item.wave === wave.id && item.lane === lane.id),
     conflicts: review.conflicts.filter((item) => item.wave === wave.id && item.lanes.includes(lane.id))
   }));
@@ -92,6 +149,7 @@ function designAudited(review, wave, designAccepted = false) {
   const audit = [...review.waves].reverse().find((item) => item.mode === "design-audit");
   return Boolean(audit?.accepted && audit.deltaRevision === wave.deltaRevision && audit.baselineId === wave.baselineId && audit.accepted.evidenceDigest === waveDigest(review, audit));
 }
+const STATUSES = ["OPEN", "IN PROGRESS", "FIXED", "VERIFIED", "REOPENED", "DEFERRED"];
 const recordSchema = obj({
   schemaVersion: { const: 1 },
   deltaPath: str,
@@ -113,7 +171,7 @@ const recordSchema = obj({
     lanes: arr(obj({ ...laneSchema.properties, result: obj({ status: { enum: ["CLEAN", "FINDINGS"] }, digest: hashField, reviewer: str }) }, ["id", "reviewer", "coverage"])),
     accepted: obj({ evidenceDigest: hashField, actor: str, at: str })
   }, ["id", "mode", "lanes"]), 1e3),
-  findings: arr(obj({ id: str, localId: str, lane: str, mode: { enum: ["design-audit", "implementation-review"] }, title: str, severity: { enum: ["blocker", "high", "medium", "low"] }, affectedPath: str, evidence: str, conditionToClose: str, aliases: arr(str), escalationTarget: str, probe: str, clause: str, status: { enum: ["OPEN", "IN PROGRESS", "FIXED", "VERIFIED", "REOPENED"] }, implementerEvidence: { type: "string" }, history: arr(obj({ actor: str, status: { enum: ["OPEN", "IN PROGRESS", "FIXED", "VERIFIED", "REOPENED"] }, wave: str, at: str, evidence: str, revised: obj({ clause: obj({ from: str, to: str }, []), conditionToClose: obj({ from: str, to: str }) }, []) }, ["actor", "status", "wave", "at", "evidence"]), 1e4) }, ["id", "localId", "lane", "mode", "title", "severity", "affectedPath", "evidence", "conditionToClose", "aliases", "escalationTarget", "status", "implementerEvidence", "history"]), 1e4),
+  findings: arr(obj({ id: str, localId: str, lane: str, mode: { enum: ["design-audit", "implementation-review"] }, title: str, severity: { enum: ["blocker", "high", "medium", "low"] }, affectedPath: str, evidence: str, conditionToClose: str, aliases: arr(str), escalationTarget: str, probe: str, clause: str, status: { enum: STATUSES }, deferral: obj({ gate: str, followUp: str, wave: str, actor: str, at: str }), implementerEvidence: { type: "string" }, history: arr(obj({ actor: str, status: { enum: STATUSES }, wave: str, at: str, evidence: str, revised: obj({ clause: obj({ from: str, to: str }, []), conditionToClose: obj({ from: str, to: str }) }, []) }, ["actor", "status", "wave", "at", "evidence"]), 1e4) }, ["id", "localId", "lane", "mode", "title", "severity", "affectedPath", "evidence", "conditionToClose", "aliases", "escalationTarget", "status", "implementerEvidence", "history"]), 1e4),
   assessments: arr({ oneOf: assessmentSchema.oneOf.map((schema) => obj({ ...schema.properties, wave: str, author: str, acceptedBy: str }, [...schema.required, "wave", "author"])) }, 1e4),
   conflicts: arr(obj({ id: str, wave: str, lanes: arr(str), reason: str, resolved: obj({ actor: str, reason: str }) }, ["id", "wave", "lanes", "reason"]), 1e4),
   exchangeWorkers: arr(str, 1e4),
@@ -361,10 +419,10 @@ async function waveProblems(projectRoot, review, wave, requireLaneResults, desig
 }
 function reviewerProblems(review, wave, requireLaneResults, problems) {
   const add = (code, message, id) => problems.push({ code, message, ...id ? { id } : {} });
-  for (const finding of review.findings.filter((item) => item.mode === wave.mode && item.status !== "VERIFIED")) add("finding_unresolved", finding.title, finding.id);
+  for (const finding of review.findings.filter((item) => item.mode === wave.mode && !closedFinding(item))) add("finding_unresolved", finding.title, finding.id);
   for (const conflict of review.conflicts.filter((item) => !item.resolved)) add("review_conflict", conflict.reason, conflict.id);
   if (requireLaneResults) {
-    for (const lane of wave.lanes) if (lane.result?.status !== "CLEAN" || lane.result.digest !== laneDigest(review, wave, lane)) add("lane_result_stale", "Every assigned lane needs a current CLEAN result.", lane.id);
+    for (const lane of wave.lanes) if (!lane.result || !(lane.result.status === "CLEAN" || deferredLane(review, wave, lane)) || lane.result.digest !== laneDigest(review, wave, lane)) add("lane_result_stale", "Every assigned lane needs a current CLEAN result, or a current FINDINGS result whose unverified findings are all deferred.", lane.id);
   }
   for (const lane of wave.lanes) if (lane.reviewer === review.coordinator || review.deliveryWorkers.includes(lane.reviewer) || review.exchangeWorkers.includes(lane.reviewer)) add("reviewer_not_independent", "A correction participant cannot verify the correction.", lane.id);
   return problems;
@@ -427,7 +485,7 @@ function markdown(review) {
     for (const lane of wave.lanes) lines.push(`- ${lane.id}: ${lane.result?.status || "PENDING"} (${lane.reviewer})`);
     lines.push("");
   }
-  for (const finding of review.findings) lines.push(`## ${finding.id}: ${finding.title}`, "", `- Status: ${finding.status}`, `- Severity: ${finding.severity}`, `- Evidence: ${finding.evidence}`, `- Condition to close: ${finding.conditionToClose}`, `- Implementer evidence: ${finding.implementerEvidence || "none"}`, "");
+  for (const finding of review.findings) lines.push(`## ${finding.id}: ${finding.title}`, "", `- Status: ${finding.status}`, ...finding.deferral ? [`- Deferred: gate ${finding.deferral.gate}, follow-up ${finding.deferral.followUp}`] : [], `- Severity: ${finding.severity}`, `- Evidence: ${finding.evidence}`, `- Condition to close: ${finding.conditionToClose}`, `- Implementer evidence: ${finding.implementerEvidence || "none"}`, "");
   return lines.join("\n") + "\n";
 }
 async function reviewProjection(input) {
@@ -447,7 +505,7 @@ function compactHistory(finding) {
 const titleWords = (title) => new Set(title.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2));
 function likelyDuplicates(review, wave, finding) {
   const words = titleWords(finding.title);
-  return review.findings.filter((item) => item !== finding && item.status !== "VERIFIED" && item.affectedPath === finding.affectedPath && raisedIn(item) === wave.id).filter((item) => {
+  return review.findings.filter((item) => item !== finding && !closedFinding(item) && item.affectedPath === finding.affectedPath && raisedIn(item) === wave.id).filter((item) => {
     const other = titleWords(item.title);
     const shared = [...words].filter((word) => other.has(word)).length;
     return shared / Math.max(1, Math.min(words.size, other.size)) >= 0.6;
@@ -481,6 +539,7 @@ async function getReview(input) {
     section,
     entries: section === "findings" ? entries.map(compactHistory) : entries,
     totalCount: list.length,
+    deferred: deferredFindings(loaded.document),
     nextOffset: offset + limit < list.length ? offset + limit : null,
     projectionStale
   };
@@ -577,6 +636,7 @@ async function updateReview(input) {
           } else if (op === "revise_finding") {
             const finding = review.findings.find((item) => item.id === operation.id);
             if (!finding) throw conservationError("validation_failed", "The finding does not exist.");
+            refuseDeferred(finding);
             if (finding.status === "VERIFIED") throw conservationError("gate_blocked", "A verified finding is closed; reopen it before revising it.");
             const changesClause = operation.clause !== void 0 || operation.clearClause === true;
             if (operation.clause !== void 0 && operation.clearClause === true) throw conservationError("validation_failed", "Pass clause to change the clause or clearClause to remove it, not both.");
@@ -600,6 +660,7 @@ async function updateReview(input) {
           } else if (op === "set_finding_status") {
             const finding = review.findings.find((item) => item.id === operation.id), status = operation.status;
             if (!finding || finding.mode !== wave2.mode) throw conservationError("validation_failed", "The finding does not belong to the current review mode.");
+            refuseDeferred(finding);
             if (["IN PROGRESS", "FIXED"].includes(status)) {
               requireRole(review, input.actor, "delivery");
               if (finding.status === "VERIFIED") throw conservationError("gate_blocked", "A reviewer must reopen a verified finding.");
@@ -649,7 +710,7 @@ async function updateReview(input) {
           } else if (op === "submit_lane") {
             const lane = laneOf(wave2, operation.lane);
             reviewer(review, wave2, input.actor, lane.id, operation.status === "CLEAN");
-            if (operation.status === "CLEAN" && review.findings.some((item) => item.mode === wave2.mode && item.lane === lane.id && item.status !== "VERIFIED")) throw conservationError("gate_blocked", "Unresolved findings prevent a CLEAN lane result.");
+            if (operation.status === "CLEAN" && review.findings.some((item) => item.mode === wave2.mode && item.lane === lane.id && !closedFinding(item))) throw conservationError("gate_blocked", "Unresolved findings prevent a CLEAN lane result.");
             if (!verifiedTreeWave(wave2)) await conservationStore.assertCurrent(input.projectRoot, wave2.snapshotId);
             lane.result = { status: operation.status, reviewer: input.actor.id, digest: laneDigest(review, wave2, lane) };
           } else if (op === "carry_lane") {
@@ -676,6 +737,13 @@ async function updateReview(input) {
             if (!requested) carry.notCarried.push(...notCarried);
           } else if (op === "accept_wave") {
             requireRole(review, input.actor, "coordinator");
+            const gate = operation.gate, deferrals = operation.deferrals;
+            if (gate === void 0 !== (deferrals === void 0)) throw conservationError("validation_failed", "Pass gate and deferrals together: the decision gate whose answer chose accept-deferred, and a follow-up for each unresolved finding.");
+            if (deferrals) {
+              if (new Set(deferrals.map((item) => item.finding)).size !== deferrals.length) throw conservationError("validation_failed", "Name each deferred finding once.");
+              if (wave2.mode !== "implementation-review") throw conservationError("validation_failed", "Only an implementation review wave accepts deferred findings.");
+              await deferFindings(input, review, wave2, gate, deferrals, input.actor.id, now());
+            }
             const problems = await waveProblems(input.projectRoot, review, wave2, true, designAccepted);
             if (problems.length) throw conservationError("gate_blocked", `The review wave does not satisfy its acceptance gate: ${summarizeProblems(problems)}. check_review_gate lists the assessments that can carry forward from the previous wave and a ready-to-fill skeleton for the rest.`, { problems });
             wave2.accepted = { evidenceDigest: waveDigest(review, wave2), actor: input.actor.id, at: now() };
@@ -716,8 +784,13 @@ export {
   GET_REVIEW_SCHEMA,
   UPDATE_REVIEW_SCHEMA,
   checkReviewGate,
+  currentGate,
+  deferredFindings,
+  gateChose,
   getReview,
   loadReview,
+  reviewWaves,
   summarizeProblems,
+  unresolvedFindings,
   updateReview
 };
