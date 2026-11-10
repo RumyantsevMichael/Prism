@@ -2,11 +2,17 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { readLaunchRecord, tokenVoided, LAUNCH_ID_PATTERN } from "./launch-records.mjs";
 
 // Ending a launched session's host and every process it started, also those that left its process group or session.
 // The review app that review-app.json names, its descendants, and every launch supervisor with its descendants are spared,
 // so a stop never ends the shared review app or another launched session.
 // A listed process is ended later only while it is still the same process, so a reused process id is never ended.
+// A process counts as a child of the parent it names only when it started no earlier than that parent,
+// since Windows keeps the parent id of a parent that ended and gives that id to new processes.
+// A launch supervisor is recognized by its exact command line, node, the supervisor script, and a launch folder in this machine's launches folder,
+// and, during a stop, by the launch record of that folder, never by a mention of the script's name.
+// The whole stop keeps to one deadline counted from the stop request, so every listing, forced round, and settle wait fits in it.
 
 export const DEFAULT_STOP_GRACE_MS = 10000;
 const LIST_TIMEOUT_MS = 10000;
@@ -16,7 +22,11 @@ const ROUND_PAUSE_MS = 50;
 // since an orphan stays listed until the system reaps it.
 const SETTLE_MS = 3000;
 const SETTLE_POLL_MS = 100;
-const SUPERVISOR_SCRIPT = "launch-supervisor.mjs";
+// After the grace period, the forced end and the settle wait finish within this long, which leaves time to record the run's end
+// inside the grace period and 5 seconds that a stop answers within.
+export const STOP_FINISH_MS = 3500;
+const MIN_SIGNAL_TIMEOUT_MS = 1000;
+const MIN_LISTING_MS = 2000;
 const DISCOVERY_FILE = "review-app.json";
 
 /** The grace period of a stop: PRISM_LAUNCH_STOP_GRACE_MS milliseconds, and 10000 without a valid value. */
@@ -25,9 +35,9 @@ export function stopGraceMs(env = process.env) {
   return /^\d{1,9}$/.test(value) ? Number(value) : DEFAULT_STOP_GRACE_MS;
 }
 
-function run(command, args) {
+function run(command, args, timeoutMs = LIST_TIMEOUT_MS) {
   return new Promise((resolve) => {
-    execFile(command, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: LIST_TIMEOUT_MS, windowsHide: true, env: { ...process.env, LC_ALL: "C" } }, (error, stdout) => resolve(error ? null : stdout));
+    execFile(command, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: Math.max(1, Math.round(timeoutMs)), windowsHide: true, env: { ...process.env, LC_ALL: "C" } }, (error, stdout) => resolve(error ? null : stdout));
   });
 }
 
@@ -45,11 +55,12 @@ function windowsTool(name) {
 
 const WINDOWS_LIST = "Get-CimInstance Win32_Process | ForEach-Object { [pscustomobject]@{ p = $_.ProcessId; q = $_.ParentProcessId; s = $(if ($_.CreationDate) { $_.CreationDate.ToFileTimeUtc() } else { 0 }); a = [string]$_.CommandLine } } | ConvertTo-Json -Compress";
 
-/** The processes of this machine as a Map of pid to { pid, ppid, started, args }, or null when the list cannot be read. */
-export async function listProcesses(platform = process.platform) {
+/** The processes of this machine as a Map of pid to { pid, ppid, started, args }, or null when the list cannot be read within timeoutMs. */
+export async function listProcesses(platform = process.platform, timeoutMs = LIST_TIMEOUT_MS) {
   const table = new Map();
+  if (!(timeoutMs > 0)) return null;
   if (platform === "win32") {
-    const out = await run(windowsTool("powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_LIST]);
+    const out = await run(windowsTool("powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_LIST], timeoutMs);
     if (out === null) return null;
     let entries;
     try { entries = JSON.parse(out); } catch { return null; }
@@ -60,7 +71,7 @@ export async function listProcesses(platform = process.platform) {
     }
     return table;
   }
-  const out = await run(posixPs(), ["-A", "-o", "pid=", "-o", "ppid=", "-o", "lstart=", "-o", "args="]);
+  const out = await run(posixPs(), ["-A", "-o", "pid=", "-o", "ppid=", "-o", "lstart=", "-o", "args="], timeoutMs);
   if (out === null) return null;
   for (const line of out.split("\n")) {
     const match = /^\s*(\d+)\s+(\d+)\s+(\S+\s+\S+\s+\d+\s+[\d:]+\s+\d+)\s?(.*)$/.exec(line);
@@ -82,15 +93,56 @@ export async function reviewAppPid(reviewAppFolder) {
   }
 }
 
-function spared(entry, sparedPids) {
-  return sparedPids.has(entry.pid) || entry.args.includes(SUPERVISOR_SCRIPT);
+// A start time as a number that orders the processes of one listing: a Windows FILETIME, or a POSIX lstart date; null when unknown.
+function startOrder(started) {
+  if (/^\d+$/.test(started)) return BigInt(started);
+  const at = Date.parse(started);
+  return Number.isFinite(at) ? BigInt(at) : null;
 }
 
-/** The descendants of the roots, without the roots, skipping every spared process and the processes below it. */
-export function descendantsOf(table, roots, sparedPids = new Set()) {
+// A process is a child of the parent it names only when it did not start before that parent; a stale parent id fails this.
+function childOf(entry, parent) {
+  if (!parent) return true;
+  const child = startOrder(entry.started);
+  const own = startOrder(parent.started);
+  return child === null || own === null || child >= own;
+}
+
+// `<node> <path>/launch-supervisor.mjs <launch folder> <cause> <token>`, each path possibly holding spaces or quoted as Windows quotes it.
+const SUPERVISOR_COMMAND = /^("?)((?:.*[\\/])?node(?:\.exe)?)\1\s+("?)((?:.*[\\/])?launch-supervisor\.mjs)\3\s+("?)(.+?)\5\s+(launch|person|gate)\s+([0-9A-Za-z]+)$/i;
+
+/**
+ * The launch folder and token of a process whose command line is exactly a launch supervisor's, or null.
+ * With launchesDir, the launch folder must be the folder of a launch id in it.
+ */
+export function supervisorCommand(args, launchesDir = null) {
+  const match = SUPERVISOR_COMMAND.exec(String(args ?? "").trim());
+  if (!match) return null;
+  const folder = match[6];
+  const name = path.basename(folder);
+  if (launchesDir) {
+    if (path.dirname(folder) !== path.resolve(launchesDir) || !LAUNCH_ID_PATTERN.test(name)) return null;
+  } else if (path.basename(path.dirname(folder)) !== "launches" || !name.startsWith("launch-")) {
+    return null;
+  }
+  return { folder, token: match[8] };
+}
+
+const supervisorByCommand = (entry) => supervisorCommand(entry.args) !== null;
+
+function spared(entry, sparedPids, isSupervisor) {
+  return sparedPids.has(entry.pid) || isSupervisor(entry);
+}
+
+/**
+ * The descendants of the roots, without the roots, skipping every spared process and the processes below it.
+ * isSupervisor names the launch supervisors to spare besides sparedPids, by default every process with a supervisor's exact command line.
+ */
+export function descendantsOf(table, roots, sparedPids = new Set(), { isSupervisor = supervisorByCommand } = {}) {
   const children = new Map();
   for (const entry of table.values()) {
     if (entry.pid === entry.ppid) continue;
+    if (!childOf(entry, table.get(entry.ppid))) continue;
     if (!children.has(entry.ppid)) children.set(entry.ppid, []);
     children.get(entry.ppid).push(entry);
   }
@@ -102,7 +154,7 @@ export function descendantsOf(table, roots, sparedPids = new Set()) {
     for (const child of children.get(pid) ?? []) {
       if (seen.has(child.pid)) continue;
       seen.add(child.pid);
-      if (spared(child, sparedPids)) continue;
+      if (spared(child, sparedPids, isSupervisor)) continue;
       found.set(child.pid, child);
       queue.push(child.pid);
     }
@@ -110,67 +162,93 @@ export function descendantsOf(table, roots, sparedPids = new Set()) {
   return [...found.values()];
 }
 
-function signal(pid, forced, platform) {
+function signal(pid, forced, platform, timeoutMs = LIST_TIMEOUT_MS) {
   if (platform === "win32") {
-    return run(windowsTool("taskkill.exe"), forced ? ["/PID", String(pid), "/F"] : ["/PID", String(pid)]);
+    return run(windowsTool("taskkill.exe"), forced ? ["/PID", String(pid), "/F"] : ["/PID", String(pid)], Math.min(LIST_TIMEOUT_MS, Math.max(MIN_SIGNAL_TIMEOUT_MS, timeoutMs)));
   }
   try { process.kill(pid, forced ? "SIGKILL" : "SIGTERM"); } catch {}
   return null;
 }
 
-async function sparedSet(reviewAppFolder) {
+// A listed supervisor command counts as a launch supervisor when its launch folder's record names this process as the supervisor
+// of the running run with its token, or does not know the token yet, while that supervisor is still starting its host.
+async function liveSupervisor(entry, launchesDir, records) {
+  const command = supervisorCommand(entry.args, launchesDir);
+  if (!command) return false;
+  if (!records.has(command.folder)) records.set(command.folder, readLaunchRecord(command.folder));
+  const record = await records.get(command.folder);
+  if (!record) return false;
+  const run = record.runs.find((item) => item?.token === command.token);
+  if (run) return run.supervisorPid === entry.pid && !run.endedAt;
+  return !tokenVoided(record, command.token);
+}
+
+// The processes a stop spares in this listing: this supervisor, the review app, and every launch supervisor.
+async function sparedSet(reviewAppFolder, table) {
   const pids = new Set([process.pid]);
   const app = await reviewAppPid(reviewAppFolder);
   if (app) pids.add(app);
+  if (table && reviewAppFolder) {
+    const launchesDir = path.join(reviewAppFolder, "launches");
+    const records = new Map();
+    await Promise.all([...table.values()].map(async (entry) => {
+      if (!pids.has(entry.pid) && await liveSupervisor(entry, launchesDir, records)) pids.add(entry.pid);
+    }));
+  }
   return pids;
 }
+
+const exactlySpared = () => false;
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
 
 /**
  * Ends a host and its process tree: lists the host's descendants, asks the host to end, and after the grace period,
  * or at once when the host ends before it, forcibly ends the host while it runs, every listed process that is still the same process,
  * and every descendant of theirs that it then finds.
  * `running` answers whether the host still runs, and `ended` settles when it has ended.
+ * The grace period counts from requestedAt, the time of the stop request, and the forced end and the settle wait finish
+ * at most finishMs after the grace period, so the stop as a whole keeps to one deadline.
  */
-export async function endProcessTree({ pid, running, ended, graceMs = DEFAULT_STOP_GRACE_MS, reviewAppFolder = null, platform = process.platform, settleMs = SETTLE_MS }) {
-  const before = await listProcesses(platform);
-  const listed = before ? descendantsOf(before, [pid], await sparedSet(reviewAppFolder)) : [];
-  if (running()) await signal(pid, false, platform);
+export async function endProcessTree({ pid, running, ended, graceMs = DEFAULT_STOP_GRACE_MS, reviewAppFolder = null, platform = process.platform, settleMs = SETTLE_MS, requestedAt = Date.now(), finishMs = STOP_FINISH_MS }) {
+  const start = Math.min(Number.isFinite(requestedAt) ? requestedAt : Date.now(), Date.now());
+  const graceEnd = start + graceMs;
+  const deadline = graceEnd + finishMs;
+  const left = (until = deadline) => until - Date.now();
+  // The listings that decide what is ended get at least a short time even past the deadline, so a late stop still ends the tree.
+  const needed = () => Math.max(left(), MIN_LISTING_MS);
+  const before = await listProcesses(platform, needed());
+  const listed = before ? descendantsOf(before, [pid], await sparedSet(reviewAppFolder, before), { isSupervisor: exactlySpared }) : [];
+  if (running()) await signal(pid, false, platform, left(graceEnd));
   let timer;
-  await Promise.race([ended, new Promise((resolve) => { timer = setTimeout(resolve, graceMs); })]);
+  await Promise.race([ended, new Promise((resolve) => { timer = setTimeout(resolve, Math.max(0, left(graceEnd))); })]);
   clearTimeout(timer);
   const killed = new Set();
   const identity = (entry) => `${entry.pid}:${entry.started}`;
-  for (let round = 0; round < FORCED_ROUNDS; round += 1) {
-    const sparedPids = await sparedSet(reviewAppFolder);
-    const now = await listProcesses(platform);
-    const roots = [];
+  // The host is this process's own child, so its id cannot be reused before it is reaped, and it is ended without a listing.
+  if (running()) await signal(pid, true, platform, left());
+  for (let round = 0; round < FORCED_ROUNDS && (round === 0 || left() > 0); round += 1) {
+    const now = await listProcesses(platform, round === 0 ? needed() : left());
+    if (!now) break;
+    const sparedPids = await sparedSet(reviewAppFolder, now);
+    const roots = running() ? [pid] : [];
     const targets = [];
-    if (running()) {
-      roots.push(pid);
-      if (round === 0) targets.push(pid);
+    for (const entry of listed) {
+      const current = now.get(entry.pid);
+      if (!current || current.started !== entry.started || sparedPids.has(current.pid)) continue;
+      roots.push(entry.pid);
+      if (!killed.has(identity(current))) targets.push(current);
     }
-    if (now) {
-      for (const entry of listed) {
-        const current = now.get(entry.pid);
-        if (!current || current.started !== entry.started || spared(current, sparedPids)) continue;
-        roots.push(entry.pid);
-        if (!killed.has(identity(current))) targets.push(entry.pid);
-      }
-      for (const entry of descendantsOf(now, roots, sparedPids)) if (!killed.has(identity(entry))) targets.push(entry.pid);
-    }
-    const fresh = targets.filter((target, index) => targets.indexOf(target) === index);
+    for (const entry of descendantsOf(now, roots, sparedPids, { isSupervisor: exactlySpared })) if (!killed.has(identity(entry))) targets.push(entry);
+    const fresh = targets.filter((target, index) => targets.findIndex((other) => other.pid === target.pid) === index);
     if (!fresh.length) break;
-    for (const target of fresh) {
-      const entry = now?.get(target);
-      if (entry) killed.add(identity(entry));
-      await signal(target, true, platform);
-    }
-    await new Promise((resolve) => setTimeout(resolve, ROUND_PAUSE_MS));
+    for (const entry of fresh) killed.add(identity(entry));
+    await Promise.all(fresh.map((entry) => signal(entry.pid, true, platform, left())));
+    await pause(Math.min(ROUND_PAUSE_MS, left()));
   }
-  const settleBy = Date.now() + settleMs;
+  const settleBy = Math.min(Date.now() + settleMs, deadline);
   while (killed.size && Date.now() < settleBy) {
-    const now = await listProcesses(platform);
+    const now = await listProcesses(platform, settleBy - Date.now());
     if (!now || ![...now.values()].some((entry) => killed.has(identity(entry)))) return;
-    await new Promise((resolve) => setTimeout(resolve, SETTLE_POLL_MS));
+    await pause(Math.min(SETTLE_POLL_MS, settleBy - Date.now()));
   }
 }

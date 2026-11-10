@@ -7,13 +7,21 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { endProcessTree, stopGraceMs } from "./process-tree.mjs";
+import { endProcessTree, stopGraceMs, STOP_FINISH_MS } from "./process-tree.mjs";
 import { readLaunchRecord, readStopRequest, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
 import { hostArguments, redactSessionId, resolveHost, streamReader, validHostSessionId } from "./launch-hosts.mjs";
 
 const STDERR_KEEP = 64 * 1024;
 const OUTPUT_DRAIN_MS = 2000;
+// After a stop's forced end, the output is drained for at most this long past the stop's deadline, so the end is recorded in time.
+const STOP_DRAIN_MS = 500;
 const STOP_POLL_MS = 100;
+
+// The time of a stop request, never later than now.
+function requestTime(request) {
+  const at = Date.parse(request?.requestedAt ?? "");
+  return Number.isFinite(at) ? Math.min(at, Date.now()) : Date.now();
+}
 
 export async function superviseRun({ folder, cause, token, env = process.env }) {
   let queue = Promise.resolve();
@@ -58,6 +66,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
     let spoke = false;
     let exited = false;
     let stopping = null;
+    let stopDeadline = null;
     let stopPoll = null;
     let markExited;
     const hostEnded = new Promise((done) => { markExited = done; });
@@ -87,11 +96,14 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
           try {
             const request = await readStopRequest(folder);
             if (request?.token !== token || stopping || exited) return;
+            // The grace period and the stop's deadline count from the request, not from this poll.
+            const requested = requestTime(request);
+            stopDeadline = requested + graceMs + STOP_FINISH_MS;
             const requestedAt = new Date().toISOString();
             stopping = update((current) => {
               const run = current.runs.find((entry) => entry.token === token);
               if (run && !run.endedAt && !run.stopRequestedAt) run.stopRequestedAt = requestedAt;
-            }).then(() => endProcessTree({ pid: child.pid, running: () => !exited, ended: hostEnded, graceMs, reviewAppFolder })).catch(() => {});
+            }).then(() => endProcessTree({ pid: child.pid, running: () => !exited, ended: hostEnded, graceMs, reviewAppFolder, requestedAt: requested })).catch(() => {});
           } finally {
             checking = false;
           }
@@ -125,7 +137,12 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
         const endedAt = new Date().toISOString();
         // The end is recorded only once the stop has ended every listed process, so a stopped view means the tree is gone.
         if (stopping) await stopping;
-        await Promise.race([drained, new Promise((done) => setTimeout(done, OUTPUT_DRAIN_MS))]);
+        const drainMs = stopDeadline === null ? OUTPUT_DRAIN_MS : Math.min(OUTPUT_DRAIN_MS, Math.max(0, stopDeadline + STOP_DRAIN_MS - Date.now()));
+        let drainTimer;
+        await Promise.race([drained, new Promise((done) => { drainTimer = setTimeout(done, drainMs); })]);
+        clearTimeout(drainTimer);
+        // A stop request for this run that the poll had not read yet when the host ended still makes the end a stopped one.
+        const request = stopping ? null : await readStopRequest(folder);
         reader.end();
         clearInterval(heartbeat);
         const { facts } = reader;
@@ -137,6 +154,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
           // The id is replaced before the line is cut, so no cut leaves part of it behind.
           const last = redactSessionId(lines.at(-1) ?? null, current.hostSessionId);
           Object.assign(run, { endedAt, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, hostError: facts.hostError, stderr: last?.slice(0, 300) ?? null });
+          if (!run.stopRequestedAt && request?.token === token) run.stopRequestedAt = new Date(requestTime(request)).toISOString();
         });
         resolve();
       });

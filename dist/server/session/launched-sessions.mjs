@@ -175,6 +175,23 @@ export async function resumeLaunch({ id, env = process.env, cause = "person" }) 
   });
 }
 
+// A run whose host ended on its own after the stop request was written, before its supervisor read it, still ended after a stop request:
+// the request's time is recorded in the run, so every view shows it stopped. The supervisor writes nothing more once it recorded the end.
+async function markStopped(env, folder, token) {
+  return withLaunchLock(env, async () => {
+    const record = await readLaunchRecord(folder);
+    const run = record?.runs.find((entry) => entry.token === token);
+    if (!run?.endedAt) return null;
+    if (run.stopRequestedAt) return record;
+    const request = await readStopRequest(folder);
+    if (request?.token !== token) return record;
+    const at = Date.parse(request.requestedAt ?? "");
+    run.stopRequestedAt = new Date(Number.isFinite(at) ? at : Date.now()).toISOString();
+    await writeLaunchRecord(folder, record);
+    return record;
+  });
+}
+
 /**
  * Asks a launched session's supervisor to stop through its launch folder, so any process on this machine can ask,
  * and answers the launch view in state stopped once the supervisor has recorded the run's end.
@@ -200,7 +217,7 @@ export async function stopLaunch({ id, env = process.env }) {
     const record = await readLaunchRecord(folder);
     if (!record) throw unknown();
     const current = record.runs.find((entry) => entry.token === run.token);
-    if (current?.endedAt) return launchView(record);
+    if (current?.endedAt) return launchView(current.stopRequestedAt ? record : await markStopped(env, folder, run.token) ?? record);
     if (lastRunStatus(record) === "lost") throw refuse("supervision_lost", SUPERVISION_LOST);
     if (Date.now() >= deadline) throw refuse("stop_timeout", `The session did not stop within ${Math.ceil((grace + STOP_SETTLE_MS) / 1000)} seconds; its supervisor keeps ending it.`);
     await new Promise((resolve) => setTimeout(resolve, POLL_MS * 4));
