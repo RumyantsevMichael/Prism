@@ -10,7 +10,7 @@ export class PrismListbox extends Base {
     options: [
       { name: "label", values: ["text"], default: "", description: "The listbox's accessible name." },
       { name: "for", values: ["id"], default: "", description: "The id of a kit field whose control keeps focus and drives the active option; without it the listbox takes focus." },
-      { name: "first-current", values: ["boolean"], default: "false", description: "While no option is active, the first option shows as current, the one Enter in the field stands for; the first ArrowDown still makes it active." }
+      { name: "first-current", values: ["boolean"], default: "false", description: "While no option is active, the first option shows as current, the one Enter in the field stands for, so the first ArrowDown moves on to the second option." }
     ],
     states: ["default", "active", "selected", "with-field", "first-current"],
     keyboard: [
@@ -117,7 +117,9 @@ export class PrismListbox extends Base {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     const options = this.options;
     if (!options.length) return;
-    const index = options.indexOf(this.active);
+    // A first option shown as current is where the arrow keys start, so ArrowDown moves past it rather than onto it.
+    const active = options.indexOf(this.active);
+    const index = active < 0 && this.hasAttribute("first-current") ? 0 : active;
     let next = null;
     switch (event.key) {
       case "ArrowDown":

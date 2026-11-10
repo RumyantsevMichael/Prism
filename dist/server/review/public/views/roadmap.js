@@ -4,6 +4,7 @@ import { claimAttributes } from "./claims.js";
 import { enablePanZoom, graphCard, renderGraph } from "./graph.js";
 import { badge, bindLinks, card, emptyNote, escapeHtml, plural } from "./util.js";
 import { currentPhase } from "./slice.js";
+import { preference, setPreference } from "../kit/preferences.js";
 
 const MODES = [["board", "Board"], ["list", "List"], ["graph", "Graph"]];
 
@@ -148,8 +149,8 @@ async function graph(container, data, ctx, titles, archive) {
 
 export async function render(container, entity, ctx) {
   const data = entity.data;
-  ctx.state.mode ??= "board";
-  ctx.state.archive ??= false;
+  // The view, the archive toggle, and the collapsed lanes are the person's preferences, so every roadmap opens the way they last left one.
+  const view = { mode: preference("roadmap.view"), archive: preference("roadmap.showArchived"), collapsedLanes: preference("roadmap.collapsedLanes") };
   const archived = data.items.filter((item) => ARCHIVED.has(item.state)).length;
   const titles = new Map(data.items.map((item) => [item.id, item.title]));
   const missing = data.error
@@ -176,28 +177,28 @@ export async function render(container, entity, ctx) {
   // The page head carries the view's controls beside the title: the archive toggle and the board, list, and graph modes.
   const head = container.parentElement?.querySelector(".artifact-header");
   const controls = `<div class="view-controls roadmap-controls">
-      <prism-button size="sm" variant="ghost" data-roadmap-archive pressed="${ctx.state.archive}"${archived ? "" : " disabled"}>${ctx.state.archive ? "Hide" : "Show"} shipped and superseded <prism-badge tone="neutral">${archived}</prism-badge></prism-button>
-      <div class="segmented" role="group" aria-label="Roadmap view">${MODES.map(([mode, label]) => `<prism-button size="sm" variant="ghost" data-roadmap-mode="${mode}" pressed="${ctx.state.mode === mode}">${label}</prism-button>`).join("")}</div>
+      <prism-button size="sm" variant="ghost" data-roadmap-archive pressed="${view.archive}"${archived ? "" : " disabled"}>${view.archive ? "Hide" : "Show"} shipped and superseded <prism-badge tone="neutral">${archived}</prism-badge></prism-button>
+      <div class="segmented" role="group" aria-label="Roadmap view">${MODES.map(([mode, label]) => `<prism-button size="sm" variant="ghost" data-roadmap-mode="${mode}" pressed="${view.mode === mode}">${label}</prism-button>`).join("")}</div>
     </div>`;
   head?.querySelector(".roadmap-controls")?.remove();
   if (head) head.insertAdjacentHTML("beforeend", controls);
   else container.insertAdjacentHTML("afterbegin", controls);
   const controlRoot = head ?? container;
   const body = container.querySelector("[data-roadmap-body]");
-  if (ctx.state.mode === "graph") {
-    await graph(body, data, ctx, titles, ctx.state.archive);
+  if (view.mode === "graph") {
+    await graph(body, data, ctx, titles, view.archive);
   } else {
-    ctx.state.collapsedLanes ??= [];
-    body.innerHTML = ctx.state.mode === "list" ? list(data, titles, ctx.state.archive) : board(data, titles, ctx.state.archive, new Set(ctx.state.collapsedLanes));
+    body.innerHTML = view.mode === "list" ? list(data, titles, view.archive) : board(data, titles, view.archive, new Set(view.collapsedLanes));
   }
   for (const toggle of container.querySelectorAll("[data-lane]")) {
     toggle.addEventListener("click", () => {
-      const lanes = new Set(ctx.state.collapsedLanes);
+      const lanes = new Set(view.collapsedLanes);
       const band = toggle.dataset.lane;
       const open = lanes.has(band);
       if (open) lanes.delete(band);
       else lanes.add(band);
-      ctx.state.collapsedLanes = [...lanes];
+      view.collapsedLanes = [...lanes];
+      void setPreference("roadmap.collapsedLanes", view.collapsedLanes).catch(() => {});
       toggle.closest(".roadmap-band").querySelector(".roadmap-band-items").hidden = !open;
       toggle.setAttribute("aria-expanded", String(open));
       toggle.setAttribute("label", `${open ? "Collapse" : "Expand"} ${band}`);
@@ -205,12 +206,12 @@ export async function render(container, entity, ctx) {
     });
   }
   controlRoot.querySelector("[data-roadmap-archive]").addEventListener("click", () => {
-    ctx.state.archive = !ctx.state.archive;
+    void setPreference("roadmap.showArchived", !view.archive).catch(() => {});
     ctx.rerender();
   });
   for (const button of controlRoot.querySelectorAll("[data-roadmap-mode]")) {
     button.addEventListener("click", () => {
-      ctx.state.mode = button.dataset.roadmapMode;
+      void setPreference("roadmap.view", button.dataset.roadmapMode).catch(() => {});
       ctx.rerender();
     });
   }

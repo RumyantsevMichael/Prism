@@ -71,6 +71,11 @@ function claimOf({ variant, label = "Claude on build-2", host = "", activity = "
 }
 
 // The six phases with the first `reached` done and the next one current.
+// A table of figures with one row per subject and one column per measure, each value cell named by its column for the narrow layout.
+function tableOf(rows, columns, values) {
+  return `<prism-table><table aria-label="Figures"><thead><tr><td></td>${columns.map((column) => `<th scope="col">${column}</th>`).join("")}</tr></thead><tbody>${rows.map((row, index) => `<tr><th scope="row">${row}</th>${values[index].map((value, column) => `<td data-label="${columns[column]}">${value}</td>`).join("")}</tr>`).join("")}</tbody></table></prism-table>`;
+}
+
 function stepper(reached) {
   return `<prism-stepper label="Lifecycle">${PHASES.map((phase, index) => `<prism-step phase="${phase}" state="${index < reached ? "done" : index === reached ? "current" : "upcoming"}">${PHASE_NAMES[index]}</prism-step>`).join("")}</prism-stepper>`;
 }
@@ -80,6 +85,17 @@ const crumbs = (labels) => `<prism-breadcrumbs>${labels.map((label, index) => `<
 // A strip of open documents: each tab is [title, states], where states lists the tab's attributes, such as "selected preview".
 function docTabsOf(tabs, label = "Open documents") {
   return `<prism-doc-tabs label="${html(label)}">${tabs.map(([title, states = ""], index) => `<prism-doc-tab value="doc-${index}" label="${html(title)}" tip="${html(title)}" ${states}>${html(title)}</prism-doc-tab>`).join("")}</prism-doc-tabs>`;
+}
+
+// A strip with tab groups: each item is a tab as docTabsOf takes it, or a group { name, tone, collapsed, tabs } of such tabs, as setTabs would lay them out.
+function groupedTabsOf(items, label = "Tab groups") {
+  let index = 0;
+  const tab = ([title, states = ""], group) => {
+    const hidden = group?.collapsed && !/\bselected\b/.test(states) ? " hidden" : "";
+    const member = group ? ` group="${html(group.name)}" group-tone="${group.tone}"` : "";
+    return `<prism-doc-tab value="doc-${index++}" label="${html(title)}" tip="${html(title)}"${member}${hidden} ${states}>${html(title)}</prism-doc-tab>`;
+  };
+  return `<prism-doc-tabs label="${html(label)}">${items.map((item) => Array.isArray(item) ? tab(item) : `<prism-doc-tab-group name="${html(item.name)}" tone="${item.tone}" count="${item.tabs.length}" tip="${html(item.name)}"${item.collapsed ? " collapsed" : ""}>${html(item.name)}</prism-doc-tab-group>${item.tabs.map((each) => tab(each, item)).join("")}`).join("")}</prism-doc-tabs>`;
 }
 
 // Each element's specimens by state; every entry also shows long text and an unbroken name, and an element that holds items shows many.
@@ -125,6 +141,14 @@ const SPECIMENS = {
     "long-text": `<prism-badge variant="status" tone="info">${LONG}</prism-badge>`,
     "unbroken-name": `<prism-badge tone="neutral">${UNBROKEN}</prism-badge>`
   },
+  "prism-table": {
+    default: tableOf(["This slice", "With descendants"], ["Runs", "Wall time", "Tool calls"], [["2", "10 min 30 s", "6"], ["3", "1 h 13 min", "75"]]),
+    grouped: `<prism-table><table aria-label="Grouped figures"><thead><tr><td rowspan="2"></td><th scope="col" rowspan="2">Runs</th><th scope="colgroup" colspan="2">Active time</th></tr><tr><th scope="col">Elapsed</th><th scope="col">Summed</th></tr></thead><tbody><tr><th scope="row">This slice</th><td data-label="Runs">2</td><td data-label="Active time, elapsed">2 min</td><td data-label="Active time, summed">2 min 30 s</td></tr></tbody></table></prism-table>`,
+    narrow: `<div class="catalog-narrow">${tableOf(["This slice"], ["Runs", "Wall time", "Input tokens", "Output tokens", "Tool calls"], [["2", "10 min 30 s", "9.8K", "1.9K", "17"]])}</div>`,
+    marked: `<prism-table><table aria-label="Marked figures"><thead><tr><td></td><th scope="col">Wall time</th><th scope="col">Cache write</th></tr></thead><tbody><tr><th scope="row">This wave</th><td data-label="Wall time"><span class="prism-table-mark" aria-hidden="true">≈</span>1 min</td><td data-label="Cache write"><span class="prism-table-mark" aria-hidden="true">≥</span>22K</td></tr><tr><th scope="row">Next wave</th><td class="prism-table-note" colspan="2">No run recorded yet.</td></tr></tbody></table></prism-table>`,
+    "long-text": tableOf([LONG], [LONG, "Runs"], [[LONG, "2"]]),
+    "unbroken-name": tableOf([UNBROKEN], [UNBROKEN], [[UNBROKEN]])
+  },
   "prism-kbd": {
     key: `<prism-kbd>Esc</prism-kbd><prism-kbd>↵</prism-kbd>`,
     combination: `<prism-kbd>Ctrl K</prism-kbd><prism-kbd keys="Ctrl ,"></prism-kbd>`,
@@ -152,14 +176,25 @@ const SPECIMENS = {
     agent: docTabsOf([["Retry requirements", "selected agent"], ["Total deadline", "agent"]], "Agent tabs"),
     missing: docTabsOf([["Roadmap"], ["docs/notes/removed.md", "selected missing"]], "Missing tab"),
     "long-text": docTabsOf([[LONG, "selected preview"], ["Files"]], "Long title"),
-    "unbroken-name": docTabsOf([[UNBROKEN, "selected agent"], ["Files"]], "Unbroken title")
+    "unbroken-name": docTabsOf([[UNBROKEN, "selected agent"], ["Files"]], "Unbroken title"),
+    grouped: groupedTabsOf([["Roadmap"], { name: "Retry requests", tone: "1", tabs: [["Design", "selected agent"], ["Change map", "agent"]] }], "Grouped tabs")
+  },
+  "prism-doc-tab-group": {
+    expanded: groupedTabsOf([{ name: "Retry requests", tone: "1", tabs: [["Design", "selected agent"], ["Change map", "agent"]] }, ["Roadmap"]], "Expanded group"),
+    collapsed: groupedTabsOf([["Roadmap", "selected"], { name: "Retry requests", tone: "2", collapsed: true, tabs: [["Design", "agent"], ["Change map", "agent"]] }], "Collapsed group"),
+    tones: groupedTabsOf(["1", "2", "3", "4", "5", "6"].map((tone) => ({ name: `Tone ${tone}`, tone, tabs: [[`Page ${tone}`, tone === "1" ? "selected" : ""]] })), "Group tones"),
+    "long-name": groupedTabsOf([{ name: "Share Prism state across repositories and worktrees", tone: "4", tabs: [["Design", "selected agent"]] }], "Long group name"),
+    "long-text": groupedTabsOf([{ name: LONG.slice(0, 60), tone: "3", tabs: [[LONG, "selected agent"]] }], "Long text"),
+    "unbroken-name": groupedTabsOf([{ name: UNBROKEN.slice(0, 60), tone: "5", collapsed: true, tabs: [[UNBROKEN, "selected agent"], ["Files"]] }], "Unbroken name")
   },
   "prism-doc-tabs": {
     default: docTabsOf([["Attention"], ["Design", "selected"], ["Change map", "agent"], ["Review ledger", "preview"]]),
     "many-tabs": docTabsOf(Array.from({ length: 18 }, (_, index) => [index % 5 ? `Document ${index + 1}` : `${UNBROKEN} ${index + 1}`, index === 12 ? "selected" : index === 17 ? "preview" : index % 4 === 1 ? "agent" : ""]), "Many tabs"),
     "many-items": docTabsOf(Array.from({ length: 30 }, (_, index) => [`Tab ${index + 1}`, index === 0 ? "selected" : ""]), "Many items"),
     "long-text": docTabsOf([[LONG, "selected"], [LONG, "preview"]], "Long titles"),
-    "unbroken-name": docTabsOf([[UNBROKEN, "selected"], [UNBROKEN, "missing"]], "Unbroken titles")
+    "unbroken-name": docTabsOf([[UNBROKEN, "selected"], [UNBROKEN, "missing"]], "Unbroken titles"),
+    groups: groupedTabsOf([["Attention"], { name: "Components", tone: "1", tabs: [["Design", "selected agent"], ["Change map", "agent"]] }, { name: "Indexing", tone: "4", tabs: [["Requirements", "agent"]] }, ["Review ledger", "preview"]], "Groups"),
+    "collapsed-group": groupedTabsOf([["Roadmap"], { name: "Components", tone: "2", collapsed: true, tabs: [["Design", "agent"], ["Change map", "selected agent"], ["Requirements", "agent"]] }, ["Files"]], "Collapsed group")
   },
   "prism-menu": {
     closed: menuFor(`${themeItems}${densityItems}<prism-menu-item value="catalog">Component catalog</prism-menu-item>`, { caption: "Display" }),
@@ -372,6 +407,7 @@ const SPECIMENS = {
     default: stepper(3),
     early: stepper(1),
     shipped: stepper(6),
+    vertical: `<prism-stepper label="Build steps" orientation="vertical">${["Reading files", "Splitting fragments", "Embedding fragments", "Building the graph", "Writing the index"].map((name, index) => `<prism-step state="${index < 2 ? "done" : index === 2 ? "current" : "upcoming"}">${name}${index === 2 ? '<prism-meter slot="detail" label="Embedding fragments" value="40"></prism-meter><span slot="detail">1,204 of 3,000 fragments · 40%</span>' : ""}</prism-step>`).join("")}</prism-stepper>`,
     "many-items": `<prism-stepper label="Many steps">${repeat(18, (index) => `<prism-step phase="${PHASES[index % 6]}" state="${index < 7 ? "done" : index === 7 ? "current" : "upcoming"}">Step ${index + 1}</prism-step>`)}</prism-stepper>`,
     "long-text": `<prism-stepper label="Long steps">${PHASES.map((phase, index) => `<prism-step phase="${phase}" state="${index < 2 ? "done" : index === 2 ? "current" : "upcoming"}">${LONG}</prism-step>`).join("")}</prism-stepper>`,
     "unbroken-name": `<prism-stepper label="Unbroken steps">${PHASES.map((phase, index) => `<prism-step phase="${phase}" state="${index < 4 ? "done" : index === 4 ? "current" : "upcoming"}">${UNBROKEN}</prism-step>`).join("")}</prism-stepper>`

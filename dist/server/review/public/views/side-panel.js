@@ -1,27 +1,31 @@
 import { highlight, highlightLines, languageOf } from "./highlight.js";
 import { anchorTarget, decorateFolds, HEADING_PREFIX, LINE_RANGE, revealInDocument } from "./markdown.js";
 import { escapeHtml } from "./util.js";
+import { onPreferencesChange, preference, setPreference } from "../kit/preferences.js";
 
-const WIDTH_KEY = "prism.sidePanelWidth";
+// The panel's width is the person's preference, kept by the review app for every port; the width an older page kept in this browser moves there once.
+const LEGACY_WIDTH_KEY = "prism.sidePanelWidth";
 const MIN_WIDTH = 320;
 const MAX_SHARE = 0.42;
 
 function storedWidth() {
+  const value = preference("sidePanel.width");
+  return Number.isFinite(value) && value >= MIN_WIDTH ? value : null;
+}
+
+function storeWidth(value) {
+  void setPreference("sidePanel.width", Math.round(value)).catch(() => {});
+}
+
+function legacyWidth() {
   try {
-    const value = Number(localStorage.getItem(WIDTH_KEY));
+    const value = Number(localStorage.getItem(LEGACY_WIDTH_KEY));
+    localStorage.removeItem(LEGACY_WIDTH_KEY);
     return Number.isFinite(value) && value >= MIN_WIDTH ? value : null;
   } catch {
     return null;
   }
 }
-
-function storeWidth(value) {
-  try {
-    localStorage.setItem(WIDTH_KEY, String(Math.round(value)));
-  } catch {
-  }
-}
-
 
 // The panel shows a file the way its tab shows it: Markdown rendered with its diagrams drawn, code highlighted with line numbers, a diagram drawn, and a record as highlighted source.
 function fileBody(data, { renderMarkdown }) {
@@ -62,8 +66,15 @@ export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown
     shell.style.setProperty("--side-panel-width", `${width}px`);
     return width;
   };
+  const legacy = legacyWidth();
+  if (legacy && storedWidth() === null) storeWidth(legacy);
   const saved = storedWidth();
   if (saved) applyWidth(saved);
+  // The review app's stored width may arrive after the panel started, and applies when it does.
+  onPreferencesChange((keys) => {
+    const width = keys.includes("sidePanel.width") ? storedWidth() : null;
+    if (width) applyWidth(width);
+  });
 
   const inSheet = () => Boolean(sheet) && root.parentElement !== home.parent;
 
@@ -206,7 +217,7 @@ export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown
   });
   closeButton.addEventListener("click", close);
 
-  // Dragging the panel's edge sets its width, which the browser remembers.
+  // Dragging the panel's edge sets its width, which the review app keeps as the person's preference.
   resizer.addEventListener("pointerdown", (event) => {
     event.preventDefault();
     resizer.setPointerCapture(event.pointerId);
