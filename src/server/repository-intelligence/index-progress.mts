@@ -25,6 +25,12 @@ export function processAlive(pid: number) {
 
 // Each process writes only its own file, so concurrent sessions never overwrite each other's progress. Writes are best effort and never
 // fail a build. A heartbeat keeps the file fresh through steps that report nothing, so a reader can tell a stopped process from a slow step.
+// The recorders of this process share one progress file per storage directory, and a load can run beside a build of the same directory.
+// So every operation on a file runs in one order, and a recorder whose file another recorder has since started is displaced and changes it no more:
+// a replaced build never writes or removes the record of a newer one.
+const shared = new Map<string, { owner?: ProgressRecorder; queue: Promise<void> }>();
+const sharedFile = (file: string) => { let state = shared.get(file); if (!state) shared.set(file, state = { queue: Promise.resolve() }); return state; };
+
 export class ProgressRecorder {
   record: ProgressRecord;
   file: string;
@@ -32,16 +38,28 @@ export class ProgressRecorder {
   queue: Promise<void> = Promise.resolve();
   trailing?: NodeJS.Timeout;
   heartbeat?: NodeJS.Timeout;
+  displaced = false;
   constructor(public directory: string, preparationId: string, public now = () => new Date()) {
     const at = now().toISOString();
     this.file = progressFile(directory);
     this.record = { schemaVersion: 1, pid: process.pid, preparationId, state: "preparing", startedAt: at, updatedAt: at, progress: null, diagnostics: [] };
   }
   async start() {
+    const state = sharedFile(this.file);
+    if (state.owner && state.owner !== this) { state.owner.displaced = true; state.owner.stop(); }
+    state.owner = this;
     await removeAbandonedProgress(this.directory);
+    if (this.displaced) return;
     this.heartbeat = setInterval(() => this.write(), HEARTBEAT_MS);
     this.heartbeat.unref();
     await this.write();
+  }
+  // A recorder changes the file while it owns it, or, when it never started, as a failure recorded before any build, while no other recorder does.
+  owns() { const owner = shared.get(this.file)?.owner; return !this.displaced && (owner === this || owner === undefined); }
+  enqueue(operation: () => Promise<unknown>) {
+    const state = sharedFile(this.file);
+    this.queue = state.queue = state.queue.then(async () => { if (this.owns()) await operation(); }).catch(() => {});
+    return this.queue;
   }
   update(progress: Progress) {
     const phaseChanged = progress.phase !== this.record.progress?.phase;
@@ -53,19 +71,25 @@ export class ProgressRecorder {
     this.written = Date.now();
     this.record.updatedAt = this.now().toISOString();
     const contents = JSON.stringify(this.record);
-    this.queue = this.queue.then(() => writeAtomically(this.file, contents, { mode: 0o600 })).catch(() => {});
-    return this.queue;
+    return this.enqueue(() => writeAtomically(this.file, contents, { mode: 0o600 }));
   }
   stop() { clearInterval(this.heartbeat); clearTimeout(this.trailing); this.trailing = undefined; }
+  // Gives the file up once this recorder's last operation has run, so the next build of the directory owns it.
+  release() {
+    const state = shared.get(this.file);
+    if (state?.owner === this) state.owner = undefined;
+    if (state && !state.owner && state.queue === this.queue) shared.delete(this.file);
+  }
   async succeed() {
     this.stop();
-    await this.queue;
-    await rm(this.file, { force: true }).catch(() => {});
+    await this.enqueue(() => rm(this.file, { force: true }));
+    this.release();
   }
   async fail(diagnostics: Diagnostic[]) {
     this.stop();
     Object.assign(this.record, { state: "failed", diagnostics, finishedAt: this.now().toISOString() });
     await this.write();
+    this.release();
   }
 }
 
