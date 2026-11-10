@@ -1,5 +1,8 @@
 # The rail of places and the shell around it
 
+> Shipped history: initiative `review-app-places` shipped on 2026-11-10, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 A rail switches five places, the sidebar shows only the current place and keeps it while pages change, the sidebar collapses to the rail, the drawer holds both on narrow windows, the trail names the place, and every kept feature and page still works.
 
 ## Changes

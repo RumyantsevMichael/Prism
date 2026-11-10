@@ -1,5 +1,8 @@
 # Navigate the review app by places
 
+> Shipped history: initiative `review-app-places` shipped on 2026-11-10, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 The review app's navigation becomes five places, Attention, Work, Roadmap, Knowledge, and History, switched from an icon rail at the left edge, with the sidebar showing only the current place.
 [mockup/mockup.html](mockup/mockup.html) is the approved mockup in the repository, built from [mockup/tokens.css](mockup/tokens.css), which is the kit's own design values file, and the fonts in [mockup/fonts/](mockup/fonts/).
 It is Michael's approved `proposal-5-places.html` with the parts that are later work removed (Waiting for approval, By area and the Area column, Applies to the code you change, Artifact changes, Sessions needing input, Asks routed to me, and the `/` hints of the filter fields), and with the screens the requirements need that the approved file does not draw: Attention filtered to one kind, History, the Roadmap place, the collapsed sidebar, and the drawer at 820 and 390 pixels; every scene previews the dark theme with `?theme=dark`.

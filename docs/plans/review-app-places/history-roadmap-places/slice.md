@@ -1,5 +1,8 @@
 # The History and Roadmap places
 
+> Shipped history: initiative `review-app-places` shipped on 2026-11-10, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 History lists shipped and superseded work by date, and the Roadmap place switches the page's views and jumps to lanes.
 
 ## Changes

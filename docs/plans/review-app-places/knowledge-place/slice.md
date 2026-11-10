@@ -1,5 +1,8 @@
 # The Knowledge place and its search
 
+> Shipped history: initiative `review-app-places` shipped on 2026-11-10, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 Knowledge shows search and entry points instead of lists, finds records of every kind, and lists diagrams by name.
 
 ## Changes

@@ -1,5 +1,8 @@
 # The Work place
 
+> Shipped history: initiative `review-app-places` shipped on 2026-11-10, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 Work lists only designed, unshipped work grouped by state, with a short slice list and a filter.
 
 ## Changes

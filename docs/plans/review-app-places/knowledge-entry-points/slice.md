@@ -1,5 +1,8 @@
 # Touched by my work and Changed this week
 
+> Shipped history: initiative `review-app-places` shipped on 2026-11-10, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 Touched by my work shows the records behind the open slice and why, and Changed this week lists this week's record changes or says plainly why it cannot.
 
 ## Changes
