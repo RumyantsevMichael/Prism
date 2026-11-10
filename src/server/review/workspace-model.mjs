@@ -437,6 +437,8 @@ async function computeAttention(projectRoot) {
   const items = new Map(roadmap.items.map((item) => [item.id, item]));
   const ids = [...new Set([...roadmap.items.map((item) => item.id), ...(await storedInitiatives(projectRoot))])];
   const needsYou = [];
+  // Open questions of a shipped initiative can no longer be answered, so they list apart and never wait on the person.
+  const shippedGates = [];
   const answered = [];
   const earlier = [];
   const watch = [];
@@ -464,7 +466,7 @@ async function computeAttention(projectRoot) {
         const gate = { type: "gate", id: entry.id, kind: entry.kind, question: entry.question, context: entry.context ?? null, options: entry.options ?? null, recommended: entry.recommended ?? null, askedAt: entry.askedAt, answer: entry.answer ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null, artifacts, unavailable: shipped ? shippedActionReason(shipped) : null };
         // A question whose every attached file is gone was likely overtaken by later work, so the page says it may no longer apply.
         if (!gate.answer && artifacts.length && artifacts.every((artifact) => !artifact.available)) gate.stale = true;
-        (gate.answer ? answered : needsYou).push(gate);
+        (gate.answer ? answered : gate.unavailable ? shippedGates : needsYou).push(gate);
       } else if (typeof entry === "string") {
         needsYou.push({ type: "pending-note", text: entry, initiative });
       }
@@ -509,9 +511,8 @@ async function computeAttention(projectRoot) {
   // The newest closed questions come first, across initiatives, so the list stays short.
   earlier.sort((left, right) => newestFirst(left.closedAt, right.closedAt));
   const recentChanges = changes.sort((left, right) => historyOrder(right, left)).slice(0, RECENT_CHANGES_LIMIT);
-  // Only a question the person can answer counts, so a shipped initiative's question shows on the page but raises no count or badge.
-  const waiting = needsYou.filter((item) => !(item.type === "gate" && item.unavailable));
-  return { needsYou, answered, earlier: earlier.slice(0, 20), watch, recentChanges, gateCount: waiting.filter((item) => item.type === "gate").length, waitingCount: waiting.length };
+  shippedGates.sort(gateOrder);
+  return { needsYou, shippedGates, answered, earlier: earlier.slice(0, 20), watch, recentChanges, gateCount: needsYou.filter((item) => item.type === "gate").length };
 }
 
 function glossaryTerms(content) {
@@ -552,7 +553,7 @@ async function computeNavigation(projectRoot) {
   const attention = await loadAttention(projectRoot);
   return {
     roadmap: { exists: roadmap.exists ?? false, error: roadmap.error ?? null, valid: roadmap.valid ?? false },
-    attention: { needsYou: attention.waitingCount, gates: attention.gateCount, answered: attention.answered.length, watch: attention.watch.length },
+    attention: { needsYou: attention.needsYou.length, gates: attention.gateCount, answered: attention.answered.length, watch: attention.watch.length },
     initiatives: [
       ...roadmap.items.map((item) => ({ id: item.id, title: item.title, band: item.band, state: item.state })),
       ...roadmap.unlisted.map((id) => ({ id, title: id, band: null, state: "unlisted" }))

@@ -31,15 +31,15 @@ async function shippedProject(context) {
 test("a shipped initiative's open question shows as unavailable with the shipped reason and raises no count", async (context) => {
   const { base, gateIds } = await shippedProject(context);
   const attention = (await get(base, `api/entity?ref=attention`)).json.data;
-  const gates = attention.needsYou.filter((item) => item.type === "gate");
-  const shipped = gates.filter((item) => item.initiative.id === INITIATIVE);
+  const shipped = attention.shippedGates;
   assert.equal(shipped.length, 4);
-  for (const gate of shipped) assert.equal(gate.unavailable, REASON, gate.id);
-  assert.deepEqual(gates.filter((item) => item.initiative.id === "search").map((item) => item.unavailable), [null]);
-  assert.equal(attention.gateCount, 1, "only the unshipped initiative's question waits on the person");
+  for (const gate of shipped) assert.deepEqual([gate.initiative.id, gate.unavailable], [INITIATIVE, REASON], gate.id);
+  const gates = attention.needsYou.filter((item) => item.type === "gate");
+  assert.deepEqual(gates.map((item) => [item.initiative.id, item.unavailable]), [["search", null]], "only the unshipped initiative's question needs the person");
+  assert.equal(attention.gateCount, 1);
   const navigation = (await get(base, "api/index")).json.navigation;
   assert.equal(navigation.attention.gates, 1);
-  assert.equal(navigation.attention.needsYou, attention.needsYou.length - 4, "the badge leaves out the questions that cannot be answered");
+  assert.equal(navigation.attention.needsYou, attention.needsYou.length, "the badge leaves out the questions that cannot be answered");
 
   const { gateCard } = await import("../../dist/server/review/public/views/attention.js");
   const ctx = { renderMarkdown: null, hasArtifact: () => true };
@@ -49,6 +49,30 @@ test("a shipped initiative's open question shows as unavailable with the shipped
   const open = gateCard(gates.find((item) => item.initiative.id === "search"), ctx, { choice: null, note: "" });
   assert.match(open, /data-submit/);
   assert.doesNotMatch(open, /gate-unavailable/);
+});
+
+test("Attention lists a shipped initiative's questions under their own group and shows Needs you empty when nothing else waits", async (context) => {
+  const { base } = await shippedProject(context);
+  const attention = (await get(base, `api/entity?ref=attention`)).json.data;
+  // Only the shipped questions remain: the unshipped initiative's question is left out to show the empty state.
+  const data = { ...attention, needsYou: attention.needsYou.filter((item) => item.type !== "gate") };
+  const previous = globalThis.document;
+  globalThis.document = { addEventListener: () => {} };
+  context.after(() => {
+    globalThis.document = previous;
+  });
+  const { render } = await import("../../dist/server/review/public/views/attention.js");
+  const container = { innerHTML: "", isConnected: true, addEventListener: () => {}, querySelectorAll: () => [], querySelector: () => null };
+  render(container, { data }, { state: {}, hasArtifact: () => true, renderMarkdown: null });
+  const html = container.innerHTML;
+  const needsYou = html.slice(html.indexOf("<h2>Needs you</h2>"), html.indexOf("<h2>Shipped history</h2>"));
+  assert.ok(html.indexOf("<h2>Needs you</h2>") >= 0 && needsYou.length > 0, "Needs you comes before the shipped group");
+  assert.match(needsYou, /Nothing is waiting on you\./);
+  assert.doesNotMatch(needsYou, /gate-unavailable/);
+  const group = html.slice(html.indexOf("<h2>Shipped history</h2>"));
+  assert.match(group, /left open when their initiative shipped, so they can no longer be answered/);
+  assert.equal(group.split(REASON).length - 1, 4);
+  assert.match(html, /<span class="stat-value">0<\/span><span class="stat-label">questions wait on you/);
 });
 
 test("a refused answer shows the server's reason instead of saying the question has an answer", async () => {

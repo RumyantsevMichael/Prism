@@ -337,8 +337,8 @@ export function render(container, entity, ctx) {
   const recent = data.recentChanges ?? [];
   const gates = data.needsYou.filter((item) => item.type === "gate");
   const notes = data.needsYou.filter((item) => item.type !== "gate");
-  // A question that can no longer be answered still shows, but it does not wait on the person.
-  const waiting = gates.filter((item) => !item.unavailable).length;
+  const shipped = data.shippedGates ?? [];
+  const waiting = gates.length;
   container.innerHTML = `
     <section class="view-card summary-card">
       <div class="stat-row">
@@ -352,6 +352,7 @@ export function render(container, entity, ctx) {
       ? `<ul class="attention-list">${gates.map((item) => gateCard(item, ctx, drafts[item.id] ?? { choice: null, note: "" })).join("")}${notes.map((item) => noteCard(item, ctx)).join("")}</ul>`
       : emptyNote("Nothing is waiting on you."), { eyebrow: "Answer here or in the agent conversation" })}
     <p class="attention-footnote muted">The orchestrator records a question here while it waits on you during an orchestrated run. Direct skill runs, such as ideate or roadmap, still ask only in the conversation.</p>
+    ${shipped.length ? card("Shipped history", `<p class="shipped-gates-note muted">These questions were left open when their initiative shipped, so they can no longer be answered.</p><ul class="attention-list">${shipped.map((item) => gateCard(item, ctx, {})).join("")}</ul>`, { eyebrow: plural(shipped.length, "question") }) : ""}
     ${answered.length ? card("Answered, waiting for the agent", `<ul class="attention-list">${answered.map((item) => answeredCard(item, ctx)).join("")}</ul><p class="attention-footnote muted">An agent waiting in Claude Code resumes on its own shortly after your last answer. Otherwise the agent receives these answers with your next message in the conversation, even a short one such as “go”.</p>`, { eyebrow: plural(answered.length, "answer") }) : ""}
     ${card("Watch", data.watch.length
       ? `<div class="table-wrap"><table class="data-table attention-watch"><tbody>${data.watch.map((item) => watchRow(item, ctx)).join("")}</tbody></table></div>`
