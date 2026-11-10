@@ -44,7 +44,7 @@ async function configuredStore(root, env) {
   const configured = workspace?.store ?? null;
   if (configured === null) return { store: null, repository: null };
   if (isRemoteStore(configured)) {
-    const id = managedStoreId(configured);
+    const id = await managedStoreId(configured);
     return { store: id ? await real(path.join(managedStoresDirectory(env), id)) : null, repository: workspace.repository };
   }
   return { store: await real(path.resolve(root, configured)), repository: workspace.repository };

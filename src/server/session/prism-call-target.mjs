@@ -123,7 +123,7 @@ async function recordBase(root, config) {
   // A store named by its remote is read from the clone Prism keeps of it, which this read never creates.
   const remote = isRemoteStore(configured);
   const directory = remote ? managedStoresDirectory() : null;
-  const id = remote ? managedStoreId(configured) : null;
+  const id = remote ? await managedStoreId(configured) : null;
   if (remote && !(directory && id)) return null;
   try {
     const base = await realpath(remote ? path.join(directory, id) : path.resolve(root, configured));

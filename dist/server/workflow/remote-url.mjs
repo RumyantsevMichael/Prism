@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
+import { realpath } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 
 /** A remote URL without its user, password, or token, so no credential ever reaches a record. */
@@ -19,9 +21,11 @@ export function publicRemote(url) {
   return scp ? `${scp[1]}:${scp[2]}` : null;
 }
 
-// A record store named by its remote: a URL of one of these schemes, or the scp form user@host:path; any other value is a path.
+// A record store named by its remote: a URL of one of these schemes, or the scp form [user@]host:path; any other value is a path.
+// A one-letter host is a Windows drive, as Git reads it, so C:store stays a path.
 const STORE_URL = /^(?:https?|ssh|git|file):\/\//i;
-const STORE_SCP = /^[^@/\\\s]+@[A-Za-z0-9][A-Za-z0-9.-]*:[^\s]+$/;
+const NETWORK_URL = /^(?:https?|ssh|git):\/\//i;
+const STORE_SCP = /^(?:[^@/\\\s]+@)?[A-Za-z0-9][A-Za-z0-9.-]+:[^\s]+$/;
 
 /** Whether a Workspace Store value names a Git remote rather than a folder. */
 export function isRemoteStore(value) {
@@ -48,8 +52,8 @@ export function remoteLabel(value) {
   return remoteParts(value)?.visible ?? null;
 }
 
-/** The identity of a remote store: lowercase host, no user information, and no trailing .git or slash, so spellings of one remote share a clone. */
-export function normalizeRemote(value) {
+// The key Prism 0.20 hashed for a remote store's clone folder: scheme, lowercase host and port, and path without trailing slashes and one trailing .git, or lowercase host:path for the scp form.
+function legacyKey(value) {
   const parts = remoteParts(value);
   if (!parts) return null;
   let tail = parts.path.replace(/\/+$/, "");
@@ -57,10 +61,61 @@ export function normalizeRemote(value) {
   return `${parts.prefix}${tail}`;
 }
 
-/** The folder name of a remote store's managed clone: the first 16 hex characters of the SHA-256 of its normalized remote. */
-export function managedStoreId(value) {
-  const normalized = normalizeRemote(value);
-  return normalized && createHash("sha256").update(normalized).digest("hex").slice(0, 16);
+const sha16 = (value) => createHash("sha256").update(value).digest("hex").slice(0, 16);
+
+/** The folder name that Prism 0.20 gave a remote store's managed clone, or null when the value names no remote. */
+export function legacyStoreId(value) {
+  const key = legacyKey(value);
+  return key && sha16(key);
+}
+
+// The network part of an identity: lowercase host, a slash, and the path without leading and trailing slashes and one trailing .git.
+function networkIdentity(host, pathname) {
+  let tail = pathname.replace(/^\/+|\/+$/g, "");
+  if (tail.toLowerCase().endsWith(".git")) tail = tail.slice(0, -4).replace(/\/+$/, "");
+  return host && tail ? `${host.toLowerCase()}/${tail}` : null;
+}
+
+// The real path of a store folder, or of the folder.git that Git also finds for it, or the path itself when neither exists yet.
+async function realFolder(folder) {
+  const bare = path.resolve(folder);
+  for (const candidate of [bare, `${bare}.git`]) {
+    try { return await realpath(candidate); } catch { /* Try the next spelling Git accepts. */ }
+  }
+  return bare;
+}
+
+/**
+ * The identity of a Workspace Store value, which every spelling of one store shares: host/path for a network remote, without scheme, user information, port, query, fragment, or a trailing .git,
+ * or file: and the real path of a folder store or a file:// URL, a relative path resolved from root; null when the value names no usable store.
+ */
+export async function storeIdentity(value, { root = process.cwd() } = {}) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  if (NETWORK_URL.test(value)) {
+    let parsed;
+    try { parsed = new URL(value); } catch { return null; }
+    return networkIdentity(parsed.hostname, parsed.pathname);
+  }
+  if (/^file:\/\//i.test(value)) {
+    let parsed;
+    try { parsed = new URL(value); } catch { return null; }
+    // A path whose bytes are not UTF-8 has no real path that Node can name, so its encoded spelling stands for it, as Git reads it.
+    let folder;
+    try { folder = fileURLToPath(parsed); } catch { return parsed.host && parsed.host !== "localhost" ? null : `file:${parsed.pathname.replace(/\/+$/, "")}`; }
+    return `file:${await realFolder(folder)}`;
+  }
+  if (STORE_SCP.test(value)) {
+    const scp = /^(?:[^@/\\\s]+@)?([A-Za-z0-9][A-Za-z0-9.-]+):([^?#\s]*)/.exec(value);
+    return scp && networkIdentity(scp[1], scp[2]);
+  }
+  return `file:${await realFolder(path.resolve(root, value))}`;
+}
+
+/** The folder name of a remote store's managed clone: the first 16 hex characters of the SHA-256 of its store identity, or null when it names no remote. */
+export async function managedStoreId(value) {
+  if (!isRemoteStore(value)) return null;
+  const identity = await storeIdentity(value);
+  return identity && sha16(identity);
 }
 
 /** The folder that holds managed store clones: one per machine in Prism's application folder, shared by every host, so a host need not give Prism a data directory. */

@@ -30,12 +30,17 @@ Choosing the workspace there opens its records, which every checkout shares.
 
 3. Commit the configuration, so every checkout of the project names the same store and the same repository.
 
-`Store` names a remote when it is a URL with the scheme `https`, `http`, `ssh`, `git`, or `file`, or the scp form `user@host:path`.
-On the first record access that finds no clone of it, Prism clones the remote into its application folder, under `stores/<id>`, where `<id>` is derived from the remote.
+`Store` names a remote when it is a URL with the scheme `https`, `http`, `ssh`, `git`, or `file`, or the scp form `[user@]host:path`.
+On the first record access that finds no clone of it, Prism clones the remote into its application folder, under `stores/<id>`, where `<id>` is derived from the store's identity.
+A network remote's identity is its host in lowercase and its path without a trailing `.git` or `/`, with no scheme, user, or port, so `https://github.com/you/prism-store.git`, `ssh://git@GitHub.com:22/you/prism-store`, and `git@github.com:you/prism-store.git` all name one store.
+A `file://` URL or a folder path has the identity of the folder's real path.
 The application folder is `~/Library/Application Support/Prism` on macOS, `%LOCALAPPDATA%\Prism` on Windows, and `$XDG_STATE_HOME/prism` or `~/.local/state/prism` elsewhere, and `PRISM_REVIEW_APP_DIR` overrides it.
 The access waits for the clone, and every later access on the machine uses it.
-Every checkout, worktree, and host on the machine whose configuration names the same remote shares that one clone, even when they spell it differently, such as with or without a trailing `.git` or `/`, so Claude Code and Codex read and write the same clone.
-A clone that Prism 0.16 made under a host's plugin data directory moves to the application folder on the first record access, with any commit it has not pushed yet.
+Every checkout, worktree, and host on the machine whose configuration names the same store shares that one clone, whatever spelling of it each one uses, so Claude Code and Codex read and write the same clone.
+Prism 0.20 and earlier named the clone after the spelling instead, so an HTTPS and an SSH spelling of one store had a clone each.
+On the first record access, a clone that Prism 0.20 named for the configured spelling moves to its new folder with any commit it has not pushed yet, when its origin names the same store and no clone is at the new folder yet.
+A clone already at the new folder is used as before, and the old folder stays untouched, so move any unpushed commit from it yourself before you delete it.
+A clone that Prism 0.16 made under a host's plugin data directory moves to the application folder on the first record access in the same way.
 Store sync is on by default for a remote store, so Prism keeps the clone in step with the remote without you running Git in it:
 
 - A few seconds after a record write, Prism commits the change, merges the remote's branch, and pushes.
