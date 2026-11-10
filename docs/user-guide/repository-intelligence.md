@@ -434,6 +434,7 @@ They are never stored in the target repository.
 Each source change produces a new index that reuses unchanged embeddings.
 Prism keeps the current index and the three most recently used earlier indexes, and removes older ones.
 One helper runs per MCP server with two inference threads and exits after five idle minutes.
+A full index, with a vector for each fragment, is read, checked, and written in a thread of its own beside the build helper, so a large build does not stop the review app or the MCP server from answering.
 Native source limits remain 20,000 files, 64 MiB total, and 2 MiB per file.
 Known omissions outside a managed change's scope limit coverage without blocking its affected-source gate.
 Missing affected source and unknown omissions block that gate.
@@ -715,7 +716,7 @@ A record holds only counts, durations, timestamps, coverage marks, the host, rol
 Cost that no Prism call attributes creates no record and stays in the local session totals.
 
 Prism never changes or replaces a record, so recording the same run again leaves the existing file as it is.
-Records stay after coordination cleanup removes an initiative's plans folder and coordination state.
+Records stay when `remove_records` removes a superseded initiative's records, and a shipped initiative keeps its plans folder and coordination state as history.
 The first record also writes `.prism/.gitignore`, which ignores only transient `*.lock` and `.*.tmp` files, so the records themselves can be committed.
 Files under `.prism/initiatives/` and `.prism/.gitignore` never count as source in repository snapshots, so a record written while a review is open does not make that review stale.
 

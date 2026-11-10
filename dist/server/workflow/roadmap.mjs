@@ -4,7 +4,7 @@ import path from "node:path";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { fitScopes, normalizeRequirementReference, readInitiative, scopeDependents } from "./initiative.mjs";
+import { fitScopes, normalizeRequirementReference, readInitiative, scopeDependents, scopeLeaves, unfinishedFixes, unfinishedFixesMessage, withInitiativeWriteLocks } from "./initiative.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
@@ -14,8 +14,9 @@ import { revisionMismatch } from "./revision.mjs";
 import { locateRecord, moveLegacyRecords, readRecord, writeRecord } from "./record-store.mjs";
 import { mergeHistory, mergeKeyed, mergeOrder, mergeScalars, MergeConflict, parseVersions } from "./record-merge.mjs";
 import { ComponentError, listComponents, listsComponents, readComponents } from "./components.mjs";
-import { latestDependentsRun } from "./slice-design.mjs";
+import { latestDependentsRun, verifiedAt } from "./slice-design.mjs";
 import { proposeComponents } from "./workspace-manifests.mjs";
+import { documentDigests, entryShippedDecision, hasOpenWork, openWork, openWorkMessage, readSliceDocuments, recordEarlierShips, ShippedHistoryError, writeHistoryMarks } from "./shipped-history.mjs";
 
 export const BANDS = Object.freeze(["Now", "Next", "Later", "Parked"]);
 export const DISPLAY_BANDS = Object.freeze([...BANDS, "Shipped"]);
@@ -39,6 +40,8 @@ const references = { type: "array", maxItems: 200, items: text };
 const object = (properties, required = Object.keys(properties)) => ({ type: "object", additionalProperties: false, properties, required });
 const band = { enum: BANDS };
 const position = { type: "integer", minimum: 0, maximum: 10000 };
+// A fix to shipped work names the shipped initiative and the slices whose work it corrects.
+const corrects = object({ initiative: id, slices: { type: "array", maxItems: 200, items: id } });
 
 // A workspace name is a short label for people, so it stays on one line; an empty name clears it.
 export const WORKSPACE_NAME_MAX = 64;
@@ -59,8 +62,8 @@ export const UPDATE_ROADMAP_SCHEMA = object({
   operations: { type: "array", minItems: 1, maxItems: 100, items: { oneOf: [
     object({ op: { const: "set_serves" }, serves: text }),
     object({ op: { const: "set_workspace_name" }, name: { type: "string", maxLength: WORKSPACE_NAME_MAX } }, ["op", "name"]),
-    object({ op: { const: "add_initiative" }, id, title: text, intent: text, pillar: text, band, position, requirements: references, requires: ids, rationale: text }, ["op", "id", "title", "intent", "band"]),
-    object({ op: { const: "update_initiative" }, id, title: text, intent: text, pillar: text, requirements: references, rationale: text }, ["op", "id"]),
+    object({ op: { const: "add_initiative" }, id, title: text, intent: text, pillar: text, band, position, requirements: references, requires: ids, rationale: text, corrects }, ["op", "id", "title", "intent", "band"]),
+    object({ op: { const: "update_initiative" }, id, title: text, intent: text, pillar: text, requirements: references, rationale: text, corrects }, ["op", "id"]),
     object({ op: { const: "place" }, id, band, position }, ["op", "id", "band"]),
     object({ op: { const: "set_requires" }, id, requires: ids }),
     object({ op: { const: "ship" }, id }),
@@ -113,11 +116,17 @@ function validateRoadmap(raw) {
     if (!BANDS.includes(item.band)) errors.push(`${field}.band must be one of ${BANDS.join(", ")}.`);
     for (const key of ["requirements", "requires"]) if (!Array.isArray(item[key]) || item[key].some((value) => typeof value !== "string")) errors.push(`${field}.${key} must be an array of strings.`);
     if (item.decision !== null && !["shipped", "superseded"].includes(item.decision?.kind)) errors.push(`${field}.decision must be null, shipped, or superseded.`);
+    else if (item.decision?.kind === "shipped") errors.push(...shippedDocumentErrors(item.decision, `${field}.decision`));
+    if (item.corrects !== undefined && (!item.corrects || typeof item.corrects !== "object" || typeof item.corrects.initiative !== "string" || !Array.isArray(item.corrects.slices) || !item.corrects.slices.length || item.corrects.slices.some((value) => typeof value !== "string"))) errors.push(`${field}.corrects must be { initiative, slices } with at least one slice.`);
   }
   for (const item of raw.initiatives) {
     for (const target of item.requires ?? []) {
       if (target === item.id) errors.push(`${item.id} cannot require itself.`);
       else if (!known.has(target)) errors.push(`${item.id} requires unknown initiative ${target}.`);
+    }
+    if (item.corrects && typeof item.corrects.initiative === "string") {
+      if (item.corrects.initiative === item.id) errors.push(`${item.id} cannot correct itself.`);
+      else if (!known.has(item.corrects.initiative)) errors.push(`${item.id} corrects unknown initiative ${item.corrects.initiative}.`);
     }
     if (item.decision?.kind === "superseded" && !known.has(item.decision.by)) errors.push(`${item.id} is superseded by unknown initiative ${item.decision.by}.`);
   }
@@ -135,6 +144,15 @@ function validateRoadmap(raw) {
     };
     try { graph.forEach((_, node) => visit(node)); } catch (error) { errors.push(error.message); }
   }
+  return errors;
+}
+
+// A shipped decision records its slice documents once: documents with each path and SHA-256, when they were recorded, and whether at ship or at a first read.
+function shippedDocumentErrors(decision, field) {
+  const errors = [];
+  if (decision.documents !== undefined && (!Array.isArray(decision.documents) || decision.documents.some((item) => typeof item?.path !== "string" || !/^[0-9a-f]{64}$/.test(item?.sha256 ?? "")))) errors.push(`${field}.documents must be an array of { path, sha256 }.`);
+  if (decision.documentsRecordedAt !== undefined && typeof decision.documentsRecordedAt !== "string") errors.push(`${field}.documentsRecordedAt must be a string.`);
+  if (decision.documentsFrom !== undefined && !["ship", "first-read"].includes(decision.documentsFrom)) errors.push(`${field}.documentsFrom must be ship or first-read.`);
   return errors;
 }
 
@@ -195,7 +213,8 @@ async function loadRoadmap(resolved) {
 /**
  * What keeps a finished initiative from shipping by its components: { problem } with the refusal of an invalid ## Components declaration,
  * or { scopes }, each fit scope { scope, blocked, reason } whose dependents by the current declaration have no passing run of every one of them,
- * where reason is failed when the latest dependents' run failed or declined one of them and not_run otherwise, and blocked names those dependents in run order.
+ * where reason is stale, with run naming that run's record path, when the latest dependents' run started before a leaf of the scope last passed verification, as after a fix slice changed the scope,
+ * failed when the latest dependents' run failed or declined one of them, and not_run otherwise, and blocked names those dependents in run order.
  * A leaf without a component, or with one the repository no longer declares, adds no dependents, so a repository that declares no components ships as before.
  */
 export async function dependentsBlockers(projectRoot, config, initiative, record) {
@@ -211,6 +230,15 @@ export async function dependentsBlockers(projectRoot, config, initiative, record
     const dependents = scopeDependents(record, scope, declaration).map((component) => component.identity);
     if (!dependents.length) continue;
     const latest = await latestDependentsRun(projectRoot, initiative, scope).catch(() => null);
+    // A run that started before a leaf of the scope last passed verification tested the scope's earlier content, so none of its results count.
+    const started = Date.parse(latest?.entry?.startedAt ?? "");
+    if (latest && !Number.isNaN(started)) {
+      const verified = await Promise.all(scopeLeaves(record, scope).map((leaf) => verifiedAt(projectRoot, initiative, leaf).catch(() => null)));
+      if (verified.some((finished) => finished !== null && finished >= started)) {
+        scopes.push({ scope, blocked: dependents, reason: "stale", run: latest.path });
+        continue;
+      }
+    }
     // A dependent passed when the latest run ran it and did not block it; one the run blocked failed, and one it never ran has not run.
     const ran = new Set((Array.isArray(latest?.entry?.components) ? latest.entry.components : []).map((component) => component?.name));
     const red = new Set(Array.isArray(latest?.entry?.blocked) ? latest.entry.blocked : []);
@@ -222,9 +250,18 @@ export async function dependentsBlockers(projectRoot, config, initiative, record
   return { scopes };
 }
 
-const dependentsMessage = (scopes) => `The initiative cannot ship while the dependents of a finished scope are red or have not run: ${scopes.map((item) => `${item.scope} (${item.reason === "failed" ? "failed or declined" : "not run"}: ${item.blocked.join(", ")})`).join("; ")}. Run verify_slice with dependents for each scope, and fix or allow what it reports.`;
+const dependentsMessage = (scopes) => `The initiative cannot ship while the dependents of a finished scope are red or have not run: ${scopes.map((item) => `${item.scope} (${item.reason === "stale" ? `the run ${item.run} predates the scope's latest verified change` : item.reason === "failed" ? "failed or declined" : "not run"}: ${item.blocked.join(", ")})`).join("; ")}. Run verify_slice with dependents for each scope, and fix or allow what it reports.`;
 
-// The facts of an initiative and what keeps it from shipping: blocker is null, { leaves: true } while a leaf is not done, { problem } for an invalid declaration, or { scopes } for blocked dependents.
+// Open work refuses ship before any leaf check, so it is reported whether or not the leaves are done or the initiative record is readable.
+async function withOpenWork(projectRoot, item, result, options = {}) {
+  const work = await openWork(projectRoot, item.id, options).catch(() => null);
+  if (!work || !hasOpenWork(work)) return null;
+  const { derived } = result;
+  const diagnostic = { code: "open_work", message: openWorkMessage(item.id, work), ...work };
+  return { derived: { ...derived, readyToShip: false, diagnostics: [...derived.diagnostics, diagnostic] }, blocker: derived.readyToShip ? { open: work } : result.blocker };
+}
+
+// The facts of an initiative and what keeps it from shipping: blocker is null, { leaves: true } while a leaf is not done, { open } for open work, { fixes } for unfinished fixes, { problem } for an invalid declaration, or { scopes } for blocked dependents.
 async function deriveItem(projectRoot, config, item) {
   const base = { id: item.id, band: item.band, state: "envisioned", readyToShip: false, progress: null, active: [], diagnostics: [] };
   const leaves = { leaves: true };
@@ -234,22 +271,37 @@ async function deriveItem(projectRoot, config, item) {
   try {
     initiative = await readInitiative(projectRoot, item.id);
   } catch (error) {
-    return { derived: { ...base, diagnostics: [{ code: error.code ?? "initiative_unreadable", message: error.message }] }, blocker: leaves };
+    const result = { derived: { ...base, diagnostics: [{ code: error.code ?? "initiative_unreadable", message: error.message }] }, blocker: leaves };
+    return await withOpenWork(projectRoot, item, result) ?? result;
   }
   const { loaded } = initiative;
-  if (!loaded.exists) return { derived: base, blocker: leaves };
-  if (!loaded.valid) return { derived: { ...base, state: "planned", diagnostics: loaded.errors.map((message) => ({ code: "invalid_initiative", message })) }, blocker: leaves };
+  if (!loaded.exists) {
+    const result = { derived: base, blocker: leaves };
+    return await withOpenWork(projectRoot, item, result) ?? result;
+  }
+  if (!loaded.valid) {
+    const result = { derived: { ...base, state: "planned", diagnostics: loaded.errors.map((message) => ({ code: "invalid_initiative", message })) }, blocker: leaves };
+    return await withOpenWork(projectRoot, item, result) ?? result;
+  }
   const analysis = loaded.analysis;
   const progress = { leaves: analysis.leaves.length, ...analysis.counts };
   let active = [];
+  let state;
   try {
-    const state = await readCoordinationState({ projectRoot, initiative: item.id });
+    state = await readCoordinationState({ projectRoot, initiative: item.id });
     active = state.state?.active ?? [];
   } catch (error) {
     base.diagnostics.push({ code: error.code ?? "state_unreadable", message: error.message });
   }
   const started = analysis.leaves.some((slug) => analysis.slices[slug].status !== "not-started") || active.length > 0;
   const derived = { ...base, state: started ? "in-progress" : "planned", readyToShip: analysis.complete[analysis.root] === true, progress, active, root: analysis.root };
+  if (state) {
+    const open = await withOpenWork(projectRoot, item, { derived, blocker: leaves }, { record: loaded.record, state });
+    if (open) return open;
+  }
+  // Unfinished fixes to done work refuse ship after open work and before the leaf check, since an unfinished fix slice is also a leaf that is not done.
+  const fixes = unfinishedFixes(loaded.record);
+  if (fixes.length) return { derived: { ...derived, readyToShip: false, diagnostics: [...derived.diagnostics, { code: "fixes_unfinished", message: unfinishedFixesMessage(item.id, fixes), fixes }] }, blocker: { fixes } };
   if (!derived.readyToShip) return { derived, blocker: leaves };
   // A finished initiative is ready to ship only once ship would succeed: its declaration is valid and every finished scope's dependents passed.
   const found = await dependentsBlockers(projectRoot, config, item.id, loaded.record);
@@ -318,10 +370,17 @@ export async function readWorkspaceName(projectRoot) {
   }
 }
 
+/**
+ * Read the roadmap; a shipped entry whose decision has no recorded slice documents has them recorded and marked by this read,
+ * and markedHistory lists { initiative, marked } for each entry whose documents it marked.
+ */
 export async function getRoadmap(input) {
   validateInput(GET_ROADMAP_SCHEMA, input);
-  const { resolved, loaded, derived } = await readRoadmap(input.projectRoot);
-  return { ...publicResult(resolved, loaded, derived), components: await roadmapComponents(resolved.root, resolved.config) };
+  let { resolved, loaded, derived } = await readRoadmap(input.projectRoot);
+  const recorded = loaded.valid && loaded.record ? await recordEarlierShips(resolved.root, loaded.record.initiatives) : [];
+  if (recorded.length) ({ resolved, loaded, derived } = await readRoadmap(input.projectRoot));
+  const markedHistory = recorded.filter((item) => item.marked.length);
+  return { ...publicResult(resolved, loaded, derived), components: await roadmapComponents(resolved.root, resolved.config), ...(markedHistory.length ? { markedHistory } : {}) };
 }
 
 function markdown(record, recordName) {
@@ -332,6 +391,7 @@ function markdown(record, recordName) {
   const entry = (item) => {
     const parts = [`- **${item.title}** (\`${item.id}\`): ${item.intent}`];
     if (item.requires.length) parts.push(`Requires ${item.requires.map((target) => `\`${target}\``).join(", ")}.`);
+    if (item.corrects) parts.push(`Corrects \`${item.corrects.initiative}\`: ${item.corrects.slices.map((slug) => `\`${slug}\``).join(", ")}.`);
     return parts.join(" ");
   };
   lines.push("## Initiative index", "");
@@ -380,8 +440,40 @@ function roadmapRequirements(resolved, references) {
   });
 }
 
-async function applyOperation(resolved, record, operation, actor, at) {
+/**
+ * The corrects field of an add_initiative or update_initiative operation, checked: the named initiative is another roadmap entry that has shipped,
+ * and every named slice is a slice of its initiative record, so a record that is missing or unreadable holds none.
+ */
+async function checkedCorrects(resolved, record, operation) {
+  const { initiative, slices } = operation.corrects;
+  if (initiative === operation.id) throw fail("validation_failed", `Initiative ${operation.id} cannot correct itself.`);
+  const target = record.initiatives.find((candidate) => candidate.id === initiative);
+  if (!target) throw fail("validation_failed", `The roadmap has no initiative ${initiative} to correct.`);
+  if (!entryShippedDecision(target)) throw fail("validation_failed", `Initiative ${initiative} has not shipped, so a fix to its done work is not a new initiative: report the defect on the done slice with update_initiative report_defect and design a fix slice inside ${initiative}.`);
+  if (!slices.length) throw fail("validation_failed", `The corrects field must name at least one slice of ${initiative}.`);
+  let held = {};
+  try {
+    const { loaded } = await readInitiative(resolved.root, initiative);
+    if (loaded.exists && loaded.valid && loaded.record?.slices && typeof loaded.record.slices === "object") held = loaded.record.slices;
+  } catch {
+    held = {};
+  }
+  const unknown = slices.filter((slug) => !Object.hasOwn(held, slug));
+  if (unknown.length) throw fail("validation_failed", `The shipped initiative ${initiative} has no recorded slice ${unknown.join(", ")}.`, { initiative, slices: unknown });
+  return { initiative, slices: [...new Set(slices)] };
+}
+
+async function applyOperation(resolved, record, operation, actor, at, marks) {
+  // A shipped entry keeps its content as history, so a change to it is refused before its arguments are normalized.
+  if (operation.op === "update_initiative" || operation.op === "set_requires") {
+    const shipped = entryShippedDecision(record.initiatives.find((candidate) => candidate.id === operation.id));
+    if (shipped) throw new ShippedHistoryError(operation.id, shipped.at);
+  }
   if (operation.requirements !== undefined && (operation.op === "add_initiative" || operation.op === "update_initiative")) operation = { ...operation, requirements: roadmapRequirements(resolved, operation.requirements) };
+  if (operation.corrects !== undefined && (operation.op === "add_initiative" || operation.op === "update_initiative")) {
+    if (operation.op === "update_initiative") findInitiative(record, operation.id);
+    operation = { ...operation, corrects: await checkedCorrects(resolved, record, operation) };
+  }
   switch (operation.op) {
     case "set_serves":
       record.serves = operation.serves;
@@ -400,13 +492,13 @@ async function applyOperation(resolved, record, operation, actor, at) {
     case "add_initiative": {
       if (!SLUG_PATTERN.test(operation.id)) throw fail("validation_failed", "Initiative identifiers use letters, digits, hyphens, or underscores.");
       if (record.initiatives.some((item) => item.id === operation.id)) throw fail("validation_failed", `The roadmap already has initiative ${operation.id}.`);
-      const item = { id: operation.id, title: operation.title, intent: operation.intent, ...(operation.pillar ? { pillar: operation.pillar } : {}), band: operation.band, requirements: operation.requirements ?? [], requires: operation.requires ?? [], ...(operation.rationale ? { rationale: operation.rationale } : {}), decision: null };
+      const item = { id: operation.id, title: operation.title, intent: operation.intent, ...(operation.pillar ? { pillar: operation.pillar } : {}), band: operation.band, requirements: operation.requirements ?? [], requires: operation.requires ?? [], ...(operation.rationale ? { rationale: operation.rationale } : {}), ...(operation.corrects ? { corrects: operation.corrects } : {}), decision: null };
       insertInBand(record, item, operation.band, operation.position);
       break;
     }
     case "update_initiative": {
       const item = findInitiative(record, operation.id);
-      for (const key of ["title", "intent", "pillar", "requirements", "rationale"]) if (operation[key] !== undefined) item[key] = operation[key];
+      for (const key of ["title", "intent", "pillar", "requirements", "rationale", "corrects"]) if (operation[key] !== undefined) item[key] = operation[key];
       break;
     }
     case "place": {
@@ -421,12 +513,20 @@ async function applyOperation(resolved, record, operation, actor, at) {
     case "ship": {
       const item = findInitiative(record, operation.id);
       if (item.decision) throw fail("validation_failed", `Initiative ${item.id} already has a ${item.decision.kind} decision.`);
+      // Work still open when an initiative ships could never be finished, because its state is then history.
+      const work = await openWork(resolved.root, item.id);
+      if (hasOpenWork(work)) throw fail("open_work", openWorkMessage(item.id, work), work);
       const { derived, blocker } = await deriveItem(resolved.root, resolved.config, item);
+      if (blocker?.open) throw fail("open_work", openWorkMessage(item.id, blocker.open), blocker.open);
+      if (blocker?.fixes) throw fail("fixes_unfinished", unfinishedFixesMessage(item.id, blocker.fixes), { fixes: blocker.fixes });
       if (blocker?.leaves) throw fail("gate_blocked", "Every leaf slice in the initiative record must be done before the initiative ships.", { state: derived.state, progress: derived.progress, diagnostics: derived.diagnostics });
       // Shipping reads the components after the leaf check: an invalid declaration refuses with its own code and fields, and a red or unproven dependent blocks it.
       if (blocker?.problem) throw blocker.problem;
       if (blocker?.scopes) throw fail("dependents_blocked", dependentsMessage(blocker.scopes), { scopes: blocker.scopes });
-      item.decision = { kind: "shipped", at, actor };
+      // Ship records each slice document's content without the mark; the marks are written once the record is.
+      const { documents, problems } = await readSliceDocuments(resolved.root, item.id);
+      item.decision = { kind: "shipped", at, actor, documents: documentDigests(documents), documentsRecordedAt: at, documentsFrom: "ship" };
+      marks.push({ initiative: item.id, decision: item.decision, documents, problems });
       break;
     }
     case "supersede": {
@@ -455,7 +555,11 @@ export async function updateRoadmap(input) {
   const managed = [resolved.projectionPath].filter((file) => path.posix.basename(file) === "roadmap.md");
   if (managed.length) await conservationStore.registerCoordinationOutputs(resolved.root, managed);
   await mkdir(path.dirname(resolved.target), { recursive: true });
-  return withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
+  // A ship holds the write locks of each initiative it ships, in id order and before the roadmap lock, from its open-work read until its decision is written,
+  // so a gate, claim, or proposal added meanwhile is either seen as open work or refused by its writer's re-check under the same lock.
+  const shipping = [...new Set(input.operations.filter((operation) => operation.op === "ship" && SLUG_PATTERN.test(operation.id ?? "")).map((operation) => operation.id))].sort();
+  const holdShipLocks = (index, action) => index === shipping.length ? action() : withInitiativeWriteLocks(resolved.root, shipping[index], () => holdShipLocks(index + 1, action));
+  return holdShipLocks(0, () => withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
     const current = await loadRoadmap(resolved);
     if (current.revision !== input.expectedRevision) {
       throw fail(input.expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("roadmap record", input.expectedRevision, current.revision), { currentRevision: current.revision });
@@ -464,7 +568,8 @@ export async function updateRoadmap(input) {
     const record = current.record ? structuredClone(current.record) : emptyRoadmap();
     const at = new Date().toISOString();
     const actor = input.actor ?? "agent";
-    for (const operation of input.operations) await applyOperation(resolved, record, operation, actor, at);
+    const marks = [];
+    for (const operation of input.operations) await applyOperation(resolved, record, operation, actor, at, marks);
     const errors = validateRoadmap(record);
     if (errors.length) throw fail("invalid_roadmap", `The proposed roadmap is invalid and was not written: ${errors[0]}`, { errors });
     const mutating = input.operations.filter((operation) => !["regenerate_markdown", "replace_hand_written_projection"].includes(operation.op));
@@ -485,21 +590,36 @@ export async function updateRoadmap(input) {
     } catch {
       projectionStale = true;
     }
+    const history = await markShipped(resolved.root, marks);
     const { loaded, derived } = await readRoadmap(input.projectRoot);
-    return { ...publicResult(resolved, loaded, derived), created: !current.exists, previousRevision: current.revision, projectionStale };
-  }, fail));
+    return { ...publicResult(resolved, loaded, derived), created: !current.exists, previousRevision: current.revision, projectionStale, ...history };
+  }, fail)));
+}
+
+// After a ship is written, each slice document it recorded takes the history mark; one it could not read or write is a problem, never a refusal.
+async function markShipped(root, marks) {
+  if (!marks.length) return {};
+  const historyMarks = [];
+  const historyMarkProblems = [];
+  for (const { initiative, decision, documents, problems } of marks) {
+    const written = await writeHistoryMarks(root, initiative, decision, documents);
+    historyMarks.push(...written.marked);
+    historyMarkProblems.push(...problems, ...written.problems);
+  }
+  historyMarkProblems.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+  return { historyMarks: historyMarks.sort(), historyMarkProblems };
 }
 
 export const ROADMAP_TOOLS = [
   {
     name: "get_roadmap",
-    description: "Read the MCP-managed roadmap record with each initiative's derived lifecycle state, band, slice progress, active work, and readiness to ship, and the repository's components: its repository name, the declared components by identity <repository>/<component> with their folder, test command, and dependencies, the declaration's problem when it is invalid, and, when the configuration lists no component and a root workspace manifest (package.json, pnpm-workspace.yaml, Cargo.toml, or go.work) gives workspace patterns, a proposal of a ## Components block with its components, shared paths, skipped manifests, and problem. Reads never create files, and the proposal is never written; offer it to the person to commit.",
+    description: "Read the MCP-managed roadmap record with each initiative's derived lifecycle state, band, slice progress, active work, and readiness to ship, and the repository's components: its repository name, the declared components by identity <repository>/<component> with their folder, test command, and dependencies, the declaration's problem when it is invalid, and, when the configuration lists no component and a root workspace manifest (package.json, pnpm-workspace.yaml, Cargo.toml, or go.work) gives workspace patterns, a proposal of a ## Components block with its components, shared paths, skipped manifests, and problem. Reads never create files, and the proposal is never written; offer it to the person to commit. The one exception is a shipped entry whose decision has not recorded its slice documents: the read records them with documentsFrom first-read, writes the history mark into each, and lists them under markedHistory ({ initiative, marked }) to commit apart from the task's changes.",
     inputSchema: GET_ROADMAP_SCHEMA,
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "update_roadmap",
-    description: "Apply revision-checked roadmap operations: set what the roadmap serves, set the workspace name that every checkout sharing the record store shows (one line of at most 64 characters, an empty name clears it), add or update initiatives, place them in Now, Next, Later, or Parked, set required initiatives, record ship or supersede decisions, and set open questions. Ship requires every leaf slice to be done, refusing with gate_blocked first; it then reads the ## Components declaration, refusing an invalid one with its own code, and refuses with dependents_blocked, listing each scope with its blocked dependents and reason failed or not_run, while a finished scope has dependents without a passing dependents' run of every one of them; readyToShip in get_roadmap is true only when ship would succeed, with a diagnostic saying why otherwise. Every write regenerates the roadmap Markdown without overwriting a hand-written file.",
+    description: "Apply revision-checked roadmap operations: set what the roadmap serves, set the workspace name that every checkout sharing the record store shows (one line of at most 64 characters, an empty name clears it), add or update initiatives, place them in Now, Next, Later, or Parked, set required initiatives, record ship or supersede decisions, and set open questions. add_initiative and update_initiative take corrects ({ initiative, slices }) for a fix to shipped work: the entry names the shipped initiative and each of its recorded slices whose work it corrects, the roadmap Markdown shows it, and the shipped initiative's shippedHistory lists the entry under laterFixes; corrects refuses with validation_failed an initiative that has not shipped (fix its done work inside it with update_initiative report_defect), an unknown initiative, the entry's own id, an empty slices list, and a slice the shipped initiative's record does not hold. A shipped initiative's entry keeps its title, intent, requirements, and required initiatives: update_initiative and set_requires naming it refuse with initiative_shipped, with its initiative and shippedAt. Ship refuses an existing decision with validation_failed, then refuses with open_work, listing gates ({ id, slice, question, answered }), claims ({ slice, label, activity, expiresAt }), and proposals (scope slugs), while the initiative has a pending user gate, answered or not, a live slice claim, or a pending design proposal. Ship then refuses with fixes_unfinished, listing fixes ({ slice, defect, fix, status }), while a defect reported on a done slice has no fix slice or its fix slice is not done. Ship then requires every leaf slice to be done, refusing with gate_blocked first; it then reads the ## Components declaration, refusing an invalid one with its own code, and refuses with dependents_blocked, listing each scope with its blocked dependents and reason failed or not_run, while a finished scope has dependents without a passing dependents' run of every one of them, or reason stale with run naming the dependents' run's record path while that latest run started before a leaf of the scope last passed verification, as when a fix slice changed the scope after it; readyToShip in get_roadmap is true only when ship would succeed, with a diagnostic saying why otherwise. Ship records each slice document of the initiative in its decision as documents ({ path, sha256 } of its content without the history mark), with documentsRecordedAt and documentsFrom ship, writes the history mark into each, and lists the marked paths under historyMarks and each document it could not read or write under historyMarkProblems ({ path, reason }) without failing. Every write regenerates the roadmap Markdown without overwriting a hand-written file.",
     inputSchema: UPDATE_ROADMAP_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

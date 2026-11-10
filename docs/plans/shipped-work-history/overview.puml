@@ -1,0 +1,38 @@
+@startuml
+title Shipped work as history - slices
+package "ship-gate" as Gate {
+  interface "shippedDecision, openWork" as Decision
+  interface "open_work, initiative_shipped" as ShipRefusals
+}
+package "history-reads" as Reads {
+  interface "shippedHistory object" as History
+  interface "history mark, recorded documents" as Marks
+}
+package "history-refusals" as Refusals {
+  interface "refuseShipped" as Refuse
+}
+package "history-browser" as Browser
+package "done-work-fixes" as Fixes {
+  interface "report_defect, add_fix, fixes_unfinished" as FixOps
+}
+package "shipped-work-fixes" as Corrects {
+  interface "corrects, laterFixes" as Later
+}
+package "history-sessions" as Sessions
+Reads ..> Decision : reads the decision
+Refusals ..> Decision : refuses shipped
+Browser ..> History : labels pages
+Browser ..> Decision : unavailable actions
+Fixes ..> ShipRefusals : ship order
+Corrects ..> History : adds laterFixes
+Sessions ..> FixOps : triage, design, orchestrate
+Sessions ..> Later : triage
+Reads ..> Gate : after
+Refusals ..> Reads : after
+Browser ..> Reads : after
+Fixes ..> Refusals : after
+Corrects ..> Reads : after
+Sessions ..> Fixes : after
+Sessions ..> Corrects : after
+Sessions ..> Browser : after
+@enduml

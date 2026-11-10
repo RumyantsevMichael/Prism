@@ -268,13 +268,14 @@ Run `node scripts/native-build/mcp-smoke.mjs --default` to verify the promoted m
 
 ## Benchmarking a change
 
-`bench/` holds a benchmark that compares plugin versions by the code their agents produce.
+The benchmark that compares plugin versions by the code their agents produce lives in the private `prism-research` repository, with the evidence behind Prism's design.
+It stays out of this repository because every plugin install clones this repository onto the user's machine.
 Hidden acceptance tests score each run, and a paired bootstrap over tasks decides whether a delta is real.
-The methodology, the commands, and the threats to validity live in [bench/README.md](bench/README.md).
+The harness loads a Prism checkout from `PRISM_REPO`, or from a sibling folder named `Prism` or `prism`.
 
 Before you trust or publish a result:
 
-1. Run `python3 bench/harness/bench.py selfcheck`.
+1. Run `python3 bench/harness/bench.py selfcheck` in the research repository.
 2. Compare arms with the same pinned model and at least 3 repetitions.
 3. Quote the confidence interval, never the point delta alone.
 

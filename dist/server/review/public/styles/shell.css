@@ -540,6 +540,19 @@ body {
   min-width: 0;
 }
 
+/* The store button's sync state follows the store's name after a gap, so the one control reads as name, then state. */
+.store-sync {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  margin-inline-start: var(--prism-space-4);
+  white-space: nowrap;
+}
+
+.store-sync[hidden] {
+  display: none;
+}
+
 .status-dot {
   display: inline-block;
   width: var(--prism-dot-size);
@@ -610,61 +623,24 @@ body {
 }
 
 .indexing-panel-note,
-.indexing-step-detail,
 .indexing-facts dt,
 .indexing-diagnostics span,
-.indexing-component-state,
-.indexing-step.pending .indexing-step-label {
+.indexing-component-state {
   color: var(--prism-color-ink-muted);
 }
 
-.indexing-panel-note,
-.indexing-step-detail {
+.indexing-panel-note {
   font-size: var(--prism-font-size-xs);
 }
 
-.indexing-steps,
+.indexing-steps {
+  margin: 0 0 var(--prism-space-5);
+}
+
 .indexing-components {
   list-style: none;
   margin: 0 0 var(--prism-space-5);
   padding: 0;
-}
-
-/* Each build step hangs on a rail, and its dot fills once the step is done or under way. */
-.indexing-step {
-  position: relative;
-  padding: var(--prism-space-1) 0 var(--prism-space-3) var(--prism-space-5);
-  border-inline-start: var(--prism-stroke-strong) solid var(--prism-color-line);
-}
-
-.indexing-step::before {
-  content: "";
-  position: absolute;
-  top: var(--prism-space-3);
-  left: calc(var(--prism-dot-size) / -2 - var(--prism-stroke));
-  width: var(--prism-dot-size);
-  height: var(--prism-dot-size);
-  border: var(--prism-stroke-strong) solid var(--prism-color-line-strong);
-  border-radius: var(--prism-radius-round);
-  background: var(--prism-color-raised);
-}
-
-.indexing-step.done::before {
-  border-color: var(--prism-color-success);
-  background: var(--prism-color-success);
-}
-
-.indexing-step.current::before {
-  border-color: var(--prism-color-accent);
-  background: var(--prism-color-accent);
-}
-
-.indexing-step.current .indexing-step-label {
-  font-weight: var(--prism-font-weight-semibold);
-}
-
-.indexing-step-detail {
-  display: block;
 }
 
 .indexing-facts {
@@ -1040,8 +1016,9 @@ body {
     padding: 0 var(--prism-space-3) 0 var(--prism-space-2);
   }
 
-  /* Appearance shows its icon alone; its label still names it. */
-  .statusbar .appearance-label {
+  /* Appearance shows its icon alone, and a synced store its icon and sync state; their labels still name them. */
+  .statusbar .appearance-label,
+  #store-status:has(.store-sync:not([hidden])) #store-status-label {
     position: absolute;
     width: 1px;
     height: 1px;

@@ -1,5 +1,8 @@
 # Search across component indexes
 
+> Shipped history: initiative `components` shipped on 2026-11-07, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 `search_repository_concepts` answers path-scoped queries from the matching components and merges unscoped ones across prepared components, naming those it left out.

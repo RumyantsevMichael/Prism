@@ -1,5 +1,6 @@
 import { enablePanZoom, graphCard, renderGraph } from "./graph.js";
 import { headingSlug } from "./markdown.js";
+import { preference, setPreference } from "../kit/preferences.js";
 import { artifactChip, badge, bindLinks, card, chip, emptyState, escapeHtml, evidenceChip, formatReference, formatSelector, keyValues, pathName, plural, shortId, summaryPanel } from "./util.js";
 
 const ACTIONS = ["ADD", "MODIFY", "REPLACE", "DELETE", "KEEP"];
@@ -152,8 +153,9 @@ export async function render(container, data, ctx) {
   const state = ctx.state;
   state.hidden ??= [];
   state.graph ??= {};
-  state.mode ??= "list";
-  state.groupBy ??= "action";
+  // A change map opens in the view and grouping the person last chose; picking a change in the graph shows it in the list for this page only.
+  state.mode ??= preference("changeMap.view");
+  state.groupBy ??= preference("changeMap.groupBy");
   const counts = Object.fromEntries(ACTIONS.map((action) => [action, changes.filter((change) => change.action === action).length]));
   const visible = changes.filter((change) => !state.hidden.includes(change.action));
   const problemsOf = (change) => diagnostics.filter((item) => item.id === change.id);
@@ -223,12 +225,14 @@ export async function render(container, data, ctx) {
   for (const button of container.querySelectorAll("[data-mode]")) {
     button.addEventListener("click", () => {
       state.mode = button.dataset.mode;
+      void setPreference("changeMap.view", state.mode).catch(() => {});
       ctx.rerender();
     });
   }
   for (const button of container.querySelectorAll("[data-group]")) {
     button.addEventListener("click", () => {
       state.groupBy = button.dataset.group;
+      void setPreference("changeMap.groupBy", state.groupBy).catch(() => {});
       ctx.rerender();
     });
   }

@@ -16,7 +16,7 @@ import { createPageBar } from "./views/page-bar.js";
 import { DEFAULT_PLACE, PLACES, placeNamed } from "./views/places.js";
 import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createPresence } from "./views/presence.js";
-import { DENSITIES, savePreferences, THEMES } from "./kit/preferences.js";
+import { DENSITIES, onPreferencesChange, preference, preferencesReady, savePreferences, setPreference, THEMES } from "./kit/preferences.js";
 import { shownActionEntries } from "./views/actions.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
 import { currentPhase } from "./views/slice.js";
@@ -24,6 +24,8 @@ import { messageHtml, shortDate } from "./views/util.js";
 import { LANES, laneHeading, ROADMAP_VIEWS } from "./views/roadmap.js";
 import { createPoller, deadline, POLL_DEADLINE_MS } from "./views/poller.js";
 import { createEventRelay } from "./views/event-relay.js";
+import { shippedHistoryHtml } from "./views/shipped-history.js";
+import { arrangeGroups } from "./views/tab-groups.js";
 
 const project = document.getElementById("project");
 const navRoot = document.getElementById("nav");
@@ -64,6 +66,8 @@ if (new URLSearchParams(location.search).get("missing") === "project") {
 let openTabs = [];
 let previewTab = null;
 let agentTabs = [];
+// Named groups of open tabs, each { name, tabs, collapsed }, such as the tabs an agent presented for one piece of work.
+let tabGroups = [];
 let sessionRevision = 0;
 // A replaced review app restarts revisions, so a snapshot from a new instance is accepted whatever its revision.
 let sessionInstance = null;
@@ -138,22 +142,25 @@ function welcome() {
 }
 
 // The pages this browser tab visited sit in the browser's own history, each entry numbered, so Back and Forward know whether there is a page to go to.
+// The tab also keeps which page each numbered entry showed, so Back and Forward pass over an entry that shows the page already open,
+// such as the entry a closed tab leaves behind, and never take a click that changes nothing.
 const HISTORY_KEY = "prism.review.history";
-const pages = { index: 0, top: 0 };
+const pages = { index: 0, top: 0, refs: [] };
 
-// The highest page the tab may move forward to is kept for this tab, with the page it was on when the tab last left the app.
+// The highest page the tab may move forward to is kept for this tab, with the page it was on when the tab last left the app and the page of each entry.
 function readHistoryTop() {
   try {
     const stored = JSON.parse(sessionStorage.getItem(HISTORY_KEY) ?? "null");
-    return { top: Number(stored?.top) || 0, left: Number.isInteger(stored?.left) ? stored.left : null };
+    const refs = Array.isArray(stored?.refs) ? stored.refs.map((ref) => (typeof ref === "string" ? ref : null)) : [];
+    return { top: Number(stored?.top) || 0, left: Number.isInteger(stored?.left) ? stored.left : null, refs };
   } catch {
-    return { top: 0, left: null };
+    return { top: 0, left: null, refs: [] };
   }
 }
 
 function storeHistoryTop(left = null) {
   try {
-    sessionStorage.setItem(HISTORY_KEY, JSON.stringify({ top: pages.top, left }));
+    sessionStorage.setItem(HISTORY_KEY, JSON.stringify({ top: pages.top, left, refs: pages.refs.slice(0, pages.top + 1) }));
   } catch {
   }
 }
@@ -177,12 +184,15 @@ function settleHistoryTop(index, stored) {
 
 function startHistory() {
   const index = history.state?.index;
+  const stored = readHistoryTop();
   if (Number.isInteger(index)) {
     pages.index = index;
-    pages.top = settleHistoryTop(index, readHistoryTop());
+    pages.top = settleHistoryTop(index, stored);
+    pages.refs = stored.refs.slice(0, pages.top + 1);
   } else {
     pages.index = 0;
     pages.top = 0;
+    pages.refs = [];
   }
   storeHistoryTop();
 }
@@ -199,17 +209,27 @@ function watchHistoryLeave() {
   });
 }
 
+// The nearest entry from `from` in direction `step` that shows another page than the open one, or null; an entry whose page is not known counts as another page.
+function nextEntry(from, step) {
+  for (let index = from + step; index >= 0 && index <= pages.top; index += step) {
+    if (pages.refs[index] !== selectedPath) return index;
+  }
+  return null;
+}
+
 // Back and Forward, and Alt+arrows, move only through the pages visited in this tab, so they never leave the review app.
 function goBack() {
-  if (pages.index > 0) history.back();
+  const target = nextEntry(pages.index, -1);
+  if (target !== null) history.go(target - pages.index);
 }
 
 function goForward() {
-  if (pages.index < pages.top) history.forward();
+  const target = nextEntry(pages.index, 1);
+  if (target !== null) history.go(target - pages.index);
 }
 
 function showHistory() {
-  pageBar?.setHistory({ back: pages.index > 0, forward: pages.index < pages.top });
+  pageBar?.setHistory({ back: nextEntry(pages.index, -1) !== null, forward: nextEntry(pages.index, 1) !== null });
 }
 
 // A tab writes only with the write session it took from the one-time grant in the URL Prism opened; the tab's session storage keeps it,
@@ -301,10 +321,12 @@ function updateLocation(path, push = false) {
   if (push) {
     pages.index += 1;
     pages.top = pages.index;
+    pages.refs.length = pages.index;
     history.pushState({ ref: path, index: pages.index }, "", `${url.pathname}${url.search}`);
   } else {
     history.replaceState({ ref: path, index: pages.index }, "", `${url.pathname}${url.search}`);
   }
+  pages.refs[pages.index] = path ?? null;
   storeHistoryTop();
   showHistory();
 }
@@ -359,8 +381,29 @@ function holdPage(path) {
   void saveSession().catch((error) => showToast(error.message));
 }
 
+// This window's id in the session, so the session can say which window chose the active tab; a reload keeps it.
+const WINDOW_KEY = "prism.review.window";
+const windowId = (() => {
+  try {
+    const kept = sessionStorage.getItem(WINDOW_KEY);
+    if (kept) return kept;
+    const id = `w-${crypto.randomUUID()}`;
+    sessionStorage.setItem(WINDOW_KEY, id);
+    return id;
+  } catch {
+    return `w-${crypto.randomUUID()}`;
+  }
+})();
+
+// While this window's own saves are on their way, an answer or event that predates the last of them would undo what the window shows,
+// so the newest snapshot waits and applies once every save has answered.
+let pendingSaves = 0;
+let waitingSnapshot = null;
+
 function saveSession() {
-  const payload = { openTabs: [...openTabs], activeTab: held ? held.sessionTab : selectedPath, previewTab, agentTabs: agentTabs.filter((tab) => openTabs.includes(tab)) };
+  arrangeTabs();
+  const payload = { openTabs: [...openTabs], activeTab: held ? held.sessionTab : selectedPath, previewTab, agentTabs: agentTabs.filter((tab) => openTabs.includes(tab)), groups: tabGroups, source: windowId };
+  pendingSaves += 1;
   const request = async () => {
     const response = await appFetch("./api/session", {
       method: "PUT",
@@ -370,11 +413,26 @@ function saveSession() {
     if (!response.ok) {
       throw new Error(await response.text());
     }
-    synchronizeSession(await response.json());
+    return response.json();
   };
-  const queued = saveQueue.then(request, request);
+  const settle = (snapshot) => {
+    pendingSaves -= 1;
+    if (snapshot && (!waitingSnapshot || newerSnapshot(snapshot, waitingSnapshot))) waitingSnapshot = snapshot;
+    if (pendingSaves > 0 || !waitingSnapshot) return;
+    const latest = waitingSnapshot;
+    waitingSnapshot = null;
+    synchronizeSession(latest);
+  };
+  const queued = saveQueue.then(request, request).then((snapshot) => settle(snapshot), (error) => {
+    settle(null);
+    throw error;
+  });
   saveQueue = queued.catch(() => {});
   return queued;
+}
+
+function newerSnapshot(snapshot, than) {
+  return snapshot.instance !== than.instance || (snapshot.revision ?? 0) > (than.revision ?? 0);
 }
 
 // The strip of open documents at the top of the main island: one tab per open page, the italic preview tab, kept tabs, and the tabs an agent presented.
@@ -391,11 +449,20 @@ function tabNames(path) {
   return { title, full: title === named.kind ? title : `${named.kind} · ${title}` };
 }
 
+// Grouped tabs sit side by side, as the review app keeps them, so the strip shows each group whole before the app answers.
+function arrangeTabs() {
+  ({ openTabs, groups: tabGroups } = arrangeGroups(openTabs, tabGroups));
+  const grouped = new Set(tabGroups.flatMap((group) => group.tabs));
+  if (grouped.has(previewTab)) previewTab = null;
+}
+
 function renderTabs() {
   if (typeof tabStrip.setTabs !== "function") {
     void customElements.whenDefined("prism-doc-tabs").then(renderTabs);
     return;
   }
+  arrangeTabs();
+  const groupOf = new Map(tabGroups.flatMap((group) => group.tabs.map((tab) => [tab, group.name])));
   tabStrip.setTabs(openTabs.map((path) => {
     const entity = Boolean(parseEntityRef(path));
     const { title, full, code = false } = tabNames(path);
@@ -403,13 +470,38 @@ function renderTabs() {
     const preview = path === previewTab;
     const agent = agentTabs.includes(path);
     const tip = [missing ? missingNotice(path, { entity, label: title }).tooltip : full, preview ? PREVIEW_TIP : "", agent ? "Presented by the agent." : ""].filter(Boolean).join(" ");
-    return { value: path, label: title, tip, selected: path === selectedPath, preview, agent, missing, code };
-  }));
+    return { value: path, label: title, tip, selected: path === selectedPath, preview, agent, missing, code, group: groupOf.get(path) ?? null };
+  }), { groups: tabGroups });
 }
 
 tabStrip.addEventListener("prism-select", (event) => openRef(event.detail?.value));
 tabStrip.addEventListener("prism-tab-keep", (event) => keepTab(event.detail?.value));
 tabStrip.addEventListener("prism-tab-close", (event) => closeTab(event.detail?.value));
+tabStrip.addEventListener("prism-tab-move", (event) => moveTabs(event.detail?.order, event.detail?.groups));
+tabStrip.addEventListener("prism-group-toggle", (event) => toggleGroup(event.detail?.group, event.detail?.collapsed));
+tabStrip.addEventListener("prism-group-close", (event) => closeTabs(event.detail?.tabs ?? []));
+
+// Moving a tab or a group gives the open tabs a new order, and a tab moved into or out of a group a new group, which every window of the session then shows.
+function moveTabs(order, groups) {
+  if (!Array.isArray(order) || !requireApp()) return;
+  const known = order.filter((path) => openTabs.includes(path));
+  openTabs = [...known, ...openTabs.filter((path) => !known.includes(path))];
+  if (Array.isArray(groups)) {
+    const collapsed = new Map(tabGroups.map((group) => [group.name, group.collapsed]));
+    tabGroups = groups.filter((group) => collapsed.has(group.name)).map((group) => ({ name: group.name, tabs: group.tabs.filter((path) => openTabs.includes(path)), collapsed: collapsed.get(group.name) }));
+  }
+  renderTabs();
+  void saveSession().catch((error) => showToast(error.message));
+}
+
+// A collapsed group shows only its head and its selected tab, in every window of the session.
+function toggleGroup(name, collapsed) {
+  const group = tabGroups.find((each) => each.name === name);
+  if (!group || !requireApp()) return;
+  group.collapsed = Boolean(collapsed);
+  renderTabs();
+  void saveSession().catch((error) => showToast(error.message));
+}
 
 // Opening a page shows it in a tab and pushes it onto the browser history, so Back, Forward, and the browser's own buttons move through the same pages.
 // An ordinary open replaces the preview tab; `keep` opens a kept tab instead, or keeps the preview, and a new tab goes right after the selected one.
@@ -467,15 +559,21 @@ function showNothing() {
 
 // Closing the selected tab shows the last open tab in its place, and closing the last tab leaves nothing open.
 function closeTab(path) {
-  if (!path || !requireApp()) return;
+  if (path) closeTabs([path]);
+}
+
+// Closing a group closes its tabs; the selected page, when it closes too, gives way to the last tab still open.
+function closeTabs(paths) {
+  const closing = new Set(paths.filter((path) => openTabs.includes(path)));
+  if (!closing.size || !requireApp()) return;
   held = null;
-  scrollPositions.delete(path);
-  openTabs = openTabs.filter((tab) => tab !== path);
-  agentTabs = agentTabs.filter((tab) => tab !== path);
-  if (previewTab === path) {
+  for (const path of closing) scrollPositions.delete(path);
+  openTabs = openTabs.filter((tab) => !closing.has(tab));
+  agentTabs = agentTabs.filter((tab) => !closing.has(tab));
+  if (closing.has(previewTab)) {
     previewTab = null;
   }
-  if (selectedPath === path) {
+  if (closing.has(selectedPath)) {
     selectedPath = openTabs[openTabs.length - 1] ?? null;
     lastSnapshot = "";
     updateLocation(selectedPath);
@@ -491,8 +589,15 @@ function closeTab(path) {
   void saveSession().catch((error) => showToast(error.message));
 }
 
-// Every window of the session shows the same tabs; a page an agent presents, or one another window opened, becomes the next page of this tab's history.
+// Every window of the session shows the same tabs. A page an agent presents becomes the next page of every window's history,
+// while a window keeps its own page when another window picks a tab, so a window's history holds only the pages it showed.
+let lastActive = null;
+
 function synchronizeSession(snapshot) {
+  if (pendingSaves > 0) {
+    if (!waitingSnapshot || newerSnapshot(snapshot, waitingSnapshot)) waitingSnapshot = snapshot;
+    return;
+  }
   const nextRevision = Number.isInteger(snapshot.revision) ? snapshot.revision : sessionRevision;
   const nextInstance = typeof snapshot.instance === "string" ? snapshot.instance : sessionInstance;
   if (typeof snapshot.appVersion === "string" && appVersion !== null && snapshot.appVersion !== appVersion) {
@@ -502,25 +607,30 @@ function synchronizeSession(snapshot) {
   if (nextRevision <= sessionRevision && nextInstance === sessionInstance) {
     return;
   }
+  const first = sessionInstance === null && lastActive === null;
   sessionInstance = nextInstance;
   const nextTabs = Array.isArray(snapshot.openTabs) ? [...snapshot.openTabs] : [];
-  let nextSelectedPath = Object.hasOwn(snapshot, "activeTab")
-    ? snapshot.activeTab
-    : nextTabs.includes(selectedPath) ? selectedPath : nextTabs[0] ?? null;
-  // A held page stays shown while the session still selects the tab it held it beside; any other selection is followed.
-  if (held && nextSelectedPath === held.sessionTab && nextTabs.includes(held.page)) nextSelectedPath = held.page;
-  else held = null;
+  const active = Object.hasOwn(snapshot, "activeTab") && nextTabs.includes(snapshot.activeTab) ? snapshot.activeTab : null;
+  // An agent's presentation is new when the active tab or its source changed since the last snapshot this window saw; the first snapshot is the session as it was.
+  const presented = !first && snapshot.activeSource === "agent" && active !== null && (lastActive?.tab !== active || lastActive?.source !== "agent");
+  lastActive = { tab: active, source: snapshot.activeSource ?? null };
+  // A held page stays shown while the session still selects the tab it held it beside and no agent presents a page; any other selection ends the hold.
+  if (held && (presented || active !== held.sessionTab || !nextTabs.includes(held.page))) held = null;
   const nextPreview = nextTabs.includes(snapshot.previewTab) ? snapshot.previewTab : null;
   const nextAgentTabs = Array.isArray(snapshot.agentTabs) ? snapshot.agentTabs.filter((tab) => nextTabs.includes(tab)) : [];
   sessionRevision = nextRevision;
   openTabs = nextTabs;
   previewTab = nextPreview;
   agentTabs = nextAgentTabs;
-  const next = nextSelectedPath && nextTabs.includes(nextSelectedPath) ? nextSelectedPath : null;
+  tabGroups = Array.isArray(snapshot.groups) ? snapshot.groups : [];
+  // The window follows a presentation; otherwise it keeps its page while that page's tab stays open, and takes the session's active tab, or the last tab, when it closed.
+  const next = presented ? active : nextTabs.includes(selectedPath) ? selectedPath : active ?? nextTabs.at(-1) ?? null;
   if (next === selectedPath) {
     renderTabs();
+    showHistory();
     return;
   }
+  const hadPage = selectedPath !== null;
   selectedPath = next;
   lastSnapshot = "";
   renderTabs();
@@ -529,7 +639,7 @@ function synchronizeSession(snapshot) {
     showNothing();
     return;
   }
-  updateLocation(selectedPath, true);
+  updateLocation(selectedPath, presented && hadPage);
   setBusy(true);
   renderNavigation();
   void showArtifact(selectedPath);
@@ -1352,8 +1462,9 @@ function storePlace(name) {
   }
 }
 
-// The view the Roadmap page shows, which only the Roadmap place's sidebar switches, and a lane whose heading the next drawn board scrolls into view.
-let roadmapView = "board";
+// The view the Roadmap page shows, which only the Roadmap place's sidebar switches, is the person's preference, so every roadmap opens in the view
+// they last chose; a lane whose heading the next drawn board scrolls into view.
+const roadmapView = () => preference("roadmap.view");
 let pendingLane = null;
 {
   const address = new URLSearchParams(location.search);
@@ -1534,14 +1645,14 @@ function roadmapViews() {
       showRoadmapView(event.detail?.value);
     });
   }
-  roadmapViewSwitch.setAttribute("value", roadmapView);
+  roadmapViewSwitch.setAttribute("value", roadmapView());
   return roadmapViewSwitch;
 }
 
 // Switching the view redraws the Roadmap page in it, and opens the page when another one shows, keeping the drawer open as a place's choice does.
 function showRoadmapView(view) {
   if (!ROADMAP_VIEWS.some(([name]) => name === view)) return;
-  roadmapView = view;
+  void setPreference("roadmap.view", view).catch(() => showToast("The view changed here, but the review app could not store the choice."));
   renderNavigation();
   openRef("roadmap", { keepDrawer: true });
 }
@@ -1549,7 +1660,7 @@ function showRoadmapView(view) {
 // A lane link opens the Roadmap's board with that lane's heading in view, and scrolls to it again while the board shows.
 function showLane(lane, { keep = false } = {}) {
   if (!LANES.some(([name]) => name === lane)) return;
-  roadmapView = "board";
+  void setPreference("roadmap.view", "board").catch(() => {});
   pendingLane = { path: "roadmap", lane };
   openRef("roadmap", { keep });
 }
@@ -1715,7 +1826,7 @@ function renderNavigation() {
   for (const rail of [shellRail, drawerRail]) renderRail(rail, attention.gates ?? 0);
   const entity = Boolean(parseEntityRef(selectedPath ?? ""));
   const claims = claimIndex ? [...claimIndex.live(), ...claimIndex.expired()].map((claim) => [claim.ref, claim.expiresAt, claim.label]) : [];
-  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", knowledgeQuery(), knowledgeResults, attentionMoreOpen, roadmapView, currentPlace === "knowledge" ? [lastSlice, touchedCount] : null]);
+  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", knowledgeQuery(), knowledgeResults, attentionMoreOpen, roadmapView(), currentPlace === "knowledge" ? [lastSlice, touchedCount] : null]);
   if (key === navigationKey) return;
   navigationKey = key;
   const focused = document.activeElement?.closest?.("prism-tree-item");
@@ -1758,8 +1869,17 @@ async function refreshContext(path) {
   currentContext = { ref: path, value };
   renderNavigation();
   pageBar.setTrail(trailOf(path), path);
+  const history = artifact.querySelector("[data-shipped-history]");
+  if (history) {
+    history.innerHTML = documentHistoryHtml(path);
+  }
   // A slice's or initiative's tab takes the title its context names.
   renderTabs();
+}
+
+// A slice document of a shipped initiative carries the shipped history label from its context.
+function documentHistoryHtml(path) {
+  return shippedHistoryHtml(currentContext?.ref === path ? currentContext.value.shippedHistory : null);
 }
 
 function controlsOf(root) {
@@ -1811,25 +1931,32 @@ function decorateMaximize(path) {
     const key = `${card.className.split(" ")[0]}:${index}`;
     let button = card.querySelector(":scope [data-maximize]");
     if (!button) {
-      button = document.createElement("prism-button");
-      button.setAttribute("variant", "ghost");
-      button.setAttribute("size", "sm");
-      button.className = "maximize-control";
+      // The kit's maximize button; a document with contents carries it in the contents header, which stays in view while the document scrolls.
+      button = document.createElement("prism-maximize");
       button.dataset.maximize = key;
-      const tools = card.querySelector(".diagram-tools");
-      if (tools) tools.appendChild(button);
-      else card.prepend(button);
-      button.addEventListener("click", () => setMaximized(path, state.maximized === key ? null : key));
+      const contents = card.querySelector(":scope > prism-contents");
+      const tools = card.querySelector(":scope .diagram-tools");
+      if (contents) {
+        button.slot = "tools";
+        contents.append(button);
+      } else if (tools) {
+        tools.appendChild(button);
+      } else {
+        button.toggleAttribute("floating", true);
+        card.prepend(button);
+      }
+      button.addEventListener("prism-maximize-request", (event) => setMaximized(path, event.detail.maximized ? key : null));
     }
     const maximized = state.maximized === key;
     found ||= maximized;
     card.classList.toggle("is-maximized", maximized);
-    button.textContent = maximized ? "Restore" : "Maximize";
-    button.setAttribute("pressed", String(maximized));
-    button.setAttribute("tip", maximized ? "Restore (Esc)" : "Fill the window");
+    button.toggleAttribute("maximized", maximized);
+    // A maximized document keeps its contents header at the top even when the contents sit above it.
+    card.querySelector(":scope > prism-contents")?.toggleAttribute("pinned", maximized);
   });
   if (!found) state.maximized = null;
   document.body.classList.toggle("has-maximized", found);
+  markCurrentSection(artifact, workspace.getBoundingClientRect().top);
 }
 
 function setMaximized(path, key) {
@@ -1844,7 +1971,7 @@ function highlightText(query) {
   const term = query.toLowerCase().split(/\s+/).filter(Boolean).sort((left, right) => right.length - left.length)[0];
   if (!term) return false;
   const walker = document.createTreeWalker(artifact, NodeFilter.SHOW_TEXT, {
-    acceptNode: (node) => node.parentElement?.closest(".doc-toc, [data-maximize], script, style") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
+    acceptNode: (node) => node.parentElement?.closest("prism-contents, [data-maximize], script, style") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
   });
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const index = node.data.toLowerCase().indexOf(term);
@@ -2107,6 +2234,7 @@ async function showArtifact(path) {
         ${source ? "<prism-chip>Read-only</prism-chip>" : structured ? "" : `<prism-chip>${diagramLabel}</prism-chip>`}
       </div>
     </header>
+    <div class="document-history" data-shipped-history>${documentHistoryHtml(path)}</div>
     ${documentCard}`;
   pageBar.setActions(structured ? modeButtons(state, path) : []);
   if (structured) {
@@ -2155,7 +2283,7 @@ function viewContext(path, state) {
     path,
     state,
     // The Roadmap page's view as its place's sidebar chose it, and the lane a lane link asks it to show.
-    roadmapView,
+    roadmapView: roadmapView(),
     lane: pendingLane?.path === path ? pendingLane.lane : null,
     // Touched by my work reads the slice in the selected tab, or else the one selected last, and passes its answer back for the sidebar's count.
     touchedSlice: () => lastSlice,
@@ -2211,14 +2339,16 @@ function viewContext(path, state) {
       const listing = await listed.json().catch(() => ({}));
       if (!listed.ok) throw Object.assign(new Error(listing.message ?? "The answer was not recorded."), { code: listing.code === "unknown_target" ? "unknown_gate" : listing.code });
       const action = (listing.actions ?? []).find((item) => item.id === "gate.answer");
+      // A question the server no longer takes an answer to, such as one of a shipped initiative, is refused with the server's own reason.
+      if (action && !action.available) throw Object.assign(new Error(action.reason ?? "The answer was not recorded."), { code: "action_unavailable" });
       const names = new Set((action?.fields ?? []).map((field) => field.name));
       const input = Object.fromEntries([["choice", choice], ["note", note]].filter(([name, value]) => names.has(name) && value !== null && value !== undefined && value !== ""));
       const response = await appFetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ action: "gate.answer", target, input, revision: action?.revision ?? null }) }).catch(unanswered);
       const result = await response.json().catch(() => ({ message: "The server returned an unreadable response." }));
       if (!response.ok) {
-        // The answer form names an answered or withdrawn question as it always has.
-        const code = result.code === "action_unavailable" ? "gate_answered" : result.code === "unknown_target" ? "unknown_gate" : result.code;
-        throw Object.assign(new Error(result.message ?? "The answer was not recorded."), { code });
+        // A withdrawn question reads as one, and any other refusal carries the server's reason.
+        const code = result.code === "unknown_target" ? "unknown_gate" : result.code;
+        throw Object.assign(new Error(result.reason ?? result.message ?? "The answer was not recorded."), { code });
       }
       return result;
     },
@@ -2270,16 +2400,20 @@ function focusPlaces(rail) {
   rail.querySelector(`prism-rail-item[data-place="${currentPlace}"]`)?.focus();
 }
 
-// Above 1100px the sidebar can hide and leave the rail; the choice is remembered in this browser, and narrower windows ignore it.
-const SIDEBAR_KEY = "prism.review.sidebar";
+// Above 1100px the sidebar can hide and leave the rail, and narrower windows ignore the choice; the choice is the person's preference,
+// kept by the review app for every port, and a choice an older page kept in this browser moves there once.
+const LEGACY_SIDEBAR_KEY = "prism.review.sidebar";
 const wideWindow = matchMedia("(min-width: 1101px)");
 
 function readSidebarCollapsed() {
   try {
-    return localStorage.getItem(SIDEBAR_KEY) === "collapsed";
+    const legacy = localStorage.getItem(LEGACY_SIDEBAR_KEY);
+    localStorage.removeItem(LEGACY_SIDEBAR_KEY);
+    if (legacy === "collapsed") void setPreference("sidebar.collapsed", true).catch(() => {});
   } catch {
-    return false;
+    // A browser without storage has no older choice to move.
   }
+  return preference("sidebar.collapsed");
 }
 
 function setSidebarCollapsed(collapsed, { remember = true } = {}) {
@@ -2288,12 +2422,7 @@ function setSidebarCollapsed(collapsed, { remember = true } = {}) {
   sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
   sidebarToggle.setAttribute("label", action);
   sidebarToggle.setAttribute("tip", `${action} ([)`);
-  if (!remember) return;
-  try {
-    localStorage.setItem(SIDEBAR_KEY, collapsed ? "collapsed" : "expanded");
-  } catch {
-    // A browser without storage keeps the choice for this page only.
-  }
+  if (remember) void setPreference("sidebar.collapsed", collapsed).catch(() => showToast("The sidebar changed here, but the review app could not store the choice."));
 }
 
 // The drawer places its children in its body a microtask after they arrive, so focus moves once the sidebar sits inside the open drawer.
@@ -2367,7 +2496,8 @@ function watchDrawerWidth() {
 
 async function initialize() {
   await takeWriteGrant();
-  const data = await fetchJson("./api/index");
+  // The views start from the person's stored preferences, such as the roadmap's view, so they wait for them alongside the index.
+  const [data] = await Promise.all([fetchJson("./api/index"), preferencesReady()]);
   startHistory();
   watchHistoryLeave();
   pageBar = createPageBar({
@@ -2381,7 +2511,7 @@ async function initialize() {
   recordStoreStatus = createRecordStoreStatus({
     storeButton: document.getElementById("store-status"),
     storeLabel: document.getElementById("store-status-label"),
-    syncButton: document.getElementById("store-sync"),
+    syncPart: document.getElementById("store-sync"),
     syncLabel: document.getElementById("store-sync-label"),
     dialog: document.getElementById("store-dialog"),
     fetchJson,
@@ -2393,6 +2523,7 @@ async function initialize() {
   openTabs = data.openTabs;
   previewTab = openTabs.includes(data.previewTab) ? data.previewTab : null;
   agentTabs = (data.agentTabs ?? []).filter((tab) => openTabs.includes(tab));
+  tabGroups = Array.isArray(data.groups) ? data.groups : [];
   sessionRevision = Number.isInteger(data.revision) ? data.revision : 0;
   sessionInstance = typeof data.instance === "string" ? data.instance : null;
   appVersion = typeof data.appVersion === "string" ? data.appVersion : null;
@@ -2402,11 +2533,19 @@ async function initialize() {
   thisProject = data;
   showPrivateServer(data.privateServer);
   let sectionFrame = 0;
-  workspace.addEventListener("scroll", () => {
-    if (!rebuilding && renderedPath && renderedPath === selectedPath) scrollPositions.set(renderedPath, workspace.scrollTop);
+  const followSections = () => {
     cancelAnimationFrame(sectionFrame);
     sectionFrame = requestAnimationFrame(() => markCurrentSection(artifact, workspace.getBoundingClientRect().top));
+  };
+  workspace.addEventListener("scroll", () => {
+    if (!rebuilding && renderedPath && renderedPath === selectedPath) scrollPositions.set(renderedPath, workspace.scrollTop);
+    followSections();
   }, { passive: true });
+  // A maximized document scrolls inside its own card, and the window size sets how much of the contents fits, so both follow the current section too.
+  artifact.addEventListener("scroll", (event) => {
+    if (event.target.classList?.contains("is-maximized")) followSections();
+  }, { passive: true, capture: true });
+  window.addEventListener("resize", followSections, { passive: true });
   // Choosing another project opens its review page; opening the menu refreshes the list first.
   projectPoller = createPoller({ run: refreshProjects, interval: 5000 });
   projectButton.addEventListener("click", () => void projectPoller.now());
@@ -2550,6 +2689,9 @@ async function initialize() {
   }
   document.getElementById("nav-button").addEventListener("click", openDrawer);
   setSidebarCollapsed(readSidebarCollapsed(), { remember: false });
+  onPreferencesChange((keys, preferences) => {
+    if (keys.includes("sidebar.collapsed") && preferences["sidebar.collapsed"] !== shell.classList.contains("sidebar-collapsed")) setSidebarCollapsed(preferences["sidebar.collapsed"], { remember: false });
+  });
   sidebarToggle.addEventListener("prism-select", () => setSidebarCollapsed(!shell.classList.contains("sidebar-collapsed")));
   navDrawer.addEventListener("prism-close", closeDrawer);
   watchDrawerWidth();
@@ -2571,11 +2713,8 @@ async function initialize() {
     const anchor = docLink.dataset.docAnchor;
     if (!target || target === selectedPath) {
       if (!scrollToAnchor(anchor)) showToast(`No heading #${anchor} in this document.`);
-      else if (docLink.closest(".doc-toc")) {
-        requestAnimationFrame(() => {
-          for (const link of docLink.closest(".doc-toc").querySelectorAll("a")) link.toggleAttribute("aria-current", link === docLink);
-          docLink.setAttribute("aria-current", "location");
-        });
+      else if (docLink.closest("prism-contents")) {
+        requestAnimationFrame(() => docLink.closest("prism-contents").markCurrent?.(docLink));
       }
       return;
     }
@@ -2622,9 +2761,20 @@ async function initialize() {
     }
   });
   window.addEventListener("popstate", (event) => {
+    const from = pages.index;
     if (Number.isInteger(event.state?.index)) pages.index = event.state.index;
-    showHistory();
     const ref = event.state?.ref ?? new URLSearchParams(location.search).get("artifact");
+    if (ref) pages.refs[pages.index] = ref;
+    // The browser's own buttons can land on an entry that shows the open page; the move goes on to the next entry in the same direction.
+    if (ref === selectedPath && pages.index !== from) {
+      const target = nextEntry(pages.index, pages.index < from ? -1 : 1);
+      if (target !== null) {
+        history.go(target - pages.index);
+        return;
+      }
+    }
+    storeHistoryTop();
+    showHistory();
     if (ref && ref !== selectedPath) openRef(ref, { fromHistory: true });
   });
   connectSessionEvents();

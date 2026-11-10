@@ -1,5 +1,8 @@
 # Declare components and record one per slice
 
+> Shipped history: initiative `components` shipped on 2026-11-07, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 A repository declares components, and each planned leaf slice records one, as `<repository>/<component>`, that holds its planned changes and frozen tests when its design is accepted.

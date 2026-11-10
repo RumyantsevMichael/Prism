@@ -134,7 +134,17 @@ test("clause 78: the command palette opens on Ctrl+K and Meta+K, drives kinded r
   await slice.waitFor();
   assert.match(await slice.innerText(), /Slice/, "a result shows its kind");
   assert.match(await slice.innerText(), /Claude on build-2/, "a slice result shows its holder");
+  // The first result shows as current, so ArrowDown moves on to the second result and ArrowUp comes back to the first.
   await page.keyboard.press("ArrowDown");
+  const second = await page.evaluate(() => {
+    let element = document.activeElement;
+    while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
+    const id = element.getAttribute("aria-activedescendant");
+    const listbox = document.querySelector("#palette-results");
+    return [...listbox.querySelectorAll("prism-list-item")].filter((item) => !item.closest("[hidden]")).findIndex((item) => item.id === id);
+  });
+  assert.equal(second, 1, "the first ArrowDown makes the second result active");
+  await page.keyboard.press("ArrowUp");
   const active = await page.evaluate(() => {
     let element = document.activeElement;
     while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
@@ -155,7 +165,7 @@ test("clause 78: the command palette opens on Ctrl+K and Meta+K, drives kinded r
   await page.getByRole("dialog", { name: "Command palette" }).waitFor();
   await page.keyboard.type("roadmap");
   await page.getByRole("dialog", { name: "Command palette" }).getByRole("option").first().waitFor();
-  await page.keyboard.press("ArrowDown");
+  // Enter opens the first result, which stands in as current until an arrow key moves.
   await page.keyboard.press("Enter");
   await waitForView(page);
   assert.equal(await page.getByRole("dialog", { name: "Command palette" }).count(), 0, "Enter opens the result and closes the palette");

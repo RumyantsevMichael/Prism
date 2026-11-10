@@ -1,5 +1,8 @@
 # Report and plan across component indexes
 
+> Shipped history: initiative `components` shipped on 2026-11-07, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 The structural reports and `plan_repository_context` read the components they select as one union and name the components they left out.

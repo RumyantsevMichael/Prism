@@ -172,7 +172,7 @@ test("a review read keeps its content and adds the slice, wave, and design-run t
   await mcp.start();
 
   const tools = Object.fromEntries((await mcp.tools()).map((tool) => [tool.name, tool]));
-  assert.equal(tools.get_review.annotations.readOnlyHint, true, "reading run totals writes nothing");
+  assert.equal(tools.get_review.annotations.readOnlyHint, false, "a first read of an earlier ship records and marks its slice documents");
 
   const review = (await mcp.call("get_review", { projectRoot: root, initiative: "demo", slice: "alpha-one" })).structuredContent;
   const { runTotals, ...content } = review;
@@ -190,7 +190,7 @@ test("an initiative read adds slice, split-parent, and initiative totals with co
   await mcp.start();
 
   const tools = Object.fromEntries((await mcp.tools()).map((tool) => [tool.name, tool]));
-  assert.equal(tools.get_initiative.annotations.readOnlyHint, true, "reading run totals writes nothing");
+  assert.equal(tools.get_initiative.annotations.readOnlyHint, false, "a first read of an earlier ship records and marks its slice documents");
 
   const result = await mcp.call("get_initiative", { projectRoot: root, initiative: "demo" });
   const { runTotals, ...content } = result.structuredContent;

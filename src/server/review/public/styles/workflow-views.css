@@ -53,12 +53,22 @@
   min-width: 0;
 }
 
-/* Run totals on wave cards, slice pages, and initiative pages: a caption over the stat tiles. */
-.run-totals {
+/* Run totals on wave cards, slice pages, and initiative pages: one kit table, a row per scope, with a legend under it. */
+.run-totals-block {
   display: grid;
-  gap: var(--prism-space-3);
+  gap: var(--prism-space-2);
   min-width: 0;
+}
+
+/* A captioned table follows the card's other content, such as a wave's lanes, so it keeps a gap above it. */
+.run-totals-block.is-captioned {
   margin-top: var(--prism-space-4);
+}
+
+.run-totals-note {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-2xs);
 }
 
 .stat-grid {
@@ -403,6 +413,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A group's note sits under its label, aligned with it. */
+.attention-group > .attention-group-note {
+  margin: 0 var(--prism-space-3) var(--prism-space-2);
 }
 
 .attention-group:first-child .attention-group-label {

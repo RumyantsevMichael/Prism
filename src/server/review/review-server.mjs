@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { arrangeGroups, GROUP_LIMIT, groupNameOf, joinGroup } from "./public/views/tab-groups.js";
 import { randomBytes } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
@@ -446,6 +447,34 @@ export function normalizeTabs(value) {
   return [...new Set(tabs)];
 }
 
+function copyGroups(groups) {
+  return groups.map((group) => ({ name: group.name, tabs: [...group.tabs], collapsed: group.collapsed }));
+}
+
+// A page's groups name open tabs, each tab in one group at most, with names that differ.
+function checkGroups(value, openTabs, follow = (tab) => tab) {
+  if (!Array.isArray(value) || value.length > GROUP_LIMIT) {
+    throw new Error(`The tab groups must be an array of at most ${GROUP_LIMIT} groups.`);
+  }
+  const names = new Set();
+  const grouped = new Set();
+  return value.map((group) => {
+    if (!group || typeof group !== "object" || Array.isArray(group)) throw new Error("Each tab group must be an object with a name and its tabs.");
+    const name = groupNameOf(group.name);
+    if (names.has(name)) throw new Error(`Two tab groups are named ${name}.`);
+    names.add(name);
+    const tabs = normalizeTabs(group.tabs).map(follow);
+    if (!tabs.length) throw new Error(`The tab group ${name} has no tabs.`);
+    for (const tab of tabs) {
+      if (!openTabs.includes(tab)) throw new Error("Grouped tabs must be open tabs.");
+      if (grouped.has(tab)) throw new Error("A tab can be in one tab group only.");
+      grouped.add(tab);
+    }
+    if (Object.hasOwn(group, "collapsed") && typeof group.collapsed !== "boolean") throw new Error("A tab group's collapsed must be true or false.");
+    return { name, tabs, collapsed: group.collapsed === true };
+  });
+}
+
 // Reads a request body of at most 64 KiB as text; the review app needs the exact text because control requests sign it.
 export async function readBody(request) {
   const chunks = [];
@@ -537,7 +566,11 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       Promise.resolve(rebuildIndex(root, component)).catch(() => {});
     }
   };
-  let session = { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], revision: 0 };
+  // activeSource says who chose the active tab last: "agent" for a presentation, or the id of the review window that chose it, so each window
+  // follows what an agent presents and its own choices, never another window's.
+  // groups name sets of open tabs, such as the tabs an agent presented for one piece of work: each group's tabs stay side by side in openTabs,
+  // in the order openTabs gives them, and a collapsed group shows only its name and its selected tab.
+  let session = { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], groups: [], activeSource: null, revision: 0 };
   // Each viewer stream maps to its heartbeat and whether it carries a live write session; only writable streams count as connected tabs.
   // The review page joins the origin's shared stream instead, as a member of the hub under this page's path, and counts the same way.
   const viewers = new Map();
@@ -547,7 +580,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   const writableRequest = (request) => canWrite(request.headers["x-prism-write"]);
 
   function sessionSnapshot() {
-    const snapshot = { openTabs: [...session.openTabs], activeTab: session.activeTab, previewTab: session.previewTab, agentTabs: [...session.agentTabs], revision: session.revision };
+    const snapshot = { openTabs: [...session.openTabs], activeTab: session.activeTab, previewTab: session.previewTab, agentTabs: [...session.agentTabs], groups: copyGroups(session.groups), activeSource: session.activeSource, revision: session.revision };
     return instance ? { ...snapshot, instance, ...(appVersion ? { appVersion } : {}) } : snapshot;
   }
 
@@ -630,7 +663,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     const follow = (tab) => moves.get(tab) ?? tab;
     const agentTabs = [...new Set(session.agentTabs.map(follow))];
     const previewTab = session.previewTab && follow(session.previewTab);
-    return commitSession({ openTabs: [...new Set(session.openTabs.map(follow))], activeTab: session.activeTab && follow(session.activeTab), previewTab: agentTabs.includes(previewTab) ? null : previewTab, agentTabs });
+    const groups = session.groups.map((group) => ({ ...group, tabs: group.tabs.map(follow) }));
+    return commitSession({ openTabs: [...new Set(session.openTabs.map(follow))], activeTab: session.activeTab && follow(session.activeTab), previewTab, agentTabs, groups, activeSource: session.activeSource });
   }
 
   // Reading the session first lets moved records' tabs follow them, so every reader sees the records where they now live.
@@ -638,9 +672,15 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     return followMovedRecords(await reviewableFiles());
   }
 
-  function commitSession(next) {
+  // Every change goes through here, so grouped tabs always sit side by side and neither an agent tab nor a grouped tab is ever the preview.
+  function commitSession(proposed) {
+    const arranged = arrangeGroups(proposed.openTabs, proposed.groups ?? session.groups);
+    const grouped = new Set(arranged.groups.flatMap((group) => group.tabs));
+    const previewTab = proposed.previewTab && !proposed.agentTabs.includes(proposed.previewTab) && !grouped.has(proposed.previewTab) ? proposed.previewTab : null;
+    const next = { ...proposed, ...arranged, previewTab };
     const changed = ["openTabs", "agentTabs"].some((key) => next[key].length !== session[key].length || next[key].some((tab, index) => tab !== session[key][index]))
-      || next.activeTab !== session.activeTab || next.previewTab !== session.previewTab;
+      || JSON.stringify(next.groups) !== JSON.stringify(session.groups)
+      || next.activeTab !== session.activeTab || next.previewTab !== session.previewTab || next.activeSource !== session.activeSource;
     if (changed) {
       session = { ...next, revision: session.revision + 1 };
       notify("session", sessionSnapshot());
@@ -685,35 +725,43 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       }
       agentTabs = requestedAgentTabs;
     }
+    const groups = Object.hasOwn(body, "groups") ? checkGroups(body.groups, requestedTabs, follow) : session.groups;
     if (requestedTabs.length === 0) {
       nextActiveTab = null;
     }
-    return commitSession({ openTabs: requestedTabs, activeTab: nextActiveTab, previewTab: agentTabs.includes(previewTab) ? null : previewTab, agentTabs });
+    // A window names itself with a short id; an active tab it did not choose keeps its source.
+    const source = typeof body.source === "string" && /^[\w-]{1,64}$/.test(body.source) ? body.source : "page";
+    const activeSource = nextActiveTab === session.activeTab ? session.activeSource : source;
+    return commitSession({ openTabs: requestedTabs, activeTab: nextActiveTab, previewTab, agentTabs, groups, activeSource });
   }
 
   // get_review_url adds tabs the same way present_review does, so neither tool closes the human's tabs.
-  async function setOpenTabs(tabs) {
-    return (await presentTabs(tabs)).openTabs;
+  async function setOpenTabs(tabs, options) {
+    return (await presentTabs(tabs, options)).openTabs;
   }
 
   // present_review adds agent tabs beside the human's tabs and focuses the first one without replacing the preview.
-  async function presentTabs(tabs) {
+  // A group name gathers the presented tabs into that group, made when no group has the name yet, and shows the group expanded;
+  // a tab already in another group moves into it, and tabs presented without a name keep the groups they are in.
+  async function presentTabs(tabs, { group } = {}) {
     const requestedTabs = normalizeTabs(tabs);
+    const groupName = group === undefined || group === null ? null : groupNameOf(group);
     const available = await reviewableFiles();
     await assertAvailable(requestedTabs, available);
     await followMovedRecords(available);
     if (requestedTabs.length === 0) {
       if (session.openTabs.includes("attention")) {
-        return commitSession({ ...session, activeTab: "attention" });
+        return commitSession({ ...session, activeTab: "attention", activeSource: "agent" });
       }
       // Attention opens in the preview tab, replacing whatever the preview showed.
       const openTabs = [...session.openTabs.filter((tab) => tab !== session.previewTab), "attention"];
-      return commitSession({ openTabs, activeTab: "attention", previewTab: "attention", agentTabs: session.agentTabs });
+      return commitSession({ openTabs, activeTab: "attention", previewTab: "attention", agentTabs: session.agentTabs, activeSource: "agent" });
     }
     const openTabs = [...session.openTabs, ...requestedTabs.filter((tab) => !session.openTabs.includes(tab))];
     const agentTabs = [...session.agentTabs, ...requestedTabs.filter((tab) => !session.agentTabs.includes(tab))];
     const previewTab = requestedTabs.includes(session.previewTab) ? null : session.previewTab;
-    return commitSession({ openTabs, activeTab: requestedTabs[0], previewTab, agentTabs });
+    const groups = groupName ? joinGroup(session.groups, groupName, requestedTabs) : session.groups;
+    return commitSession({ openTabs, activeTab: requestedTabs[0], previewTab, agentTabs, groups, activeSource: "agent" });
   }
 
   function closeViewerStreams() {
@@ -756,7 +804,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         try {
           change = JSON.parse(await readBody(request));
         } catch {
-          throw Object.assign(new Error("The preferences must be a JSON object with theme, density, or both."), { code: "invalid_preference" });
+          throw Object.assign(new Error("The preferences must be a JSON object that gives one or more preferences."), { code: "invalid_preference" });
         }
         send(response, 200, JSON.stringify(await writePreferences(change)), "application/json; charset=utf-8");
       } catch (error) {
@@ -994,9 +1042,9 @@ export async function startReviewServer(options = {}) {
     viewerCount: review.viewerCount,
     setOpenTabs: review.setOpenTabs,
     reviewUrl: review.reviewUrl,
-    async open(artifactPaths) {
+    async open(artifactPaths, options) {
       const tabs = normalizeTabs(artifactPaths);
-      await review.presentTabs(tabs);
+      await review.presentTabs(tabs, options);
       const url = review.reviewUrl(tabs);
       if (!review.claimBrowserOpen()) {
         return { url, opened: false, ...review.getSession() };

@@ -9,8 +9,8 @@ import { boundaryFailures, contrastFailures, escapes, focusRing, launch, movingE
 // Contract: docs/plans/review-app-ui-kit/slice.md clauses 21, 22, 41 to 51, and 54 to 57.
 // The containers and content blocks are exercised through their public attributes, events, and keys on the served catalog page.
 
-const CONTAINERS = ["prism-panel", "prism-tree", "prism-tree-item", "prism-listbox", "prism-list-item", "prism-dialog", "prism-popover", "prism-stepper", "prism-step", "prism-breadcrumbs", "prism-disclosure", "prism-empty-state", "prism-banner", "prism-toast", "prism-stat", "prism-meter", "prism-spinner", "prism-doc", "prism-code"];
-const HOLDS_ITEMS = ["prism-tree", "prism-listbox", "prism-panel", "prism-stepper", "prism-breadcrumbs"];
+const CONTAINERS = ["prism-panel", "prism-tree", "prism-tree-item", "prism-listbox", "prism-list-item", "prism-dialog", "prism-popover", "prism-stepper", "prism-step", "prism-breadcrumbs", "prism-disclosure", "prism-empty-state", "prism-banner", "prism-toast", "prism-stat", "prism-meter", "prism-spinner", "prism-doc", "prism-contents", "prism-code"];
+const HOLDS_ITEMS = ["prism-tree", "prism-listbox", "prism-panel", "prism-stepper", "prism-breadcrumbs", "prism-contents"];
 const LONG = "A caption that is far longer than the room any container gives it, so it has to end early";
 const UNBROKEN = "initiative-with-a-very-long-name-that-has-no-spaces-anywhere-and-cannot-wrap";
 
@@ -238,6 +238,28 @@ test("clause 44: a listbox driven from a field keeps focus in the field and move
   await page.keyboard.press("Enter");
   assert.deepEqual((await events(page, "prism-select")).map((event) => event.detail.value), ["slice", "two"]);
   assert.match(await region.getByRole("option", { name: /Timeout retries/ }).innerText(), /Slice/, "an option shows its kind");
+});
+
+test("a first-current listbox shows its first option as current, so the first ArrowDown moves to the second option", { skip }, async (context) => {
+  const { page } = await catalog(context);
+  await mount(page, `<prism-field id="query" type="search" label="Jump to" name="q"></prism-field>
+    <prism-listbox id="matches" label="Matches" for="query" first-current>
+      <prism-list-item value="roadmap">Roadmap</prism-list-item>
+      <prism-list-item value="slice">Timeout retries</prism-list-item>
+      <prism-list-item value="doc">docs/retry.md</prism-list-item>
+    </prism-listbox>`);
+  const state = () => page.evaluate(() => {
+    const control = document.querySelector("#query input");
+    const id = control.getAttribute("aria-activedescendant");
+    const current = document.querySelector("#matches prism-list-item[current]");
+    return { active: id ? document.getElementById(id)?.closest("prism-list-item")?.getAttribute("value") ?? document.getElementById(id)?.getAttribute("value") : null, current: current?.getAttribute("value") ?? null };
+  });
+  await page.locator("#fixture").getByRole("searchbox", { name: "Jump to" }).focus();
+  assert.deepEqual(await state(), { active: null, current: "roadmap" });
+  await page.keyboard.press("ArrowDown");
+  assert.deepEqual(await state(), { active: "slice", current: null });
+  await page.keyboard.press("ArrowUp");
+  assert.deepEqual(await state(), { active: "roadmap", current: null });
 });
 
 test("clause 45: a dialog opens modally over a blurred scrim, keeps focus inside, closes with Escape, its button, or the scrim, and returns focus", { skip }, async (context) => {
@@ -540,4 +562,61 @@ test("clause 51: rendered Markdown and code take the kit's content styles and sy
   assert.match(styles.block, /^"?Prism Code"?/);
   assert.equal(styles.numbers, true, "line numbers start at 7");
   assert.deepEqual(await contrastFailures(page, "#fixture"), []);
+});
+
+test("contents sit beside a document, fit the visible part of their scroller, scroll only their list to the current entry, and take tools in their header", { skip }, async (context) => {
+  const { page } = await catalog(context, "", { viewport: { width: 1440, height: 900 } });
+  const sections = Array.from({ length: 40 }, (_, index) => index + 1);
+  await mount(page, `<div id="scroller"><div id="box"><prism-contents id="contents"><prism-maximize slot="tools" id="tool"></prism-maximize><ol>${sections.map((index) => `<li><a href="#s${index}">Section ${index}</a></li>`).join("")}</ol></prism-contents><prism-doc>${sections.map((index) => `<h3 id="s${index}">Section ${index}</h3><p>Text.</p>`).join("")}</prism-doc></div></div>`, { width: "1000px" });
+  const shown = await page.evaluate(async () => {
+    const scroller = document.getElementById("scroller");
+    const contents = document.getElementById("contents");
+    // The page's policy refuses style attributes in markup, so the scrolling box gets its size from the style object.
+    scroller.style.setProperty("height", "400px");
+    scroller.style.setProperty("overflow", "auto");
+    scroller.scrollTop = 600;
+    contents.fit(scroller);
+    contents.markCurrent(contents.links.at(-1));
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const area = scroller.getBoundingClientRect();
+    const body = contents.querySelector(".prism-contents-body").getBoundingClientRect();
+    const list = contents.querySelector(".prism-contents-list");
+    const current = contents.links.at(-1).getBoundingClientRect();
+    const frame = list.getBoundingClientRect();
+    return {
+      beside: contents.getBoundingClientRect().left > document.querySelector("#box prism-doc").getBoundingClientRect().right,
+      inside: body.top >= area.top - 1 && body.bottom <= area.bottom + 1,
+      listScrolled: list.scrollTop > 0,
+      currentShown: current.top >= frame.top - 1 && current.bottom <= frame.bottom + 1,
+      marked: contents.querySelectorAll('a[aria-current="location"]').length,
+      toolInHeader: document.getElementById("tool").parentElement.classList.contains("prism-contents-tools"),
+      named: contents.getAttribute("role") === "navigation" && contents.getAttribute("aria-label") === "Contents"
+    };
+  });
+  assert.deepEqual(shown, { beside: true, inside: true, listScrolled: true, currentShown: true, marked: 1, toolInHeader: true, named: true });
+  assert.equal(await page.locator("#contents .prism-contents-toggle").isVisible(), false, "beside a document the header is a title, not a fold toggle");
+  assert.deepEqual(page.errors, []);
+});
+
+test("contents above a document in a narrow window fold from their header", { skip }, async (context) => {
+  const { page } = await catalog(context, "", { viewport: { width: 900, height: 800 } });
+  await mount(page, `<div><prism-contents id="contents"><ol><li><a href="#a">A</a></li><li><a href="#b">B</a></li></ol></prism-contents><prism-doc><h3 id="a">A</h3><h3 id="b">B</h3></prism-doc></div>`);
+  const toggle = page.locator("#contents .prism-contents-toggle");
+  assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+  assert.equal(await page.locator("#contents ol").isVisible(), false);
+  await toggle.click();
+  assert.equal(await toggle.getAttribute("aria-expanded"), "true");
+  assert.equal(await page.locator("#contents ol").isVisible(), true);
+});
+
+test("a maximize button asks for the other state and leaves applying it to its owner", { skip }, async (context) => {
+  const { page } = await catalog(context);
+  await mount(page, `<prism-maximize id="button"></prism-maximize>`);
+  await record(page, "#button", "prism-maximize-request");
+  const region = page.locator("#fixture");
+  await region.getByRole("button", { name: "Maximize" }).click();
+  assert.equal(await page.evaluate(() => document.getElementById("button").hasAttribute("maximized")), false, "the button does not change its own state");
+  await page.evaluate(() => document.getElementById("button").setAttribute("maximized", ""));
+  await region.getByRole("button", { name: "Restore" }).click();
+  assert.deepEqual((await events(page, "prism-maximize-request")).map((event) => event.detail.maximized), [true, false]);
 });

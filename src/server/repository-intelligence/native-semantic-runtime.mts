@@ -2,16 +2,21 @@ import path from "node:path";
 import { pluginPath, pluginURL } from "../plugin-root.mjs";
 import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
-import { jsonLine, readJsonLines } from "../json-lines.mjs";
-import { constants } from "node:fs";
-import { mkdir, lstat, realpath, readFile, readdir, open, rename, rm, chmod, utimes } from "node:fs/promises";
+import { mkdir, lstat, realpath, readdir, open, rename, rm, chmod, utimes } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { withFileLock, withArtifactLock, writeAtomically } from "../workflow/artifact-store.mjs";
+import { errorFields, log } from "../log.mjs";
 import { ProgressRecorder, componentStorageKey, gitFingerprint, projectStorageKey, sameFingerprint, writeFreshness } from "./index-progress.mjs";
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { assertSafeAncestors, regularBytes, semanticError } from "./native-files.mjs";
+import { publishedUnits, unitsFile } from "./index-files.mjs";
+import { Helper } from "./native-helper.mjs";
+import { LocalIndexStore, ThreadIndexStore } from "./index-store.mjs";
+import type { IndexStore } from "./index-store.mjs";
 import type { GitFingerprint } from "./index-progress.mjs";
-import type { NativeSource, SourceSnapshot, UnitIndex, IndexMetadata, PreparedIndex, Preparation, Progress, Diagnostic, WorkerMethods, SearchFilters, ComponentRuntime, Counts, PublishedUnits, IndexComponent, ComponentFailure } from "./repository-unit-types.mjs";
+import type { NativeSource, SourceSnapshot, IndexMetadata, PreparedIndex, Preparation, Progress, Diagnostic, SearchFilters, ComponentRuntime, Counts, IndexComponent, ComponentFailure } from "./repository-unit-types.mjs";
+
+export { assertSafeAncestors, regularBytes, semanticError } from "./native-files.mjs";
+export { publishedUnits, unitsFile } from "./index-files.mjs";
 
 interface Asset { url: string; bytes: number; sha256: string; unpackedBytes?: number }
 interface AssetManifest { schemaVersion: 1; identity: string; assetVersion: string; bundles: Record<string, Asset>; modelMirror?: string; model: { id: string; revision: string; files: (Omit<Asset, "url"> & { path: string; url?: string })[] } }
@@ -28,7 +33,6 @@ interface Location { root: string; directory: string }
 interface Entry { source: NativeSource; component?: IndexComponent }
 interface IndexPointer { snapshot?: string; revision?: string; chunkerVersion?: string; coverage?: Coverage; diagnostics?: Diagnostic[]; builtAt?: string }
 
-export const semanticError = (code: string, message: string) => Object.assign(new Error(message), { code });
 const sha = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 const supported = new Set(["darwin-x64", "darwin-arm64", "linux-x64", "linux-arm64", "win32-x64"]);
 const boundedWait = (promise: Promise<void>, ms: number) => new Promise<void>((resolve, reject) => {
@@ -36,7 +40,6 @@ const boundedWait = (promise: Promise<void>, ms: number) => new Promise<void>((r
   promise.then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
 });
 const inside = (root: string, file: string) => { const relative = path.relative(root, file); return !path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`); };
-const indexMetadata = ({ chunks: _chunks, ...metadata }: UnitIndex) => metadata;
 const busy = (job: Job | undefined) => job?.status === "waiting" || job?.status === "preparing";
 // A component whose lock another session holds is retried after this delay instead of holding the queue while that session builds it.
 const LOCK_RETRY_MS = 2000;
@@ -66,30 +69,7 @@ export async function privateDirectory(directory: string): Promise<string> {
   return directory;
 }
 
-export async function assertSafeAncestors(target: string): Promise<void> {
-  const absolute = path.resolve(target), root = path.parse(absolute).root;
-  let current = root;
-  for (const part of absolute.slice(root.length).split(path.sep).filter(Boolean)) {
-    current = path.join(current, part);
-    const info = await lstat(current);
-    if (info.isSymbolicLink() || !info.isDirectory()) throw semanticError("invalid_path", "Private storage must not follow a symlink ancestor.");
-  }
-}
 
-export async function regularBytes(file: string, max = 512 * 1024 * 1024) {
-  await assertSafeAncestors(path.dirname(file));
-  const info = await lstat(file);
-  if (!info.isFile() || info.isSymbolicLink()) throw semanticError("invalid_path", "A cache file must be a regular file.");
-  if (info.size > max) throw semanticError("resource_limit", "A cache file exceeds its size limit.");
-  const handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
-  try {
-    const current = await handle.stat();
-    if (!current.isFile() || current.size > max) throw semanticError("resource_limit", "A cache file exceeds its size limit.");
-    const bytes = await handle.readFile();
-    if (bytes.length > max) throw semanticError("resource_limit", "A cache file exceeds its size limit.");
-    return bytes;
-  } finally { await handle.close(); }
-}
 
 async function readJson<T>(file: string): Promise<T> { return JSON.parse((await regularBytes(file)).toString("utf8")); }
 
@@ -143,17 +123,7 @@ export const modelAssetName = (file: string) => `model-${file.split("/").join("-
 const STALE_ASSET_MS = 14 * 24 * 60 * 60 * 1000;
 const KEPT_INDEX_REVISIONS = 4;
 const UNITS_FILE = /^units-([a-f\d]{64})\.json$/;
-export const unitsFile = (revision: string) => `units-${revision}.json`;
 
-// The units sidecar holds only what a viewer needs to locate code, so the review browser can read it without the full index and its embeddings.
-export function publishedUnits(index: IndexMetadata, revision: string): PublishedUnits {
-  const edges = new Map<string, [string, string]>();
-  for (const edge of index.edges) if (edge.kind === "calls" || edge.kind === "references") edges.set(`${edge.source}\0${edge.target}`, [edge.source, edge.target]);
-  return { schemaVersion: 1, snapshot: index.snapshot, revision,
-    units: index.units.map(({ id, file, kind, name, qualifiedName, range, sourceHash }) => ({ id, file, kind, name, ...(qualifiedName === undefined ? {} : { qualifiedName }),
-      range: { startLine: range.startLine, endLine: range.endLine }, ...(sourceHash === undefined ? {} : { sourceHash }) })),
-    edges: [...edges.values()] };
-}
 
 // Keep the current index and the most recently used earlier revisions, so a retained before-change snapshot still reuses its index.
 // Each source change writes a complete index, so older revisions, their generation pointers, and abandoned snapshot mirrors are removed.
@@ -185,51 +155,6 @@ export async function pruneAssets(directory: string, keep: Set<string>, maxAgeMs
   }
 }
 
-class Helper {
-  child: ChildProcessWithoutNullStreams | null = null;
-  idle?: NodeJS.Timeout;
-  requests = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timeout: NodeJS.Timeout; progress?: (value: Progress) => void }>();
-  counter = 0;
-  constructor(public runtime: string, private options: Options) {}
-  start() {
-    if (this.child) return;
-    const environment = { ...process.env };
-    for (const key of Object.keys(environment)) if (/^(CODEGRAPH_|NODE_OPTIONS$|NODE_PATH$)/.test(key)) delete environment[key];
-    Object.assign(environment, { PRISM_EMBEDDED: "1", CODEGRAPH_NO_STORE_WORKER: "1", CODEGRAPH_NO_PARALLEL_RESOLVE: "1", CODEGRAPH_NO_WAL_DEFER: "1", CODEGRAPH_NO_FAST_INIT: "1", CODEGRAPH_KERNEL: "0", NODE_DISABLE_COMPILE_CACHE: "1" });
-    const args = ["--liftoff-only", "--permission", `--allow-fs-read=${this.runtime}`, `--allow-fs-read=${this.options.directory}`, `--allow-fs-write=${this.options.directory}`, "--allow-addons", path.join(this.runtime, "worker.mjs")];
-    const child = spawn(path.join(this.runtime, process.platform === "win32" ? "node.exe" : "node"), args, { env: environment, cwd: this.runtime, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
-    this.child = child;
-    child.stderr.on("data", () => {});
-    const lines = readJsonLines(child.stdout);
-    lines.on("line", line => {
-      let message: { id: number; progress?: Progress; error?: { code: string; message: string }; result?: unknown };
-      try { message = JSON.parse(line); } catch { return this.stop(semanticError("preparation_failed", "The native helper returned invalid data.")); }
-      const pending = this.requests.get(message.id);
-      if (!pending) return;
-      if (message.progress) { pending.progress?.(message.progress); return; }
-      this.requests.delete(message.id); clearTimeout(pending.timeout);
-      if (message.error) pending.reject(semanticError(message.error.code, message.error.message)); else pending.resolve(message.result);
-      if (!this.requests.size) { this.idle = setTimeout(() => this.stop(), this.options.idleMs ?? 300000); this.idle.unref(); }
-    });
-    child.once("error", () => this.stop(semanticError("unsupported_runtime", "The bundled Node helper could not start.")));
-    child.once("exit", () => { if (this.child === child) this.stop(semanticError("preparation_failed", "The native helper exited before completing its request.")); });
-  }
-  request<K extends keyof WorkerMethods>(method: K, args: WorkerMethods[K]["input"], progress?: (value: Progress) => void): Promise<WorkerMethods[K]["output"]> {
-    clearTimeout(this.idle); this.start();
-    return new Promise((resolve, reject) => {
-      const id = ++this.counter;
-      const timeout = setTimeout(() => this.stop(semanticError("resource_limit", "Native preparation exceeded its 30 minute operation limit.")), this.options.operationMs ?? 30 * 60 * 1000);
-      timeout.unref(); this.requests.set(id, { resolve: value => resolve(value as WorkerMethods[K]["output"]), reject, timeout, progress });
-      this.child!.stdin.write(jsonLine({ id, method, args }), error => { if (error) this.stop(semanticError("preparation_failed", "The native helper input channel failed.")); });
-    });
-  }
-  stop(error = semanticError("preparation_failed", "The native helper stopped.")) {
-    clearTimeout(this.idle);
-    const child = this.child; this.child = null; child?.kill();
-    for (const request of this.requests.values()) { clearTimeout(request.timeout); request.reject(error); }
-    this.requests.clear();
-  }
-}
 
 export class NativeSemanticRuntime implements ComponentRuntime {
   directory: string;
@@ -248,6 +173,7 @@ export class NativeSemanticRuntime implements ComponentRuntime {
   // Builds and searches have a helper each, because a helper answers one request at a time and a build can run for many minutes,
   // while a search of a component that is ready must answer within its call's bound and must not fail when another component's build times out.
   processes = new Map<"build" | "search", Helper>();
+  indexStore?: IndexStore;
   // Counts snapshot reads, so a newer read of a location's live content can replace a job for content read before it.
   reads = 0;
   verifiedRuntime?: string;
@@ -516,6 +442,7 @@ export class NativeSemanticRuntime implements ComponentRuntime {
           recovery = `If no session is preparing this component, delete ${lock} and repeat the call.`;
         }
         const code = stableFailure(error);
+        log.warn("index_failed", { directory: location.directory, component: component?.identity, code, ...errorFields(error) });
         job.status = "degraded"; job.failure = { code, message: error.message };
         job.diagnostics = [{ code, message: error.message, recovery }];
         if (component && code === "resource_limit") this.limited.set(generationKey, job);
@@ -535,9 +462,20 @@ export class NativeSemanticRuntime implements ComponentRuntime {
     if (!job) { this.settle(); return; }
     if (!this.idle) this.sequence = new Promise<void>(resolve => { this.idle = resolve; });
     this.running = job; job.status = "preparing";
-    void job.run().catch(() => {}).finally(() => { this.running = null; if (!job.retry) job.finish(); this.pump(); });
+    const started = performance.now();
+    log.info("index_started", { directory: job.directory, component: job.component?.identity, queued: this.queue.length });
+    void job.run().catch(() => {}).finally(() => {
+      log.info("index_finished", { directory: job.directory, component: job.component?.identity, status: job.status, ms: Math.round(performance.now() - started) });
+      log.activity.delete("index");
+      this.running = null; if (!job.retry) job.finish(); this.pump();
+    });
   }
   report(job: Job, progress: Progress) {
+    // A phase change is logged once, and the phase stays the index activity that a record of a stalled event loop names.
+    if (job.progress?.phase !== progress.phase) {
+      log.debug("index_phase", { directory: job.directory, component: job.component?.identity, phase: progress.phase, total: progress.total });
+      if (job === this.running) log.activity.set("index", `${job.component?.identity ?? "project"} ${progress.phase}`);
+    }
     job.progress = progress;
     job.recorder?.update(progress);
   }
@@ -552,21 +490,23 @@ export class NativeSemanticRuntime implements ComponentRuntime {
     try {
       return await withArtifactLock(directory, () => withFileLock(directory, async () => {
         clearTimeout(waiting);
-        let previous: UnitIndex | undefined;
+        let previous: { index: IndexMetadata; indexPath: string; revision: string } | undefined;
         try {
           const pointer = await readJson<IndexPointer>(path.join(directory, `generation-${snapshot.sourceFingerprint}-${assets.assetIdentity}.json`))
             .catch(error => { if (error.code !== "ENOENT") throw error; return readJson<IndexPointer>(path.join(directory, "current.json")); });
           if (!pointer.revision || !/^[a-f\d]{64}$/.test(pointer.revision)) throw semanticError("corrupt_asset", "The index pointer has an invalid revision.");
-          const indexPath = path.join(directory, `${pointer.revision}.json`), bytes = await regularBytes(indexPath);
-          if (sha(bytes) !== pointer.revision) throw semanticError("corrupt_asset", "The semantic index failed its integrity check.");
-          previous = JSON.parse(bytes.toString("utf8")) as UnitIndex;
-          if (previous.snapshot === snapshot.sourceFingerprint && previous.assetIdentity === assets.assetIdentity) {
-            await source.verifySnapshot(); job.revision = pointer.revision; job.coverage = pointer.coverage; job.diagnostics = previous.diagnostics; job.builtAt = pointer.builtAt;
+          const indexPath = path.join(directory, `${pointer.revision}.json`);
+          // The full index is read and checked in the index store's thread; only its metadata comes back.
+          const index = await this.store.read(indexPath, pointer.revision);
+          previous = { index, indexPath, revision: pointer.revision };
+          if (index.snapshot === snapshot.sourceFingerprint && index.assetIdentity === assets.assetIdentity) {
+            await source.verifySnapshot(); job.revision = pointer.revision; job.coverage = pointer.coverage; job.diagnostics = index.diagnostics; job.builtAt = pointer.builtAt;
             const used = new Date(); await utimes(indexPath, used, used).catch(() => {});
             // An index built before units sidecars existed gets its sidecar when it is reused.
             const sidecar = path.join(directory, unitsFile(pointer.revision));
-            await lstat(sidecar).catch(() => writeAtomically(sidecar, JSON.stringify(publishedUnits(previous!, pointer.revision!)), { mode: 0o600 })).catch(() => {});
-            return { ...assets, index: indexMetadata(previous), indexPath, revision: pointer.revision };
+            await lstat(sidecar).catch(() => writeAtomically(sidecar, JSON.stringify(publishedUnits(index, pointer.revision!)), { mode: 0o600 })).catch(() => {});
+            log.info("index_reused", { directory, revision: pointer.revision, component: job.component?.identity });
+            return { ...assets, index, indexPath, revision: pointer.revision };
           }
         } catch (error) { if (error.code !== "ENOENT") throw error; }
         // A load never builds beside the running build; it hands the job back to the build queue.
@@ -587,19 +527,12 @@ export class NativeSemanticRuntime implements ComponentRuntime {
             this.report(job, { phase: "snapshot-copy", current: index + 1, total: snapshot.files.length, unit: "files" });
           }
           await source.verifySnapshot();
-          const previousEmbeddings = Object.fromEntries((previous?.chunks || []).filter(chunk => chunk.embeddingKey && chunk.embedding).map(chunk => [chunk.embeddingKey!, chunk.embedding!]));
-          const indexStarted = performance.now();
-          const index = await this.helper(assets.runtime).request("build", { mirror, files: snapshot.files.map(({ file, hash }) => ({ file, hash })),
-            snapshot: snapshot.sourceFingerprint, modelDirectory: assets.modelDirectory, modelIdentity: assets.modelIdentity, previousEmbeddings }, progress => this.report(job, progress));
-          index.resources = { ...index.resources, indexMilliseconds: performance.now() - indexStarted };
+          const token = await this.store.build({ runtime: assets.runtime, args: { mirror, files: snapshot.files.map(({ file, hash }) => ({ file, hash })),
+            snapshot: snapshot.sourceFingerprint, modelDirectory: assets.modelDirectory, modelIdentity: assets.modelIdentity },
+          ...(previous ? { previous: { indexPath: previous.indexPath, revision: previous.revision } } : {}) }, progress => this.report(job, progress));
           this.report(job, { phase: "saving" });
-          await source.verifySnapshot();
-          index.assetIdentity = assets.assetIdentity;
-          if (!snapshot.complete) { index.structureComplete = false; index.diagnostics.push({ code: "resource_limit", message: "The native source snapshot is incomplete." }); }
-          const contents = JSON.stringify(index), revision = sha(contents), indexPath = path.join(directory, `${revision}.json`);
-          if (Buffer.byteLength(contents) > 512 * 1024 * 1024) throw semanticError("resource_limit", "The semantic index exceeds 512 MiB.");
-          await writeAtomically(indexPath, contents, { mode: 0o600 });
-          await writeAtomically(path.join(directory, unitsFile(revision)), JSON.stringify(publishedUnits(index, revision)), { mode: 0o600 });
+          try { await source.verifySnapshot(); } catch (error) { await this.store.discard(token).catch(() => {}); throw error; }
+          const { revision, indexPath, bytes, index } = await this.store.save(token, { directory, assetIdentity: assets.assetIdentity, incomplete: !snapshot.complete });
           const coverage = { ...index.counts, structurallyCoveredFiles: Object.values(index.fileCoverage).filter(Boolean).length, complete: index.structureComplete && Object.values(index.fileCoverage).every(Boolean) };
           const builtAt = new Date().toISOString();
           const pointerContents = JSON.stringify({ snapshot: index.snapshot, revision, chunkerVersion: index.chunkerVersion, coverage, diagnostics: index.diagnostics, builtAt });
@@ -608,14 +541,22 @@ export class NativeSemanticRuntime implements ComponentRuntime {
           job.revision = revision; job.coverage = coverage; job.diagnostics = index.diagnostics; job.builtAt = builtAt;
           await rm(mirror, { recursive: true, force: true });
           await pruneIndexes(directory, revision).catch(() => {});
-          return { ...assets, index: indexMetadata(index), indexPath, revision };
+          log.info("index_built", { directory, revision, component: job.component?.identity, files: snapshot.files.length, bytes, counts: index.counts,
+            indexMs: Math.round(index.resources?.indexMilliseconds ?? 0), diagnostics: index.diagnostics.length });
+          return { ...assets, index, indexPath, revision };
         } finally { await rm(mirror, { recursive: true, force: true }); }
       }, job.component ? heldError : semanticError, { renew: true, timeoutMs: job.component ? 250 : 120000 }));
     } finally { clearTimeout(waiting); }
   }
-  helper(runtime: string, role: "build" | "search" = "build"): Helper {
+  // A build goes to the index store, whose default runs in a thread with its own helper; a search goes to the search helper here,
+  // because a search answers with a few results and must not wait behind a build.
+  get store(): IndexStore { return this.indexStore ??= new ThreadIndexStore({ ...this.options, directory: this.directory }); }
+  set store(store: IndexStore) { this.indexStore = store; }
+  /** A store that builds through this runtime's `helper` in this thread, for a helper that runs in process. */
+  inProcessStore(): IndexStore { return new LocalIndexStore((runtime, args, progress) => this.helper(runtime, "build").request("build", args, progress)); }
+  helper(runtime: string, role: "build" | "search" = "search"): Pick<Helper, "request"> {
     let helper = this.processes.get(role);
-    if (helper?.runtime !== runtime) { helper?.stop(); helper = new Helper(runtime, { ...this.options, directory: this.directory }); this.processes.set(role, helper); }
+    if (helper?.runtime !== runtime) { helper?.stop(); helper = new Helper(runtime, { ...this.options, directory: this.directory }, role); this.processes.set(role, helper); }
     return helper;
   }
   async search(prepared: PreparedIndex, source: NativeSource, query: string, filters: SearchFilters | undefined, limit: number) {
@@ -625,15 +566,12 @@ export class NativeSemanticRuntime implements ComponentRuntime {
     await source.verifySnapshot();
     return results;
   }
-  // Resolves once the helper processes have exited, so a caller that exits next leaves no helper holding the runtime's files open.
-  close(): Promise<void> {
-    const exits = [...this.processes.values()].map(helper => {
-      const child = helper.child;
-      helper.stop();
-      if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-      return new Promise<void>(resolve => child.once("exit", () => resolve()));
-    });
-    return Promise.all(exits).then(() => {});
+  // Resolves once the helper processes and the index thread have ended, so a caller that exits next leaves no helper holding the runtime's files open.
+  async close(): Promise<void> {
+    const exits = [...this.processes.values()].map(helper => helper.close());
+    this.processes.clear();
+    await Promise.all([...exits, this.indexStore?.close()]);
+    this.indexStore = undefined;
   }
 }
 

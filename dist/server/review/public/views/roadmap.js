@@ -4,6 +4,7 @@ import { claimAttributes } from "./claims.js";
 import { enablePanZoom, graphCard, renderGraph } from "./graph.js";
 import { badge, bindLinks, card, emptyNote, escapeHtml, plural } from "./util.js";
 import { currentPhase } from "./slice.js";
+import { preference, setPreference } from "../kit/preferences.js";
 
 /** The Roadmap page's views, which the Roadmap place's sidebar switches; the page draws no switch of its own. */
 export const ROADMAP_VIEWS = Object.freeze([["board", "Board"], ["list", "List"], ["graph", "Graph"]]);
@@ -157,11 +158,12 @@ async function graph(container, data, ctx, titles, archive) {
 // The view comes from the Roadmap place's sidebar; a lane link always shows the board, with that lane open so its heading can scroll into view.
 export async function render(container, entity, ctx) {
   const data = entity.data;
+  // The view, the archive toggle, and the collapsed lanes are the person's preferences, so every roadmap opens the way they last left one;
+  // the Roadmap place's sidebar switches the view, and a lane link always shows the board with that lane open.
   const lane = LANES.find(([name]) => name === ctx.lane)?.[1] ?? null;
-  const mode = lane ? "board" : ROADMAP_VIEWS.some(([name]) => name === ctx.roadmapView) ? ctx.roadmapView : "board";
-  ctx.state.collapsedLanes ??= [];
-  if (lane) ctx.state.collapsedLanes = ctx.state.collapsedLanes.filter((band) => band !== lane);
-  ctx.state.archive ??= false;
+  const chosen = ROADMAP_VIEWS.some(([name]) => name === ctx.roadmapView) ? ctx.roadmapView : preference("roadmap.view");
+  const view = { mode: lane ? "board" : chosen, archive: preference("roadmap.showArchived"), collapsedLanes: preference("roadmap.collapsedLanes") };
+  if (lane) view.collapsedLanes = view.collapsedLanes.filter((band) => band !== lane);
   const archived = data.items.filter((item) => ARCHIVED.has(item.state)).length;
   const titles = new Map(data.items.map((item) => [item.id, item.title]));
   const missing = data.error
@@ -188,26 +190,27 @@ export async function render(container, entity, ctx) {
   // The page head carries the archive toggle beside the title; the board, list, and graph switch is the Roadmap place's, in the sidebar.
   const head = container.parentElement?.querySelector(".artifact-header");
   const controls = `<div class="view-controls roadmap-controls">
-      <prism-button size="sm" variant="ghost" data-roadmap-archive pressed="${ctx.state.archive}"${archived ? "" : " disabled"}>${ctx.state.archive ? "Hide" : "Show"} shipped and superseded <prism-badge tone="neutral">${archived}</prism-badge></prism-button>
+      <prism-button size="sm" variant="ghost" data-roadmap-archive pressed="${view.archive}"${archived ? "" : " disabled"}>${view.archive ? "Hide" : "Show"} shipped and superseded <prism-badge tone="neutral">${archived}</prism-badge></prism-button>
     </div>`;
   head?.querySelector(".roadmap-controls")?.remove();
   if (head) head.insertAdjacentHTML("beforeend", controls);
   else container.insertAdjacentHTML("afterbegin", controls);
   const controlRoot = head ?? container;
   const body = container.querySelector("[data-roadmap-body]");
-  if (mode === "graph") {
-    await graph(body, data, ctx, titles, ctx.state.archive);
+  if (view.mode === "graph") {
+    await graph(body, data, ctx, titles, view.archive);
   } else {
-    body.innerHTML = mode === "list" ? list(data, titles, ctx.state.archive) : board(data, titles, ctx.state.archive, new Set(ctx.state.collapsedLanes));
+    body.innerHTML = view.mode === "list" ? list(data, titles, view.archive) : board(data, titles, view.archive, new Set(view.collapsedLanes));
   }
   for (const toggle of container.querySelectorAll("[data-lane]")) {
     toggle.addEventListener("click", () => {
-      const lanes = new Set(ctx.state.collapsedLanes);
+      const lanes = new Set(view.collapsedLanes);
       const band = toggle.dataset.lane;
       const open = lanes.has(band);
       if (open) lanes.delete(band);
       else lanes.add(band);
-      ctx.state.collapsedLanes = [...lanes];
+      view.collapsedLanes = [...lanes];
+      void setPreference("roadmap.collapsedLanes", view.collapsedLanes).catch(() => {});
       toggle.closest(".roadmap-band").querySelector(".roadmap-band-items").hidden = !open;
       toggle.setAttribute("aria-expanded", String(open));
       toggle.setAttribute("label", `${open ? "Collapse" : "Expand"} ${band}`);
@@ -215,7 +218,7 @@ export async function render(container, entity, ctx) {
     });
   }
   controlRoot.querySelector("[data-roadmap-archive]").addEventListener("click", () => {
-    ctx.state.archive = !ctx.state.archive;
+    void setPreference("roadmap.showArchived", !view.archive).catch(() => {});
     ctx.rerender();
   });
   applyWidths(container);

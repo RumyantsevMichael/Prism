@@ -72,7 +72,7 @@ An initiative expands when you expand it, when its page or one of its slices' pa
 Type in **Filter work** to keep only the initiatives and slices whose titles hold the text, ignoring case, each matching slice under its initiative; clear the field, or press Escape in it, to see every group again.
 Below the groups, a note says that shipped work moves to History and that emerging and unplanned items stay on the Roadmap.
 Every row is a link, so a middle-click or a Shift click opens the page in a new browser tab or window, and the browser's context menu can copy its address; a crumb of the page bar works the same way.
-Above 1100 pixels, press `[` or use the sidebar button at the top of the rail to hide the sidebar and keep the rail, and again to show it; the browser remembers the choice, and choosing a place shows the sidebar again.
+Above 1100 pixels, press `[` or use the sidebar button at the top of the rail to hide the sidebar and keep the rail, and again to show it; the review app keeps the choice for every project and later session, and choosing a place shows the sidebar again.
 At a window width of 1100 pixels or less the rail and the sidebar are hidden, and the Navigation button at the left of the top bar opens a drawer that holds the rail and the current place's sidebar; choosing a place in it switches the sidebar, and choosing a page opens it and closes the drawer.
 The bell at the right of the top bar then keeps the Attention count and opens the Attention page.
 If you widen the window past that width while the drawer is open, the drawer closes and the rail and the sidebar return; if you narrow it while the sidebar has the focus, the focus moves to the Navigation button.
@@ -186,6 +186,8 @@ An initiative has these settings, each with its default and the moment an agent 
 Turning autonomy to `full`, commit on, or push on asks you to confirm first, because it lets agents act further without you.
 
 Every setting can change at any time, including after work on the initiative started.
+Once an initiative ships, its state is history, so every action on the initiative, its slices, and its questions shows as unavailable with the reason `The initiative shipped on <date>, so its state is history.`, and Prism refuses one sent anyway and changes nothing.
+Index actions are not part of an initiative, so shipping one leaves them available.
 
 ### Initiative settings card
 
@@ -210,6 +212,7 @@ In a repository without components, the root component's rebuild prepares the ch
 ## Roadmap, initiatives, and slices
 
 The roadmap shows initiatives as a board, a list, or a dependency graph, chosen under **View** in the Roadmap place's sidebar, which is the only place to switch them.
+The review app keeps the chosen view, the archive toggle, and the collapsed lanes, so every later roadmap opens the way you left it.
 The board stacks one full-width lane per band in priority order, an empty band on one line, and each card shows its priority rank within its band and its state.
 Click a lane's arrow to collapse it.
 Shipped and superseded initiatives appear only with "Show shipped and superseded".
@@ -267,12 +270,25 @@ Active time excludes idle gaps over the stated threshold, and new runs appear wi
 
 JSON records such as the coordination state have a Structured and a Raw view.
 
+### Shipped history
+
+A shipped initiative records finished work, so its page and each of its slice pages show the label `Shipped history: <initiative> shipped on <date>; this page records finished work.` above their content.
+Each slice document of a shipped initiative, its `slice.md`, shows the same label above the document.
+When that document changed after the initiative shipped, ignoring the history mark that Prism writes into it, the label adds `This document changed after the initiative shipped.`
+A link preview of such a document carries the same label.
+An open question of a shipped initiative moves out of Needs you on Attention into a Shipped history group, marked `Cannot be answered` with the reason `The initiative shipped on <date>, so its state is history.`, and it does not count among the questions that wait on you or in the Attention badge.
+For an initiative that shipped before Prism recorded its slice documents, the first page that reaches it records their content then and marks each one as history, so commit those marked files apart from other changes.
+Take current intent from Approved requirements, Accepted ADRs, the glossary, and feature files, and treat a shipped initiative's pages only as a record of what was built.
+
 ## Documents and diagrams
 
 Prism stores diagrams as PlantUML `.puml` source files, and the browser renders them without creating image files.
 Markdown links open the linked file or heading in the review.
 A link to a missing file or a target outside the project is marked as missing, and an external link opens in a new browser tab.
 A document with three or more headings gets a contents list that marks the current section.
+In a wide window the contents stay beside the text while it scrolls, and a list longer than the window scrolls on its own and keeps the current section in view.
+In a window 1100 pixels wide or narrower the contents sit above the text and fold open from their header.
+Consecutive lines of text render as one paragraph, as in CommonMark, so a document written one sentence per line reads as ordinary paragraphs.
 Each heading with text under it has a fold toggle beside it, and a link or contents entry that leads into a folded section opens it.
 Code in source files, Markdown code blocks, previews, and diagram source is highlighted by language.
 
@@ -285,7 +301,8 @@ A file's preview has a Show in side panel button, and Alt+click on a link does t
 The panel draws a PlantUML file, and the diagrams a document links, as its page does, fitted to the panel's width, with the same zoom and source controls.
 The side panel holds one file at a time, so opening another replaces it, and a link inside the panel opens its target in the panel.
 Open as tab opens the file in a tab that stays open, Esc or the close button closes the panel, and dragging its left edge sets its width.
-Graph, diagram, and document cards can be maximized, and Esc restores them.
+Graph, diagram, and document cards can be maximized with their Maximize button, and Esc restores them.
+A maximized document keeps its Restore button in view while it scrolls, in its contents header when it has contents.
 
 ## Find artifacts
 
@@ -337,6 +354,17 @@ Each fallback also adds a line with the time, project, and reason to `fallbacks.
 `prism review` opens the project in the shared review app and returns.
 It opens the system browser only when no review tab that can make changes is open, and such a tab shows the project or a notice with a link to it instead.
 When the shared app cannot start or `PRISM_REVIEW_APP=off` is set, `prism review` serves the review itself until you stop it with `Ctrl-C`.
+
+## Logs
+
+Every Prism process writes to one log file, `logs/prism.log` in the state directory above, so the review app, each session's MCP server, and their index builds leave one record.
+Each line is a JSON object with the time, level, event, process name and id, and the event's own fields.
+The log records each process start and stop, index builds with their phases, durations, and failures, review app requests that fail or take more than two seconds, MCP tool calls that fail, and uncaught errors.
+It also records each time a process stops answering for more than a second, with what it was doing at the time, such as the index phase of the component being built.
+Past 5 MiB the file moves to `prism.log.1`, replacing the older one.
+Set `PRISM_LOG_LEVEL` to `debug`, `info` (the default), `warn`, `error`, or `off`, and set `PRISM_LOG_DIR` to write the log to another folder.
+An MCP server also writes its warnings and errors to its error output, which the agent host keeps with its own logs.
+The log holds project paths, component names, and tool names, but no file contents, search queries, or tool arguments.
 
 ## Security
 

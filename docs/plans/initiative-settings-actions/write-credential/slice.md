@@ -1,5 +1,8 @@
 # Write only from the page Prism opened
 
+> Shipped history: initiative `initiative-settings-actions` shipped on 2026-11-08, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 Only a tab that Prism opened can apply actions, through a one-time grant exchanged for a per-tab write session that no agent-visible surface reveals, on the shared app and the per-project session server.

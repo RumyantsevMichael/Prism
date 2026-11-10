@@ -190,12 +190,19 @@ test("an agent presentation of several artifacts opens each as a marked tab, foc
   await waitForView(other);
   assert.deepEqual(await tabs(other), await tabs(page), "another window of the session shows the same tabs");
   assert.equal(await shownPage(other), presented[0], "the address of the other window names the selected tab");
+  // A tab chosen in another window changes that window only, so this window's page and history hold only what it showed.
+  const length = await page.evaluate(() => history.length);
   await tab(other, presented[2]).click();
-  await settled(page, base, presented[2]);
-  assert.equal((await tabs(page)).find((value) => value.startsWith(presented[2])), `${presented[2]}*(a)`, "a tab chosen in one window is selected in every window");
+  for (let tries = 0; tries < 40 && (await session(base)).activeTab !== presented[2]; tries += 1) await page.waitForTimeout(100);
+  await page.waitForTimeout(500);
+  assert.equal(await shownPage(page), presented[0], "a tab chosen in another window leaves this window's page");
+  assert.equal(await page.evaluate(() => history.length), length, "and adds nothing to this window's history");
   await page.reload();
   await waitForView(page);
-  assert.deepEqual(await tabs(page), ["attention(p)", `${presented[0]}(a)`, `${presented[1]}(a)`, `${presented[2]}*(a)`], "a reload restores the tabs, the preview, the agent marks, and the selected tab");
+  assert.deepEqual(await tabs(page), ["attention(p)", `${presented[0]}*(a)`, `${presented[1]}(a)`, `${presented[2]}(a)`], "a reload restores the tabs, the preview, the agent marks, and this window's page");
+  await review.setOpenTabs([presented[1]]);
+  await settled(page, base, presented[1]);
+  assert.equal(await shownPage(other), presented[1], "a presentation shows in every window");
   assert.deepEqual(page.errors, []);
 });
 
@@ -253,6 +260,143 @@ test("the strip moves focus with arrow keys, Home, and End, opens with Enter, re
   await page.keyboard.press("Tab");
   assert.notEqual((await deepFocus(page)).host, "attention", "Tab leaves the strip after the focused tab's buttons, not through every tab");
   assert.deepEqual(page.errors, []);
+});
+
+test("dragging a tab or Ctrl+Shift+arrows move it, Escape puts a dragged tab back, every window shows the new order, and a press without a drag still opens the tab", { skip, timeout: 60000 }, async (context) => {
+  const { base, browser } = await demo(context);
+  const page = await openPage(browser, reviewUrl(base, "attention"), { viewport: { width: 1440, height: 900 } });
+  await waitForView(page);
+  for (const name of ["Roadmap", "Requirements", "Decisions"]) {
+    await sidebarItem(page, name).click({ modifiers: ["Control"] });
+    await settled(page, base, name.toLowerCase());
+  }
+  const order = async () => (await tabs(page)).map((item) => item.replace(/[*(].*$/, ""));
+  const waitForOrder = async (expected) => {
+    for (let tries = 0; tries < 40 && JSON.stringify((await session(base)).openTabs) !== JSON.stringify(expected); tries += 1) await page.waitForTimeout(100);
+    assert.deepEqual((await session(base)).openTabs, expected, "the session keeps the new order");
+  };
+  const drag = async (ref, target, { cancel = false } = {}) => {
+    const from = await tab(page, ref).boundingBox();
+    const to = await tab(page, target).boundingBox();
+    // The press lands on the tab's title, away from its Keep and close buttons.
+    await page.mouse.move(from.x + 16, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(from.x + 26, from.y + from.height / 2, { steps: 2 });
+    await page.mouse.move(to.x + to.width - 4, to.y + to.height / 2, { steps: 8 });
+    if (cancel) await page.keyboard.press("Escape");
+    await page.mouse.up();
+  };
+  await drag("attention", "requirements");
+  assert.deepEqual(await order(), ["roadmap", "requirements", "attention", "decisions"], "the dragged tab lands past the tab it was dropped on");
+  await waitForOrder(["roadmap", "requirements", "attention", "decisions"]);
+  assert.equal(await shownPage(page), "decisions", "a drop does not open the dragged tab");
+  await drag("decisions", "roadmap", { cancel: true });
+  assert.deepEqual(await order(), ["roadmap", "requirements", "attention", "decisions"], "Escape puts the dragged tab back");
+  await page.getByRole("tab", { name: /^Decisions/ }).focus();
+  await page.keyboard.press("Control+Shift+ArrowLeft");
+  assert.deepEqual(await order(), ["roadmap", "requirements", "decisions", "attention"]);
+  assert.equal((await deepFocus(page)).host, "decisions", "the moved tab keeps the focus");
+  await page.keyboard.press("Control+Shift+ArrowRight");
+  await page.keyboard.press("Control+Shift+ArrowRight");
+  assert.deepEqual(await order(), ["roadmap", "requirements", "attention", "decisions"], "the last tab does not wrap");
+  await waitForOrder(["roadmap", "requirements", "attention", "decisions"]);
+  const other = await openPage(browser, reviewUrl(base, "decisions"), { viewport: { width: 1440, height: 900 } });
+  await waitForView(other);
+  assert.deepEqual((await tabs(other)).map((item) => item.replace(/[*(].*$/, "")), ["roadmap", "requirements", "attention", "decisions"], "another window shows the same order");
+  await tab(page, "requirements").click();
+  await settled(page, base, "requirements");
+  assert.deepEqual(page.errors, []);
+});
+
+test("a named tab group shows its head before its tabs, collapses, takes and lets go of tabs by drag and Ctrl+Shift+arrows, moves whole, and closes its tabs", { skip, timeout: 90000 }, async (context) => {
+  const { base, browser } = await demo(context);
+  const put = (body) => fetch(`${base}/api/session`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  await put({ openTabs: ["attention", "roadmap", "requirements", "decisions", "glossary"], activeTab: "roadmap", groups: [{ name: "Retry requests", tabs: ["requirements", "decisions"] }] });
+  const page = await openPage(browser, `${base}/review`, { viewport: { width: 1440, height: 900 } });
+  await waitForView(page);
+  const layout = () => page.evaluate(() => [...document.querySelector("#open-tabs").children].map((node) => node.tagName === "PRISM-DOC-TAB-GROUP" ? `[${node.getAttribute("name")}:${node.getAttribute("count")}${node.hasAttribute("collapsed") ? ":c" : ""}]` : `${node.getAttribute("value")}${node.getAttribute("group") ? "+" : ""}${node.hidden ? "(h)" : ""}`));
+  const waitFor = async (check, message) => {
+    for (let tries = 0; tries < 40 && !check(await session(base)); tries += 1) await page.waitForTimeout(100);
+    const last = await session(base);
+    // A failure names the session and the strip as they ended, so a failure under load says which step did not land.
+    assert.ok(check(last), `${message}: session ${JSON.stringify({ openTabs: last.openTabs, groups: last.groups, activeTab: last.activeTab })}, strip ${JSON.stringify(await layout())}`);
+  };
+  const groupsOf = (snapshot) => JSON.stringify(snapshot.groups.map((group) => [group.name, group.tabs, group.collapsed]));
+  assert.deepEqual(await layout(), ["attention", "roadmap", "[Retry requests:2]", "requirements+", "decisions+", "glossary"]);
+  const head = page.locator("#open-tabs prism-doc-tab-group");
+  assert.match(await head.evaluate((node) => node.shadowRoot.querySelector(".head").getAttribute("aria-label")), /Retry requests, group of 2 tabs/);
+
+  // A click collapses the group in every window, and a second click expands it.
+  await head.click({ position: { x: 20, y: 10 } });
+  assert.deepEqual(await layout(), ["attention", "roadmap", "[Retry requests:2:c]", "requirements+(h)", "decisions+(h)", "glossary"]);
+  await waitFor((snapshot) => snapshot.groups[0]?.collapsed === true, "the session keeps the group collapsed");
+  const other = await openPage(browser, `${base}/review`, { viewport: { width: 1440, height: 900 } });
+  await waitForView(other);
+  assert.equal(await other.locator("#open-tabs prism-doc-tab-group[collapsed]").count(), 1, "another window shows the group collapsed");
+  await head.click({ position: { x: 20, y: 10 } });
+  await waitFor((snapshot) => snapshot.groups[0]?.collapsed === false, "the session keeps the group expanded");
+
+  // Ctrl+Shift+ArrowLeft first takes the next tab into the group's end, then moves it inside the group; at the group's start it leaves.
+  await page.getByRole("tab", { name: /^Glossary/ }).focus();
+  await page.keyboard.press("Control+Shift+ArrowLeft");
+  assert.deepEqual(await layout(), ["attention", "roadmap", "[Retry requests:3]", "requirements+", "decisions+", "glossary+"]);
+  await page.keyboard.press("Control+Shift+ArrowLeft");
+  assert.deepEqual(await layout(), ["attention", "roadmap", "[Retry requests:3]", "requirements+", "glossary+", "decisions+"]);
+  await page.keyboard.press("Control+Shift+ArrowLeft");
+  await page.keyboard.press("Control+Shift+ArrowLeft");
+  assert.deepEqual(await layout(), ["attention", "roadmap", "glossary", "[Retry requests:2]", "requirements+", "decisions+"]);
+  await waitFor((snapshot) => groupsOf(snapshot) === JSON.stringify([["Retry requests", ["requirements", "decisions"], false]]) && snapshot.openTabs.join() === "attention,roadmap,glossary,requirements,decisions", "the session keeps the tab out of the group, before it");
+
+  // A tab dropped among the group's tabs joins it, and one dragged well past its end leaves it.
+  const drag = async (from, x) => {
+    const box = await from.boundingBox();
+    await page.mouse.move(box.x + 16, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 26, box.y + box.height / 2, { steps: 2 });
+    await page.mouse.move(x, box.y + box.height / 2, { steps: 10 });
+    await page.mouse.up();
+  };
+  const middleOf = async (locator) => {
+    const box = await locator.boundingBox();
+    return box.x + box.width / 2;
+  };
+  await drag(tab(page, "attention"), (await middleOf(tab(page, "decisions"))) - 4);
+  assert.deepEqual(await layout(), ["roadmap", "glossary", "[Retry requests:3]", "requirements+", "attention+", "decisions+"]);
+  const end = await tab(page, "decisions").boundingBox();
+  await drag(tab(page, "attention"), end.x + end.width + 80);
+  assert.deepEqual(await layout(), ["roadmap", "glossary", "[Retry requests:2]", "requirements+", "decisions+", "attention"]);
+  await waitFor((snapshot) => groupsOf(snapshot) === JSON.stringify([["Retry requests", ["requirements", "decisions"], false]]) && snapshot.openTabs.at(-1) === "attention", "the session keeps the tab out of the group");
+
+  // Dragging the head moves the whole group, and Ctrl+Shift+arrows on the head move it past a neighbor.
+  const headBox = await head.boundingBox();
+  await page.mouse.move(headBox.x + 20, headBox.y + headBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(headBox.x + 30, headBox.y + headBox.height / 2, { steps: 2 });
+  await page.mouse.move((await tab(page, "roadmap").boundingBox()).x + 2, headBox.y + headBox.height / 2, { steps: 10 });
+  await page.mouse.up();
+  assert.deepEqual(await layout(), ["[Retry requests:2]", "requirements+", "decisions+", "roadmap", "glossary", "attention"]);
+  await head.evaluate((node) => node.focus());
+  await page.keyboard.press("Control+Shift+ArrowRight");
+  assert.deepEqual(await layout(), ["roadmap", "[Retry requests:2]", "requirements+", "decisions+", "glossary", "attention"]);
+  await waitFor((snapshot) => snapshot.openTabs.join() === "roadmap,requirements,decisions,glossary,attention", "the session keeps the group's new place");
+
+  // Arrow keys reach the head like a tab, and Enter collapses the group.
+  await page.getByRole("tab", { name: /^Roadmap/ }).focus();
+  await page.keyboard.press("ArrowRight");
+  assert.equal(await page.evaluate(() => document.activeElement?.tagName), "PRISM-DOC-TAB-GROUP", "ArrowRight reaches the group's head");
+  await page.keyboard.press("Enter");
+  await waitFor((snapshot) => snapshot.groups[0]?.collapsed === true, "Enter collapses the group");
+  await page.keyboard.press("ArrowRight");
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("value")), "glossary", "the arrow keys skip a collapsed group's hidden tabs");
+
+  // A dragged tab does not join a collapsed group, and closing the group closes its tabs.
+  await drag(tab(page, "attention"), (await middleOf(head)) + 4);
+  assert.equal(await tab(page, "attention").getAttribute("group"), null, "a collapsed group takes no tab");
+  await head.evaluate((node) => node.shadowRoot.querySelector(".close").click());
+  await waitFor((snapshot) => !snapshot.openTabs.includes("requirements") && !snapshot.openTabs.includes("decisions") && snapshot.groups.length === 0, "closing a group closes its tabs");
+  assert.equal(await page.locator("#open-tabs prism-doc-tab-group").count(), 0);
+  assert.deepEqual(page.errors, []);
+  assert.deepEqual(other.errors, []);
 });
 
 test("at 390px the strip scrolls inside itself, keeps the selected tab in view, and ends long titles with an ellipsis whose full title shows on focus", { skip, timeout: 60000 }, async (context) => {

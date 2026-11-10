@@ -181,8 +181,8 @@ test("a passing run completes the slice, and only project content changes make i
   await writeFile(path.join(root, "source.mjs"), "export const value = 2;\n");
   const stale = await checkSliceGate({ projectRoot: root, initiative: INITIATIVE, slice: "download", gate: "completion" });
   assert.deepEqual(stale.problems.map((problem) => problem.code), ["verification_stale"]);
-  await initiativeUpdate(root, [{ op: "set_status", slug: "download", status: "in-progress" }]);
-  await assert.rejects(initiativeUpdate(root, [{ op: "set_status", slug: "download", status: "done" }]), /changed after the verification run/);
+  // A done slice stays done, so its stale gate is fixed as new work rather than by reopening the slice.
+  await assert.rejects(initiativeUpdate(root, [{ op: "set_status", slug: "download", status: "in-progress" }]), /stays done/);
   assert.equal((await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download" })).status, "passed", "an approved command runs without asking again");
   assert.equal((await getInitiative({ projectRoot: root, initiative: INITIATIVE })).record.slices.download.status, "done");
 });
@@ -252,6 +252,19 @@ test("cancelling the call stops the run", async (context) => {
   const controller = new AbortController();
   const started = Date.now();
   setTimeout(() => controller.abort(), 200);
+  const cancelled = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: gateId, signal: controller.signal });
+  assert.equal(cancelled.status, "cancelled");
+  assert.ok(Date.now() - started < 10000);
+});
+
+test("a call cancelled while verification sets up stops the run", async (context) => {
+  const root = await project(context, `${node} sleep.mjs 20000`);
+  await accept(root);
+  const gateId = await approve(root);
+  // The abort fires before the run starts listening for it, as a cancel can on a loaded machine.
+  const controller = new AbortController();
+  controller.abort();
+  const started = Date.now();
   const cancelled = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: gateId, signal: controller.signal });
   assert.equal(cancelled.status, "cancelled");
   assert.ok(Date.now() - started < 10000);

@@ -7,7 +7,11 @@ import { demoProject, launch, openPage, serveProject, settle, skip, useAppDirect
 // Feature: docs/Features/F-review-app-appearance.feature.
 // The person chooses the theme and density from the status bar's Appearance menu of the real review page.
 
-const stored = async (base) => (await fetch(`${base}/api/preferences`)).json();
+// The review app stores every registered preference; these tests read the appearance part of them.
+const stored = async (base) => {
+  const { theme, density } = await (await fetch(`${base}/api/preferences`)).json();
+  return { theme, density };
+};
 const appearance = (page) => page.evaluate(() => ({ choice: document.documentElement.dataset.themeChoice, theme: document.documentElement.dataset.theme, density: document.documentElement.dataset.density }));
 
 async function open(context) {

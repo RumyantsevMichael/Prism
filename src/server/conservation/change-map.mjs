@@ -250,12 +250,17 @@ export async function getChangeMap(input) {
 }
 export async function updateChangeMap(input) {
   assertInput(UPDATE_CHANGE_MAP_SCHEMA, input);
+  // A shipped initiative's change maps are history, so a change to one is refused after argument validation and before any other check.
+  const { refuseShipped } = await import("../workflow/shipped-history.mjs");
+  await refuseShipped(input.projectRoot, input.initiative);
   await moveLegacyRecords(input.projectRoot);
   const resolved = await resolveChangeMap(input.projectRoot, input);
   await mkdir(path.dirname(resolved.target), { recursive: true });
   const { conservationStore } = await import("./conservation-store.mjs");
   if (input.expectedRevision === null || input.migrate) await conservationStore.registerSlice(resolved.root, input.initiative, input.slice);
   return withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
+    // A ship that landed after the first check refuses the update too, so the change map never changes after the initiative shipped.
+    await refuseShipped(input.projectRoot, input.initiative);
     const current = await loadDelta(resolved);
     checkRevision(input.expectedRevision, current);
     if (!current.valid) throw failure("invalid_delta", "The existing change map is invalid and was not changed.", { errors: current.errors });

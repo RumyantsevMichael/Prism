@@ -251,6 +251,7 @@ test("atomic generations retain previous bytes after a failed build and reuse un
   const runtime = new NativeSemanticRuntime({ directory: path.join(directory, "cache"), manifestPath });
   runtime.assets = async () => ({ runtime: "fake", modelIdentity: "model", assetIdentity: "assets" });
   let fail = false, seenPrevious = null;
+  runtime.store = runtime.inProcessStore();
   runtime.helper = () => ({ request: async (_method, args) => {
     seenPrevious = args.previousEmbeddings;
     if (fail) throw new Error("Worker crashed during indexing.");
@@ -276,6 +277,7 @@ test("repeated source edits keep a bounded set of reusable index generations", a
   const runtime = new NativeSemanticRuntime({ directory: path.join(directory, "cache"), manifestPath });
   runtime.assets = async () => ({ runtime: "fake", modelIdentity: "model", assetIdentity: "assets" });
   let builds = 0;
+  runtime.store = runtime.inProcessStore();
   runtime.helper = () => ({ request: async (_method, args) => {
     builds++;
     return { schemaVersion: 1, snapshot: args.snapshot, modelIdentity: "model", units: [], edges: [], chunks: [], fileCoverage: { "a.ts": true }, diagnostics: [], counts: { files: 1 }, structureComplete: true };
@@ -346,6 +348,7 @@ test("a concurrent source edit prevents generation publication", async t => {
   await writeFile(path.join(root, "a.ts"), "export const x = 1;\n");
   const runtime = new NativeSemanticRuntime({ directory: path.join(directory, "cache"), manifestPath });
   runtime.assets = async () => ({ runtime: "fake" });
+  runtime.store = runtime.inProcessStore();
   runtime.helper = () => ({ request: async () => { await writeFile(path.join(root, "a.ts"), "export const x = 2;\n"); return {}; } });
   const result = await runtime.prepare(await openNativeRepositoryIntelligence(root));
   assert.equal(result.status, "degraded"); assert.equal(result.diagnostics[0].code, "stale_snapshot");

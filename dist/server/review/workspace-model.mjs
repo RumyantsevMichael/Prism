@@ -14,6 +14,7 @@ import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservati
 import { contractClauses, loadDesignView } from "../workflow/design-view.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 import { recordChanges } from "./record-changes.mjs";
+import { shippedActionReason, shippedDecision, shippedHistory, shippedHistoryLabel } from "../workflow/shipped-history.mjs";
 
 const LIBRARY_LIMIT = 500;
 const RECENT_CHANGES_LIMIT = 20;
@@ -502,6 +503,8 @@ async function computeAttention(projectRoot) {
   const items = new Map(roadmap.items.map((item) => [item.id, item]));
   const ids = [...new Set([...roadmap.items.map((item) => item.id), ...(await storedInitiatives(projectRoot))])];
   const needsYou = [];
+  // Open questions of a shipped initiative can no longer be answered, so they list apart and never wait on the person.
+  const shippedGates = [];
   const answered = [];
   const earlier = [];
   const watch = [];
@@ -514,6 +517,8 @@ async function computeAttention(projectRoot) {
     const initiative = { id, title: snapshot.title };
     titles.set(id, snapshot.title);
     const state = snapshot.state;
+    // A shipped initiative's state is history, so its open questions can no longer be answered and no longer wait on the person.
+    const shipped = await shippedDecision(projectRoot, id).catch(() => null);
     // The Watch group lists every live and expired claim, read-only, beside the agent-side signals.
     const claimed = await claimedSlices(projectRoot, id);
     for (const claim of sliceClaims(claimed)) claims.push({ ...claim, initiative });
@@ -531,10 +536,10 @@ async function computeAttention(projectRoot) {
           const available = await isFile(projectRoot, current);
           artifacts.push({ path: current, available, ...(available ? { record: await describeRecord(projectRoot, config, current, key, snapshot) } : {}) });
         }
-        const gate = { type: "gate", id: entry.id, kind: entry.kind, question: entry.question, context: entry.context ?? null, options: entry.options ?? null, recommended: entry.recommended ?? null, askedAt: entry.askedAt, answer: entry.answer ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null, phase: entry.slice && claimed && Object.hasOwn(claimed, entry.slice) ? slicePhase(claimed[entry.slice]) : null, claim: entry.slice ? holdingClaim(claimed, entry.slice) : null, artifacts };
+        const gate = { type: "gate", id: entry.id, kind: entry.kind, question: entry.question, context: entry.context ?? null, options: entry.options ?? null, recommended: entry.recommended ?? null, askedAt: entry.askedAt, answer: entry.answer ?? null, initiative, slice: entry.slice ? { slug: entry.slice, title: snapshot.sliceTitle(entry.slice) } : null, phase: entry.slice && claimed && Object.hasOwn(claimed, entry.slice) ? slicePhase(claimed[entry.slice]) : null, claim: entry.slice ? holdingClaim(claimed, entry.slice) : null, artifacts, unavailable: shipped ? shippedActionReason(shipped) : null };
         // A question whose every attached file is gone was likely overtaken by later work, so the page says it may no longer apply.
         if (!gate.answer && artifacts.length && artifacts.every((artifact) => !artifact.available)) gate.stale = true;
-        (gate.answer ? answered : needsYou).push(gate);
+        (gate.answer ? answered : gate.unavailable ? shippedGates : needsYou).push(gate);
       } else if (typeof entry === "string") {
         needsYou.push({ type: "pending-note", text: entry, initiative });
       }
@@ -588,7 +593,8 @@ async function computeAttention(projectRoot) {
   // Live claims lapse first first, then expired ones, the most recently lapsed first.
   const ends = (claim) => Date.parse(claim.expiresAt ?? "") || 0;
   claims.sort((left, right) => Number(left.expired) - Number(right.expired) || (left.expired ? ends(right) - ends(left) : ends(left) - ends(right)));
-  return { needsYou, answered, earlier: earlier.slice(0, 20), watch, claims, recentChanges, gateCount: needsYou.filter((item) => item.type === "gate").length, answeredThisWeek };
+  shippedGates.sort(gateOrder);
+  return { needsYou, shippedGates, answered, earlier: earlier.slice(0, 20), watch, claims, recentChanges, gateCount: needsYou.filter((item) => item.type === "gate").length, answeredThisWeek };
 }
 
 // A slice's latest verification run when it failed, so Attention lists it until a later run passes or the slice is done.
@@ -1034,6 +1040,24 @@ async function knownInitiative(projectRoot, id) {
   return Boolean(roadmap?.items?.some((item) => item.id === id));
 }
 
+// A page of a shipped initiative carries its shipped history with the label the page shows, or null when the initiative has not shipped.
+async function pageHistory(projectRoot, initiative) {
+  const history = await shippedHistory(projectRoot, initiative).catch(() => null);
+  return history ? { ...history, label: shippedHistoryLabel(initiative, { at: history.shippedAt }) } : null;
+}
+
+// A slice document of a shipped initiative carries the page's shipped history, with changedAfterShip saying whether this document changed after ship.
+async function documentHistory(projectRoot, plans, ref) {
+  if (!under(plans, ref) || path.posix.basename(ref) !== "slice.md") return null;
+  const id = ref.slice(plans.length + 1).split("/")[0];
+  if (!SLUG_PATTERN.test(id ?? "")) return null;
+  const history = await pageHistory(projectRoot, id);
+  if (!history) return null;
+  const changed = history.changedAfterShip.some((item) => item.path === ref);
+  if (!changed && !history.documents.includes(ref)) return null;
+  return { ...history, changedAfterShip: changed };
+}
+
 // Context gives every tab, including plain files, a breadcrumb trail, the sidebar scope it belongs to, and the place it belongs to:
 // the trail of a page of a place starts with the place's crumb, and a page of no place keeps its trail from Files.
 export async function entityContext(projectRoot, ref) {
@@ -1051,6 +1075,15 @@ export async function entityContext(projectRoot, ref) {
     return { trail: [entry, { ref, label }], scope: { kind: "global" }, place };
   }
   const config = await readWorkflowConfig(projectRoot);
+  const history = await documentHistory(projectRoot, config.paths.plans, ref);
+  if (history) return { ...(await fileContext(projectRoot, config, ref)), shippedHistory: history };
+  return fileContext(projectRoot, config, ref);
+}
+
+// The trail and scope of a file tab.
+async function fileContext(projectRoot, config, ref) {
+  const roadmapCrumb = { ref: "roadmap", label: "Roadmap" };
+  const libraryCrumb = { ref: null, label: "Library" };
   const fileCrumb = { ref, label: path.posix.basename(ref) };
   const plans = config.paths.plans;
   const record = await keyOfPath(projectRoot, ref).catch(() => null);
@@ -1127,7 +1160,10 @@ export async function loadEntity(projectRoot, ref, options = {}) {
   if (parsed.kind === "knowledge") return { ref, kind: "changed", data: await loadRecordChanges(projectRoot) };
   if (parsed.kind === "initiative") {
     const view = await loadInitiativeView(projectRoot, parsed.id);
-    return { ref, kind: "initiative", data: { ...view, runTotals: await loadInitiativeRunTotals(projectRoot, view), code: await initiativeCode(projectRoot, view) } };
+    const history = await pageHistory(projectRoot, parsed.id);
+    return { ref, kind: "initiative", data: { ...view, runTotals: await loadInitiativeRunTotals(projectRoot, view), code: await initiativeCode(projectRoot, view), ...(history ? { shippedHistory: history } : {}) } };
   }
-  return { ref, kind: "slice", data: await loadSliceView(projectRoot, parsed.id, parsed.slug, options) };
+  const history = await pageHistory(projectRoot, parsed.id);
+  const slice = await loadSliceView(projectRoot, parsed.id, parsed.slug, options);
+  return { ref, kind: "slice", data: history ? { ...slice, shippedHistory: history } : slice };
 }

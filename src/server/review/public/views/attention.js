@@ -237,7 +237,12 @@ function answerForm(item, draft) {
   </div>`;
 }
 
-function gateDetail(item, ctx, draft) {
+// A question the server no longer takes an answer to, such as one of a shipped initiative, names why in place of the form.
+function unavailableAnswer(item) {
+  return `<prism-banner class="gate-unavailable" tone="warning" heading="Cannot be answered"><p>${escapeHtml(item.unavailable)}</p></prism-banner>`;
+}
+
+export function gateDetail(item, ctx, draft) {
   return `<article class="gate attention-item gate-${escapeHtml(item.kind)}" aria-label="${escapeHtml(GATE_LABELS[item.kind] ?? "Question")}">
     <header class="gate-head">
       ${gateHead(item, ctx, item.askedAt)}
@@ -252,7 +257,7 @@ function gateDetail(item, ctx, draft) {
         ${inspectList(item, ctx)}
         ${item.stale ? `<p class="notice">Every file this question refers to is gone, so it may no longer apply. The agent that asked it withdraws it when it does not.</p>` : ""}
       </div>
-      ${answerForm(item, draft)}
+      ${item.unavailable ? unavailableAnswer(item) : answerForm(item, draft)}
     </div>
   </article>`;
 }
@@ -288,6 +293,13 @@ function closedDetail(item, ctx) {
     title: escapeHtml(item.question),
     body: `<p class="gate-given">${outcome}</p>${item.reason ? `<p class="muted">${escapeHtml(item.reason)}</p>` : ""}`
   });
+}
+
+// A refused answer shows beside the form: the server's reason for an action it no longer offers, and a re-render shows the question as it now stands.
+export function answerError(error) {
+  if (error.code === "action_unavailable" || error.code === "gate_answered") return { message: error.message, rerender: true };
+  if (error.code === "unknown_gate") return { message: "The agent already resolved or withdrew this question.", rerender: true };
+  return { message: error.message, rerender: false };
 }
 
 function bindAnswers(container, ctx, gates) {
@@ -367,12 +379,13 @@ function bindAnswers(container, ctx, gates) {
         ctx.rerender();
       } catch (error) {
         // The server stays the backstop: its refusal shows beside the form, and the draft keeps the note through a re-render.
-        draft.error = error.code === "gate_answered" ? "This question already has an answer." : error.code === "unknown_gate" ? "The agent already resolved or withdrew this question." : error.message;
+        const refusal = answerError(error);
+        draft.error = refusal.message;
         failure.textContent = draft.error;
         failure.hidden = false;
         sending = false;
         refresh();
-        if (error.code === "gate_answered" || error.code === "unknown_gate") ctx.rerender();
+        if (refusal.rerender) ctx.rerender();
       }
     });
     // The page re-renders when live data changes, so an unsent note and its cursor are restored.
@@ -539,10 +552,11 @@ function inboxRow(key, row) {
 }
 
 // A group of the list: a label with its count and the rows to pick from.
-function group(id, label, entries, { count = entries.length, tone = "neutral" } = {}) {
+function group(id, label, entries, { count = entries.length, tone = "neutral", note = "" } = {}) {
   if (!entries.length) return "";
   return `<section class="attention-group" aria-labelledby="attention-group-${id}">
     <h2 class="attention-group-label" id="attention-group-${id}"><span>${escapeHtml(label)}</span> <prism-badge tone="${tone}">${count}</prism-badge></h2>
+    ${note ? `<p class="attention-footnote attention-group-note muted">${escapeHtml(note)}</p>` : ""}
     <prism-inbox label="${escapeHtml(label)}" data-inbox>${entries.map(({ key, row }) => inboxRow(key, row)).join("")}</prism-inbox>
   </section>`;
 }
@@ -644,6 +658,12 @@ export function render(container, entity, ctx) {
     })),
     ...notes.map((item, index) => ({ key: `note:${index}`, ...noteEntry(item, ctx) }))
   ];
+  // A shipped initiative's open questions can no longer be answered, so they list apart from Needs you and raise no count.
+  const shippedRows = (data.shippedGates ?? []).map((item) => ({
+    key: `shipped:${item.id}`,
+    row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: "neutral", title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, "Cannot be answered", item.slice?.title ?? item.initiative?.title].filter(Boolean).join(" · ")), end: escapeHtml(shortAgo(item.askedAt)) },
+    detail: gateDetail(item, ctx, {})
+  }));
   const waiting = answered.map((item) => ({
     key: `answered:${item.id}`,
     row: { icon: "check", tone: "success", title: escapeHtml(item.question), meta: escapeHtml(`${choiceLabel(item, item.answer.choice)} · waiting for the agent`), end: escapeHtml(shortAgo(item.answer.answeredAt)) },
@@ -663,7 +683,7 @@ export function render(container, entity, ctx) {
     row: { icon: "clock", tone: "neutral", title: "Recent changes", meta: escapeHtml(recent.length ? `${plural(recent.length, "change")} from the review app` : "No changes from the review app yet"), end: recent[0]?.at ? escapeHtml(shortAgo(recent[0].at)) : "" },
     detail: detailSheet({ className: "recent-changes-sheet", head: badge("From the review app, newest first"), title: "Recent changes", body: `<div data-recent-changes>${recent.length ? `<ul class="recent-changes">${recent.map((entry) => changeHtml(entry, ctx)).join("")}</ul>` : emptyState("No changes yet", "No one changed settings, answered a question, or rebuilt an index from the review app yet.")}</div>` })
   }];
-  const all = [...needs, ...waiting, ...watch, ...closed, ...history];
+  const all = [...needs, ...shippedRows, ...waiting, ...watch, ...closed, ...history];
   if (!all.some((entry) => entry.key === ctx.state.selected)) ctx.state.selected = all[0].key;
   ctx.state.pane ??= "detail";
   const selected = ctx.state.selected;
@@ -672,6 +692,7 @@ export function render(container, entity, ctx) {
     <div class="attention-inbox" data-pane="${ctx.state.pane}">
       <div class="attention-list" aria-label="Items that need you">
         ${needs.length ? group("needs", "Needs you", needs, { tone: "accent" }) : `<div class="attention-nothing">${emptyState("Nothing is waiting on you", "Questions an agent asks during an orchestrated run appear here.")}</div>`}
+        ${group("shipped", "Shipped history", shippedRows, { note: "These questions were left open when their initiative shipped, so they can no longer be answered." })}
         ${group("answered", "Answered", waiting)}
         ${group("watch", "Watch", watch)}
         ${closed.length ? `<prism-disclosure class="attention-earlier" summary="${escapeHtml(`Earlier questions · ${closed.length}`)}"${closed.some((entry) => entry.key === selected) || ctx.state.earlierOpen ? " open" : ""}><prism-inbox label="Earlier questions" data-inbox>${closed.map(({ key, row }) => inboxRow(key, row)).join("")}</prism-inbox></prism-disclosure>` : ""}

@@ -51,6 +51,9 @@ test("clauses 12 and 16: an unscoped search while a component prepares merges th
   const { root, runtime, control } = await scored(t);
   // The root component builds after the declared ones, so the packages answer while it prepares.
   control.hold("README.md");
+  // The search is read once the root build has started, so the package builds before it have finished by then whatever the machine's load.
+  await search(root, runtime, {}, 0);
+  await control.reached("README.md");
   const found = await search(root, runtime, {}, 300);
   assert.equal(found.status, "partial");
   assert.deepEqual(names(found), ["timeoutAfter", "fetchUser", "retryRequest"]);

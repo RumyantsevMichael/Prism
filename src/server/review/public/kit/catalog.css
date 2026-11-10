@@ -226,7 +226,7 @@
   min-width: 0;
 }
 
-.catalog-stage > :is(prism-tabs, prism-menu, prism-field, prism-choice, prism-panel, prism-tree, prism-listbox, prism-stepper, prism-banner, prism-empty-state, prism-meter, prism-doc, prism-code, prism-disclosure, prism-breadcrumbs, prism-claim[variant="strip"], prism-page-sub, prism-lib-table, .prism-rows, .prism-page-subs, .prism-group-heading, .prism-foot-note, .catalog-narrow) {
+.catalog-stage > :is(prism-tabs, prism-menu, prism-field, prism-choice, prism-panel, prism-tree, prism-listbox, prism-stepper, prism-banner, prism-empty-state, prism-meter, prism-doc, prism-code, prism-disclosure, prism-breadcrumbs, prism-claim[variant="strip"], prism-page-sub, prism-lib-table, .prism-rows, .prism-page-subs, .prism-group-heading, .prism-foot-note, .catalog-narrow, .catalog-document) {
   flex: 1 1 100%;
   min-width: 0;
 }

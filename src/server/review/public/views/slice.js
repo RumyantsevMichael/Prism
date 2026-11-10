@@ -7,6 +7,7 @@ import { codeParts } from "./code-location.js";
 import { claimChip } from "./claims.js";
 import { componentChip } from "./components.js";
 import { mountInitiativeSettings } from "./actions.js";
+import { shippedHistoryHtml } from "./shipped-history.js";
 
 function sliceChip(data, slug, ctx) {
   return artifactChip(`slice:${data.id}/${slug}`, ctx, data.titles[slug] ?? slug);
@@ -427,7 +428,7 @@ export async function render(container, entity, ctx) {
     files: filesPanel(artifacts, ctx)
   };
   const designNote = data.designReview ? `<p class="muted">${data.designReview === "answered" ? "You answered the design question; the agent accepts or revises the design next." : "The design waits for your answer on the Attention page."}</p>` : "";
-  container.innerHTML = `
+  container.innerHTML = `${shippedHistoryHtml(data.shippedHistory)}
     <div class="slice-head-tags chip-row">${phaseTag(slice, data)}${requirementLinks(slice.requirements, ctx, { icon: "list" })}${componentChip(slice.component)}${data.complete && slice.status === "split" ? badge("all descendants done", "success") : ""}</div>
     ${stepper(slice, data)}
     ${held ? `<div class="slice-claim-strip">${claimChip(held, "strip")}</div>` : ""}

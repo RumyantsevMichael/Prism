@@ -1,5 +1,8 @@
 # Components for slices and verification
 
+> Shipped history: initiative `components` shipped on 2026-11-07, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 A repository declares its components, each planned leaf slice records one and stays inside it, verification runs its component's tests and the dependents' tests when a scope finishes, the review browser labels each slice's component, and a checkout that names a store but no repository is refused.
