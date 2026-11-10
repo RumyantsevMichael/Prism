@@ -39,16 +39,21 @@ The top bar holds the Prism mark, the project switcher, the search button that o
 The status bar at the bottom shows where the project's records live, naming a shared store, their sync state, and the repository index.
 The rail at the left edge switches between five places, and the sidebar beside it shows only the current place, under its title and a line that says what it holds.
 **Attention** shows what waits on you, and the rail's Attention button carries the number of recorded questions that wait for an answer.
-**Work** lists each initiative that has an initiative record and is neither shipped nor superseded, with its slices.
+**Work** lists each initiative that has an initiative record and is neither shipped nor superseded, with its slices, under the groups **In progress**, **Blocked**, **Designed, not started**, and **Not on the roadmap**, each with its count, and leaves out an empty group.
+An initiative is **Blocked** when one of its slices is blocked and none is in progress or claimed, and it keeps the roadmap's order inside its group; initiatives that are not on the roadmap go by title.
 **Roadmap** leads to the Roadmap, and choosing it on the rail also opens the Roadmap page.
 **Knowledge** lists Requirements, Decisions, and the Glossary with their counts.
 **History** lists the shipped and superseded initiatives.
 Choosing any other place leaves the open page as it is, and the place stays while you change tabs, follow links, use the palette, or go back.
 The browser remembers the current place, so a reload or a new window shows it again, and an address with `place=work`, or another place's name, chooses that place.
 The page bar's trail starts with the place of the open page, and choosing that crumb makes the place current without leaving the page.
-An initiative's row shows its state as a round glyph and its shipped leaf slices out of all, such as `0/4`, and its slices nest below it, each with a triangle in the color of its phase, its holder, and a warning mark when it is blocked.
+An initiative's row shows its state as a round glyph and its shipped leaf slices out of all, such as `0/4`.
+Expanded, it lists at most five of its unfinished slices, each with a triangle in the color of its phase, its holder, and `Blocked` when it is blocked: the slice you have open first, then those in progress or claimed, then blocked ones, then the rest.
+A last row, such as `3 more unfinished` with `2 done`, or `All slices` when every unfinished slice is listed, opens the initiative's page with all its slices.
 Hover or focus a row to see its full title with its status, its phase, and its claim; the Roadmap lists every initiative, including shipped and envisioned ones.
-An initiative or a slice that has subslices expands when you expand it or when it leads to the open page.
+An initiative expands when you expand it, when its page or one of its slices' pages is open, or when one of its slices is in progress or claimed, and you can collapse it.
+Type in **Filter work** to keep only the initiatives and slices whose titles hold the text, ignoring case, each matching slice under its initiative; clear the field, or press Escape in it, to see every group again.
+Below the groups, a note says that shipped work moves to History and that emerging and unplanned items stay on the Roadmap.
 Every row is a link, so a middle-click or a Shift click opens the page in a new browser tab or window, and the browser's context menu can copy its address; a crumb of the page bar works the same way.
 Above 1100 pixels, press `[` or use the sidebar button at the top of the rail to hide the sidebar and keep the rail, and again to show it; the browser remembers the choice, and choosing a place shows the sidebar again.
 At a window width of 1100 pixels or less the rail and the sidebar are hidden, and the Navigation button at the left of the top bar opens a drawer that holds the rail and the current place's sidebar; choosing a place in it switches the sidebar, and choosing a page opens it and closes the drawer.

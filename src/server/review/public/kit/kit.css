@@ -878,6 +878,14 @@ prism-tree-item[selected] > .prism-tree-row > .prism-tree-start,
   white-space: nowrap;
 }
 
+/* A word that flags a row, such as `Blocked`, in the danger tone at the end of the row. */
+.prism-tree-flag {
+  flex: none;
+  color: var(--prism-color-danger);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
 /* A tree in a rail shows each top item's glyph alone, with its count badge on the glyph; the label becomes the tooltip. */
 prism-tree[rail] .prism-tree-row {
   position: relative;
@@ -1479,6 +1487,53 @@ prism-field[variant="bare"] > .prism-field-control {
 
 prism-field[variant="bare"] > .prism-field-control::-webkit-search-cancel-button {
   display: none;
+}
+
+/* A filter field, such as a sidebar's filter: the label names the control without showing, the placeholder says what it filters,
+   and the control keeps its box at the control height with a start-slot icon drawn over its inline padding. */
+prism-field[variant="filter"] {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 0;
+}
+
+prism-field[variant="filter"] > .prism-field-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+prism-field[variant="filter"] > :is(.prism-field-control, [slot="start"], [slot="end"]) {
+  grid-row: 1;
+  grid-column: 1;
+}
+
+prism-field[variant="filter"] > [slot="start"] {
+  justify-self: start;
+  margin-inline-start: var(--prism-space-3);
+  color: var(--prism-color-ink-muted);
+  pointer-events: none;
+}
+
+prism-field[variant="filter"] > [slot="end"] {
+  justify-self: end;
+  margin-inline-end: var(--prism-space-2);
+}
+
+prism-field[variant="filter"] > .prism-field-control {
+  height: var(--prism-control-height);
+  min-height: var(--prism-control-height);
+  padding: 0 var(--prism-space-2) 0 calc(var(--prism-space-3) + var(--prism-icon-size-sm) + var(--prism-space-3));
+  font-size: var(--prism-font-size-sm);
+}
+
+prism-field[variant="filter"] > .prism-field-control:focus-visible {
+  outline: none;
+  border-color: var(--prism-color-accent);
+  box-shadow: 0 0 0 var(--prism-stroke) var(--prism-color-accent);
 }
 
 /* ---------- prism-popover: glass anchored to its button ---------- */

@@ -315,10 +315,24 @@ body {
   white-space: nowrap;
 }
 
-/* A group's heading is a level 3 heading that reads as a quiet caption above its rows. */
+/* A group's heading is a level 3 heading that reads as a quiet caption above its rows, in the sidebar's own size and weight.
+   Its letters are drawn as capitals by small caps rather than by a text transform, so the heading's text stays as written for every reader and copy;
+   the browser draws small capitals at about 72% of the font size, so the size grows by that much to match the capitals of the sidebar's size. */
 h3.nav-section {
-  margin-bottom: var(--prism-space-2);
-  line-height: inherit;
+  margin: 0;
+  font-size: calc(var(--prism-font-size-md) / 0.72);
+  font-weight: var(--prism-font-weight-regular);
+  font-variant-caps: all-small-caps;
+  letter-spacing: calc(var(--prism-tracking-caps) * 0.72);
+  line-height: calc(var(--prism-font-size-md) * var(--prism-line-height));
+  text-transform: none;
+}
+
+h3.nav-section > .nav-count {
+  flex: none;
+  font-size: var(--prism-font-size-md);
+  font-variant-caps: normal;
+  font-variant-numeric: tabular-nums;
 }
 
 /* A count at the end of a row, such as an initiative's shipped slices out of all, stays short and lines up. */
@@ -350,6 +364,30 @@ h3.nav-section {
   color: var(--prism-color-ink-muted);
   font-size: var(--prism-font-size-xs);
   overflow-wrap: anywhere;
+}
+
+/* A place's filter field sits below the place's head, above its groups. */
+.nav-filter {
+  flex: none;
+  margin: var(--prism-space-2) 0;
+}
+
+/* A place's closing note says where the rest of the work went, in a quiet tone below its groups. */
+.nav-foot {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--prism-space-3);
+  margin: var(--prism-space-5) 0 0;
+  padding: var(--prism-space-3);
+  color: var(--prism-color-ink-faint);
+  font-size: var(--prism-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.nav-foot-glyph {
+  display: inline-flex;
+  flex: none;
+  margin-top: var(--prism-space-1);
 }
 
 /* The drawer holds a rail of its own beside the sidebar, which moves into it while it is open. */

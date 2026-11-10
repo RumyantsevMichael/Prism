@@ -639,21 +639,48 @@ async function computeNavigation(projectRoot) {
   const roadmap = await loadRoadmapView(projectRoot);
   const glossary = await loadGlossary(projectRoot);
   const attention = await loadAttention(projectRoot);
-  const initiatives = await Promise.all([
+  const placed = await Promise.all([
     ...roadmap.items.map((item) => ({ id: item.id, title: item.title, band: item.band, state: item.state })),
     ...roadmap.unlisted.map((id) => ({ id, title: id, band: null, state: "unlisted" }))
-  ].map(withSliceTree(projectRoot)));
+  ].map(async (item) => ({ ...item, place: await initiativePlace(projectRoot, item.id) })));
+  const listedInitiatives = await Promise.all(placed.map(withSliceTree(projectRoot)));
   return {
     roadmap: { exists: roadmap.exists ?? false, error: roadmap.error ?? null, valid: roadmap.valid ?? false },
     attention: { needsYou: attention.needsYou.length, gates: attention.gateCount, answered: attention.answered.length, watch: attention.watch.length },
-    initiatives: await Promise.all(initiatives.map(async (item) => ({ ...item, place: await initiativePlace(projectRoot, item.id) }))),
+    initiatives: listedInitiatives,
     glossary: { path: glossary.path, exists: glossary.exists },
     library: Object.fromEntries(await Promise.all(["requirements", "decisions"].map(async (kind) => [kind, (await loadLibrary(projectRoot, kind).catch(() => ({ entries: [] }))).entries.length]))),
     diagnostics: config.diagnostics,
     index: await searchIndex(projectRoot, config, roadmap, glossary),
     // Each place's own navigation data, by the place's name, for the places that need more than the lists above.
-    places: {}
+    places: { work: await workGroups(projectRoot, listedInitiatives) }
   };
+}
+
+// Work's groups in their order, each initiative once and an empty group left out: work not on the roadmap, then blocked work that nobody is
+// working on, then the roadmap's in-progress work, and every other designed, unshipped initiative; groups keep the roadmap's order, and
+// initiatives not on the roadmap go by title.
+const WORK_GROUPS = Object.freeze([
+  { key: "in-progress", label: "In progress" },
+  { key: "blocked", label: "Blocked" },
+  { key: "designed", label: "Designed, not started" },
+  { key: "unlisted", label: "Not on the roadmap" }
+]);
+
+async function workGroups(projectRoot, initiatives) {
+  const live = new Set((await loadClaims(projectRoot).catch(() => ({ claims: [] }))).claims.filter((claim) => !claim.expired).map((claim) => claim.ref));
+  const members = new Map(WORK_GROUPS.map((group) => [group.key, []]));
+  for (const item of initiatives) {
+    if (item.place !== "work") continue;
+    const view = await loadInitiativeView(projectRoot, item.id).catch(() => null);
+    const slices = Object.entries(view?.record?.slices ?? {});
+    const working = slices.some(([slug, slice]) => slice?.status === "in-progress" || live.has(`slice:${item.id}/${slug}`));
+    const blocked = slices.some(([, slice]) => slice?.status === "blocked");
+    const key = item.state === "unlisted" ? "unlisted" : blocked && !working ? "blocked" : item.state === "in-progress" ? "in-progress" : "designed";
+    members.get(key).push({ id: item.id, title: item.title });
+  }
+  members.get("unlisted").sort((left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id));
+  return { groups: WORK_GROUPS.filter((group) => members.get(group.key).length).map((group) => ({ ...group, initiatives: members.get(group.key) })) };
 }
 
 // The place an initiative's pages belong to: History once it has a shipped or superseded decision, Work while it has an initiative record,
@@ -666,12 +693,12 @@ async function initiativePlace(projectRoot, id) {
   return view?.exists ? "work" : "roadmap";
 }
 
-// The sidebar nests the slices of each initiative that is being worked on, so a planned, in-progress, or unlisted initiative carries its slice tree.
+// The sidebar nests the slices of each initiative that is being worked on, so a planned, in-progress, or unlisted initiative and every initiative of Work carries its slice tree.
 const NAVIGATION_TREE_STATES = new Set(["planned", "in-progress", "unlisted"]);
 
 function withSliceTree(projectRoot) {
   return async (item) => {
-    if (!NAVIGATION_TREE_STATES.has(item.state)) return item;
+    if (!NAVIGATION_TREE_STATES.has(item.state) && item.place !== "work") return item;
     const { scope } = await initiativeTree(projectRoot, item.id).catch(() => ({ scope: null }));
     return scope ? { ...item, title: item.state === "unlisted" ? scope.title : item.title, tree: scope.tree } : item;
   };

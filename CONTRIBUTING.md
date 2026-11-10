@@ -148,7 +148,7 @@ Run a local human review from the repository root:
 To try the entity-first review browser, run `node scripts/review-demo/seed.mjs` and start the review command it prints.
 The seed builds a temporary project whose roadmap, initiative records, change map, review ledger, coordination state, recorded user gates, and evidence come from the real MCP tools.
 The project is a Git repository, so the browser also lists its source files.
-The browser opens on Attention, which lists the recorded user gates, and the rail's Work place nests the slices of each initiative being worked on and expands the path to the open page.
+The browser opens on Attention, which lists the recorded user gates, and the rail's Work place groups the initiatives being worked on by state, lists a few unfinished slices of each, and expands an initiative whose page or slice is open or that has a slice in progress or claimed.
 Answering a gate on Attention records the answer in the initiative's coordination state, and the `deliver-gate-answers` prompt hook passes answered gates to the agent with the next user message until the agent resolves them.
 The same hook runs when a session resumes and lists every open gate, so the resumed agent waits on its unanswered gates again.
 In Claude Code the `wait_for_user_gate` tool also returns the answer: Claude Code moves the call to the background after about two minutes (`CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS`), its result wakes the idle session, and progress notifications every minute keep the stdio idle window (`CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`) from cancelling it.

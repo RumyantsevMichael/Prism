@@ -1220,39 +1220,11 @@ function branchState(id, nodes, slug) {
   return "planned";
 }
 
-// A branch expands when the user expanded it, when it leads to the open page, or when one of its slices is being worked on.
-function sliceItems(id, nodes, current, entity) {
-  const bySlug = new Map(nodes.map((node) => [node.slug, node]));
-  const ancestorsOfCurrent = new Set();
-  for (let slug = bySlug.get(current)?.parent; slug; slug = bySlug.get(slug)?.parent) ancestorsOfCurrent.add(slug);
-  const build = (node) => {
-    const ref = `slice:${id}/${node.slug}`;
-    const children = nodes.filter((child) => child.parent === node.slug).map(build);
-    const start = [];
-    const end = [];
-    const status = STATUS_WORDS[node.status] ?? node.status;
-    const phase = slicePhaseStep(node);
-    let stateWord;
-    if (children.length) {
-      const state = branchState(id, nodes, node.slug);
-      stateWord = `Split · ${STATE_WORDS[state]}`;
-      start.push(kitElement("prism-state", { state, label: stateWord }));
-    } else {
-      stateWord = [phase ? phase[1] : null, status].filter(Boolean).join(" · ");
-      start.push(kitElement("prism-phase", { phase: phase?.[0] ?? null, label: stateWord }));
-    }
-    if (node.status === "blocked") end.push(kitElement("prism-icon", { name: "warning", size: "xs", label: "Blocked", tip: "Blocked", class: "nav-blocked" }));
-    if (node.blocking) end.push(badge(String(node.blocking), "danger", `${node.blocking} blocking ${node.blocking === 1 ? "finding" : "findings"}`));
-    const claim = claimIndex?.claimFor(ref);
-    if (claim) end.push(claimElement(claim, "avatar"));
-    const counts = children.length ? leafCounts(nodes.filter((other) => isBelow(bySlug, other, node.slug))) : null;
-    const tip = [node.title, stateWord, counts && counts.total ? `${counts.done} of ${counts.total} shipped` : null, node.blocking ? `${node.blocking} blocking ${node.blocking === 1 ? "finding" : "findings"}` : null, claimLine(claim)].filter(Boolean).join(" · ");
-    const toggled = treeToggles.get(ref);
-    const hasActive = children.length > 0 && nodes.some((other) => isBelow(bySlug, other, node.slug) && isActiveSlice(other, `slice:${id}/${other.slug}`));
-    const expanded = children.length > 0 && (toggled ?? (ancestorsOfCurrent.has(node.slug) || hasActive));
-    return treeItem(ref, node.title, { selected: selectedPath === ref, expanded, start, end, children, tip });
-  };
-  return nodes.filter((node) => node.depth === 1).map(build);
+// A slice is being worked on while it is in progress or under a live claim.
+function isWorkingSlice(node, ref) {
+  if (node.status === "in-progress") return true;
+  const claim = claimIndex?.claimFor(ref);
+  return Boolean(claim && !claim.expired);
 }
 
 function isBelow(bySlug, node, ancestor) {
@@ -1260,18 +1232,76 @@ function isBelow(bySlug, node, ancestor) {
   return false;
 }
 
-// One initiative as a branch: its state glyph, its shipped leaf slices out of all, and its slices nested below.
-function initiativeItem(item, nodes, scope, entity) {
+// One slice of Work as a row: its phase glyph in its phase's color, or a split slice's state glyph, its title, `Blocked`, its blocking findings, and its holder.
+function sliceRow(id, node, nodes) {
+  const ref = `slice:${id}/${node.slug}`;
+  const start = [];
+  const end = [];
+  const status = STATUS_WORDS[node.status] ?? node.status;
+  const phase = slicePhaseStep(node);
+  const bySlug = new Map(nodes.map((other) => [other.slug, other]));
+  let stateWord;
+  if (node.hasChildren) {
+    const state = branchState(id, nodes, node.slug);
+    stateWord = `Split · ${STATE_WORDS[state]}`;
+    start.push(kitElement("prism-state", { state, label: stateWord }));
+  } else {
+    stateWord = [phase ? phase[1] : null, status].filter(Boolean).join(" · ");
+    start.push(kitElement("prism-phase", { phase: phase?.[0] ?? null, label: stateWord }));
+  }
+  if (node.status === "blocked") end.push(element("span", "prism-tree-flag", "Blocked"));
+  if (node.blocking) end.push(badge(String(node.blocking), "danger", `${node.blocking} blocking ${node.blocking === 1 ? "finding" : "findings"}`));
+  const claim = claimIndex?.claimFor(ref);
+  if (claim) end.push(claimElement(claim, "avatar"));
+  const counts = node.hasChildren ? leafCounts(nodes.filter((other) => isBelow(bySlug, other, node.slug))) : null;
+  const tip = [node.title, stateWord, counts && counts.total ? `${counts.done} of ${counts.total} shipped` : null, node.blocking ? `${node.blocking} blocking ${node.blocking === 1 ? "finding" : "findings"}` : null, claimLine(claim)].filter(Boolean).join(" · ");
+  return treeItem(ref, node.title, { selected: selectedPath === ref, start, end, tip });
+}
+
+// The most unfinished slices an expanded initiative of Work lists before the row that leads to all of them.
+const WORK_SHORT_LIST = 5;
+
+/**
+ * One initiative of Work: its state glyph, its title, and its shipped leaf slices out of all.
+ * Expanded, it lists at most five unfinished leaf slices, the open one first, then those being worked on, then blocked ones, then the rest,
+ * each part in the order of the slice tree, and then one row for the rest that opens the initiative's page.
+ * While the filter holds text, it lists the slices whose titles hold it instead, and expands when one does.
+ */
+function workInitiativeItem(item, nodes, scope, query) {
   const ref = `initiative:${item.id}`;
   const inScope = scope.kind === "initiative" && scope.id === item.id;
-  const children = sliceItems(item.id, nodes, inScope ? scope.current : null, entity);
+  const leaves = nodes.filter((node) => node.depth > 0 && !node.hasChildren);
   const counts = leafCounts(nodes);
   const state = item.state === "unlisted" ? "planned" : item.state;
   const stateWord = STATE_WORDS[item.state] ?? item.state;
   const end = counts.total ? [meta(`${counts.done}/${counts.total}`)] : [];
   const tip = [item.title, stateWord, counts.total ? `${counts.done} of ${counts.total} shipped` : null].filter(Boolean).join(" · ");
-  // An initiative expands when the person expanded it or its page or one of its slices' pages is open, so its own row stays where a click lands.
-  const expanded = children.length > 0 && (treeToggles.get(ref) ?? inScope);
+  const sliceRef = (node) => `slice:${item.id}/${node.slug}`;
+  let children;
+  let expanded;
+  if (query) {
+    children = nodes.filter((node) => node.depth > 0 && node.title.toLowerCase().includes(query)).map((node) => sliceRow(item.id, node, nodes));
+    expanded = children.length > 0;
+  } else {
+    const unfinished = leaves.filter((node) => node.status !== "done");
+    const open = inScope ? unfinished.find((node) => node.slug === scope.current) : null;
+    const rest = unfinished.filter((node) => node !== open);
+    const working = rest.filter((node) => isWorkingSlice(node, sliceRef(node)));
+    const blocked = rest.filter((node) => !working.includes(node) && node.status === "blocked");
+    const others = rest.filter((node) => !working.includes(node) && !blocked.includes(node));
+    const shown = [open, ...working, ...blocked, ...others].filter(Boolean).slice(0, WORK_SHORT_LIST);
+    children = shown.map((node) => sliceRow(item.id, node, nodes));
+    const more = unfinished.length - shown.length;
+    const done = leaves.length - unfinished.length;
+    if (more > 0 || done > 0) {
+      const label = more > 0 ? `${more} more unfinished` : "All slices";
+      const moreTip = [more > 0 ? `${more} more unfinished` : null, done > 0 ? `${done} done` : null].filter(Boolean).join(", ");
+      children.push(treeItem(ref, label, { start: [navIcon("more")], end: done > 0 ? [meta(`${done} done`)] : [], tip: `${moreTip}: open ${item.title} for all its slices` }));
+    }
+    // An initiative expands when the person expanded it, when its page or one of its slices' pages is open, or when one of its slices is being worked on.
+    const hasWorking = nodes.some((node) => node.depth > 0 && isWorkingSlice(node, sliceRef(node)));
+    expanded = children.length > 0 && (treeToggles.get(ref) ?? (inScope || hasWorking));
+  }
   return treeItem(ref, item.title, { selected: selectedPath === ref, expanded, start: [kitElement("prism-state", { state, label: stateWord })], end, children, tip });
 }
 
@@ -1365,16 +1395,60 @@ function attentionNavigation() {
   return parts;
 }
 
-// The initiatives being worked on in roadmap order, each with its slices; the open initiative expands to its open slice.
-function workNavigation({ scope, entity }) {
-  const listed = (navigation.initiatives ?? []).filter((item) => item.tree && (item.place ?? "work") === "work").map((item) => {
-    const open = scope.kind === "initiative" && scope.id === item.id;
-    return open ? { item: { ...item, title: scope.title ?? item.title }, nodes: scope.tree ?? item.tree } : { item, nodes: item.tree };
-  });
-  const parts = [section("Initiatives", listed.length)];
-  if (listed.length) parts.push(tree("Initiatives", listed.map(({ item, nodes }) => initiativeItem(item, nodes, scope, entity))));
-  else parts.push(element("p", "nav-note", (navigation.initiatives ?? []).length ? "No initiative is planned or in progress; the roadmap lists them all." : "No initiatives yet."));
-  if (scope.kind === "initiative" && scope.valid === false && listed.some(({ item }) => item.id === scope.id)) parts.push(element("p", "nav-note", "The initiative record is invalid."));
+// Work's filter field stays one element across renders, so typing in it keeps its focus and its text while the groups below it change.
+let workFilterField = null;
+
+function workFilter() {
+  if (!workFilterField) {
+    workFilterField = kitElement("prism-field", { type: "search", variant: "filter", label: "Filter work", placeholder: "Filter work", class: "nav-filter" });
+    const icon = navIcon("filter");
+    icon.slot = "start";
+    icon.setAttribute("size", "sm");
+    workFilterField.append(icon);
+    workFilterField.addEventListener("input", () => renderNavigation());
+    workFilterField.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !workFilterField.value) return;
+      event.preventDefault();
+      event.stopPropagation();
+      workFilterField.value = "";
+      renderNavigation();
+    });
+  }
+  return workFilterField;
+}
+
+/**
+ * Work: designed, unshipped initiatives grouped by state, each group with its count and an empty one left out, in the server's order,
+ * then the note that says where the rest went; the filter keeps the initiatives and slices whose titles hold its text.
+ */
+function workNavigation({ scope }) {
+  const field = workFilter();
+  const typed = (field.value ?? "").trim();
+  const query = typed.toLowerCase();
+  const byId = new Map((navigation.initiatives ?? []).map((item) => [item.id, item]));
+  const parts = [field];
+  let shown = 0;
+  for (const group of navigation.places?.work?.groups ?? []) {
+    const rows = [];
+    for (const { id, title } of group.initiatives) {
+      const listed = byId.get(id) ?? { id, title, state: group.key === "unlisted" ? "unlisted" : "planned" };
+      const open = scope.kind === "initiative" && scope.id === id;
+      const item = { ...listed, title: open ? scope.title ?? listed.title ?? title : listed.title ?? title };
+      const nodes = (open ? scope.tree : null) ?? listed.tree ?? [];
+      if (query && !item.title.toLowerCase().includes(query) && !nodes.some((node) => node.depth > 0 && node.title.toLowerCase().includes(query))) continue;
+      rows.push(workInitiativeItem(item, nodes, scope, query));
+    }
+    if (!rows.length) continue;
+    shown += rows.length;
+    parts.push(section(group.label, rows.length), tree(group.label, rows));
+  }
+  if (!shown) parts.push(element("p", "nav-note", typed ? `No work matches "${typed}".` : "Nothing is designed and unshipped."));
+  if (scope.kind === "initiative" && scope.valid === false && (navigation.places?.work?.groups ?? []).some((group) => group.initiatives.some((entry) => entry.id === scope.id))) parts.push(element("p", "nav-note", "The initiative record is invalid."));
+  const foot = element("p", "nav-foot");
+  const glyph = element("span", "nav-foot-glyph");
+  glyph.append(kitElement("prism-icon", { name: "clock", size: "xs" }));
+  foot.append(glyph, element("span", "", "Shipped work moves to History. Emerging and unplanned items stay on the Roadmap."));
+  parts.push(foot);
   return parts;
 }
 
@@ -1416,7 +1490,7 @@ function renderNavigation() {
   for (const rail of [shellRail, drawerRail]) renderRail(rail, attention.gates ?? 0);
   const entity = Boolean(parseEntityRef(selectedPath ?? ""));
   const claims = claimIndex ? [...claimIndex.live(), ...claimIndex.expired()].map((claim) => [claim.ref, claim.expiresAt, claim.label]) : [];
-  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles]]);
+  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? ""]);
   if (key === navigationKey) return;
   navigationKey = key;
   const focused = document.activeElement?.closest?.("prism-tree-item");
@@ -1425,7 +1499,18 @@ function renderNavigation() {
   placeHead.setAttribute("heading", place.label);
   placeHead.setAttribute("subtitle", place.subtitle);
   sidebar.setAttribute("aria-label", place.label);
+  // A field of the place, such as Work's filter, is the same element after the render, so it keeps the focus and the caret it had.
+  const field = document.activeElement?.closest?.("prism-field");
+  const typing = field && navRoot.contains(field) ? { field, start: document.activeElement.selectionStart, end: document.activeElement.selectionEnd } : null;
   navRoot.replaceChildren(...PLACE_NAVIGATION[place.name]({ scope, entity }));
+  if (typing && navRoot.contains(typing.field) && typing.field.control) {
+    typing.field.control.focus();
+    try {
+      typing.field.control.setSelectionRange(typing.start, typing.end);
+    } catch {
+      // A control without a caret keeps the focus only.
+    }
+  }
   if (refocus) [...navRoot.querySelectorAll("prism-tree-item")].find((item) => item.getAttribute("value") === refocus)?.focus();
   navRoot.querySelector("prism-tree-item[selected]")?.scrollIntoView?.({ block: "nearest" });
 }

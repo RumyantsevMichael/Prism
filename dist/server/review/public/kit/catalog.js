@@ -196,6 +196,7 @@ const SPECIMENS = {
     text: `<prism-field type="text" label="Name" name="name" placeholder="Name the slice"></prism-field>`,
     search: `<prism-field type="search" label="Jump to" name="q" placeholder="Search"></prism-field>`,
     bare: `<prism-field type="search" variant="bare" label="Search or jump to" name="bare" placeholder="Search"><prism-icon slot="start" name="search"></prism-icon><prism-kbd slot="end">Esc</prism-kbd></prism-field>`,
+    filter: `<div class="catalog-narrow"><prism-field type="search" variant="filter" label="Filter work" name="filter" placeholder="Filter work"><prism-icon slot="start" name="filter" size="sm"></prism-icon></prism-field></div>`,
     textarea: `<prism-field type="textarea" label="Note" name="note" placeholder="Write a note"></prism-field>`,
     select: `<prism-field type="select" label="Lane" name="lane"><prism-option value="a">Alpha</prism-option><prism-option value="b" selected>Beta</prism-option></prism-field>`,
     hint: `<prism-field type="text" label="Reviewer" name="reviewer" hint="Optional unless you request changes"></prism-field>`,
