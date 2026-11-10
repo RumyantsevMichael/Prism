@@ -99,9 +99,11 @@ export async function render(container, entity, ctx) {
     bindLinks(container, ctx);
     return;
   }
-  const slice = ctx.touchedSlice?.() ?? null;
-  let answer = null;
-  if (slice) {
+  // The page passes the remembered slice's answer with the entity, so a change to the slice's records redraws it; without one the view asks for it.
+  const given = entity.touched ?? null;
+  const slice = given ? given.slice : ctx.touchedSlice?.() ?? null;
+  let answer = given ? given.answer : null;
+  if (!given && slice) {
     try {
       answer = await ctx.fetchTouched(slice);
     } catch {

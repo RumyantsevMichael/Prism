@@ -12,13 +12,20 @@ export const UNAVAILABLE = Object.freeze({
 });
 
 // One Git command in the project; Git is looked up through PATH on each call, so a project without Git says so rather than failing.
+// Git's messages are read in English whatever the locale.
+// A failure keeps Git's exit code, which is a number only when Git ran to its end, and its message, so a command that was killed or overflowed reads as Git not running.
 function git(root, args) {
   return new Promise((resolve) => {
-    execFile("git", ["-c", "core.quotePath=false", ...args], { cwd: root, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_BUFFER, encoding: "utf8" }, (error, stdout) => {
-      resolve(error ? { ok: false, missing: error.code === "ENOENT", stdout: "" } : { ok: true, stdout });
+    execFile("git", ["-c", "core.quotePath=false", ...args], { cwd: root, env: { ...process.env, LC_ALL: "C", LANGUAGE: "C" }, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_BUFFER, encoding: "utf8" }, (error, stdout, stderr) => {
+      resolve(error ? { ok: false, code: error.killed || typeof error.code !== "number" ? null : error.code, stderr: String(stderr ?? ""), stdout: "" } : { ok: true, stdout });
     });
   });
 }
+
+// Git says a folder is outside every repository with exit code 128 and this message; any other failure means Git could not answer.
+const notRepository = (result) => result.code === 128 && /not a git repository/i.test(result.stderr);
+// `rev-parse --verify --quiet HEAD` exits 1 without a message when the repository has no commit yet.
+const noCommit = (result) => result.code === 1 && !result.stderr.trim();
 
 const unavailable = (reason, records) => ({ available: false, reason, records: [], undated: records.map(({ kind, title, ref }) => ({ kind, title, ref })) });
 
@@ -26,13 +33,14 @@ const unavailable = (reason, records) => ({ available: false, reason, records: [
  * The record files changed in the last 7 days: those Git reports modified, added, or untracked first, marked uncommitted,
  * then those a commit of the last 7 days changed, newest change first, with the commit's time and author; a renamed file counts under its new name.
  * `records` lists every record file as { kind, title, ref } with `ref` its project-relative path, and `pathspecs` the folders and files that hold them.
+ * A merge commit counts with what it changed against its first parent.
  * Without Git, a repository, or a commit, nothing is dated and every record file is listed as undated.
  */
 export async function recordChanges(projectRoot, records, pathspecs, { now = Date.now() } = {}) {
   const top = await git(projectRoot, ["rev-parse", "--show-prefix"]);
-  if (!top.ok) return unavailable(top.missing ? UNAVAILABLE.noGit : UNAVAILABLE.notRepository, records);
+  if (!top.ok) return unavailable(notRepository(top) ? UNAVAILABLE.notRepository : UNAVAILABLE.noGit, records);
   const head = await git(projectRoot, ["rev-parse", "--verify", "--quiet", "HEAD"]);
-  if (!head.ok) return unavailable(head.missing ? UNAVAILABLE.noGit : UNAVAILABLE.noCommits, records);
+  if (!head.ok) return unavailable(noCommit(head) ? UNAVAILABLE.noCommits : UNAVAILABLE.noGit, records);
   // Git names files from the repository's top, so a project inside a larger repository drops its own folder from each name.
   const prefix = top.stdout.trim();
   const local = (name) => prefix && name.startsWith(prefix) ? name.slice(prefix.length) : prefix ? null : name;
@@ -40,8 +48,10 @@ export async function recordChanges(projectRoot, records, pathspecs, { now = Dat
   const specs = pathspecs.filter(Boolean);
   if (!specs.length || !byRef.size) return { available: true, reason: null, records: [], undated: [] };
   const status = await git(projectRoot, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...specs]);
-  const log = await git(projectRoot, ["log", "-M", `--since=${new Date(now - WINDOW_MS).toISOString()}`, "--format=%x1e%cI%x1f%an", "--name-only", "--", ...specs]);
-  if (!status.ok || !log.ok) return unavailable(status.missing || log.missing ? UNAVAILABLE.noGit : UNAVAILABLE.notRepository, records);
+  // A merge lists what it brought onto the branch, against its first parent, so a branch merged this week counts at the merge's time and author.
+  const log = await git(projectRoot, ["log", "-M", "--diff-merges=first-parent", `--since=${new Date(now - WINDOW_MS).toISOString()}`, "--format=%x1e%cI%x1f%an", "--name-only", "--", ...specs]);
+  // rev-parse already found a repository with a commit, so a failure here is Git that could not answer.
+  if (!status.ok || !log.ok) return unavailable(UNAVAILABLE.noGit, records);
   const uncommitted = new Set();
   const fields = status.stdout.split("\0");
   for (let index = 0; index < fields.length; index += 1) {

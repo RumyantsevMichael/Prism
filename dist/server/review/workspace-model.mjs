@@ -809,7 +809,8 @@ export async function searchRecords(projectRoot, query) {
   return { query: text, groups };
 }
 
-async function searchIndex(projectRoot, config, roadmap, glossary) {
+// `libraries` may hold the requirements and decisions libraries already read, each as { value } or the { error } reading it failed with.
+async function searchIndex(projectRoot, config, roadmap, glossary, libraries = {}) {
   const entries = [];
   const titles = new Map(roadmap.items.map((item) => [item.id, item.title]));
   for (const item of roadmap.items) entries.push({ ref: `initiative:${item.id}`, label: item.title, kind: "initiative", detail: `${item.band} · ${item.state}` });
@@ -819,7 +820,9 @@ async function searchIndex(projectRoot, config, roadmap, glossary) {
     for (const [slug, slice] of Object.entries(loaded.record?.slices ?? {})) entries.push({ ref: `slice:${id}/${slug}`, label: slice.title, kind: "slice", detail: `${titles.get(id) ?? id} · ${slice.status}` });
   }
   for (const kind of ["requirements", "decisions"]) {
-    for (const entry of (await loadLibrary(projectRoot, kind)).entries) entries.push({ ref: entry.path, label: entry.title, kind: kind === "requirements" ? "requirement" : "decision", detail: entry.status ?? entry.path });
+    const library = libraries[kind];
+    if (library?.error) throw library.error;
+    for (const entry of (library ? library.value : await loadLibrary(projectRoot, kind)).entries) entries.push({ ref: entry.path, label: entry.title, kind: kind === "requirements" ? "requirement" : "decision", detail: entry.status ?? entry.path });
   }
   for (const term of glossaryTerms(glossary.content)) entries.push({ ref: "glossary", label: term, kind: "term", detail: "Glossary" });
   return entries;
@@ -828,29 +831,31 @@ async function searchIndex(projectRoot, config, roadmap, glossary) {
 /**
  * Every record file by kind, title, and project-relative path: each requirements file, each decision, the glossary file when it exists, and each diagram,
  * with the folders and files that hold them for reading their history.
+ * `loaded` may hold the workflow config, the glossary, the diagrams, and the requirements and decisions libraries a caller already read, which are not read again.
  */
-export async function recordFiles(projectRoot) {
-  const config = await readWorkflowConfig(projectRoot);
+export async function recordFiles(projectRoot, loaded = {}) {
+  const config = loaded.config ?? await readWorkflowConfig(projectRoot);
   const records = [];
   for (const [kind, library] of [["requirement", "requirements"], ["decision", "decisions"]]) {
-    for (const entry of (await loadLibrary(projectRoot, library).catch(() => ({ entries: [] }))).entries) records.push({ kind, title: entry.title, ref: entry.path, status: entry.status ?? null });
+    const entries = loaded[library] ?? await loadLibrary(projectRoot, library).catch(() => ({ entries: [] }));
+    for (const entry of entries.entries) records.push({ kind, title: entry.title, ref: entry.path, status: entry.status ?? null });
   }
-  const glossary = await loadGlossary(projectRoot);
+  const glossary = loaded.glossary ?? await loadGlossary(projectRoot);
   if (glossary.exists) records.push({ kind: "glossary", title: "Glossary", ref: glossary.path, status: null });
-  for (const diagram of await loadDiagrams(projectRoot).catch(() => [])) records.push({ kind: "diagram", title: diagram.name, ref: diagram.path, status: null });
+  for (const diagram of loaded.diagrams ?? await loadDiagrams(projectRoot).catch(() => [])) records.push({ kind: "diagram", title: diagram.name, ref: diagram.path, status: null });
   const pathspecs = [...new Set([config.paths.requirements, config.paths.adrs, config.paths.glossary, config.paths.plans].filter(Boolean))];
   return { records, pathspecs };
 }
 
 /** Changed this week: the record files changed in the last 7 days, read from Git on each call, or why Git cannot tell. */
-export async function loadRecordChanges(projectRoot) {
-  const { records, pathspecs } = await recordFiles(projectRoot);
+export async function loadRecordChanges(projectRoot, loaded = {}) {
+  const { records, pathspecs } = await recordFiles(projectRoot, loaded);
   return recordChanges(projectRoot, records.map(({ kind, title, ref }) => ({ kind, title, ref })), pathspecs);
 }
 
 // Knowledge's entry points: the count of Changed this week only while Git can date the records; Touched by my work depends on the slice the page has open.
-async function knowledgeEntries(projectRoot) {
-  const changes = await loadRecordChanges(projectRoot).catch(() => null);
+async function knowledgeEntries(projectRoot, loaded) {
+  const changes = await loadRecordChanges(projectRoot, loaded).catch(() => null);
   return changes?.available ? { changed: changes.records.length } : {};
 }
 
@@ -885,20 +890,25 @@ async function computeNavigation(projectRoot) {
     ...roadmap.unlisted.map((id) => ({ id, title: id, band: null, state: "unlisted" }))
   ].map(async (item) => ({ ...item, place: await initiativePlace(projectRoot, item.id) })));
   const listedInitiatives = await Promise.all(placed.map(withSliceTree(projectRoot)));
+  // The libraries and diagrams are read once for their counts, the search index, and Changed this week; a library that cannot be read still fails the search index.
+  const settled = (promise) => promise.then((value) => ({ value }), (error) => ({ error }));
+  const read = Object.fromEntries(await Promise.all(["requirements", "decisions"].map(async (kind) => [kind, await settled(loadLibrary(projectRoot, kind))])));
+  const readable = Object.fromEntries(Object.entries(read).map(([kind, result]) => [kind, result.value ?? { entries: [] }]));
+  const diagrams = await loadDiagrams(projectRoot).catch(() => []);
   return {
     roadmap: { exists: roadmap.exists ?? false, error: roadmap.error ?? null, valid: roadmap.valid ?? false },
     attention: { needsYou: attention.needsYou.length, gates: attention.gateCount, answered: attention.answered.length, watch: attention.watch.length },
     initiatives: listedInitiatives,
     glossary: { path: glossary.path, exists: glossary.exists },
     library: {
-      ...Object.fromEntries(await Promise.all(["requirements", "decisions"].map(async (kind) => [kind, (await loadLibrary(projectRoot, kind).catch(() => ({ entries: [] }))).entries.length]))),
+      ...Object.fromEntries(Object.entries(readable).map(([kind, library]) => [kind, library.entries.length])),
       terms: glossaryTerms(glossary.content).length,
-      diagrams: (await loadDiagrams(projectRoot).catch(() => [])).length
+      diagrams: diagrams.length
     },
     diagnostics: config.diagnostics,
-    index: await searchIndex(projectRoot, config, roadmap, glossary),
+    index: await searchIndex(projectRoot, config, roadmap, glossary, read),
     // Each place's own navigation data, by the place's name, for the places that need more than the lists above.
-    places: { attention: attentionPlace(attention), work: await workGroups(projectRoot, listedInitiatives), history: historyEntries(roadmap), knowledge: await knowledgeEntries(projectRoot) }
+    places: { attention: attentionPlace(attention), work: await workGroups(projectRoot, listedInitiatives), history: historyEntries(roadmap), knowledge: await knowledgeEntries(projectRoot, { config, glossary, diagrams, ...readable }) }
   };
 }
 

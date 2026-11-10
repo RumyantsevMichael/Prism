@@ -1966,6 +1966,8 @@ async function showEntity(path) {
     return;
   }
   const entity = await response.json();
+  // Touched by my work's records come from the remembered slice rather than from the page's address, so they join the snapshot and a change to them redraws the page.
+  if (entity.kind === "touched") entity.touched = await touchedAnswer(lastSlice);
   const snapshot = JSON.stringify(entity);
   if (path !== selectedPath) return;
   if (snapshot === lastSnapshot) {
@@ -2016,13 +2018,20 @@ function rememberSlice(path) {
   void countTouched(slice);
 }
 
+// The server's answer for Touched by my work of one slice, as { slice, answer }, with a null answer when there is no slice or the server could not answer.
+async function touchedAnswer(slice) {
+  if (!slice) return { slice: null, answer: null };
+  try {
+    return { slice, answer: await fetchJson(`./api/touched?slice=${encodeURIComponent(slice)}`) };
+  } catch {
+    return { slice, answer: null };
+  }
+}
+
 // Touched by my work's count is its records behind the remembered slice, and 0 while no slice was selected.
 async function countTouched(slice) {
-  try {
-    noteTouched(slice, await fetchJson(`./api/touched?slice=${encodeURIComponent(slice)}`));
-  } catch {
-    noteTouched(slice, null);
-  }
+  const { answer } = await touchedAnswer(slice);
+  noteTouched(slice, answer);
 }
 
 function noteTouched(slice, answer) {
@@ -2653,6 +2662,8 @@ async function initialize() {
         if (selectedPath) {
           await showArtifact(selectedPath);
         }
+        // Knowledge's sidebar counts the remembered slice's records, which can change without the navigation changing; the Touched page counts them as it draws.
+        if (currentPlace === "knowledge" && lastSlice && selectedPath !== "knowledge:touched") await countTouched(lastSlice);
       }
     } catch {
     }

@@ -1,12 +1,11 @@
-import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { loadDesignView } from "../workflow/design-view.mjs";
+import { changedPaths, treeId } from "../workflow/slice-gate.mjs";
 import { listRecordEntries, sliceDocumentFolder } from "../workflow/record-store.mjs";
 import { glossaryEntries, loadGlossary, loadInitiativeView, recordFiles } from "./workspace-model.mjs";
 
 const SLICE_PATTERN = /^([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)$/;
-const GIT_TIMEOUT_MS = 10000;
 
 export class TouchedError extends Error {
   constructor(code, message, status) {
@@ -46,27 +45,20 @@ function linkTargets(source, documentPath) {
   return targets;
 }
 
-function git(root, args) {
-  return new Promise((resolve) => {
-    execFile("git", ["-c", "core.quotePath=false", ...args], { cwd: root, timeout: GIT_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024, encoding: "utf8" }, (error, stdout) => resolve(error ? null : stdout));
-  });
-}
-
 /**
  * The files that differ between the content a slice started from and the content its latest passing verification run tested,
  * as { files } with project-relative paths, { unreadable: true } when Git cannot read either, or null when the slice has no such pair.
+ * Both trees come from records a cloned repository can carry, so a value that is not a Git object identifier counts as no pair and never reaches Git.
  */
 async function verifiedChanges(projectRoot, id, slug, slice) {
   const start = slice?.design?.startTree;
-  if (!start) return null;
+  if (!treeId(start)) return null;
   const entries = await listRecordEntries(projectRoot, { kind: "runs", initiative: id, slice: slug }).catch(() => []);
   const passed = entries.filter((item) => item.entry?.kind === "verification" && item.entry.passed === true && typeof item.entry.tree === "string").at(-1);
-  if (!passed) return null;
-  const [prefix, diff] = await Promise.all([git(projectRoot, ["rev-parse", "--show-prefix"]), git(projectRoot, ["diff-tree", "-r", "-M", "--name-only", "-z", start, passed.entry.tree])]);
-  if (prefix === null || diff === null) return { unreadable: true };
-  const own = prefix.trim();
-  const files = diff.split("\0").filter(Boolean).map((name) => own ? (name.startsWith(own) ? name.slice(own.length) : null) : name).filter(Boolean);
-  return { files };
+  if (!passed || !treeId(passed.entry.tree)) return null;
+  // A moved file lists both its paths, and only its new path names a record file.
+  const files = await changedPaths(projectRoot, start, passed.entry.tree);
+  return files ? { files } : { unreadable: true };
 }
 
 /**
