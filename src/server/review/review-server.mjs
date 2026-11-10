@@ -14,21 +14,25 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { entityContext, entityExists, forgetWorkspace, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
+import { entityContext, entityExists, forgetWorkspace, loadClaims, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
+import { readPreferences, writePreferences } from "./review-preferences.mjs";
 import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
+import { createViewerHub, openEventStream, writeEvent } from "./viewer-hub.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 const PUBLIC_DIR = path.join(SERVER_DIR, "public");
 const VENDOR_DIR = path.join(PLUGIN_ROOT, "vendor", "plantuml");
 const VIEWS_DIR = path.join(PUBLIC_DIR, "views");
+const KIT_DIR = path.join(PUBLIC_DIR, "kit");
+// The kit and the area stylesheets are served by extension, and any other file in their folders answers 404.
+const ASSET_TYPES = new Map([[".css", "text/css; charset=utf-8"], [".js", "text/javascript; charset=utf-8"], [".html", "text/html; charset=utf-8"], [".txt", "text/plain; charset=utf-8"], [".woff2", "font/woff2"]]);
 const TEXT_EXTENSIONS = new Set([".md", ".feature", ".puml", ".json"]);
 const EVIDENCE_ARRAY_LIMIT = 200;
 // Requests naming any other host are refused, so a DNS-rebinding page cannot reach the server.
 const TRUSTED_HOSTS = new Set(["127.0.0.1", "localhost"]);
-const VIEWER_HEARTBEAT_MS = 15 * 1000;
 const VIEWER_OPEN_RETRY_MS = 10 * 1000;
 // The stale hint runs Git in the project, so its answer is reused for this long however often the page asks.
 const FRESHNESS_CHECK_MS = 30 * 1000;
@@ -332,12 +336,66 @@ async function serveFile(response, filePath, contentType) {
   try {
     send(response, 200, await readFile(filePath), contentType);
   } catch (error) {
-    if (error.code === "ENOENT") {
+    if (["ENOENT", "ENOTDIR", "EISDIR"].includes(error.code)) {
       send(response, 404, "Not found");
       return;
     }
     throw error;
   }
+}
+
+/** Whether a request is a browser loading a page, as opposed to a script, a stylesheet, or a call from the page. */
+export function wantsPage(request) {
+  if (request.method !== "GET" && request.method !== "HEAD") return false;
+  const destination = request.headers["sec-fetch-dest"];
+  if (destination) return destination === "document";
+  return /\btext\/html\b/.test(request.headers.accept ?? "");
+}
+
+const UNAVAILABLE_REASONS = new Set(["expired", "empty"]);
+
+/** The page for a link the review app cannot open: one without the current viewer credential ("expired") or an app with no project yet ("empty"). */
+export async function sendUnavailable(response, reason) {
+  const page = await readFile(path.join(PUBLIC_DIR, "unavailable.html"), "utf8");
+  send(response, 404, page.replace("{{reason}}", UNAVAILABLE_REASONS.has(reason) ? reason : "expired"), "text/html; charset=utf-8");
+}
+
+/**
+ * Answers a request that carries no current viewer credential. Only the kit's files and the marks, which hold no project data, are served,
+ * and a page load gets the page that says the link no longer works, so a stale tab or a bare address shows the app's own page rather than a line of text.
+ */
+export async function serveOutsideSession(request, response, pathname) {
+  if (pathname === "/favicon.svg" || pathname === "/prism-mark.svg") {
+    await serveFile(response, path.join(PUBLIC_DIR, pathname.slice(1)), "image/svg+xml");
+    return;
+  }
+  if (pathname === "/unavailable.js") {
+    await serveFile(response, path.join(PUBLIC_DIR, "unavailable.js"), "text/javascript; charset=utf-8");
+    return;
+  }
+  const asset = request.method === "GET" || request.method === "HEAD" ? publicAsset(pathname) : null;
+  if (asset) await serveFile(response, asset.file, asset.type);
+  else if (wantsPage(request)) await sendUnavailable(response, "expired");
+  else send(response, 404, "Not found");
+}
+
+// The file and type of a route under kit/ or styles/, or null for a path that leaves its folder, is not a known type, or is not a styles/<name>.css.
+export function publicAsset(route) {
+  const folder = route.startsWith("/kit/") ? "kit" : route.startsWith("/styles/") ? "styles" : null;
+  if (!folder) return null;
+  let relative;
+  try {
+    relative = decodeURIComponent(route.slice(folder.length + 2));
+  } catch {
+    return null;
+  }
+  const parts = relative.split("/");
+  if (!relative || /[\0\\]/.test(relative) || parts.some((part) => !part || part === "." || part === "..")) return null;
+  const extension = path.extname(relative);
+  if (!ASSET_TYPES.has(extension) || (folder === "styles" && (parts.length !== 1 || extension !== ".css"))) return null;
+  const root = path.join(PUBLIC_DIR, folder);
+  const file = path.join(root, ...parts);
+  return isInside(root, file) ? { file, type: ASSET_TYPES.get(extension) } : null;
 }
 
 export function openBrowser(url) {
@@ -442,8 +500,9 @@ async function readJson(request) {
 // writeSessions is the write session store of the server or app that serves this page; without one, no request can write.
 // onAction(event, { shared }) receives each applied action's event, the history entry with its initiative, instead of this page's viewer streams;
 // shared is false for an index target, whose history belongs to this checkout alone. Without it, the event reaches this page's viewer streams.
-export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, onAction = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null, writeSessions = null,
-  rebuildIndex = (root, component) => backgroundPreparation().then((module) => module.startIndexRebuild(root, component ? { component: { identity: component.identity, folder: component.folder } } : {})), autoRebuild = (root) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }) {
+// hub holds the shared viewer streams of the origin that serves this page; the review app passes one hub to every project, and a session server keeps its own.
+export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, onAction = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null, writeSessions = null, hub = createViewerHub(),
+  rebuildIndex = (root, component, options = {}) => backgroundPreparation().then((module) => module.startIndexRebuild(root, { ...(component ? { component: { identity: component.identity, folder: component.folder } } : {}), ...options })), autoRebuild = (root) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }) {
   let fingerprint = null;
   function currentFingerprint() {
     if (!fingerprint || Date.now() - fingerprint.at >= rebuildTiming.freshnessMs) fingerprint = { at: Date.now(), value: gitFingerprint(projectRoot).catch(() => null) };
@@ -463,7 +522,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     const now = Date.now();
     if (auto && outOfDate && now - rebuild.changedAt >= rebuildTiming.quietMs && now - rebuild.startedAt >= rebuildTiming.gapMs) {
       rebuild.startedAt = now;
-      void rebuildIndex(projectRoot);
+      void rebuildIndex(projectRoot, null, { automatic: true });
     }
     return { ...status, autoRebuild: auto };
   }
@@ -479,7 +538,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   };
   let session = { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], revision: 0 };
   // Each viewer stream maps to its heartbeat and whether it carries a live write session; only writable streams count as connected tabs.
+  // The review page joins the origin's shared stream instead, as a member of the hub under this page's path, and counts the same way.
   const viewers = new Map();
+  const hubKey = `${new URL(baseUrl).pathname}/`;
   let viewerOpenLease = null;
   const canWrite = (token) => Boolean(writeSessions?.valid(token));
   const writableRequest = (request) => canWrite(request.headers["x-prism-write"]);
@@ -504,10 +565,6 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     viewerOpenLease.unref();
   }
 
-  function writeEvent(response, event, data) {
-    response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  }
-
   function removeViewer(response) {
     const viewer = viewers.get(response);
     if (!viewer) {
@@ -518,6 +575,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   function notify(event, data) {
+    hub.notify(hubKey, event, data);
     for (const response of viewers.keys()) {
       try {
         writeEvent(response, event, data);
@@ -529,33 +587,25 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   function openViewerStream(response, writable) {
-    response.writeHead(200, {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-store",
-      Connection: "keep-alive",
-      "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
-      "X-Content-Type-Options": "nosniff",
-      "Referrer-Policy": "no-referrer"
-    });
-    response.flushHeaders();
-    const heartbeat = setInterval(() => {
-      try {
-        response.write(": keep-alive\n\n");
-      } catch {
-        removeViewer(response);
-        response.destroy();
-      }
-    }, VIEWER_HEARTBEAT_MS);
-    heartbeat.unref();
+    const heartbeat = openEventStream(response, () => removeViewer(response));
     viewers.set(response, { heartbeat, writable });
-    response.once("close", () => removeViewer(response));
     if (writable) clearViewerOpenLease();
     writeEvent(response, "session", sessionSnapshot());
     onViewer?.((event, data) => writeEvent(response, event, data));
   }
 
+  // A tab joins the shared stream with its own write session, which decides whether it counts as a writable tab, exactly as its own stream would.
+  // It starts from the session snapshot and the pending notices, sent on the shared stream for this page only.
+  function joinHub(stream, tab, writable) {
+    if (!hub.join(stream, tab, hubKey, writable)) return false;
+    if (writable) clearViewerOpenLease();
+    hub.send(stream, hubKey, "session", sessionSnapshot());
+    onViewer?.((event, data) => hub.send(stream, hubKey, event, data));
+    return true;
+  }
+
   function writableViewerCount() {
-    let count = 0;
+    let count = hub.count(hubKey, { writable: true });
     for (const viewer of viewers.values()) if (viewer.writable) count += 1;
     return count;
   }
@@ -667,6 +717,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
 
   function closeViewerStreams() {
     clearViewerOpenLease();
+    hub.close();
     for (const response of viewers.keys()) {
       removeViewer(response);
       response.end();
@@ -678,8 +729,6 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       await serveFile(response, path.join(PUBLIC_DIR, "review.html"), "text/html; charset=utf-8");
     } else if (route === "/review.js") {
       await serveFile(response, path.join(PUBLIC_DIR, "review.js"), "text/javascript; charset=utf-8");
-    } else if (route === "/review.css") {
-      await serveFile(response, path.join(PUBLIC_DIR, "review.css"), "text/css; charset=utf-8");
     } else if (route === "/favicon.svg" || route === "/prism-mark.svg") {
       await serveFile(response, path.join(PUBLIC_DIR, route.slice(1)), "image/svg+xml");
     } else if (route === "/vendor/plantuml.js") {
@@ -688,10 +737,51 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       await serveFile(response, path.join(VENDOR_DIR, "viz-global.js"), "text/javascript; charset=utf-8");
     } else if (route === "/c4.min.js" || route === "/vendor/c4.min.js") {
       await serveFile(response, path.join(VENDOR_DIR, "c4.min.js"), "text/javascript; charset=utf-8");
+    } else if (route === "/kit/catalog") {
+      await serveFile(response, path.join(KIT_DIR, "catalog.html"), "text/html; charset=utf-8");
+    } else if (route.startsWith("/kit/") || route.startsWith("/styles/")) {
+      const asset = publicAsset(route);
+      if (asset) await serveFile(response, asset.file, asset.type);
+      else send(response, 404, "Not found");
+    } else if (route === "/api/preferences" && request.method === "GET") {
+      send(response, 200, JSON.stringify(await readPreferences()), "application/json; charset=utf-8");
+    } else if (route === "/api/preferences" && request.method === "PUT") {
+      if (!fromPage(request)) {
+        send(response, 403, "Preferences must come from the review page as JSON.");
+        return;
+      }
+      try {
+        let change;
+        try {
+          change = JSON.parse(await readBody(request));
+        } catch {
+          throw Object.assign(new Error("The preferences must be a JSON object with theme, density, or both."), { code: "invalid_preference" });
+        }
+        send(response, 200, JSON.stringify(await writePreferences(change)), "application/json; charset=utf-8");
+      } catch (error) {
+        if (error.code !== "invalid_preference") throw error;
+        send(response, 400, JSON.stringify({ code: error.code, message: error.message }), "application/json; charset=utf-8");
+      }
     } else if (/^\/views\/[a-z][a-z-]*\.js$/.test(route)) {
       await serveFile(response, path.join(VIEWS_DIR, route.slice("/views/".length)), "text/javascript; charset=utf-8");
     } else if (route === "/api/events" && request.method === "GET") {
       openViewerStream(response, canWrite(url.searchParams.get("write")));
+    } else if (route === "/api/events/shared" && request.method === "GET") {
+      hub.open(response);
+    } else if ((route === "/api/events/join" || route === "/api/events/leave") && request.method === "POST") {
+      if (!fromPage(request)) {
+        sendJson(response, 403, { code: "origin_refused", message: "A tab joins the event stream from the review page as JSON." });
+        return;
+      }
+      const body = await readJson(request);
+      if (route === "/api/events/leave") {
+        hub.leave(body?.stream, body?.tab);
+        sendJson(response, 200, {});
+      } else if (joinHub(body?.stream, body?.tab, writableRequest(request))) {
+        sendJson(response, 200, { project: hubKey });
+      } else {
+        sendJson(response, 404, { code: "stream_gone", message: "The event stream closed; join the stream that replaced it." });
+      }
     } else if (route === "/api/index") {
       const artifacts = await listArtifacts(projectRoot), sources = await listSourceFiles(projectRoot);
       const available = new Set([...artifacts, ...sources]);
@@ -772,6 +862,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         return;
       }
       send(response, 200, JSON.stringify(await loadEntity(projectRoot, ref, { intelligenceDirectories: intelligenceDirectories() })), "application/json; charset=utf-8");
+    } else if (route === "/api/claims" && request.method === "GET") {
+      send(response, 200, JSON.stringify(await loadClaims(projectRoot)), "application/json; charset=utf-8");
     } else if (route === "/api/evidence") {
       send(response, 200, JSON.stringify(await loadEvidence(projectRoot, url.searchParams.get("id"), evidenceStore())), "application/json; charset=utf-8");
     } else if (route === "/api/indexing" && request.method === "GET") {
@@ -799,6 +891,10 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         return;
       }
       send(response, 200, JSON.stringify(loaded), "application/json; charset=utf-8");
+    } else if (wantsPage(request) && !/^\/(api|kit|styles|views|vendor)\//.test(route)) {
+      // A page address the app no longer has, such as one from an earlier release, opens the project's start page instead of a line of text.
+      response.writeHead(302, { Location: `${baseUrl}/`, "Cache-Control": "no-store" });
+      response.end();
     } else {
       send(response, 404, "Not found");
     }
@@ -816,7 +912,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     },
     currentSession,
     viewerCount() {
-      return viewers.size;
+      return viewers.size + hub.count(hubKey);
     },
     writableViewerCount,
     notify,
@@ -855,7 +951,7 @@ export async function startReviewServer(options = {}) {
       }
       const url = new URL(request.url, "http://127.0.0.1");
       if (!url.pathname.startsWith(prefix)) {
-        send(response, 404, "Not found");
+        await serveOutsideSession(request, response, url.pathname);
         return;
       }
       await review.handle(request, response, url.pathname.slice(prefix.length) || "/", url);
@@ -899,6 +995,8 @@ export async function startReviewServer(options = {}) {
     },
     close() {
       review.closeViewers();
+      // An open page reuses its keep-alive sockets to poll and to reopen its event stream, so a close that waited for them would last as long as the page.
+      server.closeAllConnections?.();
       return new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
   };

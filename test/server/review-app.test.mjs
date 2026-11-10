@@ -559,12 +559,64 @@ test("the served review page carries the project switcher and the notice banner"
   const root = await project(context, "page");
   const url = await (await pool(context, { app: { directory } }).get(root, "task")).reviewUrl([]);
   const page = (await request(url)).body;
-  assert.match(page, /id="project-switcher"/);
+  assert.match(page, /id="project-button"/);
   assert.match(page, /id="project-menu"/);
   assert.match(page, /id="notice"/);
   const client = (await request(new URL("review.js", url))).body;
   assert.match(client, /\.\/api\/projects/);
-  assert.match(client, /addEventListener\("notice"/);
+  // The page handles notices that reach it over the shared event stream.
+  assert.match(client, /name === "notice"/);
+});
+
+test("addresses the app cannot open show the app's own page or a project, never a line of text", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "routes");
+  const url = await (await pool(context, { app: { directory } }).get(root, "task")).reviewUrl([]);
+  const projectBase = new URL(url);
+  const viewer = projectBase.pathname.replace(/\/p\/[0-9a-f]{16}\/$/, "");
+  const page = { Accept: "text/html" };
+  const origin = `http://127.0.0.1:${projectBase.port}`;
+
+  // Without the current viewer credential the page says the link no longer works and names no project.
+  for (const address of [`${origin}/`, `${origin}/session/stale-credential/p/0123456789abcdef/`]) {
+    const answer = await request(address, { headers: page });
+    assert.equal(answer.status, 404);
+    assert.match(answer.headers["content-type"], /^text\/html/);
+    assert.match(answer.body, /data-reason="expired"/);
+    assert.ok(!answer.body.includes(root) && !answer.body.includes(path.basename(root)), "the page names no project");
+  }
+  // The page's own files carry no project data, so they load without the credential; nothing else does.
+  assert.equal((await request(`${origin}/kit/tokens.css`)).status, 200);
+  assert.equal((await request(`${origin}/styles/unavailable.css`)).status, 200);
+  assert.equal((await request(`${origin}/review.js`)).status, 404);
+  assert.equal((await request(`${origin}/kit/%2e%2e/review.html`)).status, 404);
+  assert.equal((await request(`${origin}/session/stale-credential/p/0123456789abcdef/api/index`)).status, 404, "a call from a stale page gets a plain refusal");
+
+  // The app's address opens the project used last, and an unknown project's page opens it with a notice.
+  const home = await request(`${origin}${viewer}/`, { headers: page });
+  assert.equal(home.status, 302);
+  assert.equal(home.headers.location, projectBase.pathname);
+  const missing = await request(`${origin}${viewer}/p/0123456789abcdef/review?artifact=docs%2Fgone.md`, { headers: page });
+  assert.equal(missing.status, 302);
+  assert.equal(missing.headers.location, `${projectBase.pathname}?missing=project`);
+  assert.equal((await request(`${origin}${viewer}/p/0123456789abcdef/api/index`)).status, 404, "a call for an unknown project is refused, not redirected");
+
+  // A page address that a project no longer has opens the project's start page.
+  const old = await request(new URL("initiatives/old-page", url), { headers: page });
+  assert.equal(old.status, 302);
+  assert.equal(old.headers.location, url.replace(/\/$/, "") + "/");
+  assert.equal((await request(new URL("api/no-such-route", url), { headers: page })).status, 404);
+});
+
+test("an app with no project yet shows the app's own page at its address", async (context) => {
+  const directory = await appDirectory(context);
+  const app = await startReviewApp({ directory, idleMs: 60000 });
+  context.after(() => app.close());
+  const answer = await request(app.viewerUrl, { headers: { Accept: "text/html" } });
+  assert.equal(answer.status, 404);
+  assert.match(answer.body, /data-reason="empty"/);
+  const unknown = await request(new URL("p/0123456789abcdef/", app.viewerUrl), { headers: { Accept: "text/html" } });
+  assert.match(unknown.body, /data-reason="empty"/);
 });
 
 test("reading the review URL without tabs leaves the session unchanged", async (context) => {
@@ -1120,4 +1172,24 @@ test("a session does not trust a state directory that others can read", { skip: 
   const url = new URL(await (await pool(context, { app: { directory } }).get(root, "task")).reviewUrl([]));
   assert.ok(!url.pathname.includes("/p/"));
   await assert.rejects(readFile(path.join(directory, "review-app.json")), { code: "ENOENT" }, "nothing is written to an untrusted directory");
+});
+
+// Every open tab lists the projects every few seconds, so the list keeps each project's gate count rather than reading every project's records each time.
+test("the project list keeps a gate count until a session registers the project again", async (context) => {
+  const directory = await appDirectory(context);
+  const current = await project(context, "lister");
+  const currentUrl = await (await pool(context, { app: { directory } }).get(current, "task")).reviewUrl([]);
+  const gated = await gateProject(context, "kept", 1);
+  await registerRecent(directory, gated);
+  const gates = async () => JSON.parse((await request(new URL("api/projects", currentUrl))).body).projects.find((entry) => entry.projectRoot === gated).gates;
+  assert.equal(await gates(), 1);
+  const state = path.join(gated, "docs", "plans", "work", "state.json");
+  const record = JSON.parse(await readFile(state, "utf8"));
+  record.pending.push({ ...record.pending[0], id: "gate-00000001", question: "Another question?" });
+  await writeFile(state, JSON.stringify(record));
+  // The records themselves are shared for a second within the process, so the test waits that long to see the list read them again.
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.equal(await gates(), 1, "a list within the keep time answers the kept count without reading the records");
+  await registerRecent(directory, gated);
+  assert.equal(await gates(), 2, "a session that registers the project renews its count at once");
 });

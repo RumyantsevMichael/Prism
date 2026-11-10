@@ -7,5 +7,5 @@ import { escapeHtml } from "./util.js";
 export function shippedHistoryHtml(shippedHistory) {
   if (shippedHistory === null || shippedHistory === undefined) return "";
   const changed = shippedHistory.changedAfterShip === true ? '<p class="shipped-history-changed">This document changed after the initiative shipped.</p>' : "";
-  return `<aside class="shipped-history" role="note"><p class="shipped-history-label">${escapeHtml(shippedHistory.label ?? "")}</p>${changed}</aside>`;
+  return `<prism-banner class="shipped-history" tone="warning"><p class="shipped-history-label">${escapeHtml(shippedHistory.label ?? "")}</p>${changed}</prism-banner>`;
 }

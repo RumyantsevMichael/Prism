@@ -50,7 +50,7 @@ const context = (state = {}) => ({
   openEvidence() {}
 });
 
-const LABEL = /<span class="component-chip" data-component="([a-z0-9_/-]+)">([^<]*)<\/span>/g;
+const LABEL = /<prism-chip data-component="([a-z0-9_/-]+)">([^<]*)<\/prism-chip>/g;
 const labels = (html) => [...html.matchAll(LABEL)].map(([, name, text]) => [name, text.trim()]);
 
 async function withEntities(t, root, run) {

@@ -1,5 +1,6 @@
 import { escapeHtml } from "./util.js";
 import { createActionList } from "./actions.js";
+import { createPoller } from "./poller.js";
 
 // The index build reports unrelated totals per step, so the chip shows the current step and its own percentage, never an overall one.
 const STEPS = [
@@ -84,7 +85,7 @@ function stepsHtml(progress) {
   return `<ol class="indexing-steps">${STEPS.map((step, index) => {
     const state = index < current ? "done" : index === current ? "current" : "pending";
     const meter = index === current
-      ? `<span class="indexing-step-meter${share === null ? " indeterminate" : ""}" role="progressbar" aria-label="${escapeHtml(step.label)}"${share === null ? "" : ` aria-valuemin="0" aria-valuemax="100" aria-valuenow="${share}"`}><span style="width:${share ?? 100}%"></span></span>
+      ? `<prism-meter class="indexing-step-meter" label="${escapeHtml(step.label)}"${share === null ? "" : ` value="${share}"`}></prism-meter>
         <span class="indexing-step-detail">${escapeHtml(phaseDetail(progress))}${share === null ? "" : ` · ${share}%`}</span>`
       : "";
     return `<li class="indexing-step ${state}"><span class="indexing-step-label">${escapeHtml(step.label)}</span>${meter}</li>`;
@@ -104,7 +105,7 @@ function indexHtml(status) {
     coverage.complete === false ? ["Coverage", "Partial: some files were skipped or not fully parsed"] : null,
     index.diagnostics ? ["Diagnostics", String(index.diagnostics)] : null
   ].filter(Boolean);
-  return `<dl class="indexing-facts">${facts.map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd title="${escapeHtml(value)}">${escapeHtml(value)}</dd>`).join("")}</dl>`;
+  return `<dl class="indexing-facts">${facts.map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd>`).join("")}</dl>`;
 }
 
 const COMPONENT_STATES = { preparing: "Building", failed: "Failed", interrupted: "Stopped", ready: "Indexed", none: "Not indexed" };
@@ -116,14 +117,14 @@ export function componentState(status, identity) {
   return status.components.find((entry) => entry.component === identity)?.state ?? "none";
 }
 
-// Each component with an index or a recorded build, in component order; a long identity ends in an ellipsis and its tooltip gives it whole.
+// Each component with an index or a recorded build, in component order; a long identity wraps.
 function componentsHtml(status) {
   if (!status.components?.length) return "";
   return `<p class="indexing-panel-title">Components</p><ul class="indexing-components">${status.components.map(({ component, state }) =>
-    `<li class="indexing-component-row" data-state="${escapeHtml(state)}" title="${escapeHtml(`${component}: ${COMPONENT_STATES[state] ?? state}`)}"><span class="indexing-dot" aria-hidden="true"></span><span class="indexing-component-name">${escapeHtml(component)}</span><span class="indexing-component-state">${escapeHtml(COMPONENT_STATES[state] ?? state)}</span></li>`).join("")}</ul>`;
+    `<li class="indexing-component-row" data-state="${escapeHtml(state)}"><span class="indexing-dot" aria-hidden="true"></span><span class="indexing-component-name">${escapeHtml(component)}</span><span class="indexing-component-state">${escapeHtml(COMPONENT_STATES[state] ?? state)}</span></li>`).join("")}</ul>`;
 }
 
-const componentPrefix = (item) => item.component ? `<span class="indexing-diagnostic-component" title="${escapeHtml(item.component)}">${escapeHtml(item.component)}</span> ` : "";
+const componentPrefix = (item) => item.component ? `<span class="indexing-diagnostic-component">${escapeHtml(item.component)}</span> ` : "";
 
 function rebuildWhen(status) {
   return status.autoRebuild ? "This page rebuilds it once the files stay unchanged for a minute." : `The next agent search or ${status.components ? "a component's Rebuild" : "Rebuild index"} updates it.`;
@@ -132,7 +133,7 @@ function rebuildWhen(status) {
 function summaryHtml(status) {
   if (status.state === "preparing") {
     const component = status.progress?.component;
-    const building = component ? `<p class="indexing-building" title="${escapeHtml(component)}">Building <code>${escapeHtml(component)}</code></p>` : "";
+    const building = component ? `<p class="indexing-building">Building <code>${escapeHtml(component)}</code></p>` : "";
     return `${building}<p>Started ${escapeHtml(relativeTime(status.startedAt))}.${status.index ? ` Searches use the previous index${component ? " of each component" : ""} until this build finishes.` : ""}</p>${stepsHtml(status.progress)}`;
   }
   if (changedDuringBuild(status)) return `<p>Files changed while the index was being built. ${rebuildWhen(status)}</p>`;
@@ -150,11 +151,11 @@ function summaryHtml(status) {
 
 // The summary of the index status; the page's panel lists each component with its rebuild control in place of the component list.
 export function panelHtml(status, { components = true } = {}) {
-  return `<p class="indexing-panel-title">Repository index</p>${summaryHtml(status)}${indexHtml(status)}${components ? componentsHtml(status) : ""}
+  return `${summaryHtml(status)}${indexHtml(status)}${components ? componentsHtml(status) : ""}
     <p class="indexing-panel-note">Agents also build and update the index when they search.${status.autoRebuild ? "" : " Background indexing is off for this project, so this page rebuilds it only when you ask."}</p>`;
 }
 
-const STATE_TONES = { ready: "is-good", preparing: "is-info", failed: "is-bad", interrupted: "is-warn", none: "is-unknown" };
+const STATE_TONES = { ready: "success", preparing: "info", failed: "danger", interrupted: "warning", none: "neutral" };
 
 let latest = null;
 
@@ -163,22 +164,25 @@ export function currentIndexStatus() {
   return latest;
 }
 
+/** The status bar's index item: `button` is a kit button, `panel` the prism-popover it opens, and `meter` a prism-meter in the button. */
 export function createIndexingStatus({ root, button, label, detail, meter, panel, fetchJson, actionApi = null, component = root.querySelector(".indexing-component") }) {
   let status = null;
-  let timer = null;
   let rendered = "";
-  panel.innerHTML = '<div data-index-summary></div><div class="index-actions" data-index-actions></div>';
-  const summary = panel.querySelector("[data-index-summary]");
-  const actionsRoot = panel.querySelector("[data-index-actions]");
+  // The popover keeps its own heading and body, so the details and the rebuild controls render into holders in its body.
+  const summary = document.createElement("div");
+  summary.className = "indexing-details";
+  const actionsRoot = document.createElement("div");
+  actionsRoot.className = "index-actions";
+  panel.append(summary, actionsRoot);
   let controls = null;
   // Each index target of this checkout gets one rebuild control from its listing, labeled with its component and that component's indexing state.
   const heading = (action) => {
     const identity = action.target.slice("index:".length);
     const state = componentState(status, identity);
-    return { label: `<code class="indexing-component-name" title="${escapeHtml(identity)}">${escapeHtml(identity)}</code>`, detail: state ? `<span class="status-pill ${STATE_TONES[state] ?? "is-unknown"}">${escapeHtml(COMPONENT_STATES[state] ?? state)}</span>` : "" };
+    return { label: `<code class="indexing-component-name">${escapeHtml(identity)}</code>`, detail: state ? `<prism-badge variant="status" tone="${STATE_TONES[state] ?? "neutral"}">${escapeHtml(COMPONENT_STATES[state] ?? state)}</prism-badge>` : "" };
   };
   async function refreshControls() {
-    if (!actionApi || panel.hidden) return;
+    if (!actionApi || !panel.isOpen) return;
     let targets;
     try {
       targets = (await fetchJson("./api/actions/targets?kind=index")).targets;
@@ -194,7 +198,7 @@ export function createIndexingStatus({ root, button, label, detail, meter, panel
     const chip = chipState(status);
     root.hidden = !chip;
     if (!chip) {
-      setOpen(false);
+      panel.close?.();
       return;
     }
     root.dataset.tone = chip.tone;
@@ -206,9 +210,9 @@ export function createIndexingStatus({ root, button, label, detail, meter, panel
       component.hidden = !chip.component;
     }
     meter.hidden = chip.tone !== "busy";
-    meter.classList.toggle("indeterminate", chip.meter === null || chip.meter === undefined);
-    meter.firstElementChild.style.width = `${chip.meter ?? 100}%`;
-    button.title = [chip.label, [chip.component, chip.detail].filter(Boolean).join(" · ")].filter(Boolean).join(": ");
+    if (chip.meter === null || chip.meter === undefined) meter.removeAttribute("value");
+    else meter.setAttribute("value", String(chip.meter));
+    button.setAttribute("tip", [chip.label, [chip.component, chip.detail].filter(Boolean).join(" · ")].filter(Boolean).join(": "));
     // The panel is rebuilt only when its content changes, so an open panel keeps its scroll position between polls.
     const html = panelHtml(status, { components: !actionApi });
     if (html !== rendered) {
@@ -218,15 +222,7 @@ export function createIndexingStatus({ root, button, label, detail, meter, panel
     controls?.render();
   }
 
-  function setOpen(open) {
-    const opening = open && panel.hidden;
-    panel.hidden = !open;
-    button.setAttribute("aria-expanded", String(open));
-    if (opening) void refreshControls();
-  }
-
-  async function refresh() {
-    clearTimeout(timer);
+  async function load() {
     try {
       status = await fetchJson("./api/indexing");
     } catch {
@@ -235,24 +231,17 @@ export function createIndexingStatus({ root, button, label, detail, meter, panel
     render();
     void refreshControls();
     document.dispatchEvent(new CustomEvent("prism:indexing", { detail: status }));
-    timer = setTimeout(refresh, status?.state === "preparing" ? ACTIVE_POLL_MS : IDLE_POLL_MS);
   }
 
-  button.addEventListener("click", () => setOpen(panel.hidden));
-  // An applied rebuild shows as a running build at once.
+  // A running build is checked often and an idle index seldom, one check at a time and only while the tab is shown.
+  const poller = createPoller({ run: load, interval: () => (status?.state === "preparing" ? ACTIVE_POLL_MS : IDLE_POLL_MS) });
+  const refresh = () => poller.now();
+
+  // Opening the popover lists the rebuild controls, and an applied rebuild shows as a running build at once.
+  panel.addEventListener("prism-open", () => void refreshControls());
   document.addEventListener("prism:action", (event) => {
     if (event.detail?.action === "index.rebuild") void refresh();
   });
-  document.addEventListener("click", (event) => {
-    // The path is read at dispatch, so a control that a re-render replaced still counts as inside the panel.
-    if (!panel.hidden && !event.composedPath().includes(root)) setOpen(false);
-  });
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !panel.hidden) {
-      setOpen(false);
-      button.focus();
-    }
-  });
-  void refresh();
+  void poller.start();
   return { refresh };
 }

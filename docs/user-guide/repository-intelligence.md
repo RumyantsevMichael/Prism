@@ -123,8 +123,9 @@ A repository without components keeps one index of the whole repository, so an i
 
 A search of the current files with `filters.paths` prepares and reads only the components that hold a file at or under those paths.
 A search without paths prepares and reads every component that holds a file.
-Prism prepares one index at a time, in component order: the root component first, then the declared components in declaration order.
-The components that a later call needs move ahead of components that only an earlier call waits for, and the running preparation always finishes.
+Prism builds one index at a time: the declared components in declaration order, then the root component, which usually holds the largest tree of documents and would otherwise hold back every package queued behind it.
+The components that a later call needs move ahead of components that only an earlier call waits for, and the running build always finishes.
+A component whose index for its current files is already stored, as after a restart, only loads it, which runs at once beside the running build instead of waiting in the queue.
 A component is prepared again only when its own files change, and its new index reuses the embeddings of its unchanged fragments.
 A component that another session is preparing is reported `preparing`, and this server tries it again every few seconds while it prepares the other components.
 A component whose storage lock names a running process but has gone unrenewed for more than 30 seconds, as when a killed session's process id was reused, fails with `lock_timeout`, and its diagnostic names the lock file to delete when no session is preparing that component.
@@ -193,8 +194,9 @@ An agent's search also starts or retries a build.
 While a page of the project is open, the review browser rebuilds an index that is out of date once the files stayed unchanged for a minute, at most once every five minutes, so slice pages show current line ranges.
 The index panel's Rebuild index button, or in a repository with components a component's Rebuild button, starts a build at once.
 To keep a project from building at startup or from the open page, add `- Background indexing: off` under `## Repository intelligence` in `.prism/workflow.md`; searches and the button still build the index.
-In a repository with components, background preparation at startup rebuilds, in component order, only the components that already have an index and whose files changed, so a component that no tool has read yet is never built in the background.
-The review browser's automatic rebuild prepares each component that has an index or a recorded failed build and whose files changed or whose latest build failed, including one that reached a native limit, and no other component.
+In a repository with components, background preparation at startup rebuilds, in the build order above, only the components that already have an index and whose files changed, so a component that no tool has read yet is never built in the background.
+The review browser's automatic rebuild prepares each component that has an index or a recorded failed build and whose files changed or whose latest build failed, and no other component.
+Unlike the buttons, the automatic rebuild leaves a component whose latest build reached a native limit until its files change, because the same files would reach the same limit again.
 A component's Rebuild button in the index panel prepares only that component, also when it has no index yet, when its files changed, or when its latest build failed, including one that reached a native limit, and reuses its index while it is up to date.
 An invalid `## Components` declaration builds nothing in the background or from the page, and the chip shows the declaration's refusal as a failed build.
 `Not indexed` means no build has run yet, and `Indexing stopped` means the session that ran the build ended before it finished.

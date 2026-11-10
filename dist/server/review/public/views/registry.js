@@ -13,7 +13,7 @@ export async function renderView(container, data, ctx) {
     const view = await load();
     await view.render(container, data, ctx);
   } catch (error) {
-    container.innerHTML = `<section class="view-card"><p class="error">The structured view failed: ${escapeHtml(error.message)}</p></section>`;
+    container.innerHTML = `<prism-panel class="view-section"><p class="error">The structured view failed: ${escapeHtml(error.message)}</p></prism-panel>`;
     const fallback = document.createElement("div");
     container.appendChild(fallback);
     (await VIEWS.json()).render(fallback, data, ctx);

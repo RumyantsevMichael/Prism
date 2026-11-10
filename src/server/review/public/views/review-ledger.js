@@ -1,5 +1,5 @@
 import { jsonTreeHtml } from "./json-tree.js";
-import { artifactChip, bindLinks, card, emptyNote, escapeHtml, evidenceChip, formatReference, formatTime, keyValues, plural, shortId } from "./util.js";
+import { badge, bindLinks, card, chip, emptyState, escapeHtml, evidenceChip, formatSelector, formatTime, keyValues, pathText, plural, recordChip, shortId, stat, summaryPanel } from "./util.js";
 import { runTotalsHtml, waveRunTotals } from "./run-totals.js";
 
 const STATUSES = ["OPEN", "IN PROGRESS", "REOPENED", "FIXED", "VERIFIED"];
@@ -9,12 +9,16 @@ function token(value) {
   return String(value).toLowerCase().replace(/[^a-z0-9]+/g, "-");
 }
 
+const STATUS_TONES = { OPEN: "danger", "IN PROGRESS": "info", REOPENED: "warning", FIXED: "accent", VERIFIED: "success" };
+const SEVERITY_TONES = { blocker: "danger", high: "warning", medium: "info", low: "neutral" };
+const RESULT_TONES = { clean: "success", passed: "success", pass: "success", findings: "warning", failed: "danger", fail: "danger", pending: "neutral" };
+
 function statusBadge(status) {
-  return `<span class="finding-status status-${token(status)}">${escapeHtml(status)}</span>`;
+  return badge(status, STATUS_TONES[status] ?? "neutral");
 }
 
 function severityBadge(severity) {
-  return `<span class="severity severity-${token(severity)}">${escapeHtml(severity)}</span>`;
+  return badge(severity, SEVERITY_TONES[severity] ?? "neutral");
 }
 
 function raisedIn(finding) {
@@ -42,79 +46,79 @@ function waveCard(wave, index, findings, current, startedAt) {
   const raised = counts[0][1];
   const lanes = wave.lanes.map((lane) => `<li>
     <span class="lane-name">${escapeHtml(lane.id)}</span>
-    <span class="lane-reviewer">${escapeHtml(lane.reviewer)}</span>
-    ${lane.result ? `<span class="lane-result result-${token(lane.result.status)}">${escapeHtml(lane.result.status)}</span>` : '<span class="lane-result result-pending">pending</span>'}
+    <span class="muted">${escapeHtml(lane.reviewer)}</span>
+    ${lane.result ? badge(lane.result.status, RESULT_TONES[token(lane.result.status)] ?? "neutral") : badge("pending")}
   </li>`).join("");
-  return `<li class="wave ${wave.accepted ? "is-accepted" : ""} ${current ? "is-current" : ""}">
-    <div class="wave-marker" aria-hidden="true">${index + 1}</div>
+  return `<li class="wave${wave.accepted ? " is-accepted" : ""}${current ? " is-current" : ""}">
+    <span class="wave-marker" aria-hidden="true">${index + 1}</span>
     <div class="wave-body">
-      <div class="wave-head"><strong>${escapeHtml(wave.id)}</strong><span class="wave-mode">${escapeHtml(wave.mode)}</span>${current ? '<span class="status-pill is-info">current</span>' : ""}</div>
-      ${startedAt ? `<p class="wave-started">Started ${escapeHtml(formatTime(startedAt))}</p>` : ""}
-      <p class="wave-accepted">${wave.accepted ? `Accepted by <strong>${escapeHtml(wave.accepted.actor)}</strong> · ${escapeHtml(formatTime(wave.accepted.at))}` : "Not accepted"}</p>
+      <div class="wave-head"><strong>${escapeHtml(wave.id)}</strong><span class="muted">${escapeHtml(wave.mode)}</span>${current ? badge("current", "info") : ""}</div>
+      ${startedAt ? `<p class="muted">Started ${escapeHtml(formatTime(startedAt))}</p>` : ""}
+      <p class="muted">${wave.accepted ? `Accepted by <strong>${escapeHtml(wave.accepted.actor)}</strong> · ${escapeHtml(formatTime(wave.accepted.at))}` : "Not accepted"}</p>
       <ul class="lane-list">${lanes}</ul>
       ${runTotalsHtml(wave.runTotals, "wave")}
-      <div class="wave-evidence">
+      <div class="chip-row">
         ${wave.comparisonId ? `${evidenceChip(wave.snapshotId, "Snapshot")}
         ${evidenceChip(wave.comparisonId, "Comparison")}
         ${wave.baselineId && wave.baselineId !== wave.snapshotId ? evidenceChip(wave.baselineId, "Baseline") : ""}
-        <span class="meta-pill" title="${escapeHtml(wave.deltaRevision)}">delta ${escapeHtml(shortId(wave.deltaRevision))}</span>` : `<span class="meta-pill" title="${escapeHtml(wave.tree ?? "")}">verified tree ${escapeHtml(shortId(wave.tree ?? ""))}</span>${wave.base ? ` <span class="meta-pill">base ${escapeHtml(shortId(wave.base))}</span>` : ""}`}
+        ${chip(`delta ${escapeHtml(shortId(wave.deltaRevision))}`, { tip: wave.deltaRevision })}` : `${chip(`verified tree ${escapeHtml(shortId(wave.tree ?? ""))}`, { tip: wave.tree ?? "" })}${wave.base ? chip(`base ${escapeHtml(shortId(wave.base))}`, { tip: wave.base }) : ""}`}
       </div>
       <p class="wave-findings">${counts.filter(([, count]) => count).map(([label, count]) => `<span class="wave-count"><strong>${count}</strong> ${label}</span>`).join("") || "No finding changed in this wave"}
-        ${raised ? `<button type="button" class="text-button wave-filter" data-wave-filter="${escapeHtml(wave.id)}">Show raised findings</button>` : ""}</p>
+        ${raised ? `<prism-button variant="ghost" size="sm" data-wave-filter="${escapeHtml(wave.id)}">Show raised findings</prism-button>` : ""}</p>
     </div>
   </li>`;
 }
 
-function findingCard(finding, selected) {
-  return `<li><button type="button" class="finding-card ${selected ? "is-selected" : ""}" data-finding="${escapeHtml(finding.id)}">
-    <span class="finding-card-head">${severityBadge(finding.severity)}<code>${escapeHtml(finding.localId)}</code></span>
-    <strong>${escapeHtml(finding.title)}</strong>
-    <span class="finding-card-meta">${escapeHtml(finding.lane)} · ${escapeHtml(raisedIn(finding) || finding.mode)}</span>
-    ${finding.affectedPath ? `<span class="finding-card-path"><code>${escapeHtml(finding.affectedPath)}</code></span>` : ""}
-  </button></li>`;
+function findingCard(finding, selected, ctx) {
+  return `<li class="finding-item${selected ? " is-selected" : ""}" data-finding-item="${escapeHtml(finding.id)}">
+    <span class="finding-head">${severityBadge(finding.severity)}<code>${escapeHtml(finding.localId)}</code></span>
+    <a class="title-link finding-link" href="#finding-${escapeHtml(finding.localId)}" data-finding="${escapeHtml(finding.id)}"${selected ? ' aria-current="true"' : ""}>${escapeHtml(finding.title)}</a>
+    <span class="finding-meta muted">${escapeHtml(finding.lane)} · ${escapeHtml(raisedIn(finding) || finding.mode)}</span>
+    ${finding.affectedPath ? `<span class="finding-path">${pathText(finding.affectedPath, ctx)}</span>` : ""}
+  </li>`;
 }
 
-function findingDetail(finding) {
+function findingDetail(finding, ctx) {
   if (!finding) {
-    return `<p class="eyebrow">Details</p><h2>Select a finding</h2><p class="empty-note">Click a finding card to read its evidence, close condition, and status history.</p>`;
+    return emptyState("Select a finding", "Choose a finding on the board to read its evidence, close condition, and status history.");
   }
   const history = [...(finding.history ?? [])].reverse();
   // A revision names each changed field with its old and new value, and its entry's evidence is the reason.
   const revisionHtml = (revised) => [
-    revised.clause ? `<p class="timeline-sub">Contract clause ${revised.clause.from ? `<code>${escapeHtml(revised.clause.from)}</code>` : "none"} → ${revised.clause.to ? `<code>${escapeHtml(revised.clause.to)}</code>` : "removed"}</p>` : "",
-    revised.conditionToClose ? `<p class="timeline-sub">Condition to close was: ${escapeHtml(revised.conditionToClose.from)}</p>` : ""
+    revised.clause ? `<p class="muted">Contract clause ${revised.clause.from ? `<code>${escapeHtml(revised.clause.from)}</code>` : "none"} → ${revised.clause.to ? `<code>${escapeHtml(revised.clause.to)}</code>` : "removed"}</p>` : "",
+    revised.conditionToClose ? `<p class="muted">Condition to close was: ${escapeHtml(revised.conditionToClose.from)}</p>` : ""
   ].join("");
-  return `<p class="eyebrow">Finding · ${escapeHtml(finding.mode)}</p>
-    <h2>${escapeHtml(finding.title)}</h2>
-    <p class="detail-meta">${severityBadge(finding.severity)} ${statusBadge(finding.status)} <code>${escapeHtml(finding.id)}</code></p>
+  return `<p class="label-caps">Finding · ${escapeHtml(finding.mode)}</p>
+    <h3 class="item-title">${escapeHtml(finding.title)}</h3>
+    <p class="chip-row">${severityBadge(finding.severity)}${statusBadge(finding.status)}<code>${escapeHtml(finding.id)}</code></p>
     ${keyValues([
       ["Raised in", raisedIn(finding) ? `wave <code>${escapeHtml(raisedIn(finding))}</code>` : null],
-      ["Affected path", finding.affectedPath ? `<code>${escapeHtml(finding.affectedPath)}</code>` : null],
+      ["Affected path", finding.affectedPath ? pathText(finding.affectedPath, ctx) : null],
       ["Escalation", finding.escalationTarget ? escapeHtml(finding.escalationTarget) : null],
       ["Contract clause", finding.clause ? `<code>${escapeHtml(finding.clause)}</code>` : null],
       ["Probe", finding.probe ? `<code>${escapeHtml(finding.probe)}</code>` : null],
       ["Aliases", finding.aliases?.length ? finding.aliases.map((alias) => `<code>${escapeHtml(alias)}</code>`).join(" ") : null]
     ])}
-    <div class="detail-block"><h3>Evidence</h3><p>${escapeHtml(finding.evidence)}</p></div>
-    <div class="detail-block"><h3>Condition to close</h3><p>${escapeHtml(finding.conditionToClose)}</p></div>
-    ${finding.implementerEvidence ? `<div class="detail-block"><h3>Implementer evidence</h3><p>${escapeHtml(finding.implementerEvidence)}</p></div>` : ""}
-    <div class="detail-block"><h3>History</h3><ol class="timeline">${history.map((entry) => `<li>
-      <div class="timeline-head">${statusBadge(entry.status)}<span>${escapeHtml(entry.actor)}</span><span class="timeline-time">${escapeHtml(formatTime(entry.at))}</span></div>
-      <p class="timeline-sub">wave <code>${escapeHtml(entry.wave)}</code></p>
+    <div class="detail-block"><p class="label-caps">Evidence</p><p>${escapeHtml(finding.evidence)}</p></div>
+    <div class="detail-block"><p class="label-caps">Condition to close</p><p>${escapeHtml(finding.conditionToClose)}</p></div>
+    ${finding.implementerEvidence ? `<div class="detail-block"><p class="label-caps">Implementer evidence</p><p>${escapeHtml(finding.implementerEvidence)}</p></div>` : ""}
+    <div class="detail-block"><p class="label-caps">History</p><ol class="timeline">${history.map((entry) => `<li>
+      <div class="timeline-head">${statusBadge(entry.status)}<span>${escapeHtml(entry.actor)}</span><span class="muted">${escapeHtml(formatTime(entry.at))}</span></div>
+      <p class="muted">wave <code>${escapeHtml(entry.wave)}</code></p>
       ${entry.revised ? revisionHtml(entry.revised) : ""}
       ${entry.evidence ? `<p>${escapeHtml(entry.evidence)}</p>` : ""}
     </li>`).join("")}</ol></div>`;
 }
 
-function assessmentsTable(assessments) {
+function assessmentsTable(assessments, ctx) {
   if (!assessments.length) {
-    return emptyNote("No assessments recorded.");
+    return emptyState("No assessments recorded");
   }
   return `<div class="table-wrap"><table class="data-table"><thead><tr><th>Kind</th><th>Wave / lane</th><th>Reason</th><th>Evidence</th><th>Author</th></tr></thead><tbody>${assessments.map((item) => `<tr>
-    <td><span class="meta-pill">${escapeHtml(item.kind)}</span>${item.decision ? ` <span class="meta-pill">${escapeHtml(item.decision)}</span>` : ""}</td>
+    <td><span class="chip-row">${chip(escapeHtml(item.kind))}${item.decision ? chip(escapeHtml(item.decision)) : ""}</span></td>
     <td><code>${escapeHtml(item.wave)}</code> / <code>${escapeHtml(item.lane)}</code></td>
     <td>${escapeHtml(item.reason)}</td>
-    <td>${(item.evidence ?? []).map((reference) => `<code>${escapeHtml(formatReference(reference))}</code>`).join("<br>")}</td>
+    <td>${(item.evidence ?? []).map((reference) => pathText(reference.path, ctx, formatSelector(reference.selector))).join("<br>")}</td>
     <td>${escapeHtml(item.author)}${item.acceptedBy ? `<br><span class="muted">accepted by ${escapeHtml(item.acceptedBy)}</span>` : ""}</td>
   </tr>`).join("")}</tbody></table></div>`;
 }
@@ -136,55 +140,56 @@ export function render(container, data, ctx) {
   const blocking = findings.filter((finding) => finding.status !== "VERIFIED" && ["blocker", "high"].includes(finding.severity)).length;
   const unresolvedConflicts = (record.conflicts ?? []).filter((conflict) => !conflict.resolved).length;
 
+  const select = (name, label, options, value) => `<prism-field type="select" class="ledger-filter" label="${escapeHtml(label)}" data-filter="${name}">${options.map(([option, text]) => `<prism-option value="${escapeHtml(option)}"${option === value ? " selected" : ""}>${escapeHtml(text)}</prism-option>`).join("")}</prism-field>`;
   container.innerHTML = `
-    <section class="view-card summary-card">
-      <div class="stat-row">
-        <div class="stat"><span class="stat-value">${waves.length}</span><span class="stat-label">${waves.length === 1 ? "wave" : "waves"}</span></div>
-        <div class="stat"><span class="stat-value">${openCount}</span><span class="stat-label">unresolved findings</span></div>
-        <div class="stat ${blocking ? "is-bad" : ""}"><span class="stat-value">${blocking}</span><span class="stat-label">blocker / high not verified</span></div>
-        <div class="stat ${currentWave?.accepted ? "is-good" : "is-warn"}"><span class="stat-value">${currentWave ? (currentWave.accepted ? "Accepted" : "Open") : "—"}</span><span class="stat-label">current wave${currentWave ? ` <code>${escapeHtml(currentWave.id)}</code>` : ""}</span></div>
-        ${unresolvedConflicts ? `<div class="stat is-bad"><span class="stat-value">${unresolvedConflicts}</span><span class="stat-label">open conflicts</span></div>` : ""}
+    ${summaryPanel(`
+      <div class="stat-grid">
+        ${stat(waves.length === 1 ? "wave" : "waves", String(waves.length))}
+        ${stat("unresolved findings", String(openCount))}
+        ${stat("blocker / high not verified", String(blocking), { tone: blocking ? "danger" : "" })}
+        ${stat(currentWave ? `current wave ${currentWave.id}` : "current wave", currentWave ? (currentWave.accepted ? "Accepted" : "Open") : "—", { tone: currentWave?.accepted ? "success" : "warning" })}
+        ${unresolvedConflicts ? stat("open conflicts", String(unresolvedConflicts), { tone: "danger" }) : ""}
       </div>
       ${keyValues([
-        ["Change map", artifactChip(record.deltaPath, ctx)],
+        ["Change map", record.deltaPath ? recordChip(record.deltaPath, ctx) : null],
         ["Coordinator", escapeHtml(record.coordinator)],
         ["Delivery", escapeHtml([record.delivery, ...(record.deliveryWorkers ?? []).filter((worker) => worker !== record.delivery)].join(", "))],
         ["Exchange workers", record.exchangeWorkers?.length ? escapeHtml(record.exchangeWorkers.join(", ")) : null],
         ["Baseline", evidenceChip(record.baselineId, "Snapshot")]
-      ])}
-    </section>
-    ${card("Waves", waves.length ? `<ol class="wave-timeline">${waves.map((wave, index) => waveCard(wave, index, findings, wave === currentWave, starts[index])).join("")}</ol>` : emptyNote("No review wave has started."), { eyebrow: "Timeline" })}
+      ])}`)}
+    ${card("Waves", waves.length ? `<ol class="wave-timeline">${waves.map((wave, index) => waveCard(wave, index, findings, wave === currentWave, starts[index])).join("")}</ol>` : emptyState("No review wave has started"), { eyebrow: "Timeline" })}
     <div class="split-layout">
-      <section class="view-card split-main">
-        <header class="view-card-header board-header">
-          <div><p class="eyebrow">Findings board</p><h2>${plural(filtered.length, "finding")}</h2></div>
-          <div class="board-filters">
-            <label>Lane <select data-filter="lane"><option value="">All</option>${lanes.map((lane) => `<option value="${escapeHtml(lane)}"${lane === state.lane ? " selected" : ""}>${escapeHtml(lane)}</option>`).join("")}</select></label>
-            <label>Raised in <select data-filter="wave"><option value="">All waves</option>${raisingWaves.map((id) => `<option value="${escapeHtml(id)}"${id === state.wave ? " selected" : ""}>${escapeHtml(id)}</option>`).join("")}</select></label>
-            <label>Severity <select data-filter="severity"><option value="">All</option>${SEVERITIES.map((severity) => `<option value="${severity}"${severity === state.severity ? " selected" : ""}>${severity}</option>`).join("")}</select></label>
-          </div>
-        </header>
+      <prism-panel class="view-section ledger-board" heading="${escapeHtml(plural(filtered.length, "finding"))}" eyebrow="Findings board">
+        <div class="view-controls ledger-filters">
+          ${select("lane", "Lane", [["", "All"], ...lanes.map((lane) => [lane, lane])], state.lane)}
+          ${select("wave", "Raised in", [["", "All waves"], ...raisingWaves.map((id) => [id, id])], state.wave)}
+          ${select("severity", "Severity", [["", "All"], ...SEVERITIES.map((severity) => [severity, severity])], state.severity)}
+        </div>
         <div class="board">${STATUSES.map((status) => {
           const column = filtered.filter((finding) => finding.status === status).sort((left, right) => SEVERITIES.indexOf(left.severity) - SEVERITIES.indexOf(right.severity));
-          return `<div class="board-column column-${token(status)}"><h3>${statusBadge(status)}<span class="column-count">${column.length}</span></h3><ul>${column.map((finding) => findingCard(finding, finding.id === state.selected)).join("") || '<li class="column-empty">—</li>'}</ul></div>`;
+          return `<div class="board-column"><h4 class="board-column-head">${statusBadge(status)}<prism-badge variant="count">${column.length}</prism-badge></h4><ul class="finding-list">${column.map((finding) => findingCard(finding, finding.id === state.selected, ctx)).join("") || '<li class="column-none muted">—</li>'}</ul></div>`;
         }).join("")}</div>
-      </section>
-      <aside class="view-card detail-panel" aria-live="polite" data-detail></aside>
+      </prism-panel>
+      <prism-panel class="view-section ledger-detail" heading="Details"><div class="ledger-detail-body" aria-live="polite" data-detail></div></prism-panel>
     </div>
-    ${card("Assessments", assessmentsTable(record.assessments ?? []), { eyebrow: "Reviewer judgements" })}
-    ${record.conflicts?.length ? card("Conflicts", `<ul class="plain-list">${record.conflicts.map((conflict) => `<li><strong>${escapeHtml(conflict.id)}</strong> (${escapeHtml(conflict.lanes.join(" vs "))}, wave <code>${escapeHtml(conflict.wave)}</code>) — ${escapeHtml(conflict.reason)} ${conflict.resolved ? `<span class="status-pill is-good">resolved by ${escapeHtml(conflict.resolved.actor)}</span>` : '<span class="status-pill is-bad">open</span>'}</li>`).join("")}</ul>`, { eyebrow: "Lane disagreements" }) : ""}
-    ${record.history?.length ? `<details class="view-card history-card"><summary><span class="eyebrow">Operation history</span> ${plural(record.history.length, "operation")}</summary><ol class="timeline">${[...record.history].reverse().map((entry) => `<li><div class="timeline-head"><code>${escapeHtml(entry.operation)}</code><span>${escapeHtml(entry.actor)}</span><span class="timeline-time">${escapeHtml(formatTime(entry.at))}</span></div></li>`).join("")}</ol></details>` : ""}
-    ${record.legacy?.length ? `<details class="view-card history-card"><summary><span class="eyebrow">Imported legacy findings</span> ${plural(record.legacy.length, "file")}</summary>${jsonTreeHtml(record.legacy, { openDepth: 1 })}</details>` : ""}`;
+    ${card("Assessments", assessmentsTable(record.assessments ?? [], ctx), { eyebrow: "Reviewer judgements" })}
+    ${record.conflicts?.length ? card("Conflicts", `<ul class="row-list">${record.conflicts.map((conflict) => `<li><strong>${escapeHtml(conflict.id)}</strong> (${escapeHtml(conflict.lanes.join(" vs "))}, wave <code>${escapeHtml(conflict.wave)}</code>) — ${escapeHtml(conflict.reason)} ${conflict.resolved ? badge(`resolved by ${conflict.resolved.actor}`, "success") : badge("open", "danger")}</li>`).join("")}</ul>`, { eyebrow: "Lane disagreements" }) : ""}
+    ${record.history?.length ? `<prism-panel class="view-section"><prism-disclosure summary="Operation history · ${plural(record.history.length, "operation")}"><ol class="timeline">${[...record.history].reverse().map((entry) => `<li><div class="timeline-head"><code>${escapeHtml(entry.operation)}</code><span>${escapeHtml(entry.actor)}</span><span class="muted">${escapeHtml(formatTime(entry.at))}</span></div></li>`).join("")}</ol></prism-disclosure></prism-panel>` : ""}
+    ${record.legacy?.length ? `<prism-panel class="view-section"><prism-disclosure summary="Imported legacy findings · ${plural(record.legacy.length, "file")}">${jsonTreeHtml(record.legacy, { openDepth: 1, ctx, label: "Imported legacy findings" })}</prism-disclosure></prism-panel>` : ""}`;
 
   const detail = container.querySelector("[data-detail]");
-  const select = (id) => {
+  const choose = (id) => {
     state.selected = id;
-    for (const element of container.querySelectorAll(".finding-card")) {
-      element.classList.toggle("is-selected", element.dataset.finding === id);
+    for (const item of container.querySelectorAll("[data-finding-item]")) {
+      const selected = item.dataset.findingItem === id;
+      item.classList.toggle("is-selected", selected);
+      const link = item.querySelector("[data-finding]");
+      if (selected) link.setAttribute("aria-current", "true");
+      else link.removeAttribute("aria-current");
     }
-    detail.innerHTML = findingDetail(findings.find((finding) => finding.id === id));
+    detail.innerHTML = findingDetail(findings.find((finding) => finding.id === id), ctx);
   };
-  select(state.selected);
+  choose(state.selected);
   container.addEventListener("click", (event) => {
     const waveFilter = event.target.closest("[data-wave-filter]");
     if (waveFilter) {
@@ -192,9 +197,10 @@ export function render(container, data, ctx) {
       ctx.rerender();
       return;
     }
-    const button = event.target.closest("[data-finding]");
-    if (button) {
-      select(button.dataset.finding);
+    const link = event.target.closest("[data-finding]");
+    if (link) {
+      event.preventDefault();
+      choose(link.dataset.finding);
     }
   });
   for (const filter of container.querySelectorAll("[data-filter]")) {

@@ -1,7 +1,8 @@
 import { entityLabel, parseEntityRef, progressBar, stateBadge } from "./entities.js";
 import { highlight, highlightLines, languageOf } from "./highlight.js";
 import { anchorTarget, LINE_RANGE } from "./markdown.js";
-import { escapeHtml } from "./util.js";
+import { escapeHtml, pathName } from "./util.js";
+import { themeDiagram } from "../kit/diagram-theme.js";
 import { shippedHistoryHtml } from "./shipped-history.js";
 
 const SHOW_DELAY_MS = 400;
@@ -39,13 +40,13 @@ function entitySummary(entity) {
     const item = data.roadmapItem;
     body = `<p>${stateBadge(item.state)} <span class="muted">${escapeHtml(item.band)}</span></p><p>${escapeHtml(item.intent ?? "")}</p>${progressBar(item.progress)}`;
   } else if (entity.kind === "slice") {
-    body = `<p><span class="slice-status status-${escapeHtml(data.slice.status)}">${escapeHtml(data.slice.status)}</span> <span class="muted">${escapeHtml(data.initiativeTitle)}</span></p>${data.slice.outcome ? `<p>${escapeHtml(data.slice.outcome)}</p>` : ""}`;
+    body = `<p class="chip-row"><prism-badge variant="status">${escapeHtml(data.slice.status)}</prism-badge><span class="muted">${escapeHtml(data.initiativeTitle)}</span></p>${data.slice.outcome ? `<p>${escapeHtml(data.slice.outcome)}</p>` : ""}`;
   } else if (entity.kind === "roadmap") {
     body = `<p>${escapeHtml(data.serves || "")}</p><p class="muted">${data.items?.length ?? 0} initiatives</p>`;
   } else if (entity.kind === "attention") {
     body = `<p class="muted">${escapeHtml(String(data.gateCount ?? 0))} recorded questions</p>`;
   } else if (Array.isArray(data.entries)) {
-    body = `<p class="muted">${data.entries.length} documents in ${escapeHtml(data.directory ?? "")}</p>`;
+    body = `<p class="muted">${data.entries.length} documents</p>`;
   }
   return `${shippedHistoryHtml(data.shippedHistory)}<p class="eyebrow">${escapeHtml(label.eyebrow ?? entity.kind)}</p><h3>${escapeHtml(label.title)}</h3>${body}`;
 }
@@ -56,7 +57,7 @@ function sourceRange(data, start, end) {
   const last = Math.min(end, all.length, start + RANGE_LINES - 1);
   const lines = all.slice(start - 1, last).map((line, index) => `<li data-line="${start + index}"><code>${line || " "}</code></li>`).join("");
   const more = end > last ? `<p class="muted">${end - last} more lines; open the file to see them all.</p>` : "";
-  return `<p class="card-source">${escapeHtml(data.path)} · lines ${start}–${end}</p><ol class="source-lines preview-lines">${lines}</ol>${more}`;
+  return `<p class="preview-source" data-code-subject>${escapeHtml(data.path)} · lines ${start}–${end}</p><ol class="source-lines preview-lines" data-code-subject>${lines}</ol>${more}`;
 }
 
 function fittedDiagram(svg) {
@@ -74,7 +75,6 @@ function fittedDiagram(svg) {
     drawing.setAttribute("width", String(Math.round(width * scale)));
     drawing.setAttribute("height", String(Math.round(height * scale)));
   }
-  drawing.removeAttribute("style");
   drawing.setAttribute("aria-hidden", "true");
   return scratch.innerHTML;
 }
@@ -84,23 +84,30 @@ async function diagramSummary(head, source, drawDiagram) {
   const drawn = await drawDiagram(source);
   return drawn.error
     ? `${head}<p class="error">${escapeHtml(drawn.error)}</p>`
-    : `${head}<div class="preview-diagram">${fittedDiagram(drawn.svg)}</div>`;
+    : `${head}<div class="preview-diagram" data-diagram-sheet>${fittedDiagram(drawn.svg)}</div>`;
 }
 
-async function fileSummary(data, anchor, { renderMarkdown, kindLabel, drawDiagram }) {
-  const head = `<p class="card-source">${escapeHtml(data.path)}</p>`;
+// A preview names one of Prism's records by title and kind, and a repository file by its path, where code is the subject.
+function previewHead(data, describe) {
+  const { label, code } = pathName(data.path, { describe });
+  return code ? `<p class="preview-source" data-code-subject>${escapeHtml(data.path)}</p>` : `<p class="preview-source">${escapeHtml(label)}</p>`;
+}
+
+async function fileSummary(data, anchor, { renderMarkdown, kindLabel, drawDiagram, describe }) {
+  const head = previewHead(data, describe);
   if (data.kind === "source") {
     const range = anchor?.match(LINE_RANGE);
     if (range) return sourceRange(data, Number(range[1]), Number(range[2] ?? range[1]));
     const lines = data.content.split(/\r?\n/).slice(0, SOURCE_LINES).join("\n");
-    return `${head}<pre><code>${highlight(lines, languageOf(data.path))}</code></pre>`;
+    const language = languageOf(data.path);
+    return `${head}<prism-code${language ? ` language="${language}"` : ""}><pre><code>${highlight(lines, language)}</code></pre></prism-code>`;
   }
   if (data.kind) return `${head}<h3>${escapeHtml(kindLabel(data.kind))}</h3>`;
   if (data.path.toLowerCase().endsWith(".puml")) return diagramSummary(head, data.content, drawDiagram);
   const scratch = document.createElement("div");
   scratch.innerHTML = renderMarkdown(data.path, data.content);
   const section = sectionOf(scratch, anchor);
-  return `${head}<div class="document-content">${section || '<p class="muted">The document is empty.</p>'}</div>`;
+  return `${head}<prism-doc class="document-content">${section || '<p class="muted">The document is empty.</p>'}</prism-doc>`;
 }
 
 // A slice document of a shipped initiative previews with the label its page shows, so a link to old work never reads as current intent.
@@ -111,18 +118,18 @@ async function documentHistory(ref, fetchJson) {
 }
 
 /** The preview of an internal link's target: an entity's summary, or a file's start or linked section under any shipped history label it carries. */
-export async function previewHtml({ ref, anchor = null }, { fetchJson, renderMarkdown, kindLabel, drawDiagram = null }) {
+export async function previewHtml({ ref, anchor = null }, { fetchJson, renderMarkdown, kindLabel, drawDiagram = null, describe = null }) {
   if (parseEntityRef(ref)) return entitySummary(await fetchJson(`./api/entity?ref=${encodeURIComponent(ref)}`));
   const [data, history] = await Promise.all([fetchJson(`./api/artifact?path=${encodeURIComponent(ref)}`), documentHistory(ref, fetchJson)]);
-  return `${shippedHistoryHtml(history)}${await fileSummary(data, anchor, { renderMarkdown, kindLabel, drawDiagram })}`;
+  return `${shippedHistoryHtml(history)}${await fileSummary(data, anchor, { renderMarkdown, kindLabel, drawDiagram, describe })}`;
 }
 
 // Hovering or focusing an internal link shows what it points to: an entity's summary, the start of a file or the linked section, or a diagram drawn small.
 // A file's preview offers to show the whole file in the side panel when the page has one.
-export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, currentPath, drawDiagram = null, onShowInPanel = null }) {
+// The preview is a hover card on glass that only repeats what the link leads to, so it is no landmark or dialog of its own.
+export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, currentPath, drawDiagram = null, onShowInPanel = null, describe = null }) {
   const popover = document.createElement("div");
   popover.className = "link-preview";
-  popover.setAttribute("role", "tooltip");
   popover.hidden = true;
   document.body.appendChild(popover);
   const cache = new Map();
@@ -130,6 +137,8 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
   let showTimer = 0;
   let hideTimer = 0;
   let request = 0;
+  // A link the pointer entered while a preview was open, which takes the preview over only if the pointer rests on it.
+  let pending = null;
 
   function targetOf(element) {
     const anchor = element.dataset.docAnchor ?? null;
@@ -143,7 +152,7 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
     const key = `${ref}#${anchor ?? ""}`;
     const cached = cache.get(key);
     if (cached && Date.now() - cached.at < CACHE_MS) return cached.html;
-    const html = await previewHtml({ ref, anchor }, { fetchJson, renderMarkdown, kindLabel, drawDiagram });
+    const html = await previewHtml({ ref, anchor }, { fetchJson, renderMarkdown, kindLabel, drawDiagram, describe });
     cache.set(key, { at: Date.now(), html });
     return html;
   }
@@ -170,11 +179,11 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
       if (onShowInPanel && !parseEntityRef(target.ref)) {
         const bar = document.createElement("div");
         bar.className = "link-preview-actions";
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "tool-button link-preview-panel";
+        const button = document.createElement("prism-button");
+        button.setAttribute("variant", "ghost");
+        button.setAttribute("size", "sm");
         button.textContent = "Show in side panel";
-        button.title = "Show the whole file beside this page (Alt+click the link)";
+        button.setAttribute("tip", "Show the whole file beside this page (Alt+click the link)");
         button.addEventListener("click", () => {
           hide();
           onShowInPanel(target.ref, target.anchor);
@@ -183,6 +192,9 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
         popover.prepend(bar);
       }
       popover.hidden = false;
+      // A previewed diagram is recolored for the theme from the runtime's SVG text each time it shows.
+      const sheet = popover.querySelector("[data-diagram-sheet]");
+      if (sheet) themeDiagram(sheet.querySelector("svg"));
       place();
     } catch {
       if (current === request) hide();
@@ -191,6 +203,7 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
 
   function hide() {
     clearTimeout(showTimer);
+    pending = null;
     request += 1;
     popover.hidden = true;
     anchorElement = null;
@@ -203,10 +216,32 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
 
   function enter(element) {
     clearTimeout(hideTimer);
-    if (element === anchorElement) return;
-    hide();
-    anchorElement = element;
-    showTimer = setTimeout(() => show(element), SHOW_DELAY_MS);
+    if (element === anchorElement) {
+      cancelSwitch();
+      return;
+    }
+    if (popover.hidden) {
+      hide();
+      anchorElement = element;
+      showTimer = setTimeout(() => show(element), SHOW_DELAY_MS);
+      return;
+    }
+    // An open preview stays while the pointer crosses a neighboring link on its way to the preview, such as the next item of a list;
+    // only resting on that link switches the preview to it, and reaching the preview first cancels the switch.
+    clearTimeout(showTimer);
+    pending = element;
+    showTimer = setTimeout(() => {
+      pending = null;
+      request += 1;
+      anchorElement = element;
+      show(element);
+    }, SHOW_DELAY_MS);
+  }
+
+  function cancelSwitch() {
+    if (!pending) return;
+    clearTimeout(showTimer);
+    pending = null;
   }
 
   const selector = "[data-artifact], a[data-doc-link], a[data-doc-anchor]";
@@ -216,17 +251,29 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
   });
   root.addEventListener("pointerout", (event) => {
     const element = event.target.closest(selector);
-    if (element && element === anchorElement && !element.contains(event.relatedTarget)) scheduleHide();
+    if (!element || element.contains(event.relatedTarget)) return;
+    if (element === pending) {
+      // Leaving a crossed link keeps the open preview only if the pointer goes on to it.
+      cancelSwitch();
+      if (!popover.contains(event.relatedTarget)) scheduleHide();
+    } else if (element === anchorElement) scheduleHide();
   });
   root.addEventListener("focusin", (event) => {
     const element = event.target.closest(selector);
     if (element) enter(element);
   });
   root.addEventListener("focusout", (event) => {
-    if (event.target.closest(selector) === anchorElement) scheduleHide();
+    const element = event.target.closest(selector);
+    if (!element) return;
+    if (element === pending) cancelSwitch();
+    else if (element !== anchorElement) return;
+    scheduleHide();
   });
   root.addEventListener("click", hide);
-  popover.addEventListener("pointerenter", () => clearTimeout(hideTimer));
+  popover.addEventListener("pointerenter", () => {
+    clearTimeout(hideTimer);
+    cancelSwitch();
+  });
   popover.addEventListener("pointerleave", scheduleHide);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !popover.hidden) hide();

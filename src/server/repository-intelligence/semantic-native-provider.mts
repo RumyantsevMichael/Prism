@@ -1,6 +1,6 @@
 import { NativeRepositoryIntelligence, openNativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
 import { nativeSemanticRuntime, semanticError } from "./native-semantic-runtime.mjs";
-import { baselineIndex, componentDiagnostics, componentResult, componentStates, indexComponents, prepareComponents, searchComponents, selectComponents, selectedComponents, unionIndex, unionSnapshot } from "./component-indexes.mjs";
+import { baselineIndex, componentDiagnostics, componentResult, componentStates, indexComponents, prepareComponents, searchComponents, selectComponents, selectedComponents, unionIndex, unionSnapshot, verifyComponents } from "./component-indexes.mjs";
 import type { ComponentResult, ComponentSource, Declaration, OpenSource } from "./component-indexes.mjs";
 import { domainFor, searchExclusion } from "../../native-runtime/domains.mjs";
 import { isTestUnit, sharedDependencyGroups } from "./shared-dependencies.mjs";
@@ -356,8 +356,8 @@ async function searchComponentIndexes(input: ConceptSearchInput, declaration: De
   const result = componentResult(states, snapshot);
   if (result.status === "preparing") return preparing();
   const candidates = result.status === "degraded" ? await lexicalResults(selected.map(entry => entry.source), input, limit, selected.map(entry => entry.component)) : searched.results;
-  const verified = result.status === "degraded" ? selected.map((entry, index) => new SemanticNativeRepositoryIntelligence(entry.source, preparations[index], runtime)) : providers;
-  for (const provider of verified) await provider.verifySnapshot();
+  const verified = result.status === "degraded" ? selected : included.filter((_, position) => searched.answers[position] !== null).map(({ index }) => selected[index]);
+  await verifyComponents(verified, verifySource);
   if (input.snapshotId && result.status === "ready" && selected.length === (await selectComponents(declaration, sources)).length)
     await retainAnalysis(input.projectRoot, input.snapshotId, await baselineIndex(selected, preparations, result));
   const prepared = providers.map(provider => provider.prepared!);
@@ -430,7 +430,7 @@ async function componentAnalysis(input: { projectRoot: string; snapshotId?: stri
   let files: Promise<SourceSnapshot> | undefined;
   return { preparation, identity: { status: result.status, preparationId: null, snapshot, snapshotId: input.snapshotId || null, components: result.components }, prepared: preparation.prepared,
     diagnostics: preparation.diagnostics, components: result.components, snapshot: () => files ??= unionSnapshot(sources, snapshot),
-    verifySnapshot: async () => { for (const entry of selected) await verifySource(entry.source); } };
+    verifySnapshot: () => verifyComponents(selected, verifySource) };
 }
 
 // A result that leaves out a selected component starts its diagnostics with the components_missing diagnostic that names it.

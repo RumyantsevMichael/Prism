@@ -26,23 +26,62 @@ When the selected browser is unavailable, Prism presents the URL and source arti
 
 ## Layout
 
-The top bar holds the project switcher and the open tabs.
-The status bar at the bottom shows where the project's records live, their sync state, and the repository index.
-The sidebar keeps Attention and Roadmap at the top and the Library, with Requirements, Decisions, and the Glossary, at the bottom.
-Between them it expands only the path to what is open: the open initiative's slices or the open library section's documents.
-Press `[` or the sidebar toggle to collapse the sidebar to an icon rail that keeps the Attention badge.
+The browser follows the operating system's light or dark setting and changes with it while the page is open.
+It shows compact density by default.
+The review app keeps the theme and density for you, so every project and every later session shows the same choice.
+Choose the theme and density from the **Appearance** button at the end of the status bar.
+Its menu offers the themes System, Light, and Dark, the densities Compact and Comfortable, and **Component catalog**.
+A choice applies at once, and System follows the operating system again.
+**Component catalog** opens the review app's component catalog in a new tab, which shows every control of the interface with its options, states, and keys.
+The catalog's own toolbar changes its theme, density, and width for that tab only, and stores nothing.
 
-A link opens in the preview tab, which the next link replaces.
-Ctrl-click or Cmd-click a link, double-click its tab, or choose Keep on the tab to keep it open.
-Tabs that an agent presents stay open until you close them.
-A tab whose file was moved or deleted, or whose initiative or slice no longer exists, is dimmed and struck through, and opening it offers to close it.
-The tab returns to normal on its own when the file comes back, for example after a checkout.
+The top bar holds the Prism mark, the project switcher, the search button that opens the Jump palette, and **Who's working**.
+The status bar at the bottom shows where the project's records live, naming a shared store, their sync state, and the repository index.
+The sidebar is the only navigation.
+It lists Attention with its count and Roadmap, then each planned or in-progress initiative and the open initiative whatever its state, then the open library section's documents, and the Library, with Requirements and Decisions and their counts and the Glossary.
+An initiative's row shows its state as a round glyph and its shipped leaf slices out of all, such as `0/4`, and its slices nest below it, each with a triangle in the color of its phase, its holder, and a warning mark when it is blocked.
+Hover or focus a row to see its full title with its status, its phase, and its claim; the Roadmap lists every initiative, including shipped and envisioned ones.
+An initiative or a slice that has subslices expands when you expand it, when it leads to the open page, or when one of its slices is in progress, blocked, or claimed.
+Every row is a link, so a middle-click or a Shift click opens the page in a new browser tab or window, and the browser's context menu can copy its address; a crumb of the page bar works the same way.
+Above 1100 pixels, press `[` or use the sidebar button at the left of the top bar to collapse the sidebar to a rail of icons that keeps the Attention count, and again to expand it; the browser remembers the choice.
+At a window width of 1100 pixels or less the sidebar is hidden, and the Navigation button at the left of the top bar opens it as a drawer that closes when you choose a page; the bell at the right of the top bar keeps the Attention count.
+If you narrow the window past that width while the sidebar has the focus, the focus moves to the Navigation button.
+
+The top of the main area holds a tab for each open page.
+A link opens in the preview tab, whose title is italic, and the next link replaces it.
+Ctrl-click or Cmd-click a link, double-click or middle-click a link in a page, press Ctrl+Enter or Cmd+Enter in the Jump palette, or choose Open as tab in the side panel to open a tab that stays open.
+Double-click the preview tab or choose its Keep button to keep it open.
+A new tab opens right after the selected tab.
+Close a tab with its close button or a middle click, and when you close the last tab the page says that nothing is open.
+Tabs that an agent presents carry the agent mark and stay open until you close them, and a presentation of several artifacts opens a tab for each of them and shows the first.
+The open tabs belong to the session, so every browser window of the session shows the same tabs, and a reload or a later visit restores them.
+When tabs do not fit, the strip scrolls sideways and keeps the selected tab in view, and a long title ends with an ellipsis whose full text shows on hover or focus.
+With the focus on a tab, the arrow keys, Home, and End move between tabs, Enter opens one, and Tab reaches that tab's Keep and close buttons.
+
+The page bar below the tabs holds Back and Forward and the trail of the page's place, initiative, and slice by title.
+Back and Forward, Alt+Left and Alt+Right, and the browser's own buttons move through the pages you visited in that browser tab, and the address names the selected tab.
+A page that an agent presents opens as the next page.
+Prism's records and documents appear by title and kind, such as Design, Diagram, or Change map, and only repository files are named by their path.
+A tab whose file was moved or deleted, or whose initiative or slice no longer exists, is dimmed and struck through, and its page says so and offers Close tab.
+The tab and its page return to normal on their own when the target comes back, for example after a checkout.
 When Prism moves a record from its legacy location into `.prism/`, a tab on that record follows it to the new path.
+
+**Who's working** shows up to three avatars of the agents that hold a live claim on a slice, and how many are working.
+Its popover lists every live claim and then every claim that expired, with the holder, the harness the agent runs in when its claim records one (otherwise Agent), the activity, the slice, and the time left.
+The sidebar shows a claimed slice's holder at the end of its row.
+Claims are read-only in the browser.
 
 A banner appears when the review server stops responding, and it clears when the connection returns.
 When the server stays silent for about 15 seconds, the banner says that the review app stopped and the page is no longer live, and actions that need the server say so instead of failing silently.
 A restarted app uses a new link, so ask the agent to open the review browser to get one, or run `./bin/prism review` from a Prism checkout.
+Opening an old link after a restart, or the app's port without a link, shows a page that says the link no longer works; it cannot list your projects, because the link is what keeps other users of the computer from reading them.
+The app's own address opens the project an agent used last, and a link to a project the app no longer lists opens that project too, with a notice to choose another from the project menu.
 The page keeps checking and recovers on its own when the same app or its upgraded successor answers.
+A check that gets no answer within 8 seconds counts as no answer, so a server that is too busy to answer shows the banner instead of a page that silently stops changing.
+
+You can keep as many review tabs open as you like, of one project or of several, in one browser.
+A browser opens at most six connections to the review app for all its tabs together, so the tabs share one live connection: one tab holds it, passes what it hears to the others, and hands it to another tab when you close it.
+A tab in the background checks nothing until you show it again, and then it catches up at once.
 
 ## Attention
 
@@ -117,7 +156,8 @@ Index actions are not part of an initiative, so shipping one leaves them availab
 
 ### Initiative settings card
 
-The initiative page, and every slice page of the initiative, ends with an **Initiative settings** card.
+The initiative page ends with an **Initiative settings** card, and on every slice page of the initiative the card opens from **Details and settings** at the end of the page bar, below the slice's details.
+An initiative whose record cannot be read and that the roadmap does not list has no settings, so its page shows no card.
 On a slice page the card names the initiative above its title, because the settings belong to the whole initiative and a change there applies to every slice.
 Each setting shows its options as a button group, the sentence on when a change takes effect, and for an on or off setting what the picked option does.
 Picking an option applies it at once, except for Models, whose model names you type and then send with **Apply** or Enter; **Reset** drops what you typed.
@@ -149,9 +189,12 @@ A slice that records a [component](workflow.md#components) carries a small label
 Below them, the page lists the unstarted leaves that can be designed next, leaving out those in design review.
 A slice page shows the slice's diagrams, its design from `slice.md`, the verification run, the review ledger, and every file in the slice folder.
 It is the page to read at a design gate.
+Under its title a tag names the slice's phase with its gate or status, such as `Design · design gate open`, beside its requirements, and below the lifecycle a strip shows who holds the slice, since when, when the holder last renewed the claim, and the time left, with the exact times on hover or focus.
+The Review ledger tab counts the open findings and the Files tab the slice folder's files.
+**Details and settings** at the end of the page bar shows the slice's outcome, slug, parent, children, dependencies, and active work, and the initiative's settings.
 
 Every PlantUML file directly in the slice folder gets a tab above the design, with `code.puml` first when it exists.
-In dark mode a diagram sits on a light sheet, because PlantUML draws black lines and text.
+A diagram sits on a sheet that follows the light or dark theme.
 
 The design is `slice.md` itself, with Prism's checks placed in it.
 Each contract clause shows how many frozen tests check it, and opening that count shows one plain-language example per test, each linked to its test file.
@@ -179,6 +222,7 @@ An agent-planned change map, from slices designed before verification runs, star
 Each change has one card with its reason, its before and after references, its own problems, and its reuse evidence.
 A reference opens the file, at the heading when the reference names one.
 Group changes by action or by file, and blocked changes come first.
+An evidence link, such as a receipt or a baseline snapshot, opens the evidence drawer at the right of the page, which leaves the page usable and stays open while you open records from it; Esc or **Close** closes it.
 The graph mode shows the same changes as before, change, and after nodes, and a node jumps to its card.
 
 Each review wave card, slice page, and initiative page shows run totals from the recorded runs: runs, wall time, elapsed and summed active time, token categories, and tool calls.
@@ -209,24 +253,26 @@ Each heading with text under it has a fold toggle beside it, and a link or conte
 Code in source files, Markdown code blocks, previews, and diagram source is highlighted by language.
 
 Hover over or focus any internal link to preview its target.
+An open preview stays while the pointer crosses other links on its way to the preview, and switches to another link only when the pointer rests on it.
 An initiative preview shows its state, band, intent, and progress, and a slice preview shows its status and outcome.
 A link to a document section previews that section.
 A link to a PlantUML file previews the diagram drawn small enough to fit.
 A file's preview has a Show in side panel button, and Alt+click on a link does the same: the whole file opens in a panel beside the current page, at the linked heading or lines.
-The panel draws a PlantUML file, and the diagrams a document links, as its tab does, fitted to the panel's width, with the same zoom and source controls.
+The panel draws a PlantUML file, and the diagrams a document links, as its page does, fitted to the panel's width, with the same zoom and source controls.
 The side panel holds one file at a time, so opening another replaces it, and a link inside the panel opens its target in the panel.
-Open as tab moves the file into a tab, Esc or the close button closes the panel, and dragging its left edge sets its width.
+Open as tab opens the file in a tab that stays open, Esc or the close button closes the panel, and dragging its left edge sets its width.
 Graph, diagram, and document cards can be maximized, and Esc restores them.
 
 ## Find artifacts
 
 Press Ctrl K or Cmd K, or `/`, to open the Jump palette.
-It finds initiatives, slices, documents, and files by name.
+It finds places, initiatives, slices, requirements, decisions, glossary terms, and Prism's records by title, and repository files by path, grouped by kind.
+A slice's result shows who holds a claim on it, and beside the results a preview shows the active result.
 A query of three or more characters also searches the text of Prism artifacts, never source files, and every word must occur in a matching file.
 Opening a text match scrolls to and highlights the first occurrence.
 When the match is not visible in the rendered view, try the Raw view.
 On an initiative or slice page, the palette also lists the page's settings as entries such as `Push: Off`, and choosing one moves the focus to that setting's control.
-In the palette, Enter opens the result in the preview tab, Ctrl+Enter keeps it open, and Esc closes the palette.
+In the palette, the arrow keys move through the results, Enter opens one, and Esc closes the palette.
 
 ## Index status
 
@@ -246,11 +292,12 @@ Checkouts whose records live in one shared store form one workspace, with the na
 Choose the workspace's name to open its records through the checkout already open, else one an agent session is using, else the one you used last.
 Every checkout of a workspace shows the same roadmap, initiatives, and questions, so choose a checkout only for its own source files and index.
 Every other recent project is listed under its repository, even a repository with one checkout, with its open questions.
+The switcher's counts of open questions follow a question that an agent recorded or answered within about 15 seconds, and one answered in the browser within about 5 seconds.
 The switcher marks the projects an agent session is using now, and lists workspaces first and then repositories, each in name order, so entries never move while you look.
 When an agent presents a review for another project while a tab that can make changes is open, that tab shows a notice with a link instead of a second tab opening.
 
 The app starts with the MCP server of the first Prism session, outlives that session, and exits after 30 minutes with no session and no open viewer.
-A session of a newer Prism release replaces an app of an older release on the same port, and open tabs reload into the new version.
+A session of a newer Prism release replaces an app of an older release on the same port, and open review pages reload into the new version.
 A session never replaces a newer app.
 
 A new session opens the review browser on its project when no review tab of any project that can make changes is open.

@@ -57,7 +57,7 @@ function link(label, href, options) {
   const base = options.basePath ? options.basePath.split("/").slice(0, -1).join("/") : "";
   const resolved = normalizePath(target.startsWith("/") ? target : `${base}/${target}`);
   if (resolved === null || !options.isKnown?.(resolved)) {
-    return `<span class="doc-link-missing" title="${escapeHtml(resolved ?? target)} is not a reviewable file in this project">${label}</span>`;
+    return `<prism-chip class="doc-link-missing" tip="${escapeHtml(resolved ?? target)} is not a reviewable file in this project">${label}</prism-chip>`;
   }
   return `<a href="./review?artifact=${encodeURIComponent(resolved)}" data-doc-link="${escapeHtml(resolved)}"${anchor ? ` data-doc-anchor="${escapeHtml(anchor)}"` : ""}>${label}</a>`;
 }
@@ -76,12 +76,22 @@ function tableCells(line, options) {
   return line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => inlineMarkdown(cell.trim(), options));
 }
 
+// A highlighted code block in the kit's code element, which colors its tok-<name> spans with the theme's syntax colors.
+function codeBlock(html, language) {
+  return `<prism-code${language ? ` language="${language}"` : ""}><pre><code${language ? ` class="language-${language}"` : ""}>${html}</code></pre></prism-code>`;
+}
+
+// A fenced block inside a document, which prism-doc styles as a code block with the theme's syntax colors.
+function fencedBlock(html, language) {
+  return `<pre><code${language ? ` class="language-${language}"` : ""}>${html}</code></pre>`;
+}
+
 // Renders the small Markdown subset Prism artifacts use; any other file shows as preformatted text.
 export function renderText(path, content, options = {}) {
   const escaped = escapeHtml(content);
   if (!path.toLowerCase().endsWith(".md")) {
     const language = languageOf(path);
-    return `<pre><code${language ? ` class="language-${language}"` : ""}>${highlight(content, language)}</code></pre>`;
+    return codeBlock(highlight(content, language), language);
   }
   const lines = escaped.split(/\r?\n/);
   const output = [];
@@ -106,7 +116,7 @@ export function renderText(path, content, options = {}) {
     const line = lines[index];
     const item = line.match(LIST_ITEM);
     if (fence && line.trim().startsWith("```")) {
-      output.push(`<pre><code${fence.language ? ` class="language-${fence.language}"` : ""}>${highlight(decode(fence.lines.join("\n")), fence.language)}</code></pre>`);
+      output.push(fencedBlock(highlight(decode(fence.lines.join("\n")), fence.language), fence.language));
       fence = null;
     } else if (fence) {
       fence.lines.push(line);
@@ -163,7 +173,7 @@ export function renderText(path, content, options = {}) {
       closeList();
     }
   }
-  if (fence) output.push(`<pre><code>${highlight(decode(fence.lines.join("\n")), fence.language)}</code></pre>`);
+  if (fence) output.push(fencedBlock(highlight(decode(fence.lines.join("\n")), fence.language), fence.language));
   closeList();
   return output.join("\n");
 }
@@ -188,7 +198,8 @@ function setFold(content, heading, folded) {
   heading.classList.toggle("is-folded", folded);
   const button = heading.querySelector(":scope > .md-fold");
   button?.setAttribute("aria-expanded", String(!folded));
-  if (button) button.title = folded ? "Expand section" : "Collapse section";
+  button?.setAttribute("tip", folded ? "Expand section" : "Collapse section");
+  button?.firstElementChild?.setAttribute("name", folded ? "chevron-right" : "chevron-down");
   const folds = content.prismFolds;
   if (folds) {
     if (folded) folds.add(heading.id);
@@ -206,20 +217,30 @@ export function decorateFolds(content, folds) {
     if (!level || heading.querySelector(":scope > .md-fold")) return;
     const next = children[index + 1];
     if (!next || (headingLevel(next) && headingLevel(next) <= level)) return;
-    const button = document.createElement("button");
-    button.type = "button";
+    const button = document.createElement("prism-button");
+    button.setAttribute("variant", "ghost");
+    button.setAttribute("size", "sm");
     button.className = "md-fold";
     button.setAttribute("aria-expanded", "true");
-    button.setAttribute("aria-label", "Collapse or expand this section");
-    button.title = "Collapse section";
+    button.setAttribute("label", "Collapse or expand this section");
+    button.setAttribute("tip", "Collapse section");
+    const icon = document.createElement("prism-icon");
+    icon.setAttribute("name", "chevron-down");
+    icon.setAttribute("size", "xs");
+    button.append(icon);
     button.addEventListener("click", (event) => {
       event.preventDefault();
       setFold(content, heading, !heading.classList.contains("is-folded"));
     });
     heading.classList.add("md-foldable");
     heading.prepend(button);
+    // The toggles sit in a gutter that the content keeps for them, so they never reach past the card, panel, or preview that holds the document.
+    content.classList.add("has-folds");
     if (folds?.has(heading.id)) heading.classList.add("is-folded");
-    button.setAttribute("aria-expanded", String(!heading.classList.contains("is-folded")));
+    const folded = heading.classList.contains("is-folded");
+    button.setAttribute("aria-expanded", String(!folded));
+    button.setAttribute("tip", folded ? "Expand section" : "Collapse section");
+    icon.setAttribute("name", folded ? "chevron-right" : "chevron-down");
   });
   applyFolds(content);
 }
@@ -248,22 +269,24 @@ export function decorateDocuments(root, folds = new Map()) {
     decorateFolds(content, folds.get(position));
   });
   for (const content of root.querySelectorAll(".document-content")) {
-    const host = content.closest(".document-card, .view-card") ?? content.parentElement;
-    if (host.querySelector(":scope > .doc-toc")) continue;
+    const host = content.parentElement;
+    if (!host || content.previousElementSibling?.classList.contains("doc-toc")) continue;
     const headings = [...content.querySelectorAll("h1[id], h2[id], h3[id]")];
     if (headings.length < TOC_MINIMUM) continue;
     const top = Math.min(...headings.map((heading) => Number(heading.tagName[1])));
     const toc = document.createElement("nav");
     toc.className = "doc-toc";
     toc.setAttribute("aria-label", "Contents");
-    toc.innerHTML = `<button type="button" class="doc-toc-toggle" aria-expanded="false">Contents</button>
+    toc.innerHTML = `<prism-button variant="ghost" size="sm" class="doc-toc-toggle" aria-expanded="false"><prism-icon name="chevron-right" size="xs"></prism-icon>Contents</prism-button>
       <ol>${headings.map((heading) => `<li class="toc-depth-${Number(heading.tagName[1]) - top}"><a href="#${escapeHtml(heading.id.slice(HEADING_PREFIX.length))}" data-doc-anchor="${escapeHtml(heading.id.slice(HEADING_PREFIX.length))}">${escapeHtml(heading.textContent)}</a></li>`).join("")}</ol>`;
-    toc.querySelector(".doc-toc-toggle").addEventListener("click", (event) => {
+    const toggle = toc.querySelector(".doc-toc-toggle");
+    toggle.addEventListener("click", () => {
       const open = toc.classList.toggle("is-open");
-      event.currentTarget.setAttribute("aria-expanded", String(open));
+      toggle.setAttribute("aria-expanded", String(open));
+      toggle.firstElementChild?.setAttribute("name", open ? "chevron-down" : "chevron-right");
     });
     host.classList.add("has-toc");
-    host.prepend(toc);
+    content.before(toc);
   }
 }
 

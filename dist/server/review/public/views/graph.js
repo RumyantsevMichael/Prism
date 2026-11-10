@@ -1,4 +1,4 @@
-import { cardSource, escapeHtml } from "./util.js";
+import { escapeHtml } from "./util.js";
 
 const SVG = "http://www.w3.org/2000/svg";
 const POINTS_PER_INCH = 72;
@@ -22,13 +22,22 @@ function textWidth(text, font) {
   return measureContext.measureText(text).width;
 }
 
-function nodeWidth(node) {
+// A node box renders its title and subtitle in the kit's fonts and sizes, so it is measured with the same design values.
+function nodeFonts() {
+  const root = getComputedStyle(document.documentElement);
+  const value = (name) => root.getPropertyValue(name).trim();
+  return {
+    title: `${value("--prism-font-weight-semibold")} ${value("--prism-font-size-md")} ${value("--prism-font-ui")}`,
+    code: `${value("--prism-font-weight-medium")} ${value("--prism-font-size-code")} ${value("--prism-font-code")}`,
+    subtitle: `${value("--prism-font-weight-regular")} ${value("--prism-font-size-xs")} ${value("--prism-font-ui")}`
+  };
+}
+
+function nodeWidth(node, fonts) {
   // Measure with the font the node box actually renders, plus the border and a safety margin for font fallback.
-  const family = getComputedStyle(document.body).fontFamily;
-  const title = textWidth(node.title ?? "", `600 13px ${family}`);
-  const mono = textWidth(node.title ?? "", "500 12px ui-monospace, SFMono-Regular, Menlo, monospace");
-  const subtitle = textWidth(node.subtitle ?? "", `11px ${family}`);
-  const widest = Math.max(node.monospace ? mono : title, subtitle);
+  const title = textWidth(node.title ?? "", node.monospace ? fonts.code : fonts.title);
+  const subtitle = textWidth(node.subtitle ?? "", fonts.subtitle);
+  const widest = Math.max(title, subtitle);
   return Math.min(NODE_MAX_WIDTH, Math.max(90, Math.ceil(widest * 1.06) + NODE_PADDING_X * 2 + 10));
 }
 
@@ -104,7 +113,8 @@ function svgElement(name, attributes = {}) {
 
 // Lay out with Graphviz, then draw every node and edge ourselves so styling and interaction stay in our hands.
 export async function renderGraph(target, graph, { onSelect, selectedId = null, clusterLabels = new Map() } = {}) {
-  const nodes = graph.nodes.map((node) => ({ ...node, width: nodeWidth(node) }));
+  const fonts = nodeFonts();
+  const nodes = graph.nodes.map((node) => ({ ...node, width: nodeWidth(node, fonts) }));
   const names = new Map(nodes.map((node, index) => [node.id, `n${index}`]));
   const ids = new Map([...names].map(([id, name]) => [name, id]));
   const { dot, clusterNames } = buildDot({ ...graph, nodes }, names);
@@ -153,11 +163,14 @@ export async function renderGraph(target, graph, { onSelect, selectedId = null, 
     const center = flip(parsePoint(object.pos));
     const nodeWidthPoints = Number(object.width) * POINTS_PER_INCH;
     const nodeHeightPoints = Number(object.height) * POINTS_PER_INCH;
-    const group = svgElement("g", { class: `graph-node ${node.className ?? ""}`, tabindex: 0, role: "button", "aria-label": `${node.title}${node.subtitle ? `, ${node.subtitle}` : ""}` });
+    // A node opens what it names, so it is a link; its SVG title carries the full text of a box that shortens it.
+    const group = svgElement("g", { class: `graph-node ${node.className ?? ""}`, tabindex: 0, role: "link", "aria-label": `${node.title}${node.subtitle ? `, ${node.subtitle}` : ""}` });
     group.dataset.id = id;
+    const tooltip = svgElement("title");
+    tooltip.textContent = node.tooltip ?? node.title;
     const box = svgElement("foreignObject", { x: center.x - nodeWidthPoints / 2, y: center.y - nodeHeightPoints / 2, width: nodeWidthPoints, height: nodeHeightPoints });
-    box.innerHTML = `<div xmlns="http://www.w3.org/1999/xhtml" class="graph-node-box" title="${escapeHtml(node.tooltip ?? node.title)}"><strong>${escapeHtml(node.title)}</strong>${node.subtitle ? `<span>${escapeHtml(node.subtitle)}</span>` : ""}</div>`;
-    group.append(box);
+    box.innerHTML = `<div xmlns="http://www.w3.org/1999/xhtml" class="graph-node-box"><strong>${escapeHtml(node.title)}</strong>${node.subtitle ? `<span>${escapeHtml(node.subtitle)}</span>` : ""}</div>`;
+    group.append(tooltip, box);
     group.addEventListener("click", (event) => onSelect?.(id, { keep: event.ctrlKey || event.metaKey }));
     group.addEventListener("dblclick", () => onSelect?.(id, { keep: true, double: true }));
     group.addEventListener("keydown", (event) => {
@@ -205,21 +218,20 @@ export async function renderGraph(target, graph, { onSelect, selectedId = null, 
   };
 }
 
-export function graphCard({ title, eyebrow, source = "", legend = "" }) {
-  const section = document.createElement("section");
-  section.className = "view-card graph-card";
+export function graphCard({ title, eyebrow, legend = "" }) {
+  const section = document.createElement("prism-panel");
+  section.className = "view-section graph-view";
+  section.setAttribute("heading", title);
+  section.setAttribute("eyebrow", eyebrow);
   section.innerHTML = `
-    <header class="view-card-header graph-header">
-      <div><p class="eyebrow">${escapeHtml(eyebrow)}</p><div class="view-card-title"><h2>${escapeHtml(title)}</h2>${cardSource(source)}</div></div>
-      <div class="diagram-tools" aria-label="Graph controls">
-        <button class="tool-button" data-zoom="out" type="button" aria-label="Zoom out">−</button>
-        <button class="tool-button" data-zoom="fit" type="button" aria-label="Fit to width">Fit</button>
-        <button class="tool-button" data-zoom="reset" type="button" aria-label="Actual size" data-zoom-label>100%</button>
-        <button class="tool-button" data-zoom="in" type="button" aria-label="Zoom in">+</button>
-      </div>
-    </header>
+    <div slot="tools" class="diagram-tools" role="group" aria-label="Graph controls">
+      <prism-button variant="ghost" size="sm" data-zoom="out" label="Zoom out" tip="Zoom out">−</prism-button>
+      <prism-button variant="ghost" size="sm" data-zoom="fit" tip="Fit to width">Fit</prism-button>
+      <prism-button variant="ghost" size="sm" data-zoom="reset" label="Actual size" tip="Actual size" data-zoom-label>100%</prism-button>
+      <prism-button variant="ghost" size="sm" data-zoom="in" label="Zoom in" tip="Zoom in">+</prism-button>
+    </div>
     ${legend ? `<div class="graph-legend">${legend}</div>` : ""}
-    <div class="graph-viewport" tabindex="-1"><p class="rendering">Laying out graph</p></div>`;
+    <div class="graph-viewport" tabindex="-1"><prism-spinner label="Laying out graph"></prism-spinner></div>`;
   return section;
 }
 
@@ -250,7 +262,7 @@ export function enablePanZoom(section, state) {
     state.top = viewport.scrollTop;
   }, { passive: true });
   section.querySelector(".diagram-tools").addEventListener("click", (event) => {
-    const action = event.target.closest("button")?.dataset.zoom;
+    const action = event.target.closest("[data-zoom]")?.dataset.zoom;
     if (action === "in") apply(state.scale + 0.15);
     else if (action === "out") apply(state.scale - 0.15);
     else if (action === "reset") apply(1);

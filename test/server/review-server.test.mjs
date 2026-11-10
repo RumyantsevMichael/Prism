@@ -168,14 +168,15 @@ test("serves the browser runtime without an image endpoint", async (context) => 
     assert.match(pageSource, /id="palette-input"/);
     assert.match(pageSource, /id="jump"/);
     assert.match(pageSource, /aria-live="polite"/);
-    assert.match(pageSource, /id="tabs"/);
-    const stylesheet = await (await fetchReview(`${review.baseUrl}/review.css`)).text();
+    assert.match(pageSource, /id="page-bar"/);
+    const stylesheet = await (await fetchReview(`${review.baseUrl}/kit/tokens.css`)).text();
     assert.match(stylesheet, /prefers-reduced-motion/);
     const client = await (await fetchReview(`${review.baseUrl}/review.js`)).text();
     assert.match(client, /data-action="zoom-in"/);
     assert.match(client, /PlantUML source copied/);
     assert.match(client, /saveSession/);
-    assert.match(client, /EventSource/);
+    assert.match(client, /createEventRelay/, "the page follows the origin's shared event stream");
+    assert.match(await (await fetchReview(`${review.baseUrl}/views/event-relay.js`)).text(), /new Source\(streamUrl\)/, "the relay serves and opens the shared stream");
     assert.doesNotMatch(client, /meta-pill live/, "the page shows a banner when refresh fails instead of a permanent Live pill");
     assert.doesNotMatch(pageSource, /Auto refresh/);
     assert.match(pageSource, /id="connection"/);
@@ -262,6 +263,50 @@ test("stores agent-selected tabs and exposes them to the viewer", async (context
     assert.equal(invalidActive.status, 400);
     await assert.rejects(review.setOpenTabs(["secrets/private.md"]), /not available for review/);
   } finally {
+    await review.close();
+  }
+});
+
+// A browser holds one stream for all its review tabs: the stream names itself first, and each tab joins it for its own page.
+test("a shared viewer stream carries the session of each page a tab joined it for, and counts each joined tab", async (context) => {
+  const projectRoot = await fixture(context);
+  const review = await startReviewServer({ projectRoot });
+  const post = (route, body, headers = { "Content-Type": "application/json" }) => fetch(`${review.baseUrl}/api/events/${route}`, { method: "POST", headers, body: JSON.stringify(body) });
+  let shared;
+  try {
+    shared = await openEventStream(`${review.baseUrl}/api/events/shared`);
+    assert.equal(shared.status, 200);
+    const hub = await shared.next();
+    assert.equal(hub.event, "hub");
+    assert.match(hub.data.stream, /^[A-Za-z0-9_-]{24}$/);
+    assert.equal(review.viewerCount(), 0, "an open stream that no tab joined counts no tab");
+
+    const page = `${new URL(review.baseUrl).pathname}/`;
+    const joined = await post("join", { stream: hub.data.stream, tab: "first-tab-0001" });
+    assert.equal(joined.status, 200);
+    assert.deepEqual(await joined.json(), { project: page });
+    assert.deepEqual(await shared.next(), { event: "session", data: { project: page, data: { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], revision: 0 } } });
+    assert.equal((await post("join", { stream: hub.data.stream, tab: "second-tab-002" })).status, 200);
+    await shared.next();
+    assert.equal(review.viewerCount(), 2);
+
+    await review.setOpenTabs(["docs/roadmap.md"]);
+    const update = await shared.next();
+    assert.equal(update.event, "session");
+    assert.deepEqual(update.data.data.openTabs, ["docs/roadmap.md"], "one change reaches the stream once, however many of its tabs show the page");
+    assert.equal(update.data.project, page);
+
+    assert.equal((await post("leave", { stream: hub.data.stream, tab: "second-tab-002" })).status, 200);
+    assert.equal(review.viewerCount(), 1);
+    assert.equal((await post("join", { stream: "no-such-stream", tab: "third-tab-0003" })).status, 404, "a tab cannot join a stream that is gone");
+    assert.equal((await post("join", { stream: hub.data.stream, tab: "x" })).status, 404, "a malformed tab id is refused");
+    assert.equal((await post("join", { stream: hub.data.stream, tab: "fourth-tab-004" }, { "Content-Type": "text/plain" })).status, 403, "a join must come from the review page as JSON");
+
+    shared.close();
+    for (let tries = 0; tries < 50 && review.viewerCount() > 0; tries += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(review.viewerCount(), 0, "the tabs of a closed stream no longer count");
+  } finally {
+    shared?.close();
     await review.close();
   }
 });

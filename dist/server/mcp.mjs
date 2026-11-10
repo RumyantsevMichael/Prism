@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import readline from "node:readline";
+import { jsonLine, readJsonLines } from "./json-lines.mjs";
 import { pluginURL } from "./plugin-root.mjs";
 import { ACTIVE_OPERATIONS_SCHEMA } from "./workflow/active-operations.mjs";
 import { assertInput } from "./workflow/artifact-schema.mjs";
@@ -8,9 +8,9 @@ import { conservationStore } from "./conservation/conservation-store.mjs";
 import { ChangeMapError, GET_CHANGE_MAP_SCHEMA, UPDATE_CHANGE_MAP_SCHEMA, getChangeMap, updateChangeMap } from "./conservation/change-map.mjs";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { recordStoreOf, takeMigrationReports } from "./workflow/record-store.mjs";
+import { recordStoreOf, restoreMigrationReports, takeMigrationReports } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
-import { takeSavedConflicts } from "./workflow/record-store-sync.mjs";
+import { confirmSavedConflicts, releaseSavedConflicts, takeSavedConflicts } from "./workflow/record-store-sync.mjs";
 import { withCallSession } from "./workflow/slice-claims.mjs";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
 import {
@@ -144,8 +144,15 @@ async function server(argumentsValue, metadata) {
   return reviewServers.get(projectRoot, id);
 }
 
+// Write a result to the host: whether the write reached standard output.
 function result(id, value) {
-  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, result: value })}\n`);
+  return new Promise((resolve) => {
+    try {
+      process.stdout.write(jsonLine({ jsonrpc: "2.0", id, result: value }), (error) => resolve(!error));
+    } catch {
+      resolve(false);
+    }
+  });
 }
 
 function requestedTabs(argumentsValue) {
@@ -313,7 +320,7 @@ function failure(id, code, message, data) {
   if (data !== undefined) {
     response.error.data = data;
   }
-  process.stdout.write(`${JSON.stringify(response)}\n`);
+  process.stdout.write(jsonLine(response));
 }
 
 function stateErrorData(error) {
@@ -438,13 +445,13 @@ const tools = [
   },
   {
     name: "get_review_url",
-    description: "Start or update the local Prism review server and return a human review URL only. Use artifacts to add agent-presented tabs to the shared session and focus the first one; the human's open tabs stay open, and an empty array focuses Attention. This tool does not open a browser or return rendered image data.",
+    description: "Start or update the local Prism review server and return a human review URL only. Use artifacts to open every listed artifact as a tab marked as presented by the agent, in the tab strip that every window of the review session shares, and to focus the first one; the human's open tabs stay open, and an empty array focuses Attention. This tool does not open a browser or return rendered image data.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
-        artifact: { type: "string", description: "One project-relative artifact path. Use artifacts for multiple tabs." },
-        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths to add as agent tabs. An empty array focuses Attention." }
+        artifact: { type: "string", description: "One project-relative artifact path, opened as one agent tab. Use artifacts to present several artifacts at once." },
+        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths, each opened as its own agent tab that stays open until the human closes it. An empty array focuses Attention." }
       },
       required: ["projectRoot"],
       additionalProperties: false
@@ -453,13 +460,13 @@ const tools = [
   },
   {
     name: "present_review",
-    description: "Open or update one local Prism review page in the system browser for the human. Use artifacts to add agent-presented tabs to the shared session and focus the first one; the human's open tabs stay open. Repeated calls update connected viewer pages without opening another tab. Omit artifact and artifacts to open Attention, which lists recorded user gates, roadmap, and library entry points. The tool returns no rendered image data.",
+    description: "Open or update one local Prism review page in the system browser for the human. Use artifacts to open every listed artifact as a tab marked as presented by the agent, in the tab strip that every window of the review session shares, and to focus the first one; the human's open tabs stay open. Repeated calls update connected viewer pages without opening another tab. Omit artifact and artifacts to open Attention, which lists recorded user gates, roadmap, and library entry points. The tool returns no rendered image data.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
-        artifact: { type: "string", description: "One project-relative artifact path. Use artifacts for multiple tabs." },
-        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths to add as agent tabs. An empty array opens Attention." }
+        artifact: { type: "string", description: "One project-relative artifact path, opened as one agent tab. Use artifacts to present several artifacts at once." },
+        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths, each opened as its own agent tab that stays open until the human closes it. An empty array opens Attention." }
       },
       required: ["projectRoot"],
       additionalProperties: false
@@ -869,7 +876,7 @@ function waitUnsupportedReason() {
 }
 
 function progress(progressToken, value, message) {
-  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken, progress: value, message } })}\n`);
+  process.stdout.write(jsonLine({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken, progress: value, message } }));
 }
 
 async function callGateWait(argumentsValue, metadata, requestId) {
@@ -1155,11 +1162,16 @@ async function callVerifySlice(argumentsValue, metadata, requestId) {
 const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
 // A sync that found the same record changed upstream kept the upstream version, so the agent whose change lost hears it on its next tool result.
+// A saved version stays pending until a tool result carries it, so a server that stopped before naming it leaves it to the next one.
+// Returns the result with the notes, and what to do once it was written or was not: a written result confirms the saved versions it names, and one never written leaves them for the next result.
 async function withRecordNotes(value) {
+  const none = { value, written: async () => {}, unwritten: () => {} };
+  if (!Array.isArray(value?.content)) return none;
   const reports = takeMigrationReports();
-  const saved = await takeSavedConflicts().catch(() => []);
-  if (!Array.isArray(value?.content)) return value;
-  if (!reports.length && !saved.length) return value;
+  const taken = await takeSavedConflicts().catch(() => []);
+  const saved = taken.filter((item) => item.record);
+  const files = taken.filter((item) => item.file);
+  if (!reports.length && !taken.length) return none;
   const lines = [];
   for (const report of reports) {
     const into = report.store ? `the record store at ${report.store}` : ".prism";
@@ -1173,7 +1185,14 @@ async function withRecordNotes(value) {
   if (saved.length) {
     lines.push(`Store sync found ${plural(saved.length, "record")} that someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each record again and redo the change through Prism's tools if it still matters.`, ...saved.map((item) => `- ${item.record} (this machine's version: ${item.savedAs})`));
   }
-  return { ...value, content: [...value.content, { type: "text", text: lines.join("\n") }] };
+  if (files.length) {
+    lines.push(`Store sync took the upstream's version of ${plural(files.length, "store file")} whose local version this machine's sync had withheld, because another machine could not take it; the store kept the upstream's version and saved this machine's version. Fix the file from the saved copy if the change still matters.`, ...files.map((item) => `- ${item.file} in the record store at ${item.store} (this machine's version: ${item.savedAs})`));
+  }
+  return {
+    value: { ...value, content: [...value.content, { type: "text", text: lines.join("\n") }] },
+    written: () => confirmSavedConflicts(taken).catch(() => {}),
+    unwritten: () => { restoreMigrationReports(reports); releaseSavedConflicts(taken); }
+  };
 }
 
 // A successful claim, or start of a slice, makes its agent the initiative's coordinator in the session.
@@ -1270,7 +1289,12 @@ if (process.env.CLAUDE_PROJECT_DIR) {
   reviewServers.startApp();
 }
 
-const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+// The ids of the tool calls in progress, and of those the host cancelled: MCP asks a receiver not to respond to a cancelled request, and the host ignores a response that arrives after its cancel,
+// so a call cancelled before its result is written gets no response, and the saved versions its notes would name stay pending for the next result the host reads.
+const callsInProgress = new Set();
+const cancelledCalls = new Set();
+
+const input = readJsonLines(process.stdin);
 input.on("line", async (line) => {
   if (!line.trim()) {
     return;
@@ -1289,25 +1313,37 @@ input.on("line", async (line) => {
     } else if (request.method === "tools/list") {
       result(request.id, { tools });
     } else if (request.method === "tools/call") {
+      callsInProgress.add(request.id);
       const meta = request.params?._meta;
       const { name, arguments: argumentsValue } = request.params ?? {};
-      const value = await withRecordNotes(await withCallSession(meta, async () => {
+      const value = await withCallSession(meta, async () => {
         const agent = await callAgent(meta).catch(() => undefined);
         return withCallAgent(agent, async () => withPersonChanges(name, argumentsValue, await callTool(name, argumentsValue, meta, request.id)));
-      }));
-      // A cancelled request gets no response, as the MCP cancellation rules require.
-      if (value.structuredContent?.status !== "cancelled") {
-        result(request.id, value);
-      }
+      });
+      // A cancelled request gets no response, so it carries no notes either; nor does a result made once the host closed input, which ends the session.
+      if (value.structuredContent?.status === "cancelled" || cancelledCalls.has(request.id)) return;
+      if (closing) { await result(request.id, value); return; }
+      const noted = await withRecordNotes(value);
+      // A cancel that arrived while the notes were taken still stops the result, and nothing runs between this check and the write.
+      if (cancelledCalls.has(request.id)) { noted.unwritten(); return; }
+      if (await result(request.id, noted.value) && !closing) await noted.written();
+      else noted.unwritten();
     } else if (request.method === "notifications/cancelled") {
-      pendingWaits.get(request.params?.requestId)?.abort();
+      const id = request.params?.requestId;
+      if (callsInProgress.has(id)) cancelledCalls.add(id);
+      pendingWaits.get(id)?.abort();
     } else if (request.id !== undefined) {
       failure(request.id, -32601, `Method not found: ${request.method}`);
     }
   } catch (error) {
-    if (request?.id !== undefined) {
+    if (request?.id !== undefined && !cancelledCalls.has(request.id)) {
       const data = stateErrorData(error);
       failure(request.id, -32603, errorMessage(error, data), data);
+    }
+  } finally {
+    if (request?.method === "tools/call") {
+      callsInProgress.delete(request.id);
+      cancelledCalls.delete(request.id);
     }
   }
 });
@@ -1315,7 +1351,9 @@ input.on("line", async (line) => {
 // The host ends the session by closing input, so the server exits once its cleanup ends, or after a short grace period,
 // even when index preparation, a store sync, or a child process started meanwhile would keep it alive.
 const CLOSE_GRACE_MS = 5000;
+let closing = false;
 input.on("close", async () => {
+  closing = true;
   const deadline = setTimeout(() => process.exit(0), CLOSE_GRACE_MS);
   deadline.unref();
   try {

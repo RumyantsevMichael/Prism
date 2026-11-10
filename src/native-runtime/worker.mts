@@ -30,7 +30,24 @@ let tokenizer: Awaited<ReturnType<typeof AutoTokenizer.from_pretrained>>;
 let model: Awaited<ReturnType<typeof AutoModel.from_pretrained>> | undefined;
 let modelIdentity: string;
 // The index that the latest search read, with its database; a build keeps none, because searches go to a helper of their own.
-let current: { index: UnitIndex; db: Awaited<ReturnType<typeof database>> } | undefined;
+type Loaded = { index: UnitIndex; db: Awaited<ReturnType<typeof database>> };
+// Searches over many component indexes read each one, so recently used indexes stay loaded, most recent last, while memory allows.
+// The newest index always stays, and older ones leave while the process holds more than this many bytes.
+const LOADED_BYTES = 1.5 * 1024 * 1024 * 1024;
+const loaded = new Map<string, Loaded>();
+const loadedKey = (snapshot: string, identity: string) => `${snapshot}\0${identity}`;
+function keep(value: Loaded) {
+  const key = loadedKey(value.index.snapshot, value.index.modelIdentity);
+  loaded.delete(key); loaded.set(key, value);
+  // The database holds each vector, so the fragments no longer need their own copy.
+  for (const chunk of value.index.chunks) delete chunk.embedding;
+  for (const [other] of loaded) {
+    if (loaded.size <= 1 || process.memoryUsage().rss <= LOADED_BYTES) break;
+    loaded.delete(other);
+  }
+}
+// One query embedding serves every component index that the same search reads.
+let lastQuery: { text: string; identity: string; vector: number[] } | undefined;
 let boundaries: (text: string) => number[];
 
 async function loadModel(directory: string, identity: string) {
@@ -120,11 +137,13 @@ async function build(args: BuildArguments, progress: (value: Progress) => void):
 
 async function query(args: SearchArguments): Promise<SearchResult[]> {
   await loadModel(args.modelDirectory, args.modelIdentity);
-  if (!current || current.index.snapshot !== args.snapshot || current.index.modelIdentity !== args.modelIdentity) {
+  let current = loaded.get(loadedKey(args.snapshot, args.modelIdentity));
+  if (!current) {
     const index: UnitIndex = JSON.parse(await readFile(args.indexPath, "utf8"));
     if (index.snapshot !== args.snapshot || index.modelIdentity !== args.modelIdentity) throw Object.assign(new Error("The semantic index is stale."), { code: "stale_snapshot" });
     current = { index, db: await database(index) };
   }
+  keep(current);
   const prefix = "Represent this sentence for searching relevant passages: ";
   // Bound long queries through the same tokenizer instead of silently truncating.
   if (countTokens(prefix + args.query) > 512) throw Object.assign(new Error("The search query exceeds the model token limit."), { code: "validation_failed" });
@@ -136,7 +155,9 @@ async function query(args: SearchArguments): Promise<SearchResult[]> {
   const words = args.query.replace(/([a-z])([A-Z])/g, "$1 $2").split(/\s+/);
   const term = words.filter(word => !STOP_WORDS.has(word.toLowerCase())).join(" ") || words.join(" ");
   const lexical = await search(current.db, { term, properties: ["text", "context"], boost: { context: CONTEXT_BOOST }, limit: candidateLimit, where });
-  const dense = args.mode === "lexical" ? { hits: [] } : await search(current.db, { mode: "vector", vector: { property: "embedding", value: (await embed([prefix + args.query]))[0] }, similarity: -1, limit: candidateLimit, where });
+  if (args.mode !== "lexical" && (lastQuery?.text !== args.query || lastQuery.identity !== args.modelIdentity))
+    lastQuery = { text: args.query, identity: args.modelIdentity, vector: (await embed([prefix + args.query]))[0] };
+  const dense = args.mode === "lexical" ? { hits: [] } : await search(current.db, { mode: "vector", vector: { property: "embedding", value: lastQuery!.vector }, similarity: -1, limit: candidateLimit, where });
   const chunks = new Map(current.index.chunks.map(chunk => [chunk.id, chunk]));
   const allowed = (id: string) => !args.filters?.paths?.length || args.filters.paths.some(prefix => chunks.get(id)!.file === prefix || chunks.get(id)!.file.startsWith(`${prefix}/`));
   const fused = new Map<string, { id: string; fusedScore: number; lexicalScore: number | null; cosineSimilarity: number | null }>();

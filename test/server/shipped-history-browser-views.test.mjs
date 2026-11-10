@@ -41,12 +41,12 @@ test("a shipped initiative's open question shows as unavailable with the shipped
   assert.equal(navigation.attention.gates, 1);
   assert.equal(navigation.attention.needsYou, attention.needsYou.length, "the badge leaves out the questions that cannot be answered");
 
-  const { gateCard } = await import("../../dist/server/review/public/views/attention.js");
+  const { gateDetail } = await import("../../dist/server/review/public/views/attention.js");
   const ctx = { renderMarkdown: null, hasArtifact: () => true };
-  const card = gateCard(shipped.find((item) => item.id === gateIds.decision), ctx, { choice: null, note: "" });
+  const card = gateDetail(shipped.find((item) => item.id === gateIds.decision), ctx, { choice: null, note: "" });
   assert.ok(card.includes(REASON));
-  assert.doesNotMatch(card, /data-submit|data-choice|<textarea/, "a shipped question offers no answer form");
-  const open = gateCard(gates.find((item) => item.initiative.id === "search"), ctx, { choice: null, note: "" });
+  assert.doesNotMatch(card, /data-submit|data-choice|gate-answer/, "a shipped question offers no answer form");
+  const open = gateDetail(gates.find((item) => item.initiative.id === "search"), ctx, { choice: null, note: "" });
   assert.match(open, /data-submit/);
   assert.doesNotMatch(open, /gate-unavailable/);
 });
@@ -62,17 +62,25 @@ test("Attention lists a shipped initiative's questions under their own group and
     globalThis.document = previous;
   });
   const { render } = await import("../../dist/server/review/public/views/attention.js");
-  const container = { innerHTML: "", isConnected: true, addEventListener: () => {}, querySelectorAll: () => [], querySelector: () => null };
+  // The page head takes the summary figures beside the title.
+  const head = { html: "", querySelector: () => null, insertAdjacentHTML(_, html) { this.html += html; } };
+  const container = { innerHTML: "", isConnected: true, addEventListener: () => {}, querySelectorAll: () => [], querySelector: () => null, parentElement: { querySelector: () => head } };
   render(container, { data }, { state: {}, hasArtifact: () => true, renderMarkdown: null });
   const html = container.innerHTML;
-  const needsYou = html.slice(html.indexOf("<h2>Needs you</h2>"), html.indexOf("<h2>Shipped history</h2>"));
-  assert.ok(html.indexOf("<h2>Needs you</h2>") >= 0 && needsYou.length > 0, "Needs you comes before the shipped group");
-  assert.match(needsYou, /Nothing is waiting on you\./);
-  assert.doesNotMatch(needsYou, /gate-unavailable/);
-  const group = html.slice(html.indexOf("<h2>Shipped history</h2>"));
+  const list = html.slice(html.indexOf('<div class="attention-list"'), html.indexOf('<div class="attention-detail">'));
+  const start = list.indexOf('id="attention-group-shipped"');
+  const group = list.slice(start, list.indexOf("</section>", start));
+  assert.ok(list.indexOf('id="attention-group-shipped"') >= 0, "the shipped questions have their own group");
+  assert.doesNotMatch(list, /attention-group-needs/, "Needs you lists nothing");
+  assert.match(list.slice(0, list.indexOf('id="attention-group-shipped"')), /Nothing is waiting on you/, "Needs you shows its empty state before the shipped group");
+  assert.match(group, /<span>Shipped history<\/span>/);
   assert.match(group, /left open when their initiative shipped, so they can no longer be answered/);
-  assert.equal(group.split(REASON).length - 1, 4);
-  assert.match(html, /<span class="stat-value">0<\/span><span class="stat-label">questions wait on you/);
+  assert.equal(group.split("<prism-inbox-item").length - 1, 4);
+  // Each shipped question's detail names the shipped reason in place of the answer form.
+  const details = html.slice(html.indexOf('<div class="attention-detail">'));
+  assert.equal(details.split(REASON).length - 1, 4);
+  assert.doesNotMatch(details, /gate-answer/);
+  assert.match(head.html, /label="questions wait on you" value="0"/);
 });
 
 test("a refused answer shows the server's reason instead of saying the question has an answer", async () => {
