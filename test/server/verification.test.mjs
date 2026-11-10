@@ -257,6 +257,19 @@ test("cancelling the call stops the run", async (context) => {
   assert.ok(Date.now() - started < 10000);
 });
 
+test("a call cancelled while verification sets up stops the run", async (context) => {
+  const root = await project(context, `${node} sleep.mjs 20000`);
+  await accept(root);
+  const gateId = await approve(root);
+  // The abort fires before the run starts listening for it, as a cancel can on a loaded machine.
+  const controller = new AbortController();
+  controller.abort();
+  const started = Date.now();
+  const cancelled = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: gateId, signal: controller.signal });
+  assert.equal(cancelled.status, "cancelled");
+  assert.ok(Date.now() - started < 10000);
+});
+
 test("a slice whose design requires review completes on a review of its verified result", async (context) => {
   const root = await project(context);
   await accept(root, "download", "required");
