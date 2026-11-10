@@ -18,8 +18,8 @@ const VIEWS = {
   decisions: () => import("./library.js"),
   glossary: () => import("./library.js"),
   diagrams: () => import("./library.js"),
-  touched: () => import("./library.js"),
-  changed: () => import("./library.js")
+  touched: () => import("./knowledge.js"),
+  changed: () => import("./knowledge.js")
 };
 
 // Knowledge's own pages by the part of their address after `knowledge:`.

@@ -13,6 +13,7 @@ import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
 import { contractClauses, loadDesignView } from "../workflow/design-view.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
+import { recordChanges } from "./record-changes.mjs";
 
 const LIBRARY_LIMIT = 500;
 const RECENT_CHANGES_LIMIT = 20;
@@ -683,7 +684,7 @@ async function describeRecord(projectRoot, config, artifactPath, key, snapshot) 
 }
 
 // The glossary's terms with the text that defines each: a heading's term owns the lines up to the next heading, a table row's term the row's other cells.
-function glossaryEntries(content) {
+export function glossaryEntries(content) {
   const entries = new Map();
   let open = null;
   for (const line of (content ?? "").split("\n")) {
@@ -824,6 +825,52 @@ async function searchIndex(projectRoot, config, roadmap, glossary) {
   return entries;
 }
 
+/**
+ * Every record file by kind, title, and project-relative path: each requirements file, each decision, the glossary file when it exists, and each diagram,
+ * with the folders and files that hold them for reading their history.
+ */
+export async function recordFiles(projectRoot) {
+  const config = await readWorkflowConfig(projectRoot);
+  const records = [];
+  for (const [kind, library] of [["requirement", "requirements"], ["decision", "decisions"]]) {
+    for (const entry of (await loadLibrary(projectRoot, library).catch(() => ({ entries: [] }))).entries) records.push({ kind, title: entry.title, ref: entry.path, status: entry.status ?? null });
+  }
+  const glossary = await loadGlossary(projectRoot);
+  if (glossary.exists) records.push({ kind: "glossary", title: "Glossary", ref: glossary.path, status: null });
+  for (const diagram of await loadDiagrams(projectRoot).catch(() => [])) records.push({ kind: "diagram", title: diagram.name, ref: diagram.path, status: null });
+  const pathspecs = [...new Set([config.paths.requirements, config.paths.adrs, config.paths.glossary, config.paths.plans].filter(Boolean))];
+  return { records, pathspecs };
+}
+
+/** Changed this week: the record files changed in the last 7 days, read from Git on each call, or why Git cannot tell. */
+export async function loadRecordChanges(projectRoot) {
+  const { records, pathspecs } = await recordFiles(projectRoot);
+  return recordChanges(projectRoot, records.map(({ kind, title, ref }) => ({ kind, title, ref })), pathspecs);
+}
+
+// Knowledge's entry points: the count of Changed this week only while Git can date the records; Touched by my work depends on the slice the page has open.
+async function knowledgeEntries(projectRoot) {
+  const changes = await loadRecordChanges(projectRoot).catch(() => null);
+  return changes?.available ? { changed: changes.records.length } : {};
+}
+
+// Every leaf slice in progress, by initiative, for Touched by my work when no slice is open.
+async function slicesInProgress(projectRoot) {
+  const roadmap = await loadRoadmapView(projectRoot);
+  const ids = [...roadmap.items.map((item) => item.id), ...roadmap.unlisted];
+  const slices = [];
+  for (const id of [...new Set(ids)]) {
+    const view = await loadInitiativeView(projectRoot, id).catch(() => null);
+    if (!view?.record) continue;
+    const title = view.roadmapItem?.title ?? view.record.slices?.[view.derived?.root]?.title ?? id;
+    for (const [slug, slice] of Object.entries(view.record.slices ?? {})) {
+      if (slice.status !== "in-progress" || (view.derived?.children?.[slug] ?? []).length) continue;
+      slices.push({ initiative: { id, title }, slice: { slug, title: slice.title } });
+    }
+  }
+  return slices;
+}
+
 export function loadNavigation(projectRoot) {
   return remember(`navigation:${projectRoot}`, () => computeNavigation(projectRoot));
 }
@@ -851,7 +898,7 @@ async function computeNavigation(projectRoot) {
     diagnostics: config.diagnostics,
     index: await searchIndex(projectRoot, config, roadmap, glossary),
     // Each place's own navigation data, by the place's name, for the places that need more than the lists above.
-    places: { attention: attentionPlace(attention), work: await workGroups(projectRoot, listedInitiatives), history: historyEntries(roadmap) }
+    places: { attention: attentionPlace(attention), work: await workGroups(projectRoot, listedInitiatives), history: historyEntries(roadmap), knowledge: await knowledgeEntries(projectRoot) }
   };
 }
 
@@ -1066,7 +1113,8 @@ export async function loadEntity(projectRoot, ref, options = {}) {
   if (parsed.kind === "requirements" || parsed.kind === "decisions") return { ref, kind: parsed.kind, data: await loadLibrary(projectRoot, parsed.kind) };
   if (parsed.kind === "glossary") return { ref, kind: "glossary", data: await loadGlossary(projectRoot) };
   if (parsed.kind === "knowledge" && parsed.page === "diagrams") return { ref, kind: "diagrams", data: { diagrams: (await loadDiagrams(projectRoot)).map(({ path: file, name, owner }) => ({ path: file, name, owner })) } };
-  if (parsed.kind === "knowledge") return { ref, kind: parsed.page, data: null };
+  if (parsed.kind === "knowledge" && parsed.page === "touched") return { ref, kind: "touched", data: { inProgress: await slicesInProgress(projectRoot) } };
+  if (parsed.kind === "knowledge") return { ref, kind: "changed", data: await loadRecordChanges(projectRoot) };
   if (parsed.kind === "initiative") {
     const view = await loadInitiativeView(projectRoot, parsed.id);
     return { ref, kind: "initiative", data: { ...view, runTotals: await loadInitiativeRunTotals(projectRoot, view), code: await initiativeCode(projectRoot, view) } };

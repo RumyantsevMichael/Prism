@@ -1348,3 +1348,205 @@ a.code-link:hover {
 .superseded-by:hover {
   text-decoration: underline;
 }
+
+/* ---------- Knowledge's entry points: Touched by my work and Changed this week ---------- */
+
+/* The lead line sits right under the page's title, as the mockup's page subtitle does, so it takes back the header's bottom margin. */
+.knowledge-lead {
+  margin: calc(var(--prism-space-5) * -1) 0 var(--prism-space-6);
+  color: var(--prism-color-ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.knowledge-lead b {
+  color: var(--prism-color-ink);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+/* One bordered list: a head row of column names, then each group's head and its records, as the mockup draws Touched by my work. */
+.knowledge-table {
+  min-width: 0;
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-lg);
+  overflow: hidden;
+}
+
+.knowledge-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px 140px 240px;
+  align-items: center;
+  gap: var(--prism-space-5);
+  min-width: 0;
+  min-height: calc(var(--prism-row-height) + var(--prism-space-5));
+  padding: var(--prism-space-2) var(--prism-space-5);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.knowledge-row:hover {
+  background: var(--prism-color-hover);
+}
+
+.knowledge-row.is-head {
+  min-height: 0;
+  padding-top: var(--prism-space-3);
+  padding-bottom: var(--prism-space-3);
+  border-top: 0;
+  background: var(--prism-color-sunken);
+}
+
+.knowledge-table.is-changed .knowledge-row {
+  grid-template-columns: minmax(0, 1fr) 120px 140px 200px;
+}
+
+.knowledge-table.is-undated .knowledge-row {
+  grid-template-columns: minmax(0, 1fr) 120px;
+}
+
+.knowledge-title {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.knowledge-title > a,
+.knowledge-title > span {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: var(--prism-font-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-kind {
+  flex: none;
+  color: var(--prism-color-ink-muted);
+}
+
+.knowledge-cell {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-why {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-group {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  padding: var(--prism-space-3) var(--prism-space-5);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+  background: var(--prism-color-raised);
+}
+
+.knowledge-group-name {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--prism-space-3);
+  margin: 0;
+  font-size: var(--prism-font-size-md);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.knowledge-group-source {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-nothing,
+.knowledge-note {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+}
+
+.knowledge-nothing {
+  padding: var(--prism-space-3) var(--prism-space-5);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.knowledge-table + .knowledge-note {
+  margin-top: var(--prism-space-4);
+}
+
+.knowledge-subhead {
+  margin: var(--prism-space-5) 0 var(--prism-space-3);
+  font-size: var(--prism-font-size-md);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.knowledge-slices {
+  display: grid;
+  gap: var(--prism-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.knowledge-slices > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--prism-space-1) var(--prism-space-4);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-owner {
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+}
+
+/* On a phone a record keeps its title on its own line, and its kind, status, and why it is listed share the line below. */
+@media (max-width: 720px) {
+  .knowledge-row,
+  .knowledge-table.is-changed .knowledge-row,
+  .knowledge-table.is-undated .knowledge-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--prism-space-1) var(--prism-space-4);
+    padding-top: var(--prism-space-3);
+    padding-bottom: var(--prism-space-3);
+  }
+
+  .knowledge-row > :first-child {
+    flex: 1 0 100%;
+    min-width: 0;
+  }
+
+  .knowledge-row.is-head {
+    display: none;
+  }
+
+  .knowledge-row .knowledge-why,
+  .knowledge-row .knowledge-cell {
+    flex: 0 1 auto;
+  }
+
+  .knowledge-group {
+    flex-wrap: wrap;
+  }
+
+  .knowledge-group-source {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+}

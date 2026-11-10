@@ -46,7 +46,13 @@ An initiative is **Blocked** when one of its slices is blocked and none is in pr
 A lane opens the board with that lane's heading scrolled into view, also again while the board is open, and its address, such as `review?artifact=roadmap&lane=parked`, does the same in a new window.
 **Knowledge** starts with a search field, such as `Search 11 records`, that counts the requirements files, decisions, glossary terms, and diagrams.
 Below it, **Start from** holds **Touched by my work** and **Changed this week**, and **Browse by kind** holds **Requirements**, **Decisions**, **Glossary**, and **Diagrams**, each with its count.
-**Touched by my work** and **Changed this week** are **Planned**: their pages say what they will list, and their rows show no count yet.
+**Touched by my work** lists the records behind the slice in the selected tab, or else the slice you selected last since the page loaded, and its count is the number of those records.
+Its page groups them under **The contract cites**, read from the slice's design: the requirements sections the slice is assigned, the decisions, requirements files, and diagrams its `slice.md` links to, and the glossary terms its contract clauses name as whole words.
+**This work changes** lists the requirements files, decisions, glossary, and diagrams that a line of the slice's `Changes` names, and those that differ between the content the slice started from and the content its latest passing verification tested.
+Each record shows its kind, its status from its `Status:` line, and why it is listed, such as `Section 1`, `Clauses 1, 2`, `Linked from the design`, `Planned by the design`, or `Changed by the verified result`.
+Without a slice the page says so and lists every slice in progress, so you can open one.
+**Changed this week** lists the requirements files, decisions, glossary, and diagrams changed in the last 7 days, read from the repository's Git history: files Git reports modified, added, or untracked come first as `Not committed`, then those a commit changed, newest first, with the commit's time and author, a renamed file counting as changed.
+When the project is not a Git repository, has no commit yet, or Git cannot be run, the page says `Change history is unavailable:` with the reason, lists the records it could not date, and the sidebar shows no count for **Changed this week**.
 **Diagrams** lists every PlantUML file of the plans and decisions folders by the name after `@startuml`, or by its file name, with what it belongs to: the initiative and slice whose folder holds it, the initiative, or the decision beside it.
 Typing two or more characters in the search replaces the groups with the matching requirements, decisions, glossary terms, and diagrams, grouped by kind and at most 20 of each, titles that hold the text first.
 A record matches when every word you type occurs in its title or its text, ignoring case, and a glossary term opens the Glossary.

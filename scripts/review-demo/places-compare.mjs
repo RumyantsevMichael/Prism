@@ -22,11 +22,12 @@ const SLICE = "slice:retry-hardening/timeout-retries";
 
 // Each scene names its frame in the mockup, the widths it is drawn at, and how the demo app reaches the same state.
 // `before` is a page opened first, `ref` the page the scene shows, `place` the place made current on the rail, and `then` what the scene does after that.
+// `via` names the sidebar entry of the place that opens `ref` in the same page after `before`, for a page that depends on what was selected since the page loaded.
 const SCENES = {
   work: { caption: "Work: a slice of Harden request retries", widths: WIDTHS, ref: SLICE, place: "Work" },
   attention: { caption: "Attention", widths: WIDTHS, ref: "attention", place: "Attention" },
   "attention-filtered": { caption: "Attention filtered to review findings", widths: WIDTHS, ref: "attention:findings", place: "Attention" },
-  knowledge: { caption: "Knowledge: Touched by my work after a slice", widths: WIDTHS, before: SLICE, ref: "knowledge:touched", place: "Knowledge" },
+  knowledge: { caption: "Knowledge: Touched by my work after a slice", widths: WIDTHS, before: SLICE, ref: "knowledge:touched", place: "Knowledge", via: "Touched by my work" },
   history: { caption: "History: a superseded initiative", widths: WIDTHS, ref: "initiative:csv-exports", place: "History" },
   roadmap: { caption: "Roadmap", widths: WIDTHS, ref: "roadmap", place: "Roadmap" },
   collapsed: { caption: "Work with the sidebar hidden", widths: WIDTHS, ref: SLICE, place: "Work", then: "collapse" },
@@ -302,6 +303,26 @@ async function choosePlace(page, place) {
   return `the rail has no ${place} button`;
 }
 
+// Opens a page from the place's sidebar in the open page, as a person does: on the rail, or in the drawer on a narrow window, which closes once the page shows.
+async function follow(page, place, entry, ref) {
+  const wide = await page.locator('nav[aria-label="Places"]').filter({ visible: true }).count() > 0;
+  if (!wide) {
+    const navigation = page.locator("#nav-button");
+    if (!await navigation.isVisible()) return "the Navigation button is not visible";
+    await navigation.click();
+    await page.waitForTimeout(400);
+  }
+  const missing = await choosePlace(page, place);
+  if (missing) return missing;
+  const row = page.locator("prism-tree-item").filter({ visible: true }).filter({ has: page.locator(".prism-tree-label", { hasText: entry }) }).first();
+  if (await row.count() === 0) return `the ${place} sidebar has no ${entry} entry`;
+  await row.click();
+  await page.waitForFunction((expected) => new URLSearchParams(location.search).get("artifact") === expected, ref, { timeout: 15000 });
+  await page.waitForSelector('#artifact[aria-busy="false"]', { timeout: 15000 });
+  await page.waitForTimeout(wide ? 400 : 1200);
+  return "";
+}
+
 async function readApp(browser, project, { scene, width, theme }) {
   const context = await browser.newContext({ viewport: { width, height: HEIGHT }, deviceScaleFactor: 1, colorScheme: theme, reducedMotion: "reduce", isMobile: width < 720, hasTouch: width < 720 });
   const page = await context.newPage();
@@ -319,7 +340,10 @@ async function readApp(browser, project, { scene, width, theme }) {
   let collapsed = false;
   try {
     if (definition.before) await visit(definition.before);
-    await visit(definition.ref);
+    if (definition.before && definition.via) {
+      const missing = await follow(page, definition.place, definition.via, definition.ref);
+      if (missing) notes.push(missing);
+    } else await visit(definition.ref);
     const wide = await page.locator('nav[aria-label="Places"]').filter({ visible: true }).count() > 0;
     if (wide) {
       const missing = await choosePlace(page, definition.place);

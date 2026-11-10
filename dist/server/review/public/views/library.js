@@ -38,22 +38,11 @@ export function renderDiagrams(data, ctx) {
   </tr>`).join("")}</tbody></table></div>`, { eyebrow: "Diagrams" });
 }
 
-// The entry points that a later change of the review app fills; until then each page says what it will list.
-const PLANNED_PAGES = {
-  touched: ["Touched by my work", "This page will list the records behind the slice you have open."],
-  changed: ["Changed this week", "This page will list the records changed in the last 7 days."]
-};
-
 export function render(container, entity, ctx) {
   const data = entity.data;
   if (entity.kind === "diagrams") {
     container.innerHTML = renderDiagrams(data, ctx);
     bindLinks(container, ctx);
-    return;
-  }
-  if (Object.hasOwn(PLANNED_PAGES, entity.kind)) {
-    const [title, text] = PLANNED_PAGES[entity.kind];
-    container.innerHTML = card(title, emptyState("Planned", text));
     return;
   }
   if (entity.kind === "glossary") {

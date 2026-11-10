@@ -1668,7 +1668,7 @@ function knowledgeNavigation() {
     field,
     section("Start from"),
     tree("Start from", [
-      row("knowledge:touched", "Touched by my work", "branch", count(entries.touched)),
+      row("knowledge:touched", "Touched by my work", "branch", count(lastSlice ? touchedCount : 0)),
       row("knowledge:changed", "Changed this week", "clock", count(entries.changed))
     ]),
     section("Browse by kind"),
@@ -1715,7 +1715,7 @@ function renderNavigation() {
   for (const rail of [shellRail, drawerRail]) renderRail(rail, attention.gates ?? 0);
   const entity = Boolean(parseEntityRef(selectedPath ?? ""));
   const claims = claimIndex ? [...claimIndex.live(), ...claimIndex.expired()].map((claim) => [claim.ref, claim.expiresAt, claim.label]) : [];
-  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", knowledgeQuery(), knowledgeResults, attentionMoreOpen, roadmapView]);
+  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", knowledgeQuery(), knowledgeResults, attentionMoreOpen, roadmapView, lastSlice, touchedCount]);
   if (key === navigationKey) return;
   navigationKey = key;
   const focused = document.activeElement?.closest?.("prism-tree-item");
@@ -2002,7 +2002,39 @@ async function showEntity(path) {
   endRebuild(memory);
 }
 
+// The slice whose page the person selected last since the page loaded, as `<initiative>/<slug>`, which Touched by my work lists the records of,
+// and the number of those records for the sidebar's count once the server answered for that slice.
+let lastSlice = null;
+let touchedCount = null;
+
+function rememberSlice(path) {
+  const parsed = parseEntityRef(path ?? "");
+  if (parsed?.kind !== "slice") return;
+  const slice = `${parsed.id}/${parsed.slug}`;
+  if (slice === lastSlice) return;
+  lastSlice = slice;
+  void countTouched(slice);
+}
+
+// Touched by my work's count is its records behind the remembered slice, and 0 while no slice was selected.
+async function countTouched(slice) {
+  try {
+    noteTouched(slice, await fetchJson(`./api/touched?slice=${encodeURIComponent(slice)}`));
+  } catch {
+    noteTouched(slice, null);
+  }
+}
+
+function noteTouched(slice, answer) {
+  if (slice !== lastSlice) return;
+  const count = answer ? answer.groups.reduce((sum, group) => sum + group.records.length, 0) : null;
+  if (count === touchedCount) return;
+  touchedCount = count;
+  renderNavigation();
+}
+
 async function showArtifact(path) {
+  rememberSlice(path);
   await refreshContext(path);
   if (path !== selectedPath) {
     return;
@@ -2102,6 +2134,10 @@ function viewContext(path, state) {
     // The Roadmap page's view as its place's sidebar chose it, and the lane a lane link asks it to show.
     roadmapView,
     lane: pendingLane?.path === path ? pendingLane.lane : null,
+    // Touched by my work reads the slice in the selected tab, or else the one selected last, and passes its answer back for the sidebar's count.
+    touchedSlice: () => lastSlice,
+    fetchTouched: (slice) => fetchJson(`./api/touched?slice=${encodeURIComponent(slice)}`),
+    onTouched: (slice, answer) => noteTouched(slice, answer),
     escapeHtml,
     showToast,
     fetchArtifact: (artifactPath) => fetchJson(`./api/artifact?path=${encodeURIComponent(artifactPath)}`),
