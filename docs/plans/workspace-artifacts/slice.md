@@ -249,7 +249,13 @@ A workspace's descriptive artifacts live in its shared store, scoped to the work
 ### Accepting ADRs at ship
 
 43. With a store, `ship` takes `afterGate`, a `correctness` gate of the initiative that the review browser answered `approve`, and is refused with `ship_unconfirmed` without one.
+   That gate confirms the initiative as it stands at ship: it was asked after each leaf slice's latest passing verification run and while every `slice.md` of the initiative, the repositories its links resolve in, and every ADR that ship would accept read as they do at ship, and an earlier gate is refused with `ship_unconfirmed` naming what changed after it was asked.
+   Once the person answers a gate, its kind, question, context, and artifacts never change, so an answer always stays with what the person was shown.
 44. On ship, each ADR whose recorded status is `Proposed` and that a Markdown link in any `slice.md` of the initiative names becomes `Accepted`: Prism rewrites its `Status:` line, records the status with the gate, and records `acceptance` with the gate and `verifiedBy`, the `slice`, `repository`, and `commit` of each leaf slice's latest passing verification run, which `get_artifact` returns; the ship result lists the accepted ADRs under `acceptedAdrs` with `path`, `scope`, and `verifiedBy`, and a cited ADR with another recorded status stays as it is.
+   A Markdown link counts as CommonMark reads it, so text in a code span, a code block, an HTML comment, or after an escaped bracket names nothing, and a link in a slice's `slice.md` names an ADR of the workspace scope or of that slice's own repository and its components, whichever repository's checkout ships.
+   Where one link could name ADRs at the same path in two or more of those scopes, it names the one in the scope that holds its `slice.md`, and where none of them is in that scope, ship is refused with `adr_ambiguous`, naming the path and the scopes, and changes nothing.
+   While a linked `Proposed` ADR has an open approval, ship is refused with `adr_pending`, naming each such ADR and its gate, and changes nothing, so the person's question is never closed by a ship.
+   When a sync meets an ADR that a ship accepted on one machine and an approval asked for it on another, it keeps the acceptance and ends that approval, so the ADR's file and recorded status agree on every machine.
 
 ### Guidance
 
