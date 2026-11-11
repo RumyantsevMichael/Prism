@@ -516,7 +516,7 @@ export class NativeSemanticRuntime implements ComponentRuntime {
       const phase = job.progress?.phase ?? "starting";
       // The build helper is stopped without waiting for its request, which then ends with the build it ran; a load that stalls beside the
       // running build has no request there, so the running build's helper is left alone.
-      if (job === this.running) void this.store.stop().catch(error => log.warn("index_stop_failed", { directory: job.directory, ...errorFields(error) }));
+      if (job === this.running) void Promise.resolve().then(() => this.store.stop()).catch(error => log.warn("index_stop_failed", { directory: job.directory, ...errorFields(error) }));
       reject(stalledError(phase, period));
     };
     job.stalled = false;
