@@ -15,7 +15,7 @@ import { retainAnalysis } from "../conservation/conservation-analysis.mjs";
 const domains = /* @__PURE__ */ new Set(["code", "instruction", "documentation", "configuration"]);
 const exact = (node, value) => [node.name, node.qualifiedName, node.selector].includes(value);
 const pinned = (hit) => hit.reasons?.some((reason) => ["explicit-design-reference", "expected-modification-target", "exact-symbol"].includes(reason));
-const STRUCTURE_REPORT = " While a build embeds, the report answers from the structure that the build published first, in any session that shares the index storage, with status ready and that structure's revision as indexRevision; in a repository that declares components, such a component is included and its components entry carries embeddings: pending.";
+const STRUCTURE_REPORT = " While a build embeds, the report answers from the structure that the build published first, in any session that shares the index storage, with status ready and that structure's revision as indexRevision, and also after the build failed while embedding; in a repository that declares components, such a component is included and its components entry carries embeddings: pending.";
 const COMPONENT_REPORT = STRUCTURE_REPORT + " In a repository that declares components, filters.paths selects the components that the report reads, and a report without paths reads every component that holds a file, as one index: groups keep members and module reports count importers only in the selected components, so matches in other components appear only in an unscoped report. components gives each read component's status, and the components_missing diagnostic names each one that is not included.";
 const NATIVE_INTELLIGENCE_TOOLS = [
   {

@@ -144,6 +144,7 @@ A structure never replaces a complete index of the same files.
 While a structure is published, the six structural reports, conservation analysis of a retained baseline, and the review browser's units answer from it without waiting for embeddings.
 A report that answers from a structure has `status: "ready"` and that structure's revision as `indexRevision`, and its groups, modules, and coverage are the same as the complete index's.
 A later call with the same files still finishes the build, so embeddings keep filling in the background.
+A build that fails after it published its structure, for example at a native limit while embedding, leaves that structure stored, and these reports keep answering from it with the failure among their diagnostics.
 
 `get_repository_intelligence_status` and `discover_repository_intelligence` give `stage`, which is `none` before any index exists, `structure` while only the structure is published, and `complete` once the complete index is stored.
 A build that embeds after it published its structure stays `preparing`.

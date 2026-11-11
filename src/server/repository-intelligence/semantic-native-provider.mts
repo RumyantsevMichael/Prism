@@ -30,7 +30,7 @@ const exact = (node: SourceUnit, value: string) => [node.name, node.qualifiedNam
 const pinned = (hit: SearchHit) => hit.reasons?.some(reason => ["explicit-design-reference", "expected-modification-target", "exact-symbol"].includes(reason));
 // The six structural reports read components as the search does.
 // A structural report needs no embeddings, so it answers from the structure that a build publishes before it embeds.
-const STRUCTURE_REPORT = " While a build embeds, the report answers from the structure that the build published first, in any session that shares the index storage, with status ready and that structure's revision as indexRevision; in a repository that declares components, such a component is included and its components entry carries embeddings: pending.";
+const STRUCTURE_REPORT = " While a build embeds, the report answers from the structure that the build published first, in any session that shares the index storage, with status ready and that structure's revision as indexRevision, and also after the build failed while embedding; in a repository that declares components, such a component is included and its components entry carries embeddings: pending.";
 const COMPONENT_REPORT = STRUCTURE_REPORT + " In a repository that declares components, filters.paths selects the components that the report reads, and a report without paths reads every component that holds a file, as one index: groups keep members and module reports count importers only in the selected components, so matches in other components appear only in an unscoped report. components gives each read component's status, and the components_missing diagnostic names each one that is not included.";
 
 export const NATIVE_INTELLIGENCE_TOOLS = [

@@ -81,9 +81,12 @@ export async function prepareComponents(runtime: ComponentRuntime, selected: Com
   return options.structure ? preparations.map(answeringPreparation) : preparations;
 }
 
-/** A preparation that waits or prepares with a published structure, as a ready preparation of that structure-only index; any other preparation as it is. */
+/**
+ * A preparation without a complete index that waits, prepares, or failed after its build published a structure, as a ready preparation of that
+ * structure-only index, which stays stored after a failure such as a native limit; any other preparation as it is.
+ */
 export function answeringPreparation(preparation: Preparation): Preparation {
-  if (preparation.prepared || !preparation.structure || (preparation.status !== "waiting" && preparation.status !== "preparing")) return preparation;
+  if (preparation.prepared || !preparation.structure || preparation.status === "ready") return preparation;
   return { ...preparation, status: "ready", prepared: preparation.structure };
 }
 

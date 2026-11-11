@@ -63,7 +63,7 @@ async function prepareComponents(runtime, selected, waitMs, options = {}) {
   return options.structure ? preparations.map(answeringPreparation) : preparations;
 }
 function answeringPreparation(preparation) {
-  if (preparation.prepared || !preparation.structure || preparation.status !== "waiting" && preparation.status !== "preparing") return preparation;
+  if (preparation.prepared || !preparation.structure || preparation.status === "ready") return preparation;
   return { ...preparation, status: "ready", prepared: preparation.structure };
 }
 function componentStates(selected, preparations) {
