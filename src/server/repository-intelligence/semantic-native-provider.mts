@@ -174,7 +174,19 @@ export class SemanticNativeRepositoryIntelligence {
   async semanticSearch(query: string, filters: SearchFilters | undefined, limit: number): Promise<SearchResult[] | null> {
     if (!this.prepared) return null;
     try { return await this.runtime.search(this.prepared, this.source, query, filters, limit); }
-    catch (error) {
+    catch (caught) {
+      let error = caught;
+      // A complete save removes the structure-only index that it replaces, also after this call loaded it, so the search answers from the
+      // complete index when one of the same content is stored, and otherwise fails to answer as a failed preparation does.
+      if (error.code === "ENOENT" && this.prepared.stage === "structure") {
+        const complete = await this.runtime.replacingIndex?.(this.prepared);
+        if (complete) {
+          this.prepared = complete;
+          this.preparation = { ...this.preparation, prepared: complete };
+          return this.semanticSearch(query, filters, limit);
+        }
+        error = semanticError("preparation_failed", "The structure-only index was removed before the search read it. Repeat the request.");
+      }
       if (["stale_snapshot", "snapshot-changed"].includes(error.code)) throw semanticError("stale_snapshot", "The repository changed during semantic analysis. Repeat the request.");
       if (!["preparation_failed", "unsupported_runtime", "corrupt_asset"].includes(error.code)) throw error;
       this.prepared = undefined;
@@ -365,9 +377,16 @@ async function searchComponentIndexes(input: ConceptSearchInput, declaration: De
   if (componentResult(states, snapshot).status === "preparing") return preparing();
   const included = states.flatMap((state, index) => state.status === "included" ? [{ index, provider: new SemanticNativeRepositoryIntelligence(selected[index].source, preparations[index], runtime) }] : []);
   const searched = await searchComponents(included.map(({ index, provider }) => ({ component: selected[index].component, search: () => provider.semanticSearch(input.query, input.filters, limit) })), limit, input.query);
-  // An index that fails to answer is not part of the result.
+  // An index that fails to answer is not part of the result, and one that answered from the complete index that replaced its structure is included from that index.
   for (const [position, { index, provider }] of included.entries()) {
-    if (searched.answers[position] !== null) continue;
+    if (searched.answers[position] !== null) {
+      if (provider.prepared !== preparations[index].prepared) {
+        preparations[index] = provider.preparation as Preparation;
+        const { embeddings: _, ...state } = states[index];
+        states[index] = { ...state, indexRevision: provider.prepared!.revision };
+      }
+      continue;
+    }
     const [failure] = provider.preparation.diagnostics.slice(-1);
     states[index] = failedState(states[index], failure);
   }

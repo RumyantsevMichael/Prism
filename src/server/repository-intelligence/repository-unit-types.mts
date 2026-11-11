@@ -58,6 +58,8 @@ export interface SemanticRuntime {
   prepare(source: NativeSource, expectedSnapshot?: string, waitMs?: number, options?: PrepareOptions): Promise<Preparation>;
   /** Searches a prepared index; a structure-only index is searched with `mode: "lexical"`. */
   search(prepared: PreparedIndex, source: NativeSource, query: string, filters: SearchFilters | undefined, limit: number): Promise<SearchResult[]>;
+  /** The complete index that replaced a structure-only index whose file a complete save removed, when one is stored. */
+  replacingIndex?(prepared: PreparedIndex): Promise<PreparedIndex | undefined>;
 }
 export interface ComponentRuntime extends SemanticRuntime {
   prepareComponents(entries: { source: NativeSource; component: IndexComponent }[], waitMs?: number, options?: { retryLimited?: boolean } & PrepareOptions): Promise<Preparation[]>;

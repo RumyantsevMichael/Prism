@@ -693,6 +693,18 @@ export class NativeSemanticRuntime implements ComponentRuntime {
     if (helper?.runtime !== runtime) { helper?.stop(); helper = new Helper(runtime, { ...this.options, directory: this.directory }, role); this.processes.set(role, helper); }
     return helper;
   }
+  // The complete index that replaced a structure-only index of the same snapshot and assets, which the generation pointer names once the
+  // complete save removed the structure-only file, in this session or another; none while the structure-only index still answers.
+  async replacingIndex(prepared: PreparedIndex): Promise<PreparedIndex | undefined> {
+    if (prepared.stage !== "structure") return undefined;
+    const directory = path.dirname(prepared.indexPath);
+    const pointer = await optionalJson(path.join(directory, `generation-${prepared.index.snapshot}-${prepared.assetIdentity}.json`)).catch(() => null);
+    if (!pointer || pointerStage(pointer) !== "complete" || !/^[a-f\d]{64}$/.test(pointer.revision ?? "")) return undefined;
+    const indexPath = path.join(directory, `${pointer.revision}.json`);
+    const index = await this.store.read(indexPath, pointer.revision!).catch(() => undefined);
+    if (!index || index.snapshot !== prepared.index.snapshot || index.assetIdentity !== prepared.assetIdentity) return undefined;
+    return { ...prepared, index, indexPath, revision: pointer.revision!, stage: "complete" };
+  }
   async search(prepared: PreparedIndex, source: NativeSource, query: string, filters: SearchFilters | undefined, limit: number) {
     await source.verifySnapshot();
     // A structure-only index holds no embeddings, so the runtime answers it from fragment text alone.

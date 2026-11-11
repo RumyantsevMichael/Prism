@@ -866,6 +866,18 @@ class NativeSemanticRuntime {
     }
     return helper;
   }
+  // The complete index that replaced a structure-only index of the same snapshot and assets, which the generation pointer names once the
+  // complete save removed the structure-only file, in this session or another; none while the structure-only index still answers.
+  async replacingIndex(prepared) {
+    if (prepared.stage !== "structure") return void 0;
+    const directory = path.dirname(prepared.indexPath);
+    const pointer = await optionalJson(path.join(directory, `generation-${prepared.index.snapshot}-${prepared.assetIdentity}.json`)).catch(() => null);
+    if (!pointer || pointerStage(pointer) !== "complete" || !/^[a-f\d]{64}$/.test(pointer.revision ?? "")) return void 0;
+    const indexPath = path.join(directory, `${pointer.revision}.json`);
+    const index = await this.store.read(indexPath, pointer.revision).catch(() => void 0);
+    if (!index || index.snapshot !== prepared.index.snapshot || index.assetIdentity !== prepared.assetIdentity) return void 0;
+    return { ...prepared, index, indexPath, revision: pointer.revision, stage: "complete" };
+  }
   async search(prepared, source, query, filters, limit) {
     await source.verifySnapshot();
     const results = await this.helper(prepared.runtime, "search").request("search", {
