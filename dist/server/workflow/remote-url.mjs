@@ -87,13 +87,8 @@ async function realFolder(folder) {
   return bare;
 }
 
-/**
- * The identity of a Workspace Store value, which every spelling of one store shares: host/path for an https://, ssh://, or scp-form remote, without scheme, user information, port, query, fragment, or a trailing .git,
- * the same after its scheme for an http:// or git:// remote, which Git reaches without encryption, so a plaintext spelling never shares a clone with an encrypted one,
- * or file: and the real path of a folder store or a file:// URL, a relative path resolved from root; null when the value names no usable store.
- */
-export async function storeIdentity(value, { root = process.cwd() } = {}) {
-  if (typeof value !== "string" || !value.trim()) return null;
+// The identity of a network URL or scp-form remote, which needs no file system, or null for any other value.
+function networkStoreIdentity(value) {
   if (NETWORK_URL.test(value)) {
     let parsed;
     try { parsed = new URL(value); } catch { return null; }
@@ -103,6 +98,19 @@ export async function storeIdentity(value, { root = process.cwd() } = {}) {
     const identity = networkIdentity(parsed.hostname, decoded);
     return identity && (PLAINTEXT_URL.test(value) ? `${parsed.protocol}//${identity}` : identity);
   }
+  if (!STORE_SCP.test(value)) return null;
+  const scp = /^(?:[^@/\\\s]+@)?([A-Za-z0-9][A-Za-z0-9.-]+):([^?#\s]*)/.exec(value);
+  return scp && networkIdentity(scp[1], scp[2]);
+}
+
+/**
+ * The identity of a Workspace Store value, which every spelling of one store shares: host/path for an https://, ssh://, or scp-form remote, without scheme, user information, port, query, fragment, or a trailing .git,
+ * the same after its scheme for an http:// or git:// remote, which Git reaches without encryption, so a plaintext spelling never shares a clone with an encrypted one,
+ * or file: and the real path of a folder store or a file:// URL, a relative path resolved from root; null when the value names no usable store.
+ */
+export async function storeIdentity(value, { root = process.cwd() } = {}) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  if (NETWORK_URL.test(value)) return networkStoreIdentity(value);
   if (/^file:\/\//i.test(value)) {
     let parsed;
     try { parsed = new URL(value); } catch { return null; }
@@ -111,10 +119,7 @@ export async function storeIdentity(value, { root = process.cwd() } = {}) {
     try { folder = fileURLToPath(parsed); } catch { return parsed.host && parsed.host !== "localhost" ? null : `file:${parsed.pathname.replace(/\/+$/, "")}`; }
     return `file:${await realFolder(folder)}`;
   }
-  if (STORE_SCP.test(value)) {
-    const scp = /^(?:[^@/\\\s]+@)?([A-Za-z0-9][A-Za-z0-9.-]+):([^?#\s]*)/.exec(value);
-    return scp && networkIdentity(scp[1], scp[2]);
-  }
+  if (STORE_SCP.test(value)) return networkStoreIdentity(value);
   return `file:${await realFolder(path.resolve(root, value))}`;
 }
 
@@ -144,14 +149,26 @@ export function withoutCredentials(text) {
 /**
  * A store address with any credential taken out, or null when none can be taken out cleanly: the user information of a URL, a URL's query and fragment,
  * and the user of an scp-form address with a password. An address without a credential comes back as it is.
+ * Only the leading user information is taken out, and the result must name the same remote store as the value, so a credential is never removed by turning the value into another store.
  */
 export function addressWithoutCredentials(value) {
   if (typeof value !== "string") return null;
   if (!credentialsIn(value)) return value;
-  let stripped = withoutCredentials(value);
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(stripped)) stripped = stripped.replace(/[?#].*$/s, "");
-  else stripped = stripped.replace(/^[^/\\\s]*@(?=[A-Za-z0-9][A-Za-z0-9.-]+:)/, "");
-  return stripped && !credentialsIn(stripped) ? stripped : null;
+  // A value that names a folder has no user information to take out.
+  if (!isRemoteStore(value)) return null;
+  let stripped;
+  const scheme = /^[a-z][a-z0-9+.-]*:\/\//i.exec(value)?.[0];
+  if (scheme) {
+    // The authority ends at the first '/', '?', or '#'; its user information ends at its last '@'.
+    const rest = value.slice(scheme.length);
+    const authority = rest.split(/[/?#]/, 1)[0];
+    stripped = `${scheme}${authority.slice(authority.lastIndexOf("@") + 1)}${rest.slice(authority.length)}`.replace(/[?#].*$/s, "");
+  } else {
+    stripped = value.replace(/^[^/\\\s]*@(?=[A-Za-z0-9][A-Za-z0-9.-]+:)/, "");
+  }
+  if (!stripped || credentialsIn(stripped) || !isRemoteStore(stripped)) return null;
+  const identity = networkStoreIdentity(value);
+  return identity && networkStoreIdentity(stripped) === identity ? stripped : null;
 }
 
 /**
