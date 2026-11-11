@@ -35,7 +35,7 @@ A choice applies at once, and System follows the operating system again.
 **Component catalog** opens the review app's component catalog in a new tab, which shows every control of the interface with its options, states, and keys.
 The catalog's own toolbar changes its theme, density, and width for that tab only, and stores nothing.
 
-The top bar holds the Prism mark, the project switcher, the search button that opens the Jump palette, and **Who's working**.
+The top bar holds the Prism mark, the workspace switcher, the search button that opens the Jump palette, and **Who's working**.
 The status bar at the bottom shows where the project's records live, their sync state, and the repository index.
 The sidebar is the only navigation.
 It lists Attention and Roadmap, every initiative with its state, the open initiative's slices or the open library section's documents, and the Library, with Requirements, Decisions, and the Glossary.
@@ -278,16 +278,20 @@ In a repository with components, the item combines every component's index and n
 A long component identity ends in an ellipsis, and its tooltip names it whole.
 See [Watch an index build in the review browser](repository-intelligence.md#watch-an-index-build-in-the-review-browser) for what each state means.
 
-## Several projects
+## Workspaces
 
-All Prism sessions of one user share one review app on one local port, and each project has its own page there.
-The project switcher names the project as `repository/branch`, falls back to the worktree folder without a branch, and shows a detached checkout by its commit.
-A checkout of a workspace shows the workspace's name first, as `workspace · repository/branch`; see [Name the workspace](shared-records.md#name-the-workspace).
-Checkouts whose records live in one shared store form one workspace, with the name kept in its store, or until one is set named after the store's folder or, for a remote store, after its repository, with one count of open questions and each checkout listed under it as `repository / branch`, because their roadmap, initiatives, and questions are the same, whichever repository each checkout belongs to.
-Choose the workspace's name to open its records through the checkout already open, else one an agent session is using, else the one you used last.
-Every checkout of a workspace shows the same roadmap, initiatives, and questions, so choose a checkout only for its own source files and index.
-Every other recent project is listed under its repository, even a repository with one checkout, with its open questions.
-The switcher marks the projects an agent session is using now, and lists workspaces first and then repositories, each in name order, so entries never move while you look.
+All Prism sessions of one user share one review app on one local port, and the app shows workspaces.
+A workspace is one record store with every checkout and repository on this machine that shares it, and a project that keeps its records itself is a workspace of one.
+Every spelling of one store, such as its HTTPS and SSH URLs, names one workspace.
+Each workspace has its own page at `w/<id>/` below the app's address, whichever checkout opened it.
+The switcher in the top bar lists workspaces only, named by the workspace name kept in the store, else after the store's last path segment, or, for a project without a store, after its folder; see [Name the workspace](shared-records.md#name-the-workspace).
+Under each workspace's name it lists its repositories and how many of their checkouts this machine has, and its tooltip names the store and each checkout's folder, as information rather than places to open.
+Each entry marks a workspace that an agent session is using now and counts its open questions, and the switcher keeps the entries in name order, so they never move while you look.
+The switcher's button shows the workspace's name first, as `workspace · repository/branch`, naming the checkout whose source files and index the page shows: the checkout that presented a review last.
+An older link to a checkout's page, which has `p/<id>/` in its address, opens the same page of the checkout's workspace, and an artifact it names by the checkout's path opens by its place in the store.
+Open tabs name each store artifact by its place in the store, so a tab opened from one checkout stays the same artifact from every other checkout of the workspace.
+The app's own address opens the workspace an agent session used most recently, else the workspace used most recently.
+With no workspace yet, it shows a page that says how to add one, and opens the first workspace as soon as a Prism session or `prism review` in a project adds it.
 When an agent presents a review for another project while a tab that can make changes is open, that tab shows a notice with a link instead of a second tab opening.
 
 The app starts with the MCP server of the first Prism session, outlives that session, and exits after 30 minutes with no session and no open viewer.
@@ -304,7 +308,8 @@ A session serves its project from its own review server when the shared app cann
 When a session falls back on its own, its page shows a banner with the reason, and the agent's review links say that the link belongs to that session, because another session may show the same project at a different link.
 Each fallback also adds a line with the time, project, and reason to `fallbacks.log` in that state directory and to the session's error output.
 
-`prism review` opens the project in the shared review app and returns.
+`prism review` opens the project's workspace in the shared review app and returns.
+`prism review --workspaces` opens the app's own address, from any folder, with a tab that can make changes when no such tab is open.
 It opens the system browser only when no review tab that can make changes is open, and such a tab shows the project or a notice with a link to it instead.
 When the shared app cannot start or `PRISM_REVIEW_APP=off` is set, `prism review` serves the review itself until you stop it with `Ctrl-C`.
 
