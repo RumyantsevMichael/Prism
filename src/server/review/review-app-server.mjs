@@ -7,7 +7,6 @@ import { withFileLock } from "../workflow/artifact-store.mjs";
 import { useManagedStores } from "../workflow/record-store-remote.mjs";
 import { describeRecordStore, outsideToolCall } from "../workflow/record-store.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
-import { appliedArtifactAction, artifactStoreLocation } from "../workflow/store-artifacts.mjs";
 import {
   REVIEW_APP_PROTOCOL,
   lockBase,
@@ -27,9 +26,10 @@ import {
 } from "./review-app-discovery.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
-import { createProjectReview, isTrustedHost, normalizeTabs, readBody, send } from "./review-server.mjs";
+import { createProjectReview, exchangeWriteGrant, isTrustedHost, normalizeTabs, readBody, send, servePageRoute, storeTabRef } from "./review-server.mjs";
 import { loadAttention } from "./workspace-model.mjs";
 import { readWorkspaceIdentity, workspaceLabel } from "./workspace-identity.mjs";
+import { checkoutWorkspace, listWorkspaces, nameOfWorkspace } from "./workspaces.mjs";
 import { createWriteSessions } from "./write-sessions.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
 
@@ -103,8 +103,10 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
   const controlToken = newCredential();
   const instance = randomBytes(8).toString("hex");
   const projects = new Map();
+  // The workspaces of the registered checkouts, by workspace id, each with the one review that serves its page for every checkout of it.
+  const workspaces = new Map();
   const nonces = new Map();
-  // Presentations nobody could see yet, by presenting project id, handed to the next viewer of another project.
+  // Presentations nobody could see yet, by presenting workspace id, handed to the next viewer of another workspace.
   const pendingNotices = new Map();
   const stores = new Map();
   let openGrantedAt = -Infinity;
@@ -123,15 +125,19 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
 
   function viewerCount() {
     let count = 0;
-    for (const project of projects.values()) count += project.review.viewerCount();
+    for (const view of workspaces.values()) count += view.review.viewerCount();
     return count;
   }
 
   function writableViewerCount() {
     let count = 0;
-    for (const project of projects.values()) count += project.review.writableViewerCount();
+    for (const view of workspaces.values()) count += view.review.writableViewerCount();
     return count;
   }
+
+  const membersOf = (view) => [...projects.values()].filter((project) => project.workspaceId === view.id);
+  const workspaceViewers = (project) => workspaces.get(project.workspaceId)?.review.viewerCount() ?? 0;
+  const workspaceUrl = (id) => `http://127.0.0.1:${port}${viewerPrefix()}/w/${id}/`;
 
   function live(project, now = Date.now()) {
     for (const [lease, expiresAt] of project.leases) {
@@ -153,11 +159,9 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
   // Keeps at most RECENT_LIMIT projects that are neither live nor watched, and saves the projects most recent first whenever that changes.
   async function rememberProjects() {
     const now = Date.now();
-    const idle = byRecency().filter((project) => !live(project, now) && project.review.viewerCount() === 0);
-    for (const project of idle.slice(RECENT_LIMIT)) {
-      projects.delete(project.id);
-      pendingNotices.delete(project.id);
-    }
+    const idle = byRecency().filter((project) => !live(project, now) && workspaceViewers(project) === 0);
+    for (const project of idle.slice(RECENT_LIMIT)) projects.delete(project.id);
+    pruneWorkspaces();
     const { roots, directories } = savedProjects();
     const text = JSON.stringify([roots, directories]);
     if (text === persisted) return;
@@ -231,6 +235,68 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     await rememberProjects();
   }
 
+  // A workspace keeps its review while a checkout of it is registered or a page of it is open, and reads through its most recent checkout once the one it read through left.
+  function pruneWorkspaces() {
+    for (const view of workspaces.values()) {
+      const members = membersOf(view);
+      if (!members.length) {
+        if (view.review.viewerCount() > 0) continue;
+        view.review.closeViewers();
+        workspaces.delete(view.id);
+        pendingNotices.delete(view.id);
+        continue;
+      }
+      if (!members.some((project) => project.root === view.root)) useCheckout(view, members.sort((left, right) => right.lastSeen - left.lastSeen)[0]);
+    }
+  }
+
+  function useCheckout(view, project) {
+    view.review.useCheckout(project.root);
+  }
+
+  const currentProject = (view) => projects.get(projectId(view.root)) ?? membersOf(view)[0] ?? null;
+
+  // The workspace a registered checkout belongs to, made with its review on first use; the store URL the checkout names joins the workspace's URLs in the order first seen.
+  async function placeProject(project) {
+    const found = await checkoutWorkspace(project.root);
+    const previous = project.workspaceId;
+    project.workspaceId = found.id;
+    project.repository = found.repository;
+    let view = workspaces.get(found.id);
+    if (!view) {
+      view = { id: found.id, kind: found.kind, identity: found.identity, urls: [], usedAt: 0, review: null, get root() { return this.review.projectRoot; } };
+      view.review = createProjectReview({ projectRoot: project.root, baseUrl: `http://127.0.0.1:${port}${viewerPrefix()}/w/${view.id}`, instance, appVersion: pluginVersion,
+        onViewer: (sendNotice) => {
+          view.usedAt = ++sequence;
+          deliverPendingNotices(view.id, sendNotice);
+        },
+        // Every checkout of a workspace shows its page through this one review, so an applied action reaches every page of the workspace.
+        onAction: (event) => view.review.notify("action", event),
+        evidenceStore: () => evidenceStoreOf(currentProject(view)), intelligenceDirectories: () => intelligenceDirectoriesOf(currentProject(view)), writeSessions,
+        workspace: { id: view.id, describe: () => describeWorkspace(view) } });
+      workspaces.set(view.id, view);
+    }
+    if (found.url !== null && !view.urls.includes(found.url)) view.urls.push(found.url);
+    if (previous && previous !== found.id) pruneWorkspaces();
+    return view;
+  }
+
+  function workspaceViews() {
+    const now = Date.now();
+    return [...workspaces.values()].map((view) => {
+      const members = membersOf(view);
+      return { id: view.id, kind: view.kind, identity: view.identity, urls: view.urls, root: view.root, members: members.map(({ root, repository }) => ({ root, repository })),
+        live: members.some((project) => live(project, now)), lastSeen: Math.max(view.usedAt, ...members.map((project) => project.lastSeen)) };
+    });
+  }
+
+  const workspaceList = () => listWorkspaces(workspaceViews(), { urlOf: workspaceUrl });
+
+  // The index names its workspace on every poll, so it reads only the name, never the gate counts and checkouts of the list.
+  async function describeWorkspace(view) {
+    return { id: view.id, name: await nameOfWorkspace(view), kind: view.kind, url: workspaceUrl(view.id) };
+  }
+
   function deliverPendingNotices(viewedId, sendNotice) {
     const now = Date.now();
     for (const [id, pending] of pendingNotices) {
@@ -254,13 +320,8 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     const id = projectId(root);
     let project = projects.get(id);
     if (!project) {
-      const baseUrl = `http://127.0.0.1:${port}${viewerPrefix()}/p/${id}`;
-      const onViewer = (sendNotice) => deliverPendingNotices(id, sendNotice);
-      const onAction = (event, { shared, comment = null }) => announceAction(project, event, shared, comment);
       // A new project starts as the most recent, so the recent limit never drops the project being registered.
-      project = { id, root, leases: new Map(), lastSeen: ++sequence, evidenceDirectories: [], intelligenceDirectories: [], recordStoreDirectories: [] };
-      project.review = createProjectReview({ projectRoot: root, baseUrl, instance, appVersion: pluginVersion, onViewer, onAction, evidenceStore: () => evidenceStoreOf(project),
-        intelligenceDirectories: () => intelligenceDirectoriesOf(project), writeSessions });
+      project = { id, root, leases: new Map(), lastSeen: ++sequence, workspaceId: null, repository: null, evidenceDirectories: [], intelligenceDirectories: [], recordStoreDirectories: [] };
       projects.set(id, project);
       if (persist) await rememberProjects();
     }
@@ -278,42 +339,17 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
 
   // Answers whether the presenting session should open a browser, and tells every other project's tabs about the presentation.
   // A browser opens only while no tab of any project is connected, once per lease, so one window serves every project.
-  function announce(project, url, name, acceptsGrant) {
+  function announce(project, view, url, name, acceptsGrant) {
     const notice = { projectId: project.id, name, projectRoot: project.root, url, at: new Date().toISOString() };
-    for (const other of projects.values()) {
-      if (other !== project) other.review.notify("notice", notice);
+    for (const other of workspaces.values()) {
+      if (other !== view) other.review.notify("notice", notice);
     }
     const now = Date.now();
     const watched = viewerCount() > 0;
     const open = grantOpen(acceptsGrant, now);
-    if (open || project.review.viewerCount() > 0) pendingNotices.delete(project.id);
-    else if (!watched) pendingNotices.set(project.id, { notice, expiresAt: now + noticeMs });
+    if (open || view.review.viewerCount() > 0) pendingNotices.delete(view.id);
+    else if (!watched) pendingNotices.set(view.id, { notice, expiresAt: now + noticeMs });
     return open;
-  }
-
-  // An applied action reaches every checkout's page whose records resolve to the same record store, since those pages show the same records;
-  // an index rebuild, and any action of a page whose store cannot be resolved, reaches only the applying page.
-  // An action on a store artifact, an approval or a comment, reaches only the checkouts that see that artifact, each naming it by its own path, as its own recent changes list it.
-  // Each such checkout reads only that artifact's status record or the one comment file the action stored, so an action costs about one entry for each open checkout, whatever the store holds.
-  async function announceAction(project, event, shared, comment) {
-    project.review.notify("action", event);
-    if (!shared) return;
-    const storeOf = (root) => describeRecordStore(root).then((store) => store.location ?? null, () => null);
-    const location = await storeOf(project.root);
-    if (!location) return;
-    const others = [...projects.values()].filter((other) => other !== project && other.review.viewerCount() > 0);
-    if (!others.length) return;
-    const artifactLocation = event.artifact ? await artifactStoreLocation(project.root, event.artifact).catch(() => null) : null;
-    if (event.artifact && !artifactLocation) return;
-    await Promise.all(others.map(async (other) => {
-      if (await storeOf(other.root) !== location) return;
-      if (!event.artifact) {
-        other.review.notify("action", event);
-        return;
-      }
-      const seen = await appliedArtifactAction(other.root, { location: artifactLocation, id: event.id, action: event.action, comment }).catch(() => null);
-      if (seen) other.review.notify("action", seen);
-    }));
   }
 
   // A project folder that is gone or records that cannot be read give an unknown count rather than a misleading zero.
@@ -334,15 +370,33 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       // Checkouts whose records resolve to one store share their records, so the switcher lists them as one project.
       store: await describeRecordStore(project.root).then(async ({ kind, label, location }) => ({ kind, label, location, workspaceName: kind === "project" ? null : await readWorkspaceName(project.root) })).catch(() => null),
       indexing: (await readIndexingStatus(project.root, intelligenceDirectoriesOf(project)).catch(() => null))?.state ?? null,
-      url: project.review.reviewUrl([]),
+      url: workspaceUrl(project.workspaceId),
       lastSeen: project.lastSeen
     })));
     entries.sort((left, right) => Number(right.live) - Number(left.live) || right.lastSeen - left.lastSeen || left.name.localeCompare(right.name));
     return { current, projects: entries.map(({ lastSeen, ...entry }) => entry) };
   }
 
-  function mostRecentLiveProject() {
-    return [...projects.values()].filter((project) => live(project)).sort((left, right) => right.lastSeen - left.lastSeen)[0] ?? null;
+
+  // The app's root opens the live workspace used most recently, else the workspace used most recently, else the page without a workspace, which offers to add one.
+  async function serveRoot(request, response, prefix) {
+    const [chosen] = (await workspaceList()).sort((left, right) => Number(right.live) - Number(left.live));
+    if (chosen) {
+      response.writeHead(302, { Location: `${prefix}/w/${chosen.id}/`, "Cache-Control": "no-store" });
+      response.end();
+      return;
+    }
+    await servePageRoute(request, response, "/");
+  }
+
+  // An old checkout link opens the checkout's workspace at the same page, and an artifact that it names by the checkout's path keeps its place as its store location.
+  async function checkoutRedirect(project, rest, query, prefix) {
+    const view = await placeProject(project);
+    const kept = new URLSearchParams(query);
+    const artifact = kept.get("artifact");
+    if (artifact && view.kind === "store") kept.set("artifact", await storeTabRef(project.root, artifact));
+    const search = kept.toString();
+    return `${prefix}/w/${view.id}${rest}${search ? `?${search}` : ""}`;
   }
 
   function freshNonce(nonce) {
@@ -374,8 +428,9 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       const project = await projectFor(body.projectRoot);
       await reportDirectories(project, body);
       project.leases.set(lease, Date.now() + LEASE_MS);
+      const view = await placeProject(project);
       await touch(project);
-      return { projectId: project.id, url: project.review.reviewUrl([]) };
+      return { projectId: project.id, workspaceId: view.id, url: view.review.reviewUrl([]) };
     }
     if (lease && request.method === "DELETE") {
       for (const project of projects.values()) project.leases.delete(lease);
@@ -385,10 +440,15 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     if (route === "/control/present" && request.method === "POST") {
       const body = parseBody(text);
       checkDirectories(body);
+      const acceptsGrant = body.acceptsGrant === true;
+      // A present that names no checkout opens the app's root, which opens the workspace used most recently, from any folder.
+      if (body.projectRoot === undefined) {
+        return withGrant({ url: `http://127.0.0.1:${port}${viewerPrefix()}/`, open: body.open === true && grantOpen(acceptsGrant) }, acceptsGrant);
+      }
       const project = await projectFor(body.projectRoot);
       await reportDirectories(project, body);
-      const review = project.review;
-      const acceptsGrant = body.acceptsGrant === true;
+      const view = await placeProject(project);
+      const review = view.review;
       // A session start asks only whether to open a window, and leaves tabs and other projects' notices alone.
       if (body.open === true && body.start === true) {
         await touch(project);
@@ -396,13 +456,14 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       }
       if (body.open === true) {
         const tabs = normalizeTabs(body.tabs);
-        await review.presentTabs(tabs);
+        const presented = await review.presentTabs(tabs, project.root);
         await touch(project);
-        const url = review.reviewUrl(tabs);
-        return withGrant({ url, open: announce(project, url, workspaceLabel(await readWorkspaceIdentity(project.root)), acceptsGrant), session: review.getSession() }, acceptsGrant);
+        // The link names the presented page as the workspace's session names it, so it opens the same artifact through any checkout.
+        const url = review.reviewUrl(tabs.length ? [presented.activeTab] : []);
+        return withGrant({ url, open: announce(project, view, url, workspaceLabel(await readWorkspaceIdentity(project.root)), acceptsGrant), session: review.getSession() }, acceptsGrant);
       }
       if (body.tabs !== undefined) {
-        await review.setOpenTabs(body.tabs);
+        await review.setOpenTabs(body.tabs, project.root);
         await touch(project);
       }
       return { url: review.reviewUrl([]), open: false, session: await review.currentSession() };
@@ -453,26 +514,60 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       }
       const prefix = viewerPrefix();
       if (url.pathname === prefix || url.pathname === `${prefix}/`) {
-        const project = mostRecentLiveProject();
-        if (!project) {
-          send(response, 404, "No project is using Prism right now.");
-          return;
-        }
-        response.writeHead(302, { Location: `${prefix}/p/${project.id}/`, "Cache-Control": "no-store" });
-        response.end();
+        await serveRoot(request, response, prefix);
         return;
       }
-      const match = url.pathname.startsWith(`${prefix}/p/`) ? /^\/p\/([0-9a-f]{16})(\/.*)?$/.exec(url.pathname.slice(prefix.length)) : null;
-      const project = match ? projects.get(match[1]) : null;
-      if (!project) {
+      if (!url.pathname.startsWith(`${prefix}/`)) {
         send(response, 404, "Not found");
         return;
       }
-      if (match[2] === "/api/projects" && request.method === "GET") {
-        send(response, 200, JSON.stringify(await projectList(project.id)), "application/json; charset=utf-8");
+      const route = url.pathname.slice(prefix.length);
+      const inWorkspace = /^\/w\/([0-9a-f]{16})(\/.*)?$/.exec(route);
+      if (inWorkspace) {
+        const view = workspaces.get(inWorkspace[1]);
+        if (!view) {
+          send(response, 404, "No workspace has that id on this machine.");
+          return;
+        }
+        // The page's own links are relative to its folder, so a workspace's page always ends in a slash.
+        if (!inWorkspace[2]) {
+          response.writeHead(308, { Location: `${prefix}${route}/${url.search}`, "Cache-Control": "no-store" });
+          response.end();
+          return;
+        }
+        if (inWorkspace[2] === "/api/projects" && request.method === "GET") {
+          send(response, 200, JSON.stringify(await projectList(currentProject(view)?.id ?? null)), "application/json; charset=utf-8");
+          return;
+        }
+        await view.review.handle(request, response, inWorkspace[2], url);
         return;
       }
-      await project.review.handle(request, response, match[2] || "/", url);
+      const inCheckout = /^\/p\/([0-9a-f]{16})(\/.*)?$/.exec(route);
+      if (inCheckout) {
+        const project = projects.get(inCheckout[1]);
+        if (!project) {
+          send(response, 404, "Not found");
+          return;
+        }
+        response.writeHead(308, { Location: await checkoutRedirect(project, inCheckout[2] || "/", url.searchParams, prefix), "Cache-Control": "no-store" });
+        response.end();
+        return;
+      }
+      if (route === "/api/workspaces" && request.method === "GET") {
+        send(response, 200, JSON.stringify({ workspaces: await workspaceList() }), "application/json; charset=utf-8");
+        return;
+      }
+      if (route === "/api/write-session" && request.method === "POST") {
+        await exchangeWriteGrant(request, response, writeSessions);
+        return;
+      }
+      // The page without a workspace reads only that it has none, and the page's own files, which every page shares.
+      if (route === "/api/index" && request.method === "GET") {
+        send(response, 200, JSON.stringify({ workspace: null, workspaces: (await workspaceList()).length }), "application/json; charset=utf-8");
+        return;
+      }
+      if (route !== "/review" && await servePageRoute(request, response, route)) return;
+      send(response, 404, "Not found");
     } catch (error) {
       if (response.headersSent) {
         response.destroy();
@@ -524,6 +619,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       project.intelligenceDirectories = restoredIntelligence[root] ?? [];
       project.recordStoreDirectories = restoredRecords[root] ?? [];
       useReportedStores(project);
+      await placeProject(project).catch(() => null);
     }
   }
   sequence = restored.length;
@@ -551,7 +647,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
   close = ({ handoff = false } = {}) => {
     closing ??= (async () => {
       clearInterval(sweep);
-      for (const project of projects.values()) project.review.closeViewers();
+      for (const view of workspaces.values()) view.review.closeViewers();
       server.closeAllConnections?.();
       await new Promise((resolve) => server.close(() => resolve()));
       // Only the lock holder touches the discovery file, so an app that lost its lock never removes the winner's.

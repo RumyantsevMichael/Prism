@@ -54,6 +54,22 @@ let appVersion = null;
 let sessionConnected = false;
 let sessionStream;
 let saveQueue = Promise.resolve();
+// A workspace's session names each store artifact by its store location, store:<location>, and the page opens it by the path its checkout gives it.
+let refPaths = new Map();
+const localTab = (tab) => typeof tab === "string" ? refPaths.get(tab) ?? tab : tab;
+const localTabs = (tabs) => Array.isArray(tabs) ? [...new Set(tabs.map(localTab))] : tabs;
+
+function useStoreRefs(data) {
+  refPaths = new Map(Object.entries(data.storeRefs ?? {}).map(([path, ref]) => [ref, path]));
+}
+
+// A session snapshot with every store artifact named as the page opens it.
+function localSession(snapshot) {
+  const named = { ...snapshot };
+  for (const key of ["openTabs", "agentTabs", "missingTabs"]) if (Object.hasOwn(snapshot, key)) named[key] = localTabs(snapshot[key]);
+  for (const key of ["activeTab", "previewTab"]) if (Object.hasOwn(snapshot, key)) named[key] = localTab(snapshot[key]);
+  return named;
+}
 let lastSnapshot = "";
 // The path whose view the workspace shows, and each visited page's scroll position, so a refresh or a return keeps the reader's place.
 let renderedPath = null;
@@ -97,6 +113,30 @@ function welcome() {
   empty.append(element("p", "", "Choose Attention, the roadmap, or a library section, or press Ctrl K to jump."));
   artifact.replaceChildren(empty);
   setBusy(false);
+}
+
+// The app's root without a workspace: the switcher says how to add one, and the page opens the first workspace as soon as the app lists one.
+function showNoWorkspace() {
+  renderedPath = null;
+  project.textContent = "No workspace";
+  document.title = "Prism review";
+  projectButton.removeAttribute("disabled");
+  void refreshProjects();
+  const empty = document.createElement("prism-empty-state");
+  empty.className = "welcome";
+  empty.setAttribute("heading", "No workspace yet");
+  empty.append(
+    element("p", "", "A workspace is one record store with every checkout and repository that shares it, or a project that keeps its records itself."),
+    element("p", "", "To add a workspace, start a Prism session in one of its projects, or run prism review there; it opens here as soon as it is added.")
+  );
+  artifact.replaceChildren(empty);
+  setBusy(false);
+  const check = async () => {
+    const listed = await fetch(`${appRoot}api/workspaces`, { cache: "no-store" }).then((response) => response.ok ? response.json() : null, () => null);
+    if (listed?.workspaces?.length) location.reload();
+    else setTimeout(check, 5000);
+  };
+  setTimeout(check, 5000);
 }
 
 // The pages this browser tab visited sit in the browser's own history, each entry numbered, so Back and Forward know whether there is a page to go to.
@@ -334,7 +374,8 @@ function closePage(path) {
   else openRef("attention");
 }
 
-function synchronizeSession(snapshot) {
+function synchronizeSession(given) {
+  const snapshot = localSession(given);
   const nextRevision = Number.isInteger(snapshot.revision) ? snapshot.revision : sessionRevision;
   const nextInstance = typeof snapshot.instance === "string" ? snapshot.instance : sessionInstance;
   if (typeof snapshot.appVersion === "string" && appVersion !== null && snapshot.appVersion !== appVersion) {
@@ -402,75 +443,71 @@ function element(tag, className, text) {
   return node;
 }
 
-// Checkouts that resolve their records to one store share them, across repositories too; a checkout with records of its own is its own project.
-// A remote store that cannot be cloned right now still groups by its address, so an outage does not scatter its workspace.
-function sharedStore(entry) {
-  const store = entry.store;
-  if (!store || store.kind === "project") return null;
-  if (store.location) return `store:${store.location}`;
-  return store.kind === "remote" && store.label ? `remote:${store.label}` : null;
-}
-
-// A workspace takes the name kept in its store when one is set.
-// Otherwise it is named after its store: a folder store by its folder, because each checkout may spell the configured path differently,
-// and a remote store by its repository, so the name reads as a name rather than an address.
-function storeName(store) {
-  if (store.workspaceName) return store.workspaceName;
-  if (store.kind === "folder" && store.location) return folderName(store.location);
-  if (store.kind === "remote" && store.label) return store.label.replace(/[\\/]+$/, "").split(/[\\/:]/).filter(Boolean).pop()?.replace(/\.git$/i, "") || store.label;
-  return store.label ?? "records";
-}
-
-// Only a store that other checkouts can share makes a workspace; a checkout's own records do not.
-function workspaceOf(store) {
-  return store && store.kind !== "project" ? storeName(store) : null;
-}
-
-function storeKey(entry) {
-  return sharedStore(entry) ?? `project:${entry.id}`;
-}
-
 // Entries keep one order, by name, so a sync that changes recency or liveness never moves an entry under the pointer.
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
-function compareMembers(left, right) {
-  const key = ({ entry, identity }) => [identity.repository ?? "", workspaceName(identity) ?? folderName(entry.projectRoot), entry.projectRoot];
-  const a = key(left);
-  const b = key(right);
-  for (let index = 0; index < a.length; index += 1) {
-    const order = collator.compare(a[index], b[index]) || (a[index] < b[index] ? -1 : a[index] > b[index] ? 1 : 0);
-    if (order) return order;
-  }
-  return 0;
-}
+// The review app's root, where the workspace list lives; a workspace's page sits below it at w/<id>/.
+const appRoot = location.pathname.replace(/\/w\/[0-9a-f]{16}(?:\/.*)?$/, "/").replace(/[^/]*$/, "");
 
-// One project of the menu: its checkout, marked when it is the open one, with its open gates and whether an agent uses it, and its folder as the tip.
-function projectItem({ entry, identity }, current, { gates: showGates = true, repository = false, value = entry.url } = {}) {
-  const item = document.createElement("prism-menu-item");
-  item.setAttribute("type", "radio");
-  item.setAttribute("value", value);
-  item.toggleAttribute("checked", entry.id === current);
-  item.setAttribute("tip", projectTitle(identity, entry.projectRoot));
-  const checkout = workspaceName(identity) ?? folderName(entry.projectRoot);
-  // A workspace can hold several repositories, so its items name the repository as well as the checkout.
-  item.append(repository && identity.repository ? `${identity.repository} / ${checkout}` : checkout);
+const countText = (count, one, many) => `${count} ${count === 1 ? one : many}`;
+
+// The states an entry shows at its end: whether an agent uses it, and its open gates, or that its records cannot be read.
+function stateHint(entry, { gates = true } = {}) {
   const states = [];
   if (entry.live) states.push("in use");
   // Only a running or failed build is marked, because the status bar covers the open project's other states.
   if (entry.indexing === "preparing") states.push("indexing");
   if (entry.indexing === "failed") states.push("index failed");
-  if (showGates && entry.gates === null) states.push("unreadable");
-  else if (showGates && entry.gates) states.push(`${entry.gates} ${entry.gates === 1 ? "gate" : "gates"}`);
-  if (states.length) {
-    const hint = element("span", "project-states", states.join(" · "));
-    hint.slot = "hint";
-    item.append(hint);
-  }
+  if (gates && entry.gates === null) states.push("unreadable");
+  else if (gates && entry.gates) states.push(countText(entry.gates, "gate", "gates"));
+  if (!states.length) return null;
+  const hint = element("span", "project-states", states.join(" · "));
+  hint.slot = "hint";
+  return hint;
+}
+
+// One checkout of a session server's menu: its checkout, marked as the open one, with its folder as the tip.
+function projectItem({ entry, identity }, current) {
+  const item = document.createElement("prism-menu-item");
+  item.setAttribute("type", "radio");
+  item.setAttribute("value", entry.url);
+  item.toggleAttribute("checked", entry.id === current);
+  item.setAttribute("tip", projectTitle(identity, entry.projectRoot));
+  item.append(workspaceName(identity) ?? folderName(entry.projectRoot));
   return item;
 }
 
-// A session server has no list of projects, so its menu holds the one project it serves.
+// A workspace's repositories and how many of its checkouts this machine has, as information under its name; only the workspace itself is a place to open.
+function workspaceDetail(entry) {
+  const repositories = entry.repositories.map((repository) => repository.name);
+  const held = repositories.length ? repositories.join(", ") : entry.kind === "project" ? "Records kept in the project" : "No repository yet";
+  return `${held} · ${countText(entry.checkouts.length, "checkout", "checkouts")}`;
+}
+
+function workspaceTip(entry) {
+  const lines = [entry.name, ...(entry.store ? [`Store: ${entry.store.label}`] : [])];
+  for (const repository of entry.repositories) lines.push(`${repository.name}: ${repository.checkouts.length ? repository.checkouts.join(", ") : "no checkout on this machine"}`);
+  const named = new Set(entry.repositories.flatMap((repository) => repository.checkouts));
+  for (const checkout of entry.checkouts) if (!named.has(checkout)) lines.push(checkout);
+  return lines.join("\n");
+}
+
+function workspaceItem(entry, current) {
+  const item = document.createElement("prism-menu-item");
+  item.setAttribute("type", "radio");
+  item.setAttribute("value", entry.url);
+  item.toggleAttribute("checked", entry.id === current);
+  item.setAttribute("detail", workspaceDetail(entry));
+  item.setAttribute("tip", workspaceTip(entry));
+  item.append(entry.name);
+  const hint = stateHint(entry);
+  if (hint) item.append(hint);
+  return item;
+}
+
+// A session server has no list of workspaces, so its menu holds the one project it serves.
 let thisProject = null;
+let thisWorkspace = null;
 
 function showOneProject() {
   if (!thisProject || projectListing === "one") return;
@@ -478,16 +515,16 @@ function showOneProject() {
   const member = { entry: { id: "this", url: location.href, projectRoot: thisProject.projectRoot }, identity: workspaceIdentity(thisProject) };
   const group = document.createElement("prism-menu-group");
   group.setAttribute("label", member.identity.repository ?? folderName(thisProject.projectRoot));
-  group.append(projectItem(member, "this", { gates: false }));
+  group.append(projectItem(member, "this"));
   projectMenu.replaceChildren(group);
   projectButton.removeAttribute("disabled");
 }
 
-// The review app lists its projects.
+// The review app lists its workspaces: each one store with its repositories and this machine's checkouts as information, or a project without a store.
 async function refreshProjects() {
   let listing;
   try {
-    const response = await fetch("./api/projects", { cache: "no-store" });
+    const response = await fetch(`${appRoot}api/workspaces`, { cache: "no-store" });
     if (!response.ok) {
       showOneProject();
       return;
@@ -497,63 +534,45 @@ async function refreshProjects() {
     return;
   }
   projectButton.removeAttribute("disabled");
-  // Checkouts that share a record store share their gates, so each store counts once.
-  const current = listing.projects.find((entry) => entry.id === listing.current);
-  const counted = new Set([current ? storeKey(current) : null]);
-  let waiting = 0;
-  for (const entry of listing.projects) {
-    if (counted.has(storeKey(entry))) continue;
-    counted.add(storeKey(entry));
-    waiting += entry.gates ?? 0;
-  }
+  const current = thisWorkspace?.id ?? null;
+  const waiting = listing.workspaces.reduce((sum, entry) => sum + (entry.id === current ? 0 : entry.gates ?? 0), 0);
   projectGates.hidden = waiting === 0;
   projectGates.textContent = String(waiting);
-  projectGates.setAttribute("tip", `${waiting} open ${waiting === 1 ? "gate" : "gates"} in other projects`);
-  // An unchanged list is left alone, and the server lists projects by recency, so the comparison ignores order and a sync that only reorders them leaves the menu alone.
-  const text = JSON.stringify({ ...listing, projects: [...listing.projects].sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)) });
+  projectGates.setAttribute("tip", `${waiting} open ${waiting === 1 ? "gate" : "gates"} in other workspaces`);
+  const entries = [...listing.workspaces].sort((left, right) => collator.compare(left.name, right.name) || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
+  // An unchanged list is left alone, so a sync that only reorders the workspaces by recency leaves the menu as it is.
+  const text = JSON.stringify(entries);
   if (text === projectListing) return;
   projectListing = text;
-  if (current) setProjectLabel(workspaceIdentity(current), current.projectRoot, current.store);
-  // Checkouts that share one record store form one workspace, whichever repositories they belong to: its records and gates show once, and each checkout stays reachable for its code.
-  // Every other checkout is listed under its repository, even a repository with one checkout.
-  // Workspaces come first, then repositories, each in name order.
-  const workspaces = new Map();
-  const repositories = new Map();
-  for (const entry of listing.projects) {
-    const member = { entry, identity: workspaceIdentity(entry) };
-    const shared = sharedStore(entry);
-    const groups = shared ? workspaces : repositories;
-    const key = shared ?? member.identity.repository ?? folderName(entry.projectRoot);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(member);
-  }
-  const groups = [];
-  const workspaceList = [...workspaces.values()].map((members) => members.sort(compareMembers));
-  workspaceList.sort((left, right) => collator.compare(storeName(left[0].entry.store), storeName(right[0].entry.store)) || compareMembers(left[0], right[0]));
-  for (const members of workspaceList) {
-    const shared = members[0].entry;
-    const gates = Math.max(...members.map(({ entry }) => entry.gates ?? 0));
-    const group = document.createElement("prism-menu-group");
-    group.setAttribute("label", `Workspace ${storeName(shared.store)}${gates ? ` · ${gates} ${gates === 1 ? "gate" : "gates"}` : ""}`);
-    // Every checkout of a workspace shows the same records, so only code views, such as source files and the index, differ between them.
-    group.append(...members.map((member) => projectItem(member, listing.current, { gates: false, repository: true })));
-    groups.push(group);
-  }
-  for (const [repository, members] of [...repositories].sort(([left], [right]) => collator.compare(left, right))) {
-    const group = document.createElement("prism-menu-group");
-    group.setAttribute("label", repository);
-    group.append(...members.sort(compareMembers).map((member) => projectItem(member, listing.current)));
-    groups.push(group);
-  }
-  projectMenu.replaceChildren(...groups);
+  const group = document.createElement("prism-menu-group");
+  group.setAttribute("label", "Workspaces");
+  if (entries.length) group.append(...entries.map((entry) => workspaceItem(entry, current)));
+  else group.append(noWorkspaceItem());
+  projectMenu.replaceChildren(group);
 }
 
-function setProjectLabel(identity, projectRoot, store = null) {
-  const workspace = workspaceOf(store);
+function noWorkspaceItem() {
+  const item = document.createElement("prism-menu-item");
+  item.setAttribute("disabled", "");
+  item.setAttribute("detail", "Start a Prism session or run prism review in a project to add its workspace");
+  item.append("No workspace yet");
+  return item;
+}
+
+// A checkout of a workspace leads with the workspace's name, because the records it shows belong to the whole workspace.
+function setProjectLabel(identity, projectRoot, workspace = null) {
   project.replaceChildren(projectLabel(identity, workspace));
   projectButton.setAttribute("tip", [workspace ? `Workspace: ${workspace}` : "", projectTitle(identity, projectRoot)].filter(Boolean).join("\n"));
   signals.project = [workspace, [identity.repository ?? folderName(projectRoot), workspaceName(identity)].filter(Boolean).join("/")].filter(Boolean).join(" · ");
   document.title = signalTitle(baseTitle(), signals.count ?? 0);
+}
+
+// A session server names no workspace, so a checkout whose records live in a store takes the store's name, the workspace name it keeps or the store's last segment.
+function storeWorkspaceName(store) {
+  if (!store || store.kind === "project") return null;
+  if (store.workspaceName) return store.workspaceName;
+  const place = store.kind === "folder" ? store.location : store.label;
+  return String(place ?? "").replace(/[\\/]+$/, "").split(/[\\/:]/).filter(Boolean).pop()?.replace(/\.git$/i, "") || store.label || null;
 }
 
 const baseTitle = () => signals.project ? `${signals.project} · Prism` : "Prism review";
@@ -1582,7 +1601,13 @@ function watchDrawerWidth() {
 
 async function initialize() {
   await takeWriteGrant();
-  const data = await fetchJson("./api/index");
+  const index = await fetchJson("./api/index");
+  if (index.workspace === null && !index.projectRoot) {
+    showNoWorkspace();
+    return;
+  }
+  useStoreRefs(index);
+  const data = localSession(index);
   startHistory();
   watchHistoryLeave();
   pageBar = createPageBar({
@@ -1610,9 +1635,10 @@ async function initialize() {
   sessionRevision = Number.isInteger(data.revision) ? data.revision : 0;
   sessionInstance = typeof data.instance === "string" ? data.instance : null;
   appVersion = typeof data.appVersion === "string" ? data.appVersion : null;
-  const requestedPath = selectedPath;
+  const requestedPath = localTab(selectedPath);
   selectedPath = Object.hasOwn(data, "activeTab") ? data.activeTab : null;
-  setProjectLabel(workspaceIdentity(data), data.projectRoot, data.recordStore);
+  thisWorkspace = data.checkout ? data.workspace : null;
+  setProjectLabel(data.checkout ?? workspaceIdentity(data), data.projectRoot, thisWorkspace ? thisWorkspace.kind === "store" ? thisWorkspace.name : null : storeWorkspaceName(data.recordStore));
   thisProject = data;
   showPrivateServer(data.privateServer);
   let sectionFrame = 0;
@@ -1804,7 +1830,7 @@ async function initialize() {
   window.addEventListener("popstate", (event) => {
     if (Number.isInteger(event.state?.index)) pages.index = event.state.index;
     showHistory();
-    const ref = event.state?.ref ?? new URLSearchParams(location.search).get("artifact");
+    const ref = localTab(event.state?.ref ?? new URLSearchParams(location.search).get("artifact"));
     if (ref && ref !== selectedPath) openRef(ref, { fromHistory: true });
   });
   connectSessionEvents();
@@ -1828,7 +1854,9 @@ async function initialize() {
       const refreshed = await fetch("./api/index", { cache: "no-store" }).catch(() => null);
       reportRefresh(Boolean(refreshed?.ok));
       if (refreshed?.ok) {
-        const snapshot = await refreshed.json();
+        const answered = await refreshed.json();
+        useStoreRefs(answered);
+        const snapshot = localSession(answered);
         renderStoreSync(snapshot);
         prismRecords = new Set(snapshot.artifacts);
         availableArtifacts = new Set([...snapshot.artifacts, ...(snapshot.sources ?? [])]);

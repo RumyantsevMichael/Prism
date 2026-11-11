@@ -83,3 +83,10 @@ export async function recordCheckout({ store, repository, path: checkout, env = 
     return true;
   }, undefined, { timeoutMs: LOCK_TIMEOUT_MS }));
 }
+
+/** The entries of this machine's checkout list whose folder still holds a .prism/workflow.md that names the listed store and repository, as { store, repository, path }; [] when the list cannot be read. */
+export async function listMachineCheckouts(env = process.env) {
+  const listed = await readEntries(checkoutsFile(env)).catch(() => null) ?? [];
+  const held = await Promise.all(listed.map(async (entry) => (await stillHolds(entry, env)) ? { store: entry.store, repository: entry.repository, path: entry.path } : null));
+  return held.filter(Boolean);
+}

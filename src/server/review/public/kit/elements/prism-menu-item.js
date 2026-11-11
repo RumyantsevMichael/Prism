@@ -7,7 +7,7 @@ const ROLES = { action: "menuitem", radio: "menuitemradio", checkbox: "menuitemc
 export class PrismMenuItem extends Base {
   static tag = "prism-menu-item";
   static styles = ["prism-menu-item.css"];
-  static observedAttributes = ["type", "checked", "disabled"];
+  static observedAttributes = ["type", "checked", "disabled", "detail"];
   static catalog = {
     purpose: "One item of a prism-menu: an action, a radio choice among the items of its group, or a checkbox.",
     options: [
@@ -15,15 +15,16 @@ export class PrismMenuItem extends Base {
       { name: "type", values: ["action", "radio", "checkbox"], default: "action", description: "The item's role: menuitem, menuitemradio, or menuitemcheckbox." },
       { name: "checked", values: ["boolean"], default: "false", description: "Whether a radio or checkbox item is checked, exposed as aria-checked." },
       { name: "disabled", values: ["boolean"], default: "false", description: "The item cannot be chosen and arrow keys skip it." },
+      { name: "detail", values: ["text"], default: "", description: "A quieter second line under the item's text, such as what a choice holds, shortened with an ellipsis when it does not fit." },
       { name: "slot=\"hint\"", values: ["children"], default: "", description: "Quieter text at the end of the item, such as a shortcut." }
     ],
-    states: ["action", "radio", "checked", "checkbox", "disabled", "hint"],
+    states: ["action", "radio", "checked", "checkbox", "disabled", "hint", "detail"],
     keyboard: ["Inside an open menu, arrow keys move between items and Enter or Space chooses one."]
   };
 
   constructor() {
     super();
-    this.root = shadow(this, PrismMenuItem.styles, `<span class="item" part="item"><span class="check" aria-hidden="true"><prism-icon name="check" size="sm"></prism-icon></span><span class="text"><slot></slot></span><span class="hint"><slot name="hint"></slot></span></span>`);
+    this.root = shadow(this, PrismMenuItem.styles, `<span class="item" part="item"><span class="check" aria-hidden="true"><prism-icon name="check" size="sm"></prism-icon></span><span class="body"><span class="text"><slot></slot></span><span class="detail" part="detail" hidden></span></span><span class="hint"><slot name="hint"></slot></span></span>`);
   }
 
   connectedCallback() {
@@ -66,5 +67,9 @@ export class PrismMenuItem extends Base {
     setAttribute(this, "role", ROLES[type]);
     setAttribute(this, "aria-checked", type === "action" ? null : String(this.checked));
     setAttribute(this, "aria-disabled", this.disabled ? "true" : null);
+    const detail = this.root.querySelector(".detail");
+    const text = this.getAttribute("detail") ?? "";
+    if (detail.textContent !== text) detail.textContent = text;
+    detail.hidden = text === "";
   }
 }

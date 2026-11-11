@@ -50,3 +50,16 @@ export function hostLabel() {
 export function checkoutLabel(identity, host = hostLabel()) {
   return `${workspaceLabel(identity)} on ${host}`;
 }
+
+/**
+ * A workspace's name, as the review app lists it: the workspace name that the store's roadmap record holds, else the last segment of the store identity without a trailing .git,
+ * else, for a project without a store, the name of its checkout's folder.
+ */
+export function workspaceTitle({ workspaceName: kept = null, identity = null, root = null }) {
+  if (kept) return kept;
+  if (identity) {
+    const last = identity.replace(/^file:/, "").split(/[\\/:]+/).filter(Boolean).pop() ?? identity;
+    return last.replace(/\.git$/i, "") || last;
+  }
+  return root ? path.basename(root) : "workspace";
+}

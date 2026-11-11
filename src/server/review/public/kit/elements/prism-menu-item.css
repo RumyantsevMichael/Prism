@@ -38,15 +38,45 @@
   display: none;
 }
 
-.text {
+.body {
+  display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+/* A detail line: what the item holds, under its text. */
+.detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  line-height: var(--prism-line-height-tight);
+}
+
+.detail[hidden] {
+  display: none;
+}
+
+:host([detail]) {
+  height: auto;
+  min-height: var(--prism-row-height);
+}
+
+:host([detail]) .item {
+  padding-block: var(--prism-space-2);
+}
+
+/* A short hint keeps its width, and only a hint wider than its share ends in an ellipsis. */
 .hint {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-width: 0;
   max-width: 40%;
   overflow: hidden;

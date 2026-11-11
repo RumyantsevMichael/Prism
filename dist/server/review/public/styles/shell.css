@@ -926,6 +926,11 @@ body {
     max-width: none;
   }
 
+  /* A long workspace name ends in an ellipsis, so the navigation button keeps its size. */
+  .topbar-navigation {
+    flex: none;
+  }
+
   .topbar-search {
     flex: none;
     margin: 0;

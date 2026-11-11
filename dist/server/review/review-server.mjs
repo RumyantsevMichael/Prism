@@ -9,7 +9,7 @@ import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { RECORD_DIRECTORY, artifactPathTest, artifactsInCheckout, describeRecordStore, inArtifactStore, outsideToolCall, keyOfPath, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
-import { readStoreArtifact, reviewStoreArtifact } from "../workflow/store-artifacts.mjs";
+import { artifactStoreLocation, readStoreArtifact, reviewStoreArtifact, storeArtifactLocation } from "../workflow/store-artifacts.mjs";
 import { withoutCredentials } from "../workflow/remote-url.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
 import { readReviewRunTotals } from "../session/run-totals.mjs";
@@ -169,6 +169,24 @@ async function checkoutArtifactsOf(projectRoot, store) {
 async function listReviewSources(projectRoot) {
   const isArtifact = await artifactPathTest(projectRoot);
   return (await listSourceFiles(projectRoot)).filter((file) => !isArtifact(file));
+}
+
+/** The store ref, store:<location>, of each store artifact the checkout sees, by path; a path that several scopes hold names the first by label. */
+async function storeArtifactRefs(projectRoot) {
+  const refs = {};
+  for (const entry of await storeArtifactEntries(projectRoot) ?? []) {
+    if (Object.hasOwn(refs, entry.path)) continue;
+    const location = await artifactStoreLocation(projectRoot, entry).catch(() => null);
+    if (location) refs[entry.path] = `store:${location}`;
+  }
+  return refs;
+}
+
+/** An open tab of a workspace's review: a store artifact that the checkout names by its path becomes store:<location>, and every other tab stays as it is. */
+export async function storeTabRef(projectRoot, tab) {
+  if (typeof tab !== "string" || tab.startsWith("store:") || parseEntityRef(tab) || !(await inArtifactStore(projectRoot, tab).catch(() => false))) return tab;
+  const found = await storeArtifactLocation(projectRoot, tab).catch(() => null);
+  return found ? `store:${found.location}` : tab;
 }
 
 /** The scope label of each store artifact the checkout sees, by path, or an empty object without a store; a path that several scopes hold names the first by label. */
@@ -544,13 +562,80 @@ async function readJson(request) {
   }
 }
 
+/** Exchange the one-time grant of a tab that Prism opened, from its URL fragment, for the write session the tab keeps. */
+export async function exchangeWriteGrant(request, response, writeSessions) {
+  if (!fromPage(request)) {
+    sendJson(response, 403, { code: "origin_refused", message: "A write session must be requested by the review page as JSON." });
+    return;
+  }
+  const body = await readJson(request);
+  const token = await writeSessions?.exchange(body?.grant) ?? null;
+  if (!token) {
+    sendJson(response, 403, { code: "grant_refused", message: "The grant was already used, has expired, or was not issued here. Ask the agent to present the review, or run prism review." });
+    return;
+  }
+  sendJson(response, 200, { token });
+}
+
+/**
+ * Answer a route of the review page itself, its scripts, styles, kit, and the person's preferences, which every page of a server or app shares,
+ * and resolve to whether the route was one of them.
+ */
+export async function servePageRoute(request, response, route) {
+  if (route === "/" || route === "/review") {
+    await serveFile(response, path.join(PUBLIC_DIR, "review.html"), "text/html; charset=utf-8");
+  } else if (route === "/review.js") {
+    await serveFile(response, path.join(PUBLIC_DIR, "review.js"), "text/javascript; charset=utf-8");
+  } else if (route === "/favicon.svg" || route === "/prism-mark.svg") {
+    await serveFile(response, path.join(PUBLIC_DIR, route.slice(1)), "image/svg+xml");
+  } else if (route === "/vendor/plantuml.js") {
+    await serveFile(response, path.join(VENDOR_DIR, "plantuml.js"), "text/javascript; charset=utf-8");
+  } else if (route === "/vendor/viz-global.js") {
+    await serveFile(response, path.join(VENDOR_DIR, "viz-global.js"), "text/javascript; charset=utf-8");
+  } else if (route === "/c4.min.js" || route === "/vendor/c4.min.js") {
+    await serveFile(response, path.join(VENDOR_DIR, "c4.min.js"), "text/javascript; charset=utf-8");
+  } else if (route === "/kit/catalog") {
+    await serveFile(response, path.join(KIT_DIR, "catalog.html"), "text/html; charset=utf-8");
+  } else if (route.startsWith("/kit/") || route.startsWith("/styles/")) {
+    const asset = publicAsset(route);
+    if (asset) await serveFile(response, asset.file, asset.type);
+    else send(response, 404, "Not found");
+  } else if (route === "/api/preferences" && request.method === "GET") {
+    send(response, 200, JSON.stringify(await readPreferences()), "application/json; charset=utf-8");
+  } else if (route === "/api/preferences" && request.method === "PUT") {
+    if (!fromPage(request)) {
+      send(response, 403, "Preferences must come from the review page as JSON.");
+      return true;
+    }
+    try {
+      let change;
+      try {
+        change = parseStoreJson(await readBody(request));
+      } catch {
+        throw Object.assign(new Error("The preferences must be a JSON object with theme, density, or both."), { code: "invalid_preference" });
+      }
+      send(response, 200, JSON.stringify(await writePreferences(change)), "application/json; charset=utf-8");
+    } catch (error) {
+      if (error.code !== "invalid_preference") throw error;
+      send(response, 400, JSON.stringify({ code: error.code, message: error.message }), "application/json; charset=utf-8");
+    }
+  } else if (/^\/views\/[a-z][a-z-]*\.js$/.test(route)) {
+    await serveFile(response, path.join(VIEWS_DIR, route.slice("/views/".length)), "text/javascript; charset=utf-8");
+  } else {
+    return false;
+  }
+  return true;
+}
+
 // One project's review context: its tab session, viewer streams, and routes, shared by the session server and the review app.
 // onViewer(send) runs when a viewer stream opens, after its first session event, and send writes a named event to that viewer only.
 // writeSessions is the write session store of the server or app that serves this page; without one, no request can write.
 // onAction(event, { shared, comment }) receives each applied action's event, the history entry with its initiative, instead of this page's viewer streams;
 // shared is false for an index target, whose history belongs to this checkout alone, and comment is the id of a stored comment, which names its file, or null.
 // Without it, the event reaches this page's viewer streams.
-export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, onAction = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null, writeSessions = null,
+// workspace, for a review of the review app's workspace, is { id, describe() }, describe answering { id, name, kind, url } for the index:
+// its open tabs then name each store artifact by its store location, store:<location>, never by a checkout path, and projectRoot is the checkout it reads through, which useCheckout(root) changes.
+export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, onAction = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null, writeSessions = null, workspace = null,
   rebuildIndex = (root, component, options = {}) => backgroundPreparation().then((module) => module.startIndexRebuild(root, { ...(component ? { component: { identity: component.identity, folder: component.folder } } : {}), ...options })), autoRebuild = (root) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }) {
   let fingerprint = null;
   function currentFingerprint() {
@@ -669,7 +754,21 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   async function reviewableFiles() {
-    return new Set([...await listArtifacts(projectRoot), ...await listReviewSources(projectRoot)]);
+    const refs = workspace ? Object.values(await storeArtifactRefs(projectRoot)) : [];
+    return new Set([...await listArtifacts(projectRoot), ...await listReviewSources(projectRoot), ...refs]);
+  }
+
+  // A workspace's tabs name store artifacts by their store location, so a tab stays the same artifact from every checkout of the workspace.
+  async function storeTabs(tabs, from = projectRoot) {
+    return workspace ? Promise.all(tabs.map((tab) => storeTabRef(from, tab))) : tabs;
+  }
+
+  async function storeRequest(request) {
+    if (!workspace || !request || typeof request !== "object") return request;
+    const named = { ...request };
+    for (const key of ["openTabs", "agentTabs"]) if (Array.isArray(request[key])) named[key] = await storeTabs(request[key]);
+    for (const key of ["activeTab", "previewTab"]) if (typeof request[key] === "string") named[key] = await storeTabRef(projectRoot, request[key]);
+    return named;
   }
 
   async function assertAvailable(tabs, availableArtifacts) {
@@ -706,7 +805,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   // The browser owns the preview tab: one replaceable tab for browsing, while kept and agent tabs stay open.
-  async function updateSession(request) {
+  async function updateSession(given) {
+    const request = await storeRequest(given);
     const available = await reviewableFiles();
     await followMovedRecords(available);
     // A page that has not yet seen a record move still names its old path, which follows the record the same way.
@@ -749,14 +849,19 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   // get_review_url adds tabs the same way present_review does, so neither tool closes the human's tabs.
-  async function setOpenTabs(tabs) {
-    return (await presentTabs(tabs)).openTabs;
+  async function setOpenTabs(tabs, from) {
+    return (await presentTabs(tabs, from)).openTabs;
   }
 
   // present_review adds agent tabs beside the human's tabs and focuses the first one without replacing the preview.
-  async function presentTabs(tabs) {
-    const requestedTabs = normalizeTabs(tabs);
-    const available = await reviewableFiles();
+  // A workspace's review takes the tabs as from, the presenting checkout, names them, and reads through that checkout once a tab is one that only it shows, such as one of its source files.
+  async function presentTabs(tabs, from = projectRoot) {
+    const requestedTabs = [...new Set(await storeTabs(normalizeTabs(tabs), from))];
+    let available = await reviewableFiles();
+    if (workspace && from !== projectRoot && requestedTabs.some((tab) => !available.has(tab) && !parseEntityRef(tab))) {
+      useCheckout(from);
+      available = await reviewableFiles();
+    }
     await assertAvailable(requestedTabs, available);
     await followMovedRecords(available);
     if (requestedTabs.length === 0) {
@@ -773,6 +878,13 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     return commitSession({ openTabs, activeTab: requestedTabs[0], previewTab, agentTabs });
   }
 
+  // A workspace's review reads through one checkout of the workspace, whose source files, index, and configured paths the page shows.
+  function useCheckout(root) {
+    if (root === projectRoot) return;
+    projectRoot = root;
+    fingerprint = null;
+  }
+
   function closeViewerStreams() {
     clearViewerOpenLease();
     for (const response of viewers.keys()) {
@@ -782,45 +894,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   async function handle(request, response, route, url) {
-    if (route === "/" || route === "/review") {
-      await serveFile(response, path.join(PUBLIC_DIR, "review.html"), "text/html; charset=utf-8");
-    } else if (route === "/review.js") {
-      await serveFile(response, path.join(PUBLIC_DIR, "review.js"), "text/javascript; charset=utf-8");
-    } else if (route === "/favicon.svg" || route === "/prism-mark.svg") {
-      await serveFile(response, path.join(PUBLIC_DIR, route.slice(1)), "image/svg+xml");
-    } else if (route === "/vendor/plantuml.js") {
-      await serveFile(response, path.join(VENDOR_DIR, "plantuml.js"), "text/javascript; charset=utf-8");
-    } else if (route === "/vendor/viz-global.js") {
-      await serveFile(response, path.join(VENDOR_DIR, "viz-global.js"), "text/javascript; charset=utf-8");
-    } else if (route === "/c4.min.js" || route === "/vendor/c4.min.js") {
-      await serveFile(response, path.join(VENDOR_DIR, "c4.min.js"), "text/javascript; charset=utf-8");
-    } else if (route === "/kit/catalog") {
-      await serveFile(response, path.join(KIT_DIR, "catalog.html"), "text/html; charset=utf-8");
-    } else if (route.startsWith("/kit/") || route.startsWith("/styles/")) {
-      const asset = publicAsset(route);
-      if (asset) await serveFile(response, asset.file, asset.type);
-      else send(response, 404, "Not found");
-    } else if (route === "/api/preferences" && request.method === "GET") {
-      send(response, 200, JSON.stringify(await readPreferences()), "application/json; charset=utf-8");
-    } else if (route === "/api/preferences" && request.method === "PUT") {
-      if (!fromPage(request)) {
-        send(response, 403, "Preferences must come from the review page as JSON.");
-        return;
-      }
-      try {
-        let change;
-        try {
-          change = parseStoreJson(await readBody(request));
-        } catch {
-          throw Object.assign(new Error("The preferences must be a JSON object with theme, density, or both."), { code: "invalid_preference" });
-        }
-        send(response, 200, JSON.stringify(await writePreferences(change)), "application/json; charset=utf-8");
-      } catch (error) {
-        if (error.code !== "invalid_preference") throw error;
-        send(response, 400, JSON.stringify({ code: error.code, message: error.message }), "application/json; charset=utf-8");
-      }
-    } else if (/^\/views\/[a-z][a-z-]*\.js$/.test(route)) {
-      await serveFile(response, path.join(VIEWS_DIR, route.slice("/views/".length)), "text/javascript; charset=utf-8");
+    if (await servePageRoute(request, response, route)) {
+      // The page, its assets, and the preferences are the same for every page.
     } else if (route === "/api/events" && request.method === "GET") {
       openViewerStream(response, canWrite(url.searchParams.get("write")));
     } else if (route === "/api/index") {
@@ -828,7 +903,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const available = new Set([...artifacts, ...sources]);
       const snapshot = await followMovedRecords(available);
       const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref) => entityExists(projectRoot, ref));
-      send(response, 200, JSON.stringify({ projectRoot, workspace: await readWorkspaceIdentity(projectRoot), artifacts, artifactScopes: await listArtifactScopes(projectRoot), sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
+      const checkout = await readWorkspaceIdentity(projectRoot);
+      const named = workspace ? { workspace: await workspace.describe(), checkout, storeRefs: await storeArtifactRefs(projectRoot) } : { workspace: checkout };
+      send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, artifactScopes: await listArtifactScopes(projectRoot), sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
     } else if (route === "/api/store/conflicts" && request.method === "GET") {
       // Saved local record versions are read-only here; a person redoes a lost change through an agent.
       send(response, 200, JSON.stringify({ conflicts: await listRecordStoreConflicts(projectRoot).catch(() => []) }), "application/json; charset=utf-8");
@@ -883,18 +960,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         sendActionError(response, error);
       }
     } else if (route === "/api/write-session" && request.method === "POST") {
-      // A tab that Prism opened exchanges the one-time grant of its URL fragment for the write session it keeps.
-      if (!fromPage(request)) {
-        sendJson(response, 403, { code: "origin_refused", message: "A write session must be requested by the review page as JSON." });
-        return;
-      }
-      const body = await readJson(request);
-      const token = await writeSessions?.exchange(body?.grant) ?? null;
-      if (!token) {
-        sendJson(response, 403, { code: "grant_refused", message: "The grant was already used, has expired, or was not issued here. Ask the agent to present the review, or run prism review." });
-        return;
-      }
-      sendJson(response, 200, { token });
+      await exchangeWriteGrant(request, response, writeSessions);
     } else if (route === "/api/context") {
       send(response, 200, JSON.stringify(await entityContext(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
     } else if (route === "/api/entity") {
@@ -954,7 +1020,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
 
   return {
     baseUrl,
-    projectRoot,
+    get projectRoot() {
+      return projectRoot;
+    },
     handle,
     getOpenTabs() {
       return [...session.openTabs];
@@ -983,7 +1051,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       return true;
     },
     releaseBrowserOpen: clearViewerOpenLease,
-    closeViewers: closeViewerStreams
+    closeViewers: closeViewerStreams,
+    useCheckout
   };
 }
 

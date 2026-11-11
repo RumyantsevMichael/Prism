@@ -132,6 +132,7 @@ const SPECIMENS = {
     checkbox: menuFor(`<prism-menu-item type="checkbox" value="wrap" checked>Wrap lines</prism-menu-item>`),
     disabled: menuFor(`<prism-menu-item value="off" disabled>Unavailable</prism-menu-item>`),
     hint: menuFor(`<prism-menu-item value="palette">Command palette<span slot="hint">Ctrl K</span></prism-menu-item>`),
+    detail: menuFor(`<prism-menu-item type="radio" value="platform" detail="api, web · 2 checkouts" checked>Platform<span slot="hint">in use · 2 gates</span></prism-menu-item><prism-menu-item type="radio" value="long" detail="${LONG}">${UNBROKEN}</prism-menu-item>`),
     "long-text": menuFor(`<prism-menu-item value="long">${LONG}<span slot="hint">Ctrl Shift Alt K</span></prism-menu-item>`),
     "unbroken-name": menuFor(`<prism-menu-item value="unbroken">${UNBROKEN}</prism-menu-item>`)
   },
