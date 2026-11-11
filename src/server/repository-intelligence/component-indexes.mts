@@ -4,6 +4,7 @@ import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { componentOf, listsComponents, readComponents } from "../workflow/components.mjs";
 import { NativeRepositoryIntelligence, RepositoryScan } from "./native-repository-intelligence.mjs";
 import { semanticError } from "./native-semantic-runtime.mjs";
+import { FUSION_OFFSET, fusionWeights } from "../../native-runtime/fusion.mjs";
 import type { ComponentRuntime, ComponentState, Diagnostic, IndexMetadata, NativeSource, Preparation, PreparedIndex, SearchResult, SourceSnapshot } from "./repository-unit-types.mjs";
 
 // A repository that declares components has one native index per component. Each component's source scans only that component's files,
@@ -141,23 +142,51 @@ export interface ComponentSearch { component: string; search(): Promise<SearchRe
 
 /**
  * Searches each included component in component order and returns each one's answer and the results, each naming its component.
- * One component that answers keeps its index's order. Several merge by cosineSimilarity from highest to lowest, with ties in component order and
- * then in each index's order. A result without a similarity, such as a container that its index placed after its best member, sorts by the
- * similarity of the result it follows in its index, so it stays directly after that result; one that follows no such result comes after every
- * result that has one. The merged list keeps the first `limit` and numbers fusedRank from 1, while each result keeps the other scores its index computed.
+ * One component that answers keeps its index's order. Several rank together by reciprocal rank fusion, because only cosine similarity compares across indexes:
+ * a result's vector rank is its place among every result with a cosineSimilarity, from highest to lowest, ties in component order and then in index order;
+ * its lexical rank is its place among every result with a lexicalScore, by its lexical place inside its own index, then by its score's share of that index's
+ * highest score, then in component order. Its fused score adds `w / (60 + lexical rank)` and `1 / (60 + vector rank)` for the ranks it has, with the weights
+ * that rank one index. Results whose file, name, qualified name, or selector equals the trimmed query come first, then the rest by fused score, ties in
+ * component order and then in index order. A result with neither score, such as a container that its index placed after its best member, stays directly
+ * after the result it follows in its index; one that follows no such result comes after every other result. The merged list keeps the first `limit`
+ * and numbers fusedRank from 1, while each result keeps the other scores its index computed.
  */
-export async function searchComponents(included: ComponentSearch[], limit: number) {
+export async function searchComponents(included: ComponentSearch[], limit: number, query = "") {
   const answers: (SearchResult[] | null)[] = [];
   for (const entry of included) answers.push(await entry.search());
   const lists = included.flatMap((entry, index) => answers[index] ? [answers[index]!.map(result => ({ ...result, component: entry.component }))] : []);
   if (lists.length === 1) return { answers, results: lists[0].slice(0, limit) };
-  const keyed = lists.flatMap(list => {
-    let previous = -Infinity;
-    return list.map(result => ({ result, key: previous = result.cosineSimilarity ?? previous }));
-  });
+  type Result = typeof lists[number][number];
+  const scored = (result: Result) => result.cosineSimilarity != null || result.lexicalScore != null;
+  // Each scored result in component order, then index order, with the unscored results that follow it in its index.
+  const entries: { result: Result; order: number; followers: Result[]; lexical?: [number, number]; fused: number }[] = [];
+  const orphans: Result[] = [];
+  for (const list of lists) {
+    let last: typeof entries[number] | undefined;
+    for (const result of list) {
+      if (scored(result)) entries.push(last = { result, order: entries.length, followers: [], fused: 0 });
+      else if (last) last.followers.push(result);
+      else orphans.push(result);
+    }
+  }
+  const byScore = (score: (result: Result) => number) => (left: typeof entries[number], right: typeof entries[number]) => score(right.result) - score(left.result);
+  // Lexical places inside each index: by score from highest to lowest, ties in index order, with each score's share of that index's highest score.
+  for (const list of lists) {
+    const own = entries.filter(entry => list.includes(entry.result) && entry.result.lexicalScore != null).sort(byScore(result => result.lexicalScore!));
+    const top = own.length ? own[0].result.lexicalScore! : 0;
+    own.forEach((entry, place) => { entry.lexical = [place, top > 0 ? entry.result.lexicalScore! / top : 0]; });
+  }
+  const weights = fusionWeights(query);
   // Array sort is stable, so equal keys keep the order of the concatenation: component order, then each index's order.
-  const merged = keyed.sort((left, right) => left.key === right.key ? 0 : right.key > left.key ? 1 : -1);
-  return { answers, results: merged.slice(0, limit).map(({ result }, index) => ({ ...result, fusedRank: index + 1 })) };
+  const vector = entries.filter(entry => entry.result.cosineSimilarity != null).sort(byScore(result => result.cosineSimilarity!));
+  vector.forEach((entry, rank) => { entry.fused += weights.cosineSimilarity / (FUSION_OFFSET + rank + 1); });
+  const lexical = entries.filter(entry => entry.lexical).sort((left, right) => left.lexical![0] - right.lexical![0] || right.lexical![1] - left.lexical![1]);
+  lexical.forEach((entry, rank) => { entry.fused += weights.lexicalScore / (FUSION_OFFSET + rank + 1); });
+  const term = query.trim();
+  const exact = (result: Result) => [result.file, result.name, result.qualifiedName, result.selector].includes(term) ? 1 : 0;
+  const ranked = entries.sort((left, right) => exact(right.result) - exact(left.result) || right.fused - left.fused || left.order - right.order);
+  const merged = [...ranked.flatMap(entry => [entry.result, ...entry.followers]), ...orphans];
+  return { answers, results: merged.slice(0, limit).map((result, index) => ({ ...result, fusedRank: index + 1 })) };
 }
 
 /**

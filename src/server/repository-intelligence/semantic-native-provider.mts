@@ -44,7 +44,7 @@ export const NATIVE_INTELLIGENCE_TOOLS = [
   },
   {
     name: "search_repository_concepts",
-    description: "Search code, instructions, documentation, and configuration for reusable concepts. Downloads pinned runtime/model assets on first use and writes only private caches. Similarity ranks candidates and does not establish conceptual equivalence. In a repository that declares components, each component has its own index: filters.paths reads only the components that hold those paths, and a search without paths reads every component that holds a file. components gives each read component's status; partial means some of them are not included, and the components_missing diagnostic names each one with why. An index build has no total time limit: it stops as stalled, with the phase it stalled in, only after it makes no progress for the stall period, 10 minutes unless PRISM_INDEX_STALL_MINUTES sets it, and the next call resumes it from the embeddings it saved.",
+    description: "Search code, instructions, documentation, and configuration for reusable concepts. Downloads pinned runtime/model assets on first use and writes only private caches. Similarity ranks candidates and does not establish conceptual equivalence. In a repository that declares components, each component has its own index: filters.paths reads only the components that hold those paths, and a search without paths reads every component that holds a file. components gives each read component's status; partial means some of them are not included, and the components_missing diagnostic names each one with why. Results of several components rank together by reciprocal rank fusion of each result's similarity rank across components and its lexical rank inside its own component, and a single answering component keeps its own order. An index build has no total time limit: it stops as stalled, with the phase it stalled in, only after it makes no progress for the stall period, 10 minutes unless PRISM_INDEX_STALL_MINUTES sets it, and the next call resumes it from the embeddings it saved.",
     inputSchema: { type: "object", required: ["projectRoot", "query"], additionalProperties: false, properties: {
       projectRoot: { type: "string" }, query: { type: "string", minLength: 1, maxLength: 4096 },
       expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" }, limit: { type: "integer", minimum: 1, maximum: 50, default: 10 },
@@ -241,7 +241,7 @@ export class ComponentRepositoryIntelligence extends SemanticNativeRepositoryInt
   }
   async semanticSearch(query: string, filters: SearchFilters | undefined, limit: number): Promise<SearchResult[] | null> {
     if (!this.prepared) return null;
-    const searched = await searchComponents(this.members.map(({ index, provider }) => ({ component: this.parts.selected[index].component, search: () => provider.semanticSearch(query, filters, limit) })), limit);
+    const searched = await searchComponents(this.members.map(({ index, provider }) => ({ component: this.parts.selected[index].component, search: () => provider.semanticSearch(query, filters, limit) })), limit, query);
     // An index that fails to answer leaves the result, and the union, as in the search tool.
     const failed = this.members.filter((_, position) => searched.answers[position] === null);
     if (failed.length) {
@@ -345,7 +345,7 @@ async function searchComponentIndexes(input: ConceptSearchInput, declaration: De
   const preparing = () => ({ status: "preparing", preparationId: null, snapshot, diagnostics: componentResult(states, snapshot).diagnostics, components: states, results: [] });
   if (componentResult(states, snapshot).status === "preparing") return preparing();
   const included = states.flatMap((state, index) => state.status === "included" ? [{ index, provider: new SemanticNativeRepositoryIntelligence(selected[index].source, preparations[index], runtime) }] : []);
-  const searched = await searchComponents(included.map(({ index, provider }) => ({ component: selected[index].component, search: () => provider.semanticSearch(input.query, input.filters, limit) })), limit);
+  const searched = await searchComponents(included.map(({ index, provider }) => ({ component: selected[index].component, search: () => provider.semanticSearch(input.query, input.filters, limit) })), limit, input.query);
   // An index that fails to answer is not part of the result.
   for (const [position, { index, provider }] of included.entries()) {
     if (searched.answers[position] !== null) continue;

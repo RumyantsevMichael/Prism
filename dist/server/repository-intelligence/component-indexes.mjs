@@ -5,6 +5,7 @@ import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { componentOf, listsComponents, readComponents } from "../workflow/components.mjs";
 import { NativeRepositoryIntelligence, RepositoryScan } from "./native-repository-intelligence.mjs";
 import { semanticError } from "./native-semantic-runtime.mjs";
+import { FUSION_OFFSET, fusionWeights } from "../../native-runtime/fusion.mjs";
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const inside = (file, folder) => file === folder || file.startsWith(`${folder}/`);
 async function indexComponents(projectRoot) {
@@ -119,17 +120,44 @@ async function unionSnapshot(sources, snapshot) {
     complete: snapshots.every((item) => item.complete)
   };
 }
-async function searchComponents(included, limit) {
+async function searchComponents(included, limit, query = "") {
   const answers = [];
   for (const entry of included) answers.push(await entry.search());
   const lists = included.flatMap((entry, index) => answers[index] ? [answers[index].map((result) => ({ ...result, component: entry.component }))] : []);
   if (lists.length === 1) return { answers, results: lists[0].slice(0, limit) };
-  const keyed = lists.flatMap((list) => {
-    let previous = -Infinity;
-    return list.map((result) => ({ result, key: previous = result.cosineSimilarity ?? previous }));
+  const scored = (result) => result.cosineSimilarity != null || result.lexicalScore != null;
+  const entries = [];
+  const orphans = [];
+  for (const list of lists) {
+    let last;
+    for (const result of list) {
+      if (scored(result)) entries.push(last = { result, order: entries.length, followers: [], fused: 0 });
+      else if (last) last.followers.push(result);
+      else orphans.push(result);
+    }
+  }
+  const byScore = (score) => (left, right) => score(right.result) - score(left.result);
+  for (const list of lists) {
+    const own = entries.filter((entry) => list.includes(entry.result) && entry.result.lexicalScore != null).sort(byScore((result) => result.lexicalScore));
+    const top = own.length ? own[0].result.lexicalScore : 0;
+    own.forEach((entry, place) => {
+      entry.lexical = [place, top > 0 ? entry.result.lexicalScore / top : 0];
+    });
+  }
+  const weights = fusionWeights(query);
+  const vector = entries.filter((entry) => entry.result.cosineSimilarity != null).sort(byScore((result) => result.cosineSimilarity));
+  vector.forEach((entry, rank) => {
+    entry.fused += weights.cosineSimilarity / (FUSION_OFFSET + rank + 1);
   });
-  const merged = keyed.sort((left, right) => left.key === right.key ? 0 : right.key > left.key ? 1 : -1);
-  return { answers, results: merged.slice(0, limit).map(({ result }, index) => ({ ...result, fusedRank: index + 1 })) };
+  const lexical = entries.filter((entry) => entry.lexical).sort((left, right) => left.lexical[0] - right.lexical[0] || right.lexical[1] - left.lexical[1]);
+  lexical.forEach((entry, rank) => {
+    entry.fused += weights.lexicalScore / (FUSION_OFFSET + rank + 1);
+  });
+  const term = query.trim();
+  const exact = (result) => [result.file, result.name, result.qualifiedName, result.selector].includes(term) ? 1 : 0;
+  const ranked = entries.sort((left, right) => exact(right.result) - exact(left.result) || right.fused - left.fused || left.order - right.order);
+  const merged = [...ranked.flatMap((entry) => [entry.result, ...entry.followers]), ...orphans];
+  return { answers, results: merged.slice(0, limit).map((result, index) => ({ ...result, fusedRank: index + 1 })) };
 }
 async function selectedComponents(projectRoot, declaration, paths, expectedSnapshot, baseline) {
   const root = await realpath(projectRoot);

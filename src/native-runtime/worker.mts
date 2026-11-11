@@ -11,13 +11,10 @@ import { assignContainers, planFragments } from "./fragments.mjs";
 import { searchExclusion } from "./domains.mjs";
 import { extractGraph } from "./graph.mjs";
 import { embedFragments } from "./embeddings.mjs";
+import { FUSION_OFFSET, fusionWeights } from "./fusion.mjs";
 import type { UnitIndex, Fragment, BuildArguments, SearchArguments, SearchResult, Progress, WorkerRequest } from "../server/repository-intelligence/repository-unit-types.mjs";
 
 const runtimeDirectory = path.dirname(fileURLToPath(import.meta.url));
-// Lexical matches on common words rank long files above precise semantic matches.
-// Identifier-like queries keep more lexical weight, because rare exact tokens blur in dense vectors.
-const IDENTIFIER = /[A-Za-z\d][_-][A-Za-z\d]|[a-z\d][A-Z]|\b[A-Z\d]{3,}\b|["'`]/;
-const fusionWeights = (query: string) => ({ lexicalScore: IDENTIFIER.test(query) ? 0.5 : 0.25, cosineSimilarity: 1 });
 const CONTEXT_BOOST = 0.5;
 const STOP_WORDS = new Set(["a", "an", "and", "are", "as", "at", "be", "by", "can", "do", "does", "for", "from", "how", "in", "into", "is", "it", "its", "of", "on", "or", "that", "the", "their", "this", "to", "what", "when", "where", "which", "while", "who", "why", "with"]);
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -166,7 +163,7 @@ async function query(args: SearchArguments): Promise<SearchResult[]> {
     for (const [rank, hit] of hits.filter(hit => allowed(hit.id)).entries()) {
       const item = fused.get(hit.id) || { id: hit.id, fusedScore: 0, lexicalScore: null, cosineSimilarity: null };
       item[mode] = hit.score;
-      item.fusedScore += weights[mode] / (60 + rank + 1);
+      item.fusedScore += weights[mode] / (FUSION_OFFSET + rank + 1);
       fused.set(hit.id, item);
     }
   }

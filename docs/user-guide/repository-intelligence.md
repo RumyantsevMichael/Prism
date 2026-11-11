@@ -157,8 +157,12 @@ The result's `snapshot` covers only the components it read, so an edit in anothe
 
 Each search result names the identity of its component in `component`.
 When one component is included, its results keep that index's order and `fusedRank`.
-When several components are included, each one answers the query with the search's filters and `limit`, and the merged results are ordered by `cosineSimilarity` from highest to lowest, with equal similarities in component order and then in each index's order.
-A result without a similarity, such as a container returned for its grouped members, stays directly after the result that it follows in its component's index.
+When several components are included, each one answers the query with the search's filters and `limit`, and Prism ranks the answers together with reciprocal rank fusion of vector and lexical evidence.
+A result's vector rank is its place among every merged result with a `cosineSimilarity`, from highest to lowest, because similarity compares across indexes.
+A result's lexical rank comes from its place among its own component's results with a `lexicalScore`, so each component's best lexical match ranks ahead of every component's second, and results at the same place rank by their score's share of their component's highest score.
+Each rank `r` adds `1 / (60 + r)` for vector evidence and `w / (60 + r)` for lexical evidence, where `w` is 0.5 for a query that looks like an identifier, such as `retryRequest`, `retry_request`, or a quoted name, and 0.25 otherwise, as inside one index.
+Results whose file, name, qualified name, or selector equals the trimmed query come first, then the rest by that fused score, with ties in component order and then in each index's order.
+A result with neither score, such as a container returned for its grouped members, stays directly after the result that it follows in its component's index.
 Such a result counts toward `limit` like any other, so it is left out when the result it follows is the last one kept.
 The merged list keeps the first `limit` results and numbers `fusedRank` from 1.
 Each result keeps the `fusedScore` and `lexicalScore` that its component's index computed, and those scores depend on that index's own files, so compare them only between results of one component.
