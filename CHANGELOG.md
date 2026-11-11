@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.23.0](https://github.com/RumyantsevMichael/Prism/compare/v0.22.1...v0.23.0) (2026-11-11)
+
+
+### Added
+
+* **review:** accept low findings with follow-ups and ask the review loop decision from the findings ([#189](https://github.com/RumyantsevMichael/Prism/issues/189)) ([1ddd03d](https://github.com/RumyantsevMichael/Prism/commit/1ddd03d9ced45a1989208d1915cc913eb8f176f2))
+
+
+### Fixed
+
+* let only one review app reclaim an abandoned lock, and name failed page loads on Windows ([#191](https://github.com/RumyantsevMichael/Prism/issues/191)) ([77cf710](https://github.com/RumyantsevMichael/Prism/commit/77cf71053fb271497245d8daec7ff114291d62ff)), closes [#85](https://github.com/RumyantsevMichael/Prism/issues/85)
+* stop hooks from syncing the record store on every prompt ([#197](https://github.com/RumyantsevMichael/Prism/issues/197)) ([e07da63](https://github.com/RumyantsevMichael/Prism/commit/e07da639ca2cd3572e37dd1d3a470610694b0967)), closes [#196](https://github.com/RumyantsevMichael/Prism/issues/196)
+
 ## [0.22.1](https://github.com/RumyantsevMichael/Prism/compare/v0.22.0...v0.22.1) (2026-11-11)
 
 
