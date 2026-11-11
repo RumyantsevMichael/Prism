@@ -24,7 +24,7 @@ Serves: Reliable planning and resumable work in Prism's spec-driven engineering 
 - **Show a whole workspace in the review app** (`workspace-view`): Make the workspace, one record store, the unit the review app opens: list workspaces only, combine every scope's artifacts for people and agents, add a workspace from its store URL alone, and show code-repository content from Prism-kept clones. Requires `workspace-artifacts`.
 - **Nested work items** (`nested-work-items`): Replace initiatives with one nested work item, so any node of the work tree is a work item and a leaf done in one session stays a slice, and migrate existing records, terms, tools and skills to it while a top work item pins each reference repository it reads to a commit that its children inherit. Requires `workspace-artifacts`.
 - **Questions about records and code** (`record-search`): Answer with records rather than passages, find similar and governing records for an intent, and read the recorded links between records and code in both directions. Requires `index-preparation`.
-- **Search of reference repositories and libraries** (`reference-search`): Let a separate search_references tool answer from reference repositories, libraries, and peer workspaces' records at the commit or version a work item pins, without mixing them into the project's own results. Requires `index-preparation`, `record-search`, `workspace-artifacts`.
+- **Search of reference repositories and libraries** (`reference-search`): Let a separate search_references tool answer from reference repositories, libraries, and peer workspaces' records at the commit or version a work item pins, without mixing them into the project's own results. Requires `index-preparation`, `record-search`, `workspace-artifacts`, `nested-work-items`.
 
 ### Shipped
 
@@ -47,7 +47,7 @@ Serves: Reliable planning and resumable work in Prism's spec-driven engineering 
 - **Show a whole workspace in the review app**: Next, after workspace-artifacts, whose store artifacts and scopes it builds on and whose scope filter it amends; Michael asked for it on 10 November 2026 and agreed the design the same day.
 - **Nested work items**: Next, after workspace-artifacts, whose store artifacts the migration moves; Michael decided on 8 November 2026 to drop initiatives for one nested work item, and that a top work item pins the reference repositories it reads, with children inheriting the pins.
 - **Questions about records and code**: Next, because Michael asked on 8 November 2026 for duplicate, governing-record, gap, and record-to-code questions; the November record-question baseline showed search alone cannot answer them. It needs cross-index ranking from index-preparation.
-- **Search of reference repositories and libraries**: Next, because Michael decided on 9 November 2026 that workspaces declare reference repositories and libraries pinned per work item; it needs workspace settings and work-item pins from workspace-artifacts, record results from record-search, and finishing builds from index-preparation.
+- **Search of reference repositories and libraries**: Next, because Michael decided on 9 November 2026 that workspaces declare reference repositories and libraries pinned per work item; it needs workspace settings from workspace-artifacts, reference pins on work items from nested-work-items, record results from record-search, and finishing builds from index-preparation.
 
 ## Open questions
 
