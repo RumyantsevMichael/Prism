@@ -4,9 +4,9 @@ import path from "node:path";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { gitTransportPath } from "./git-local-repository.mjs";
 import { describeOversizedEntry, describeUnsafeEntry, gitTimeoutMs, gitTooOld, gitUrlText, helperForRepository, localRemoteRepository, markManagedStore, moveUnderSyncLock, oversizedStoreEntry, runGit, unsafeStoreEntry, writeCommitFiles } from "./record-store-sync.mjs";
-import { legacyStoreId, legacyStoresDirectory, managedStoreId, managedStoresDirectory, remoteLabel, storeIdentity, storeTransport, withoutCredentials } from "./remote-url.mjs";
+import { legacyStoreId, legacyStoresDirectory, managedStoreId, managedStoresDirectory, remoteLabel, storeIdentity, withoutCredentials } from "./remote-url.mjs";
 
-// A record store named by its remote lives in a clone Prism keeps in its application folder, one per store identity, shared by every checkout and host that names any spelling of it.
+// A record store named by its remote lives in a clone Prism keeps in its application folder, one per store identity, shared by every checkout and host that names any spelling of that identity.
 // Prism creates that clone because no checkout owns it, and never changes, replaces, or deletes a folder it finds there.
 const clones = new Map();
 // The review app serves projects of sessions whose hosts keep their data in different folders, so each project uses the folder its sessions report.
@@ -111,21 +111,6 @@ async function moveLegacyClone(directory, target, configured, unavailable, renam
   await moveEarlierClone(path.join(legacy, old), target, configured, unavailable, move);
 }
 
-// A shared clone never fetches or pushes over a plaintext transport (http://, git://) when an access names the store with an encrypted spelling (https://, ssh://, scp):
-// such an access sets a plaintext origin to its own URL before any sync, and a plaintext access, or another encrypted spelling, keeps the origin there.
-async function encryptedOrigin(base, configured, unavailable) {
-  if (storeTransport(configured) !== "encrypted") return;
-  const plaintext = async () => {
-    const origin = await runGit(base, ["config", "--local", "--get", "remote.origin.url"]);
-    return origin.ok && storeTransport(origin.text) === "plaintext" ? origin.text : null;
-  };
-  const origin = await plaintext();
-  if (!origin) return;
-  const set = await runGit(base, ["config", "--local", "remote.origin.url", configured]);
-  // Another access may have set it at the same moment, so only an origin that is still plaintext refuses.
-  if (!set.ok && await plaintext()) throw unavailable(`Its clone at ${base} has the unencrypted origin ${remoteLabel(origin) ?? "of another spelling"}, and Git could not set it to ${remoteLabel(configured) ?? "the configured remote"}: ${withoutCredentials(set.stderr)}`);
-}
-
 // The origin URL that git clone records for a remote: a local path made absolute from the folder the clone ran in, as clone's absolute_pathdup does, or the URL as it is.
 async function clonedUrl(directory, configured) {
   let local = null;
@@ -207,7 +192,7 @@ export async function managedRecordStore(projectRoot, configured, makeUnavailabl
   const target = path.join(directory, id);
   const cached = clones.get(target);
   // A clone that disappeared since it was cached is looked for again, so the access reports what is there now.
-  if (cached && (!cached.done || await exists(target))) return withEncryptedOrigin(cached.pending, configured, unavailable);
+  if (cached && (!cached.done || await exists(target))) return cached.pending;
   const entry = { done: false };
   entry.pending = cloneOnce(directory, id, target, configured, unavailable, renameFolder).then((base) => {
     entry.done = true;
@@ -219,12 +204,6 @@ export async function managedRecordStore(projectRoot, configured, makeUnavailabl
     throw error;
   });
   clones.set(target, entry);
-  return withEncryptedOrigin(entry.pending, configured, unavailable);
+  return entry.pending;
 }
 
-// Every access checks the origin, since another access may have made the clone or set its origin since.
-async function withEncryptedOrigin(pending, configured, unavailable) {
-  const base = await pending;
-  await encryptedOrigin(base, configured, unavailable);
-  return base;
-}

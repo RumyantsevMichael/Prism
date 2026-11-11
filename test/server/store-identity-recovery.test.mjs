@@ -134,25 +134,44 @@ function plaintextSpelling(store) {
   return url;
 }
 
-test("an https access to a clone made from the http:// spelling syncs through the https URL", async (context) => {
-  const where = await place(context);
-  const store = await networkStore(where);
-  const http = plaintextSpelling(store);
-  const base = await managedRecordStore(where.root, http, unavailable);
-  assert.equal(git(base, "config", "--get", "remote.origin.url"), http, "the plaintext access clones through its own spelling");
-  assert.equal(await managedRecordStore(where.root, store.url, unavailable), base, "both spellings share one clone");
-  assert.equal(git(base, "config", "--get", "remote.origin.url"), store.url);
-  assert.equal(await managedRecordStore(where.root, http, unavailable), base);
-  assert.equal(git(base, "config", "--get", "remote.origin.url"), store.url, "a later plaintext access keeps the encrypted origin");
+test("http:// and git:// spellings keep their scheme in the store identity", async () => {
+  assert.equal(await storeIdentity("http://GitHub.com:80/Acme/store.git"), "http://github.com/Acme/store");
+  assert.equal(await storeIdentity("git://github.com/Acme/store.git/"), "git://github.com/Acme/store");
+  assert.equal(await storeIdentity("HTTP://github.com/Acme/store"), "http://github.com/Acme/store");
+  assert.equal(await storeIdentity("https://github.com/Acme/store.git"), "github.com/Acme/store");
 });
 
-test("a plaintext access to a clone made from the https spelling keeps the https origin", async (context) => {
+test("a plaintext spelling never reaches the clone of an encrypted spelling of the same store", async (context) => {
   const where = await place(context);
   const store = await networkStore(where);
   const http = plaintextSpelling(store);
-  const base = await managedRecordStore(where.root, store.url, unavailable);
-  for (const value of [http, http.replace(/^http:/, "git:")]) {
-    assert.equal(await managedRecordStore(where.root, value, unavailable), base, value);
-    assert.equal(git(base, "config", "--get", "remote.origin.url"), store.url, value);
+  const plainGit = http.replace(/^http:/, "git:");
+  alias(plainGit, store.bare);
+  const encrypted = await managedRecordStore(where.root, store.url, unavailable);
+  const clones = new Set([encrypted]);
+  for (const value of [http, plainGit]) {
+    const base = await managedRecordStore(where.root, value, unavailable);
+    assert.equal(clones.has(base), false, `${value} has a clone of its own`);
+    clones.add(base);
+    assert.equal(git(base, "config", "--get", "remote.origin.url"), value, "the plaintext clone keeps its own spelling");
   }
+  assert.equal(git(encrypted, "config", "--get", "remote.origin.url"), store.url, "the encrypted clone keeps its encrypted origin");
+});
+
+test("a 0.20 clone of an http:// spelling stays that spelling's clone, and moves only to its identity folder", async (context) => {
+  const where = await place(context);
+  const store = await networkStore(where);
+  const http = plaintextSpelling(store);
+  assert.equal(legacyStoreId(http), await managedStoreId(http), "a plain http:// spelling already names the folder of its identity");
+  const ported = http.replace("example.invalid/", "example.invalid:8080/");
+  alias(ported, store.bare);
+  const { old, unpushed, target } = await earlierClone(where, { ...store, url: ported });
+  assert.notEqual(old, target);
+  const encrypted = path.join(where.stores, await managedStoreId(store.url));
+  assert.notEqual(target, encrypted);
+  assert.equal(await managedRecordStore(where.root, store.url, unavailable), await realpath(encrypted));
+  assert.equal(await exists(old), true, "an encrypted access leaves the plaintext clone where it is");
+  assert.equal(await managedRecordStore(where.root, ported, unavailable), await realpath(target), "its own spelling moves it");
+  assert.equal(await exists(old), false);
+  assert.doesNotThrow(() => git(target, "cat-file", "-e", `${unpushed}^{commit}`));
 });

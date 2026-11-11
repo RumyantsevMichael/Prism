@@ -25,20 +25,13 @@ export function publicRemote(url) {
 // A one-letter host is a Windows drive, as Git reads it, so C:store stays a path.
 const STORE_URL = /^(?:https?|ssh|git|file):\/\//i;
 const NETWORK_URL = /^(?:https?|ssh|git):\/\//i;
+const PLAINTEXT_URL = /^(?:http|git):\/\//i;
 // A path that begins with a second ':' is Git's <transport>::<address> form, which starts the remote helper git-remote-<transport>, so it names no network store.
 const STORE_SCP = /^(?:[^@/\\\s]+@)?[A-Za-z0-9][A-Za-z0-9.-]+:[^:\s][^\s]*$/;
 
 /** Whether a Workspace Store value names a Git remote rather than a folder. */
 export function isRemoteStore(value) {
   return typeof value === "string" && (STORE_URL.test(value) || STORE_SCP.test(value));
-}
-
-/** Whether a remote store value reaches its remote over an encrypted transport (https://, ssh://, or the scp form), over plaintext (http://, git://), or names no network remote (null). */
-export function storeTransport(value) {
-  if (typeof value !== "string") return null;
-  if (/^(?:http|git):\/\//i.test(value)) return "plaintext";
-  if (/^(?:https|ssh):\/\//i.test(value)) return "encrypted";
-  return !STORE_URL.test(value) && STORE_SCP.test(value) ? "encrypted" : null;
 }
 
 // The remote as messages may name it: scheme, host, and path, never user information, query, or fragment.
@@ -95,7 +88,8 @@ async function realFolder(folder) {
 }
 
 /**
- * The identity of a Workspace Store value, which every spelling of one store shares: host/path for a network remote, without scheme, user information, port, query, fragment, or a trailing .git,
+ * The identity of a Workspace Store value, which every spelling of one store shares: host/path for an https://, ssh://, or scp-form remote, without scheme, user information, port, query, fragment, or a trailing .git,
+ * the same after its scheme for an http:// or git:// remote, which Git reaches without encryption, so a plaintext spelling never shares a clone with an encrypted one,
  * or file: and the real path of a folder store or a file:// URL, a relative path resolved from root; null when the value names no usable store.
  */
 export async function storeIdentity(value, { root = process.cwd() } = {}) {
@@ -106,7 +100,8 @@ export async function storeIdentity(value, { root = process.cwd() } = {}) {
     // The URL parser percent-encodes the path that the scp form spells as it is, so the decoded path gives both spellings one identity.
     let decoded = parsed.pathname;
     try { decoded = decodeURIComponent(decoded); } catch { /* A malformed escape stays as it is spelled. */ }
-    return networkIdentity(parsed.hostname, decoded);
+    const identity = networkIdentity(parsed.hostname, decoded);
+    return identity && (PLAINTEXT_URL.test(value) ? `${parsed.protocol}//${identity}` : identity);
   }
   if (/^file:\/\//i.test(value)) {
     let parsed;

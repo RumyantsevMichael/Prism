@@ -33,14 +33,12 @@ Choosing the workspace there opens its records, which every checkout shares.
 `Store` names a remote when it is a URL with the scheme `https`, `http`, `ssh`, `git`, or `file`, or the scp form `[user@]host:path`.
 A value in Git's `<transport>::<address>` form, such as `ext::sh`, would start a Git remote helper, so Prism takes it for a folder path rather than a remote and never clones it.
 On the first record access that finds no clone of it, Prism clones the remote into its application folder, under `stores/<id>`, where `<id>` is derived from the store's identity.
-A network remote's identity is its host in lowercase and its path, with a URL's percent-encoding decoded, without a trailing `.git` or `/`, with no scheme, user, or port, so `https://github.com/you/prism-store.git`, `ssh://git@GitHub.com:22/you/prism-store`, and `git@github.com:you/prism-store.git` all name one store.
+An `https://`, `ssh://`, or scp-form remote's identity is its host in lowercase and its path, with a URL's percent-encoding decoded, without a trailing `.git` or `/`, with no scheme, user, or port, so `https://github.com/you/prism-store.git`, `ssh://git@GitHub.com:22/you/prism-store`, and `git@github.com:you/prism-store.git` all name one store.
+An unencrypted `http://` or `git://` URL keeps its scheme in its identity, so `http://github.com/you/prism-store` and `git://github.com/you/prism-store` each have a clone of their own, apart from the clone of the encrypted spellings, and a plaintext spelling never fetches into or pushes from the encrypted spellings' clone.
 A `file://` URL or a folder path has the identity of the folder's real path.
 The application folder is `~/Library/Application Support/Prism` on macOS, `%LOCALAPPDATA%\Prism` on Windows, and `$XDG_STATE_HOME/prism` or `~/.local/state/prism` elsewhere, and `PRISM_REVIEW_APP_DIR` overrides it.
 The access waits for the clone, and every later access on the machine uses it.
-Every checkout, worktree, and host on the machine whose configuration names the same store shares that one clone, whatever spelling of it each one uses, so Claude Code and Codex read and write the same clone.
-The clone never syncs over an unencrypted `http://` or `git://` URL once any access names the store with an encrypted spelling (`https://`, `ssh://`, or the scp form).
-An access with an encrypted spelling that finds the clone's origin unencrypted sets the origin to its own URL before any fetch or push, and an access with an unencrypted spelling keeps an encrypted origin as it is.
-Between two encrypted spellings the clone keeps the origin it has.
+Every checkout, worktree, and host on the machine whose configuration names a spelling of the same store identity shares that one clone, so Claude Code and Codex read and write the same clone.
 Prism 0.20 and earlier named the clone after the spelling instead, so an HTTPS and an SSH spelling of one store had a clone each.
 On the first record access, a clone that Prism 0.20 named for the configured spelling moves to its new folder with any commit it has not pushed yet, when its origin names the same store and no clone is at the new folder yet.
 A clone already at the new folder is used as before, and the old folder stays untouched, so move any unpushed commit from it yourself before you delete it.
