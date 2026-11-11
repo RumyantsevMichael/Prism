@@ -18,14 +18,18 @@ export interface UnitIndex extends IndexMetadata { chunks: Fragment[] }
 export interface PublishedUnit { id: string; file: string; kind: string; name: string; qualifiedName?: string; range: SourceRange; sourceHash?: string }
 export interface PublishedUnits { schemaVersion: 1; snapshot: string; revision: string; units: PublishedUnit[]; edges: [string, string][] }
 export interface RuntimeAssets { runtime: string; modelDirectory: string; modelIdentity: string; assetIdentity: string }
-export interface PreparedIndex extends RuntimeAssets { index: IndexMetadata; indexPath: string; revision: string }
+// `stage` is "structure" for an index whose fragments carry no embedding yet, which answers structure and lexical search only; an index without it is complete.
+export type IndexStage = "structure" | "complete";
+export interface PreparedIndex extends RuntimeAssets { index: IndexMetadata; indexPath: string; revision: string; stage?: IndexStage }
 // A component preparation names its component's identity, may wait in the queue, and records why it failed.
-export interface Preparation { status: "waiting" | "preparing" | "ready" | "degraded"; preparationId: string; snapshot: string; diagnostics: Diagnostic[]; prepared?: PreparedIndex; component?: string; failure?: ComponentFailure | null }
+// `structure` is the structure-only index of the preparation's content that its build published, while the preparation still embeds.
+export interface Preparation { status: "waiting" | "preparing" | "ready" | "degraded"; preparationId: string; snapshot: string; diagnostics: Diagnostic[]; prepared?: PreparedIndex; structure?: PreparedIndex; component?: string; failure?: ComponentFailure | null }
 export interface ComponentFailure { code: string; message: string; phase?: string }
 // The component a runtime preparation indexes: its name, its identity <repository>/<component>, and its folder, "" for the root component.
 export interface IndexComponent { name: string; identity: string; folder: string }
 // How a component took part in a result: its up-to-date index answered, it waits or prepares, or its preparation failed.
-export interface ComponentState { component: string; folder: string; status: "included" | "waiting" | "preparing" | "failed"; indexRevision: string | null; failure: ComponentFailure | null }
+// `embeddings: "pending"` marks a component included from its structure-only index, which a search reads lexically.
+export interface ComponentState { component: string; folder: string; status: "included" | "waiting" | "preparing" | "failed"; indexRevision: string | null; failure: ComponentFailure | null; embeddings?: "pending" }
 // `vectors` holds the embedding key and vector of each fragment embedded since the previous embedding value; Prism saves and strips them.
 export interface Progress { phase: string; current?: number; total?: number; file?: string; unit?: "bytes" | "files"; item?: number; items?: number; vectors?: [string, number[]][] }
 export interface BuildArguments { mirror: string; files: Pick<SourceFile, "file" | "hash">[]; snapshot: string; modelDirectory: string; modelIdentity: string; previousEmbeddings?: Record<string, number[]>; fragmentsOnly?: boolean }
@@ -47,10 +51,14 @@ export interface NativeSource {
   validateSourceRange(range: { file: string; range: SourceRange }): Promise<{ file: string; range: SourceRange }>;
   verifySnapshot(): Promise<unknown>;
 }
+// `structure` returns the published structure of a preparation that still embeds, for a caller that can answer from it,
+// and `structureSuffices` also ends the call's wait once that structure is published, for a caller that needs structure only.
+export interface PrepareOptions { structure?: boolean; structureSuffices?: boolean }
 export interface SemanticRuntime {
-  prepare(source: NativeSource, expectedSnapshot?: string, waitMs?: number): Promise<Preparation>;
+  prepare(source: NativeSource, expectedSnapshot?: string, waitMs?: number, options?: PrepareOptions): Promise<Preparation>;
+  /** Searches a prepared index; a structure-only index is searched with `mode: "lexical"`. */
   search(prepared: PreparedIndex, source: NativeSource, query: string, filters: SearchFilters | undefined, limit: number): Promise<SearchResult[]>;
 }
 export interface ComponentRuntime extends SemanticRuntime {
-  prepareComponents(entries: { source: NativeSource; component: IndexComponent }[], waitMs?: number, options?: { retryLimited?: boolean }): Promise<Preparation[]>;
+  prepareComponents(entries: { source: NativeSource; component: IndexComponent }[], waitMs?: number, options?: { retryLimited?: boolean } & PrepareOptions): Promise<Preparation[]>;
 }

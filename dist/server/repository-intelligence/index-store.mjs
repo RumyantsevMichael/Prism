@@ -19,7 +19,8 @@ class LocalIndexStore {
   async read(indexPath, revision) {
     return indexMetadata(await readIndex(indexPath, revision));
   }
-  async build({ runtime, directory, args, previous }, progress) {
+  // The runtime's `structure` value is the index without embeddings; it is held for `structure`, never forwarded, and its phase alone is reported.
+  async build({ runtime, directory, args, previous }, progress, structure) {
     const stops = this.stops;
     const indexed = previous ? await readIndex(previous.indexPath, previous.revision).then(storedEmbeddings, (error) => {
       log.warn("index_reuse_unreadable", { indexPath: previous.indexPath, ...errorFields(error) });
@@ -29,7 +30,12 @@ class LocalIndexStore {
     const previousEmbeddings = { ...indexed, ...saved };
     if (this.stops !== stops) throw semanticError("preparation_failed", "The index build was stopped before it started.");
     let saving = true;
-    const forward = ({ vectors, index: _index, ...value }) => {
+    const forward = ({ vectors, index: index2, ...value }) => {
+      if (value.phase === "structure" && index2 && structure) {
+        const token2 = String(++this.counter);
+        this.built.set(token2, index2);
+        structure(token2);
+      }
       if (vectors && saving) {
         try {
           appendEmbeddings(directory, vectors);
@@ -51,14 +57,18 @@ class LocalIndexStore {
     const index = this.built.get(token);
     if (!index) throw semanticError("preparation_failed", "The built index is no longer held.");
     this.built.delete(token);
-    index.assetIdentity = assetIdentity;
-    index.fileCoverage = structuralCoverage(index);
-    if (incomplete) {
-      index.structureComplete = false;
-      index.diagnostics.push({ code: "resource_limit", message: "The native source snapshot is incomplete." });
-    }
+    finished(index, assetIdentity, incomplete);
     const stored = await writeIndex(directory, index);
     await replaceEmbeddings(directory, index.chunks).catch((error) => log.warn("embedding_store_unwritable", { directory, ...errorFields(error) }));
+    return { ...stored, index: indexMetadata(index) };
+  }
+  async saveStructure(token, { directory, assetIdentity, incomplete }) {
+    const index = this.built.get(token);
+    if (!index) throw semanticError("preparation_failed", "The reported structure is no longer held.");
+    this.built.delete(token);
+    for (const chunk of index.chunks) delete chunk.embedding;
+    finished(index, assetIdentity, incomplete);
+    const stored = await writeIndex(directory, index);
     return { ...stored, index: indexMetadata(index) };
   }
   async stop() {
@@ -70,6 +80,14 @@ class LocalIndexStore {
   }
   async close() {
     this.built.clear();
+  }
+}
+function finished(index, assetIdentity, incomplete) {
+  index.assetIdentity = assetIdentity;
+  index.fileCoverage = structuralCoverage(index);
+  if (incomplete) {
+    index.structureComplete = false;
+    index.diagnostics.push({ code: "resource_limit", message: "The native source snapshot is incomplete." });
   }
 }
 class ThreadIndexStore {
@@ -90,6 +108,10 @@ class ThreadIndexStore {
         call.progress?.(message.progress, message.embedded);
         return;
       }
+      if (message.structure !== void 0) {
+        call.structure?.(message.structure);
+        return;
+      }
       this.calls.delete(message.id);
       if (!this.calls.size) worker.unref();
       if (message.error) call.reject(Object.assign(new Error(message.error.message), message.error.code === void 0 ? {} : { code: message.error.code }));
@@ -107,10 +129,10 @@ class ThreadIndexStore {
     worker.unref();
     return worker;
   }
-  call(op, args, progress) {
+  call(op, args, progress, structure) {
     const worker = this.start(), id = ++this.counter;
     return new Promise((resolve, reject) => {
-      this.calls.set(id, { resolve: (value) => resolve(value), reject, progress });
+      this.calls.set(id, { resolve: (value) => resolve(value), reject, progress, structure });
       worker.ref();
       worker.postMessage({ id, op, args });
     });
@@ -118,8 +140,12 @@ class ThreadIndexStore {
   read(indexPath, revision) {
     return this.call("read", [indexPath, revision]);
   }
-  build(request, progress) {
-    return this.call("build", [request], progress);
+  // The thread is told whether to hold a reported structure, so a build whose caller cannot save one never holds it.
+  build(request, progress, structure) {
+    return this.call("build", [request, Boolean(structure)], progress, structure);
+  }
+  saveStructure(token, finish) {
+    return this.call("saveStructure", [token, finish]);
   }
   // A thread that never started runs no build, so there is nothing to stop.
   async stop() {

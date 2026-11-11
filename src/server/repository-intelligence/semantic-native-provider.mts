@@ -1,6 +1,6 @@
 import { NativeRepositoryIntelligence, openNativeRepositoryIntelligence } from "./native-repository-intelligence.mjs";
 import { nativeSemanticRuntime, semanticError } from "./native-semantic-runtime.mjs";
-import { baselineIndex, componentDiagnostics, componentResult, componentStates, indexComponents, prepareComponents, searchComponents, selectComponents, selectedComponents, unionIndex, unionSnapshot, verifyComponents } from "./component-indexes.mjs";
+import { answeringPreparation, baselineIndex, componentDiagnostics, componentResult, componentStates, indexComponents, prepareComponents, searchComponents, selectComponents, selectedComponents, unionIndex, unionSnapshot, verifyComponents } from "./component-indexes.mjs";
 import type { ComponentResult, ComponentSource, Declaration, OpenSource } from "./component-indexes.mjs";
 import { domainFor, searchExclusion } from "../../native-runtime/domains.mjs";
 import { isTestUnit, sharedDependencyGroups } from "./shared-dependencies.mjs";
@@ -19,7 +19,9 @@ interface ConceptSearchInput { projectRoot: string; query: string; filters?: Sea
 interface SharedDependencyInput { projectRoot: string; filters?: { paths?: string[] }; includeTests?: boolean; expectedSnapshot?: string; snapshotId?: string; limit?: number }
 interface ModuleInterfaceInput { projectRoot: string; filters?: { paths?: string[] }; allModules?: boolean; expectedSnapshot?: string; snapshotId?: string; limit?: number; offset?: number }
 interface ScopedAnalysisInput { projectRoot: string; filters?: { paths?: string[] }; includeTests?: boolean; expectedSnapshot?: string; snapshotId?: string; limit?: number }
-interface ProviderOptions { source?: Record<string, unknown>; nativeSource?: NativeSource; runtime?: SemanticRuntime; expectedSnapshot?: string; waitMs?: number }
+// `structure` answers from a published structure-only index while the build embeds, and `structureSuffices` stops waiting once one is published,
+// as for a structural report; a search waits its bound for a complete index first, and a context plan sets neither, so it waits for a complete index.
+interface ProviderOptions { source?: Record<string, unknown>; nativeSource?: NativeSource; runtime?: SemanticRuntime; expectedSnapshot?: string; waitMs?: number; structure?: boolean; structureSuffices?: boolean }
 // The preparation of a call in a repository with components: the result's status and components, with no preparation id of its own, and the union of the included components' indexes.
 interface ComponentPreparation { status: ComponentResult["status"]; preparationId: null; snapshot: string; diagnostics: Diagnostic[]; components: ComponentState[]; prepared?: PreparedIndex }
 
@@ -161,8 +163,11 @@ export class SemanticNativeRepositoryIntelligence {
   verifySnapshot() { return verifySource(this.source); }
   async describe() {
     const description = await this.source.describe();
-    return { ...description, preparation: { ...this.preparation, prepared: undefined },
-      capabilities: { ...description.capabilities, semanticSearch: Boolean(this.prepared), hybridSearch: Boolean(this.prepared), symbolGraph: Boolean(this.prepared), documentGraph: Boolean(this.prepared) } };
+    // A structure-only index answers structure and lexical search, but has no embeddings for a semantic or hybrid ranking.
+    const embedded = Boolean(this.prepared) && this.prepared!.stage !== "structure";
+    const { structure: _structure, ...preparation } = this.preparation as Preparation;
+    return { ...description, preparation: { ...preparation, prepared: undefined },
+      capabilities: { ...description.capabilities, semanticSearch: embedded, hybridSearch: embedded, symbolGraph: Boolean(this.prepared), documentGraph: Boolean(this.prepared) } };
   }
   async semanticSearch(query: string, filters: SearchFilters | undefined, limit: number): Promise<SearchResult[] | null> {
     if (!this.prepared) return null;
@@ -286,33 +291,40 @@ export async function prepareNativeProvider(projectRoot: string, options: Provid
   if (declaration) return prepareComponentProvider(projectRoot, declaration, options);
   const source = options.nativeSource || await openNativeRepositoryIntelligence(projectRoot, options.source) as unknown as NativeSource;
   const runtime = options.runtime || nativeSemanticRuntime;
-  const preparation = await runtime.prepare(source, options.expectedSnapshot, options.waitMs);
+  const prepared = await runtime.prepare(source, options.expectedSnapshot, options.waitMs, options.structure ? { structure: true, structureSuffices: Boolean(options.structureSuffices) } : {});
+  const preparation = options.structure ? answeringPreparation(prepared) : prepared;
   return { provider: new SemanticNativeRepositoryIntelligence(source, preparation, runtime), preparation };
 }
+
+// The diagnostic of a search that answered lexically from structure-only indexes: `components` names them in a repository with components.
+const embeddingsPending = (components?: string[]): Diagnostic => ({ code: "embeddings_pending",
+  message: `Lexical results answered without embeddings for ${components ? components.join(", ") : "the index"}; repeat the search after the build finishes for a hybrid ranking.`,
+  ...(components ? { components } : {}) });
 
 export async function searchRepositoryConcepts(input: ConceptSearchInput, options: ProviderOptions = {}) {
   validateConceptSearch(input);
   const declaration = options.nativeSource ? null : await indexComponents(input.projectRoot);
   if (declaration) return searchComponentIndexes(input, declaration, options);
   const nativeSource = input.snapshotId ? await conservationStore.source(input.projectRoot, input.snapshotId) : options.nativeSource;
-  const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot });
+  const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot, structure: true });
   if (preparation.status === "preparing") return { ...preparation, prepared: undefined, results: [] };
   let results = await provider.semanticSearch(input.query, input.filters, input.limit || 10);
   if (results === null) results = await lexicalResults([provider.source], input, input.limit || 10);
   await provider.verifySnapshot();
   if (input.snapshotId && provider.prepared) await retainAnalysis(input.projectRoot, input.snapshotId, provider.prepared);
   const capabilities = (await provider.describe()).capabilities;
+  const diagnostics = [...(provider.prepared?.stage === "structure" ? [embeddingsPending()] : []), ...provider.preparation.diagnostics];
   const receipt: SearchReceipt = { kind: "search", schemaVersion: 1, project: (await conservationStore.location(input.projectRoot)).root,
     snapshotId: input.snapshotId || null, snapshot: preparation.snapshot, query: input.query, filters: input.filters || null, limit: input.limit || 10,
     status: provider.preparation.status, capabilities, modelIdentity: provider.prepared?.modelIdentity || null, indexRevision: provider.prepared?.revision || null,
     versions: { graph: "1.6.0", extractor: provider.prepared?.index.chunkerVersion || "unavailable", tokenizer: provider.prepared?.modelIdentity || "unavailable", runtime: provider.prepared?.assetIdentity || "unavailable" },
     coverage: provider.prepared ? { files: provider.prepared.index.fileCoverage, counts: provider.prepared.index.counts } : null,
-    diagnostics: provider.preparation.diagnostics, candidates: results };
+    diagnostics, candidates: results };
   const receiptId = await conservationStore.put(input.projectRoot, receipt);
   return { status: provider.preparation.status, preparationId: preparation.preparationId, snapshot: preparation.snapshot,
     snapshotId: input.snapshotId || null, receiptId,
     indexRevision: provider.prepared?.revision || null, modelIdentity: provider.prepared?.modelIdentity || null,
-    capabilities, diagnostics: provider.preparation.diagnostics.slice(0, 20), diagnosticCount: provider.preparation.diagnostics.length, results };
+    capabilities, diagnostics: diagnostics.slice(0, 20), diagnosticCount: diagnostics.length, results };
 }
 
 // Today's lexical fallback over the files of one or more sources: the sources' file matches by score from highest to lowest and then by path,
@@ -340,7 +352,7 @@ const retainedSources = (projectRoot: string, snapshotId?: string): OpenSource |
 async function searchComponentIndexes(input: ConceptSearchInput, declaration: Declaration, options: ProviderOptions) {
   const runtime = (options.runtime || nativeSemanticRuntime) as ComponentRuntime, limit = input.limit || 10;
   const { sources, selected, snapshot } = await selectedComponents(input.projectRoot, declaration, input.filters?.paths, input.expectedSnapshot, retainedSources(input.projectRoot, input.snapshotId));
-  const preparations = await prepareComponents(runtime, selected, options.waitMs);
+  const preparations = await prepareComponents(runtime, selected, options.waitMs, { structure: true });
   const states = componentStates(selected, preparations);
   const preparing = () => ({ status: "preparing", preparationId: null, snapshot, diagnostics: componentResult(states, snapshot).diagnostics, components: states, results: [] });
   if (componentResult(states, snapshot).status === "preparing") return preparing();
@@ -361,8 +373,11 @@ async function searchComponentIndexes(input: ConceptSearchInput, declaration: De
   if (input.snapshotId && result.status === "ready" && selected.length === (await selectComponents(declaration, sources)).length)
     await retainAnalysis(input.projectRoot, input.snapshotId, await baselineIndex(selected, preparations, result));
   const prepared = providers.map(provider => provider.prepared!);
-  const diagnostics = componentDiagnostics(result, preparations);
-  const capabilities = { lexicalSearch: true, semanticSearch: prepared.length > 0, hybridSearch: prepared.length > 0, symbolGraph: prepared.length > 0, verifiedSource: true, documentGraph: prepared.length > 0 };
+  // The components that answered lexically from a structure-only index are named directly after any components_missing diagnostic.
+  const pending = result.status === "degraded" ? [] : result.components.filter(state => state.status === "included" && state.embeddings === "pending").map(state => state.component);
+  const diagnostics = missingFirst([...(pending.length ? [embeddingsPending(pending)] : []), ...componentDiagnostics(result, preparations)]);
+  const embedded = prepared.some(item => item.stage !== "structure");
+  const capabilities = { lexicalSearch: true, semanticSearch: embedded, hybridSearch: embedded, symbolGraph: prepared.length > 0, verifiedSource: true, documentGraph: prepared.length > 0 };
   const first = prepared[0];
   const receipt: SearchReceipt = { kind: "search", schemaVersion: 1, project: (await conservationStore.location(input.projectRoot)).root,
     snapshotId: input.snapshotId || null, snapshot, query: input.query, filters: input.filters || null, limit, status: result.status, capabilities, modelIdentity: first?.modelIdentity || null, indexRevision: result.indexRevision,
@@ -412,7 +427,7 @@ async function preparedAnalysis(input: { projectRoot: string; snapshotId?: strin
   const declaration = options.nativeSource ? null : await indexComponents(input.projectRoot);
   if (declaration) return componentAnalysis(input, declaration, options);
   const nativeSource = input.snapshotId ? await conservationStore.source(input.projectRoot, input.snapshotId) : options.nativeSource;
-  const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot });
+  const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot, structure: true, structureSuffices: true });
   const identity = { status: provider.preparation.status, preparationId: preparation.preparationId, snapshot: preparation.snapshot, snapshotId: input.snapshotId || null };
   return { preparation, identity, prepared: provider.prepared, diagnostics: provider.preparation.diagnostics, snapshot: () => provider.snapshot(), verifySnapshot: () => provider.verifySnapshot() };
 }
@@ -423,7 +438,7 @@ async function preparedAnalysis(input: { projectRoot: string; snapshotId?: strin
 async function componentAnalysis(input: { projectRoot: string; snapshotId?: string; expectedSnapshot?: string; filters?: { paths?: string[] } }, declaration: Declaration, options: ProviderOptions): Promise<Analysis> {
   const runtime = (options.runtime || nativeSemanticRuntime) as ComponentRuntime;
   const { selected, snapshot } = await selectedComponents(input.projectRoot, declaration, input.filters?.paths, input.expectedSnapshot, retainedSources(input.projectRoot, input.snapshotId));
-  const preparations = await prepareComponents(runtime, selected, options.waitMs);
+  const preparations = await prepareComponents(runtime, selected, options.waitMs, { structure: true, structureSuffices: true });
   const parts = { selected, preparations, states: componentStates(selected, preparations), snapshot };
   const result = componentResult(parts.states, snapshot), preparation = componentPreparation(result, parts);
   const sources = selected.filter((_, index) => result.components[index].status === "included").map(entry => entry.source);

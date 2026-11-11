@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { CHUNKER_VERSION } from "./units.mjs";
 import type { Fragment, Progress } from "../server/repository-intelligence/repository-unit-types.mjs";
 
+/** The key under which a fragment's embedding is saved and reused: the model, the chunker version, and the text the model reads. */
+export const embeddingKey = (modelIdentity: string, text: string) => createHash("sha256").update(`${modelIdentity}\0${CHUNKER_VERSION}\0${text}`).digest("hex");
 const validVector = (value: unknown): value is number[] => Array.isArray(value) && value.length === 384 && value.every(Number.isFinite);
 
 export async function embedFragments(chunks: Fragment[], modelIdentity: string, previous: Record<string, number[]>,
@@ -9,7 +11,7 @@ export async function embedFragments(chunks: Fragment[], modelIdentity: string, 
   const groups = new Map<string, { text: string; chunks: Fragment[] }>();
   const vectors = new Map<string, number[]>();
   for (const chunk of chunks) {
-    const key = createHash("sha256").update(`${modelIdentity}\0${CHUNKER_VERSION}\0${chunk.embeddingText}`).digest("hex");
+    const key = embeddingKey(modelIdentity, chunk.embeddingText);
     const group = groups.get(key);
     if (group) group.chunks.push(chunk);
     else groups.set(key, { text: chunk.embeddingText, chunks: [chunk] });

@@ -57,16 +57,28 @@ async function selectionSnapshot(selected) {
 `);
   return sha(lines.join(""));
 }
-function prepareComponents(runtime, selected, waitMs) {
-  if (!selected.length) return Promise.resolve([]);
-  return runtime.prepareComponents(selected.map((entry) => ({ source: entry.source, component: { name: entry.name, identity: entry.component, folder: entry.folder } })), waitMs);
+async function prepareComponents(runtime, selected, waitMs, options = {}) {
+  if (!selected.length) return [];
+  const preparations = await runtime.prepareComponents(selected.map((entry) => ({ source: entry.source, component: { name: entry.name, identity: entry.component, folder: entry.folder } })), waitMs, options);
+  return options.structure ? preparations.map(answeringPreparation) : preparations;
+}
+function answeringPreparation(preparation) {
+  if (preparation.prepared || !preparation.structure || preparation.status !== "waiting" && preparation.status !== "preparing") return preparation;
+  return { ...preparation, status: "ready", prepared: preparation.structure };
 }
 function componentStates(selected, preparations) {
   return selected.map((entry, index) => {
     const preparation = preparations[index];
     const status = preparation.status === "ready" && preparation.prepared ? "included" : preparation.status === "degraded" ? "failed" : preparation.status === "waiting" ? "waiting" : "preparing";
     const failure = status !== "failed" ? null : preparation.failure ?? { code: preparation.diagnostics[0]?.code ?? "preparation_failed", message: preparation.diagnostics[0]?.message ?? "The component's preparation failed." };
-    return { component: entry.component, folder: entry.folder, status, indexRevision: status === "included" ? preparation.prepared.revision : null, failure };
+    return {
+      component: entry.component,
+      folder: entry.folder,
+      status,
+      indexRevision: status === "included" ? preparation.prepared.revision : null,
+      failure,
+      ...status === "included" && preparation.prepared.stage === "structure" ? { embeddings: "pending" } : {}
+    };
   });
 }
 function componentResult(components, snapshot) {
@@ -181,6 +193,7 @@ async function baselineIndex(selected, preparations, result) {
   } };
 }
 export {
+  answeringPreparation,
   baselineIndex,
   baselineSources,
   componentDiagnostics,

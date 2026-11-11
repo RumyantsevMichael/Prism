@@ -16,6 +16,7 @@ const store = new LocalIndexStore((runtime, args, progress) => {
 const operations = {
   read: (indexPath, revision) => store.read(indexPath, revision),
   save: (token, finish) => store.save(token, finish),
+  saveStructure: (token, finish) => store.saveStructure(token, finish),
   discard: (token) => store.discard(token),
   stop: () => store.stop(),
   close: async () => {
@@ -27,7 +28,11 @@ const operations = {
 };
 parentPort.on("message", async ({ id, op, args }) => {
   try {
-    const result = op === "build" ? await store.build(args[0], (progress, embedded) => parentPort.postMessage({ id, progress, ...embedded ? { embedded } : {} })) : await operations[op](...args);
+    const result = op === "build" ? await store.build(
+      args[0],
+      (progress, embedded) => parentPort.postMessage({ id, progress, ...embedded ? { embedded } : {} }),
+      args[1] ? (structure) => parentPort.postMessage({ id, structure }) : void 0
+    ) : await operations[op](...args);
     parentPort.postMessage({ id, result });
   } catch (error) {
     parentPort.postMessage({ id, error: { message: error.message, ...error.code === void 0 ? {} : { code: error.code } } });

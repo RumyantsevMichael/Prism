@@ -34,7 +34,8 @@ async function readStorages(storages, now) {
   const ended = latest && (!pointer || time(latest.finishedAt ?? latest.updatedAt) > time(pointer.builtAt)) ? latest : null;
   return { pointer, active, ended };
 }
-const summary = (pointer) => pointer ? { builtAt: pointer.builtAt, coverage: pointer.coverage ?? null, diagnostics: pointer.diagnostics?.length ?? 0 } : null;
+const stageOf = (pointer) => pointer.stage === "structure" ? "structure" : "complete";
+const summary = (pointer) => pointer ? { builtAt: pointer.builtAt, stage: stageOf(pointer), coverage: pointer.coverage ?? null, diagnostics: pointer.diagnostics?.length ?? 0 } : null;
 const endedState = (record) => record.state === "failed" ? "failed" : "interrupted";
 const recordedGit = (pointer) => pointer?.freshness?.snapshot === pointer?.snapshot ? pointer?.freshness?.git ?? null : null;
 async function unavailable(options) {
@@ -103,7 +104,7 @@ async function readUnits(storages) {
   if (!newest || !revision || !/^[a-f\d]{64}$/.test(revision)) return null;
   const sidecar = await readJson(path.join(newest.storage, unitsFile(revision)));
   if (sidecar?.schemaVersion !== 1 || sidecar.revision !== revision || sidecar.snapshot !== newest.pointer.snapshot || !Array.isArray(sidecar.units) || !Array.isArray(sidecar.edges)) return null;
-  return { snapshot: newest.pointer.snapshot, revision, builtAt: newest.pointer.builtAt, units: sidecar.units, edges: sidecar.edges };
+  return { snapshot: newest.pointer.snapshot, revision, builtAt: newest.pointer.builtAt, stage: stageOf(newest.pointer), units: sidecar.units, edges: sidecar.edges };
 }
 async function readPublishedUnits(projectRoot, directories = [nativeSemanticRuntime.directory]) {
   const root = await realpath(projectRoot).catch(() => projectRoot);
@@ -122,6 +123,7 @@ async function readPublishedUnits(projectRoot, directories = [nativeSemanticRunt
     revision: sha(views.map(({ component, view }) => `${component} ${view.revision}
 `).join("")),
     builtAt: views.map(({ view }) => view.builtAt).sort((left, right) => time(right) - time(left))[0],
+    stage: views.some(({ view }) => view.stage === "structure") ? "structure" : "complete",
     units: views.flatMap(({ view }) => view.units),
     edges: views.flatMap(({ view }) => view.edges)
   };

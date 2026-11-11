@@ -5,7 +5,7 @@ import { componentOf, listsComponents, readComponents } from "../workflow/compon
 import { NativeRepositoryIntelligence, RepositoryScan } from "./native-repository-intelligence.mjs";
 import { semanticError } from "./native-semantic-runtime.mjs";
 import { FUSION_OFFSET, fusionWeights } from "../../native-runtime/fusion.mjs";
-import type { ComponentRuntime, ComponentState, Diagnostic, IndexMetadata, NativeSource, Preparation, PreparedIndex, SearchResult, SourceSnapshot } from "./repository-unit-types.mjs";
+import type { ComponentRuntime, ComponentState, Diagnostic, IndexMetadata, NativeSource, Preparation, PrepareOptions, PreparedIndex, SearchResult, SourceSnapshot } from "./repository-unit-types.mjs";
 
 // A repository that declares components has one native index per component. Each component's source scans only that component's files,
 // and a call prepares and reads only the components that hold the paths it names, or every component that holds a file.
@@ -71,19 +71,33 @@ export async function selectionSnapshot(selected: ComponentSource[]) {
   return sha(lines.join(""));
 }
 
-/** Queues the selected components that are missing or out of date, waits at most the call's bound for them, and returns each one's preparation. */
-export function prepareComponents(runtime: ComponentRuntime, selected: ComponentSource[], waitMs?: number): Promise<Preparation[]> {
-  if (!selected.length) return Promise.resolve([]);
-  return runtime.prepareComponents(selected.map(entry => ({ source: entry.source, component: { name: entry.name, identity: entry.component, folder: entry.folder } })), waitMs);
+/**
+ * Queues the selected components that are missing or out of date, waits at most the call's bound for them, and returns each one's preparation.
+ * With `structure`, a component whose build published its structure answers from that structure-only index, as answeringPreparation describes.
+ */
+export async function prepareComponents(runtime: ComponentRuntime, selected: ComponentSource[], waitMs?: number, options: PrepareOptions = {}): Promise<Preparation[]> {
+  if (!selected.length) return [];
+  const preparations = await runtime.prepareComponents(selected.map(entry => ({ source: entry.source, component: { name: entry.name, identity: entry.component, folder: entry.folder } })), waitMs, options);
+  return options.structure ? preparations.map(answeringPreparation) : preparations;
 }
 
-/** How each selected component took part: included when its up-to-date index is ready, otherwise waiting, preparing, or failed. */
+/** A preparation that waits or prepares with a published structure, as a ready preparation of that structure-only index; any other preparation as it is. */
+export function answeringPreparation(preparation: Preparation): Preparation {
+  if (preparation.prepared || !preparation.structure || (preparation.status !== "waiting" && preparation.status !== "preparing")) return preparation;
+  return { ...preparation, status: "ready", prepared: preparation.structure };
+}
+
+/**
+ * How each selected component took part: included when its up-to-date index is ready, otherwise waiting, preparing, or failed.
+ * A component included from a structure-only index carries `embeddings: "pending"`, and no other component carries `embeddings`.
+ */
 export function componentStates(selected: ComponentSource[], preparations: Preparation[]): ComponentState[] {
   return selected.map((entry, index) => {
     const preparation = preparations[index];
     const status = preparation.status === "ready" && preparation.prepared ? "included" : preparation.status === "degraded" ? "failed" : preparation.status === "waiting" ? "waiting" : "preparing";
     const failure = status !== "failed" ? null : preparation.failure ?? { code: preparation.diagnostics[0]?.code ?? "preparation_failed", message: preparation.diagnostics[0]?.message ?? "The component's preparation failed." };
-    return { component: entry.component, folder: entry.folder, status, indexRevision: status === "included" ? preparation.prepared!.revision : null, failure };
+    return { component: entry.component, folder: entry.folder, status, indexRevision: status === "included" ? preparation.prepared!.revision : null, failure,
+      ...(status === "included" && preparation.prepared!.stage === "structure" ? { embeddings: "pending" as const } : {}) };
   });
 }
 
