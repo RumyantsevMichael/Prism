@@ -7,13 +7,64 @@ Name the store by its Git remote to share records between machines, or by a fold
 
 ## What moves and what stays
 
-Only machine records move into the store.
-`.prism/workflow.md`, requirements, ADRs, slice plans, diagrams, generated Markdown views, feature files, and tests stay in the project and travel with its branches as before.
-Tools, tool results, review browser links, and stored references keep naming records by their `.prism/...` address, so nothing that agents or people see changes.
+A record store holds Prism's machine records and the project's requirements, ADRs, plans, glossary, and roadmap view.
+`.prism/workflow.md`, feature files, step definitions, tests, executable contracts, user documentation, and code stay in the project and travel with its branches as before.
+Tools, tool results, review browser links, and stored references keep naming records by their `.prism/...` address and those files by their path in the project, such as `docs/requirements/billing.md`, although the file lives in the store.
+[Requirements, ADRs, and plans in the store](#requirements-adrs-and-plans-in-the-store) says how agents and people read, change, approve, and ship them.
 Each verified slice records where its code lives, the repository, branch, and commit of its latest passing run, and the review browser shows it on the slice page and beside each slice on the initiative page.
 On GitHub, GitLab, and Bitbucket the branch, commit, and repository link to their web pages.
 The review browser's project menu lists every checkout that shares one record store under that store as one workspace, named after the store, whichever repository each checkout belongs to, and lists projects in name order.
 Choosing the workspace there opens its records, which every checkout shares.
+
+## Requirements, ADRs, and plans in the store
+
+In a project whose `.prism/workflow.md` names a record store, the files under the configured `Requirements`, `ADRs`, and `Plans` folders and at the `Glossary` and `Roadmap` paths live in the store instead of the checkout.
+They include requirements, ADRs, slice designs, diagrams, recovery notes, and the generated `initiative.md`, `review.md`, and roadmap views.
+Feature files and the user guide stay in the checkout, also when their configured folders lie inside one of those folders.
+In a project without a record store, all of these files stay in the checkout, and agents edit them there as before.
+
+### Scopes
+
+Each file in the store belongs to a scope: the whole workspace, one repository, or one component of a repository, labeled `workspace`, `<repository>`, or `<repository>/<component>`.
+A checkout sees the workspace's files, its own repository's files, and the files of its repository's components, and the review browser shows each file's scope.
+A new file takes the scope that the agent names, else the scope that holds the nearest folder above it, else the workspace scope.
+An agent moves a file to another scope with the `move_scope` operation of `update_artifact`, which takes its status and comments with it.
+Two scopes can hold a file at the same path, such as `docs/ADRs/storage.md` in the workspace and in a repository; the agent then names the scope it means, and a read or change without one is refused with `artifact_ambiguous`, which lists both scopes.
+
+### How agents read and change them
+
+Agents read these files with the `get_artifact` tool and change them with `update_artifact`, by their path in the project, never by editing files in the checkout.
+Ask an agent for a change to one of them, or comment on it in the review browser, rather than editing the store's copy yourself.
+A read returns the file's text in pages of at most 2000 lines and 64 KiB, with its scope, its version, its comments from the review browser, whether it changed since a person last accepted it, and, for a requirement or ADR, its recorded status and your latest answer to its approval.
+Without a path, or with a folder, `get_artifact` lists the files that the checkout sees there.
+One update writes, edits, removes, or moves up to 50 files, each against the version that the agent last read, so a change that someone else made in the meantime refuses the whole update with `version_conflict` and changes nothing.
+A file holds at most 1 MiB of UTF-8 text, and a larger one is refused with `artifact_too_large`.
+A name below a configured folder begins with an ASCII letter or digit, holds only ASCII letters, digits, `.`, `_`, and `-`, does not end in `.` or `.lock`, and is no Windows device name such as `con`, `aux`, `nul`, `com1`, or `lpt1` before its first `.`, in any letter case, or Prism refuses it with `artifact_name_invalid`.
+A new file whose path differs from a file the checkout sees only in letter case is refused with `artifact_name_conflict`, and one whose place in the store would take more than 120 characters with `artifact_path_too_long`.
+Prism's skills choose every file, folder, and identifier name within that form, with at most 100 characters in a path, in every project, so a repository checks out on Windows, macOS, and Linux alike.
+Both tools refuse a file outside these paths, such as a feature file or a test, with `not_an_artifact`, refuse in a project without a record store with `store_not_configured`, and while the store cannot be used refuse with its reason, such as `store_unavailable`, without reading or writing the checkout's copies.
+
+### Statuses change only at gates
+
+Prism records each requirement's and ADR's status in the store: `Draft` for a new requirement, `Proposed` for a new ADR, and the status written in a file that moved in from the checkout.
+After that, only your answer at a gate changes it.
+An agent's edit of a `Status:` line is kept, but Prism still reads the file with its recorded status and tells the agent which gate changes it.
+To approve a requirement, or an amendment of an Approved one, the agent asks for your approval with the `ask_approval` operation of `update_artifact`, and the question appears on [Attention](review-browser.md#attention).
+Approving writes the status, `Approved` unless the agent asked for another such as `Withdrawn`, into the file's `Status:` line, sets its `Approved:` line to the day you answered, and records your checkout's Git `user.name` and your machine's host name as the approver.
+Request changes with a note when the file needs another revision, and the agent revises it and asks again.
+An ADR becomes `Accepted` only when its initiative ships, never through an approval, which can still give it another status, such as `Superseded`.
+[Review a file in the record store](review-browser.md#review-a-file-in-the-record-store) shows a file's changes since you last accepted it and its comments.
+
+### Shipping accepts ADRs
+
+An initiative of a project with a record store ships only after you approve its correctness review in the review browser, and shipping sets to `Accepted` each Proposed ADR that its slice designs link, as [Ship an initiative](workflow.md#ship-an-initiative) describes.
+
+### Existing files move into the store
+
+The first Prism tool call of an agent session in a checkout moves each file that Git tracks under those paths into its repository's scope and removes it from the checkout, so commit those removals.
+Its result lists each moved file with its place in the store, each file that stayed and why, such as a copy in the store with other text, and each tracked file left in the checkout that still names a moved file's former path, with its line numbers, so you can update those references.
+Frozen tests of accepted designs stay in the checkout.
+[Sync status](#sync-status) says when a move happens and what an interrupted move leaves behind.
 
 ## Share records between machines
 

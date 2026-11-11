@@ -38,6 +38,7 @@ The MCP server owns the roadmap and initiative records, and agents change them o
 It validates requirement coverage and the slice dependency graph on every write, and refuses to mark a slice done without a passing completion gate.
 Initiative progress on the roadmap is derived from the initiative records.
 Each slice folder keeps the slice design in `slice.md`, and a recovery note when a run pauses.
+In a project with a record store, slice folders, requirements, ADRs, the glossary, and the roadmap view live in the store, as [Requirements, ADRs, and plans in the store](shared-records.md#requirements-adrs-and-plans-in-the-store) describes.
 A short resume note records settings, active work, pending questions, next actions, and evidence paths, so an interrupted initiative resumes where it stopped.
 
 Requirements preserve intent, ADRs preserve decisions, and feature files preserve acceptance examples.
@@ -231,7 +232,24 @@ A run whose commands change project files fails with reason `tracked_files_chang
 Its `scopes` lists each such scope as `{ scope, blocked, reason }`, where `reason` is `failed` when that run failed or declined one of them and `not_run` when none ran or a dependent was declared after it.
 A later passing run of those dependents lets it ship, and an initiative of a repository that declares no components ships as before.
 A leaf that is not done still refuses `ship` with `gate_blocked` first, and an invalid declaration refuses it with its own code.
-`get_roadmap` reports such an initiative with `readyToShip` `false` and a `diagnostics` entry, `dependents_blocked` with the same `scopes`, or the code and message of the invalid declaration, so the review browser shows an initiative as ready to ship only once `ship` would succeed.
+`get_roadmap` reports such an initiative with `readyToShip` `false` and a `diagnostics` entry, `dependents_blocked` with the same `scopes`, or the code and message of the invalid declaration, so the review browser shows an initiative as ready to ship only once no slice, declaration, or dependent stops it.
+
+## Ship an initiative
+
+When every slice of an initiative is done, the orchestrator ships it with the `ship` operation of `update_roadmap`, which records the decision on the roadmap.
+`ship` refuses with `gate_blocked` while a slice is not done, and with `dependents_blocked` while [dependents](#dependents) block it.
+In a project with a record store, a ship also needs your confirmation: the orchestrator asks you a correctness review of the finished initiative, and only Approve in the review browser confirms it, while an answer in the conversation does not.
+The review confirms the initiative as you saw it, so the orchestrator asks it after the latest passing verification run of every slice and once the initiative's `slice.md` files and the ADRs they link no longer change.
+When a slice passed verification again, a `slice.md` or such an ADR changed, or the repositories that a slice's links resolve in changed after the question was asked, `ship` refuses with `ship_unconfirmed`, naming what changed, and the orchestrator asks you again.
+A ship then sets to `Accepted` each ADR whose recorded status is `Proposed` and that a Markdown link in a `slice.md` of the initiative names, and records with it the review you approved and the slice, repository, and commit of each slice's latest passing verification run.
+A link counts only as Markdown reads it, so a path in a code span, a code block, an HTML comment, or after an escaped bracket names nothing.
+A link in a slice's `slice.md` names an ADR of the workspace scope or of that slice's own repository and its components, whichever repository's checkout ships.
+When two or more of those scopes hold an ADR at the linked path, the one in the scope of that `slice.md` counts, and when none of them is that scope, `ship` refuses with `adr_ambiguous`, naming the path and the scopes, and changes nothing.
+While a linked Proposed ADR waits for your answer to an approval, `ship` refuses with `adr_pending`, naming each such ADR and its question, and changes nothing, so a ship never closes a question you have not answered.
+A `slice.md` that Prism cannot read for its links, because it holds more than 1 MiB or nests its Markdown deeper than Prism reads, refuses the ship with `artifact_too_large` until an agent shortens it.
+The result lists the accepted ADRs under `acceptedAdrs` with their path, scope, and the verified commits, an ADR with another recorded status stays as it is, and `get_artifact` returns an accepted ADR's acceptance.
+So a ready-to-ship initiative of a project with a record store still waits for your correctness review, and its ship can still be refused for the reasons above.
+In a project without a record store, `ship` needs no review, and the orchestrator accepts the Proposed ADRs of each slice as it lands.
 
 ## Questions and answers
 
@@ -279,6 +297,8 @@ Prism stores its configuration in `.prism/workflow.md`, and all configured paths
 | Roadmap | `docs/roadmap.md` |
 | Glossary | `docs/Glossary.md` |
 | User documentation | `docs/user-guide/` |
+
+With a record store, the requirements, architecture decisions, slice designs, roadmap view, and glossary live in the store at these paths, while feature files and user documentation stay in the project.
 
 The roadmap Markdown and each initiative's `initiative.md` are generated views of records that agents change only through Prism's MCP tools.
 Slices have titles such as `Download signed reports`, while stable slugs identify slices and artifact paths.
