@@ -14,6 +14,7 @@ A change to Markdown changes agent behavior at task time.
   plugin.json        # Codex plugin manifest
 .agents/plugins/
   marketplace.json   # Codex marketplace
+.agents/skills/      # skills for developing Prism itself, linked from .claude/skills/
 skills/
   <name>/SKILL.md    # one directory per skill; the directory name is the skill name
 src/                 # editable server, native helper, and hook sources
@@ -248,6 +249,26 @@ Only a successful run produces the `verified-native-manifest` artifact.
 The release workflow promotes that artifact only when the release pull request and `main` still match the tested source.
 It changes only `vendor/native-runtime/manifest.json` during promotion.
 Run `node scripts/native-build/mcp-smoke.mjs --default` to verify the promoted manifest locally.
+
+## Dependencies
+
+Prism is licensed under Apache 2.0, and its code must stay combinable with closed-source code.
+Agents follow the [`add-dependency`](.agents/skills/add-dependency/SKILL.md) skill before adding or upgrading any dependency, and people follow the same procedure.
+
+A dependency ships when it reaches users: a runtime dependency of `src/` or `dist/`, anything under `vendor/`, anything in a native runtime archive, a model, a font, or copied code.
+A development-only dependency, used only by tests, build scripts, linters, or CI, may carry any license that lets the project use it, except the ones marked not allowed.
+
+| License | Shipped dependency |
+|---|---|
+| MIT, BSD-2-Clause, BSD-3-Clause, ISC, Apache-2.0, 0BSD, Unlicense, CC0-1.0, Zlib, BlueOak-1.0.0, Python-2.0 | Allowed |
+| OFL-1.1 for fonts, CC-BY-4.0 for data and models | Allowed |
+| LGPL-2.1, LGPL-3.0, MPL-2.0, EPL-2.0 | Only with the maintainer's approval, kept as a separate unmodified library that users can replace, never bundled or inlined |
+| GPL, AGPL, SSPL, EUPL, CC-BY-SA, CC-BY-NC | Not allowed |
+| BSL, Elastic License, Commons Clause, other source-available or non-commercial licenses | Not allowed |
+| No license, unknown, or custom terms | Not allowed until the maintainer approves it |
+
+A package with a choice of licenses, such as `(MIT OR GPL-3.0)`, is used under the allowed one.
+Every shipped dependency keeps its license text and copyright notice in `THIRD_PARTY_NOTICES.md`, under `vendor/`, or in the license files the native runtime build collects.
 
 ## Writing skills
 
