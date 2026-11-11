@@ -125,6 +125,18 @@ After two review waves for one accepted design, Prism asks you whether to contin
 The slice page in the review browser shows the latest run with its command, exit code, and output tail, and a failed run also names the failing tests that Prism found anywhere in the output.
 Verification runs need a git work tree, and `PRISM_VERIFY_TIMEOUT_MINUTES` changes the 30-minute default timeout.
 
+Each run record names the slice's files by their Git blob hashes and never holds their bytes.
+Its `files` lists `{ path, blob }`, sorted by path, for every path whose content differs between the slice's start content and the content the run tested, plus each frozen test, with `blob` null for a removed path.
+`filesFrom` is `start-content`, or `frozen-tests` for a slice without start content that Git can read, which lists its frozen tests only.
+A run lists at most 2000 files and sets `filesTruncated` to `true` when more changed, and a run that stops at changed frozen tests lists none.
+The run's `checkout` names the repository, `origin` remote, branch, head commit, whether the work tree was dirty, and `host`, this machine's host name up to its first `.`.
+
+When you `ship` an initiative, Prism first fetches `origin` in the shipping checkout, and goes on with what it has when the fetch fails.
+The decision then records `slices` with `{ repository, verified, shipped }` for each done leaf slice that has a passing run: `verified` is the head commit of the slice's latest passing run, and `shipped` is the oldest of the 1000 newest commits on the first-parent history of the default branch whose tree holds every file the run listed at its blob and none of its removed paths.
+The default branch is `origin/HEAD`, else `origin/main`, else `origin/master`, so a squash merge or a force push that keeps the verified files still leads to them.
+`shipped` is null when the run was in another repository, when the run listed no files, or when no commit qualifies, as when you ship before the slice's branch merges, and the `ship` result lists those slices under `noShipCommit`.
+`get_roadmap` lists `initiatives` with each one's `id` and `decision`, so a shipped initiative's `slices` read without the whole record.
+
 ## Components
 
 A repository can declare its packages as components in `.prism/workflow.md`, so that each planned slice stays inside one of them:

@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
@@ -11,7 +13,9 @@ import { readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 import { resolveArtifactPath } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { revisionMismatch } from "./revision.mjs";
-import { inArtifactStore, locateRecord, moveLegacyRecords, oversizedRevision, readRecord, readStoreFileBytes, writeRecord } from "./record-store.mjs";
+import { objectsAt } from "./git-objects.mjs";
+import { repositoryOf } from "./verification.mjs";
+import { inArtifactStore, listRecordEntries, locateRecord, moveLegacyRecords, oversizedRevision, readRecord, readStoreFileBytes, writeRecord } from "./record-store.mjs";
 import { mergeHistory, mergeKeyed, mergeOrder, mergeScalars, MergeConflict, parseVersions } from "./record-merge.mjs";
 import { ComponentError, listComponents, listsComponents, readComponents } from "./components.mjs";
 import { latestDependentsRun } from "./slice-design.mjs";
@@ -226,6 +230,103 @@ export async function dependentsBlockers(projectRoot, config, initiative, record
   return { scopes };
 }
 
+const execute = promisify(execFile);
+// A ship looks for each slice's squash commit among this many of the newest first-parent commits of the default branch.
+const SHIP_HISTORY_MAX = 1000;
+const SHIP_FETCH_TIMEOUT_MS = 120000;
+const gitEnv = () => ({ ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" });
+
+// Git's answer to a question about the shipping checkout, or null when Git cannot answer it.
+async function gitOutput(root, args, options = {}) {
+  try { return (await execute("git", args, { cwd: root, env: gitEnv(), maxBuffer: 64 * 1024 * 1024, ...options })).stdout; }
+  catch { return null; }
+}
+
+/**
+ * The newest first-parent commits of the default branch of the checkout's origin, newest first and at most SHIP_HISTORY_MAX, after a fetch of origin whose failure is ignored:
+ * the branch is refs/remotes/origin/HEAD, else origin/main, else origin/master, and [] when the checkout has none of them.
+ */
+async function defaultBranchHistory(root) {
+  await gitOutput(root, ["fetch", "--quiet", "origin"], { timeout: SHIP_FETCH_TIMEOUT_MS });
+  for (const ref of ["refs/remotes/origin/HEAD", "refs/remotes/origin/main", "refs/remotes/origin/master"]) {
+    const commit = (await gitOutput(root, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`]))?.trim();
+    if (!commit) continue;
+    return ((await gitOutput(root, ["rev-list", "--first-parent", `--max-count=${SHIP_HISTORY_MAX}`, "--end-of-options", commit])) ?? "").split("\n").filter(Boolean);
+  }
+  return [];
+}
+
+/**
+ * The oldest of the commits, given newest first along the first-parent history, whose tree holds every recorded file at its blob and no removed path, or null when none does.
+ * It reads the files of the oldest commit and then only the first-parent changes to those files of each newer commit, so one Git command answers for all of them.
+ */
+async function shipCommit(root, commits, files) {
+  if (!commits.length || !files.length) return null;
+  const paths = files.map((file) => file.path);
+  const wanted = new Map(files.map((file) => [file.path, file.blob]));
+  const oldest = commits.at(-1);
+  const held = await objectsAt(root, oldest, paths);
+  if (held === null) return null;
+  const matches = () => paths.every((file) => held.get(file) === wanted.get(file));
+  if (matches()) return oldest;
+  const newer = commits.slice(0, -1).reverse();
+  if (!newer.length) return null;
+  const running = execute("git", ["--literal-pathspecs", "diff-tree", "--stdin", "-r", "-m", "--first-parent", "--raw", "-z", "--no-abbrev", "--no-renames", "--relative", "--", ...paths], { cwd: root, env: gitEnv(), maxBuffer: 256 * 1024 * 1024 });
+  running.child.stdin.end(`${newer.join("\n")}\n`);
+  let output;
+  try { output = (await running).stdout; }
+  catch { return null; }
+  // The output names each commit that changes one of the files, followed by its changes, each a raw line and a path.
+  const changes = new Map();
+  let current = null;
+  const fields = output.split("\0");
+  for (let at = 0; at < fields.length; at += 1) {
+    const field = fields[at];
+    if (!field) continue;
+    if (field.startsWith(":")) {
+      const object = field.split(" ")[3];
+      changes.get(current)?.push({ path: fields[at + 1], blob: /^0+$/.test(object ?? "") ? null : object });
+      at += 1;
+    } else {
+      current = field.trim();
+      changes.set(current, []);
+    }
+  }
+  for (const commit of newer) {
+    for (const change of changes.get(commit) ?? []) if (held.has(change.path)) held.set(change.path, change.blob);
+    if (matches()) return commit;
+  }
+  return null;
+}
+
+/**
+ * What a ship records about each done leaf slice with a passing verification run: { <slug>: { repository, verified, shipped } },
+ * verified the latest passing run's checkout head and shipped the oldest commit of the default branch that holds every file that run recorded,
+ * or null when the run's repository is not the shipping checkout's, the run recorded no files, or no commit qualifies.
+ */
+async function shippedSlices(root, initiative) {
+  let loaded;
+  try { ({ loaded } = await readInitiative(root, initiative)); }
+  catch { return {}; }
+  if (!loaded.valid || !loaded.analysis) return {};
+  const slices = {};
+  const runs = {};
+  for (const slug of loaded.analysis.leaves) {
+    if (loaded.analysis.slices[slug]?.status !== "done") continue;
+    const entries = await listRecordEntries(root, { kind: "runs", initiative, slice: slug }).catch(() => []);
+    const run = entries.filter((item) => item.entry?.kind === "verification" && item.entry.passed === true).at(-1)?.entry;
+    if (!run) continue;
+    runs[slug] = run;
+    slices[slug] = { repository: run.checkout?.repository ?? null, verified: run.checkout?.head ?? null, shipped: null };
+  }
+  const own = Object.keys(slices).length ? await repositoryOf(root).catch(() => null) : null;
+  const looked = Object.keys(slices).filter((slug) => own && slices[slug].repository === own && slices[slug].verified && Array.isArray(runs[slug].files) && runs[slug].files.length);
+  if (!looked.length) return slices;
+  const commits = await defaultBranchHistory(root);
+  for (const slug of looked) slices[slug].shipped = await shipCommit(root, commits, runs[slug].files.filter((file) => typeof file?.path === "string"));
+  return slices;
+}
+
 const dependentsMessage = (scopes) => `The initiative cannot ship while the dependents of a finished scope are red or have not run: ${scopes.map((item) => `${item.scope} (${item.reason === "failed" ? "failed or declined" : "not run"}: ${item.blocked.join(", ")})`).join("; ")}. Run verify_slice with dependents for each scope, and fix or allow what it reports.`;
 
 // The facts of an initiative and what keeps it from shipping: blocker is null, { leaves: true } while a leaf is not done, { problem } for an invalid declaration, or { scopes } for blocked dependents.
@@ -276,6 +377,8 @@ function publicResult(resolved, loaded, derivedItems = null) {
     valid: loaded.valid,
     errors: loaded.errors,
     record: loaded.record,
+    // Each initiative's recorded decision beside its id, so a shipped one's slices and their commits read without the whole record.
+    initiatives: (loaded.valid && Array.isArray(loaded.record?.initiatives) ? loaded.record.initiatives : []).map((item) => ({ id: item.id, decision: item.decision })),
     ...(derivedItems ? { derived: derivedItems } : {})
   };
 }
@@ -409,7 +512,7 @@ function roadmapRequirements(resolved, references) {
   });
 }
 
-async function applyOperation(resolved, record, operation, actor, at) {
+async function applyOperation(resolved, record, operation, actor, at, notes) {
   if (operation.requirements !== undefined && (operation.op === "add_initiative" || operation.op === "update_initiative")) operation = { ...operation, requirements: roadmapRequirements(resolved, operation.requirements) };
   switch (operation.op) {
     case "set_serves":
@@ -455,7 +558,10 @@ async function applyOperation(resolved, record, operation, actor, at) {
       // Shipping reads the components after the leaf check: an invalid declaration refuses with its own code and fields, and a red or unproven dependent blocks it.
       if (blocker?.problem) throw blocker.problem;
       if (blocker?.scopes) throw fail("dependents_blocked", dependentsMessage(blocker.scopes), { scopes: blocker.scopes });
-      item.decision = { kind: "shipped", at, actor };
+      // The decision names, for each slice, the commit it was verified at and the default-branch commit that holds its verified files, as a squash merge or a force push leaves it.
+      const slices = await shippedSlices(resolved.root, item.id);
+      item.decision = { kind: "shipped", at, actor, slices };
+      notes.noShipCommit.push(...Object.keys(slices).filter((slug) => slices[slug].shipped === null));
       break;
     }
     case "supersede": {
@@ -493,7 +599,8 @@ export async function updateRoadmap(input) {
     const record = current.record ? structuredClone(current.record) : emptyRoadmap();
     const at = new Date().toISOString();
     const actor = input.actor ?? "agent";
-    for (const operation of input.operations) await applyOperation(resolved, record, operation, actor, at);
+    const notes = { noShipCommit: [] };
+    for (const operation of input.operations) await applyOperation(resolved, record, operation, actor, at, notes);
     const errors = validateRoadmap(record);
     if (errors.length) throw fail("invalid_roadmap", `The proposed roadmap is invalid and was not written: ${errors[0]}`, { errors });
     const mutating = input.operations.filter((operation) => !["regenerate_markdown", "replace_hand_written_projection"].includes(operation.op));
@@ -512,20 +619,21 @@ export async function updateRoadmap(input) {
       projectionStale = true;
     }
     const { loaded, derived } = await readRoadmap(input.projectRoot);
-    return { ...publicResult(resolved, loaded, derived), created: !current.exists, previousRevision: current.revision, projectionStale };
+    const shipped = input.operations.some((operation) => operation.op === "ship") ? { noShipCommit: notes.noShipCommit } : {};
+    return { ...publicResult(resolved, loaded, derived), created: !current.exists, previousRevision: current.revision, projectionStale, ...shipped };
   }, fail));
 }
 
 export const ROADMAP_TOOLS = [
   {
     name: "get_roadmap",
-    description: "Read the MCP-managed roadmap record with each initiative's derived lifecycle state, band, slice progress, active work, and readiness to ship, and the repository's components: its repository name, the declared components by identity <repository>/<component> with their folder, test command, and dependencies, the declaration's problem when it is invalid, and, when the configuration lists no component and a root workspace manifest (package.json, pnpm-workspace.yaml, Cargo.toml, or go.work) gives workspace patterns, a proposal of a ## Components block with its components, shared paths, skipped manifests, and problem. Reads never create files, and the proposal is never written; offer it to the person to commit.",
+    description: "Read the MCP-managed roadmap record, initiatives with each id and its recorded decision, each initiative's derived lifecycle state, band, slice progress, active work, and readiness to ship, and the repository's components: its repository name, the declared components by identity <repository>/<component> with their folder, test command, and dependencies, the declaration's problem when it is invalid, and, when the configuration lists no component and a root workspace manifest (package.json, pnpm-workspace.yaml, Cargo.toml, or go.work) gives workspace patterns, a proposal of a ## Components block with its components, shared paths, skipped manifests, and problem. Reads never create files, and the proposal is never written; offer it to the person to commit.",
     inputSchema: GET_ROADMAP_SCHEMA,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "update_roadmap",
-    description: "Apply revision-checked roadmap operations: set what the roadmap serves, set the workspace name that every checkout sharing the record store shows (one line of at most 64 characters, an empty name clears it), add or update initiatives, place them in Now, Next, Later, or Parked, set required initiatives, record ship or supersede decisions, and set open questions. Ship requires every leaf slice to be done, refusing with gate_blocked first; it then reads the ## Components declaration, refusing an invalid one with its own code, and refuses with dependents_blocked, listing each scope with its blocked dependents and reason failed or not_run, while a finished scope has dependents without a passing dependents' run of every one of them; readyToShip in get_roadmap is true only when ship would succeed, with a diagnostic saying why otherwise. Every write regenerates the roadmap Markdown without overwriting a hand-written file.",
+    description: "Apply revision-checked roadmap operations: set what the roadmap serves, set the workspace name that every checkout sharing the record store shows (one line of at most 64 characters, an empty name clears it), add or update initiatives, place them in Now, Next, Later, or Parked, set required initiatives, record ship or supersede decisions, and set open questions. Ship requires every leaf slice to be done, refusing with gate_blocked first; it then reads the ## Components declaration, refusing an invalid one with its own code, and refuses with dependents_blocked, listing each scope with its blocked dependents and reason failed or not_run, while a finished scope has dependents without a passing dependents' run of every one of them; readyToShip in get_roadmap is true only when ship would succeed, with a diagnostic saying why otherwise. A ship fetches origin and records in the decision slices, { <slug>: { repository, verified, shipped } } for each done leaf slice with a passing verification run, verified that run's head commit and shipped the oldest of the 1000 newest first-parent commits of origin's default branch whose tree holds every file the run recorded at its blob, or null, and the result lists the slugs whose shipped is null under noShipCommit. Every write regenerates the roadmap Markdown without overwriting a hand-written file.",
     inputSchema: UPDATE_ROADMAP_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

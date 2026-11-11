@@ -8,6 +8,7 @@ import { conservationStore } from "../conservation/conservation-store.mjs";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { findComponent, readComponents } from "./components.mjs";
+import { changedBlobs, objectsAt } from "./git-objects.mjs";
 import { appendRecord, listRecordEntries, locateRecord, readStoreFileBytes, RECORD_DIRECTORY, recordStoreOf, STORE_FILE_BOUNDS } from "./record-store.mjs";
 import { repositoryId } from "./repository-names.mjs";
 import { changedPaths, contentTree, crossesComponent, setSliceRef, treeId, treeReadable } from "./slice-gate.mjs";
@@ -27,6 +28,7 @@ const BRIEF_TAIL_CHARS = 1500;
 const MAX_FAILING_NAMES = 20;
 const MAX_TRACKED_FAILURES = 1000;
 const MAX_CROSSING_PATHS = 200;
+const MAX_RUN_FILES = 2000;
 const DEFAULT_TIMEOUT_MINUTES = 30;
 const PROGRESS_MS = 30000;
 const KILL_GRACE_MS = 5000;
@@ -387,6 +389,21 @@ async function crossingPaths(root, initiative, slice, { component, declaration }
   return changed.filter((file) => !explained.has(file) && crossesComponent(design.startDeclaration, component.identity, folder, file)).sort();
 }
 
+/**
+ * The files a run records for the content it tested: { files, filesFrom, filesTruncated? }, files { path, blob } sorted by path for each path that differs from the slice's start content, plus each frozen test,
+ * blob the Git blob hash of the tested bytes or null for a removed path, at most MAX_RUN_FILES of them.
+ * A slice without start content that Git can read records its frozen tests only, with filesFrom frozen-tests; no file bytes are ever recorded.
+ */
+async function runFiles(root, design, tree) {
+  const frozen = design.frozenTests.map((item) => item?.path).filter((item) => typeof item === "string");
+  const changed = treeId(design.startTree) && await treeReadable(root, design.startTree) ? await changedBlobs(root, design.startTree, tree) : null;
+  const blobs = new Map((changed ?? []).map((item) => [item.path, item.blob]));
+  const tested = await objectsAt(root, tree, frozen);
+  for (const file of frozen) blobs.set(file, tested?.get(file) ?? null);
+  const files = [...blobs].map(([file, blob]) => ({ path: file, blob })).sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+  return { files: files.slice(0, MAX_RUN_FILES), filesFrom: changed === null ? "frozen-tests" : "start-content", ...(files.length > MAX_RUN_FILES ? { filesTruncated: true } : {}) };
+}
+
 async function verificationRun({ root, initiative, slice, target, key, design, signal, onProgress, dataDirectory }) {
   const { command, config } = target;
   const startedAt = new Date().toISOString();
@@ -426,6 +443,8 @@ async function verificationRun({ root, initiative, slice, target, key, design, s
       entry = { ...base, ...boundary, finishedAt: new Date().toISOString(), durationMs: outcome.durationMs, exitCode: outcome.exitCode, signal: outcome.signal, timedOut: outcome.timedOut, passed: reason === null, ...(reason ? { reason } : {}), tree: before, ...(after !== before ? { treeAfter: after } : {}), ...(snapshotId ? { snapshotId } : {}), ...(reason === "command_failed" && outcome.failing.length ? { failing: outcome.failing.slice(0, MAX_FAILING_NAMES), failingCount: outcome.failing.length } : {}), outputTail: tail(outcome.output, RECORDED_TAIL_CHARS), output: outcome.output };
     }
   }
+  // A run that stops at its frozen tests tested no content, so it records no files.
+  if (treeId(entry.tree)) Object.assign(entry, await runFiles(root, design, entry.tree));
   entry.checkout = await checkoutOf(root, config, entry.tree).catch(() => null);
   const { output = entry.outputTail, ...recorded } = entry;
   const stored = await appendRecord(root, { kind: "runs", initiative, slice }, id, recorded);
@@ -443,12 +462,15 @@ function gitValue(root, args) {
 const DIRTY_TIMEOUT_MS = 30000;
 
 // A checkout's repository is the name its record store accepted, or its root commit when it names none or has no store.
-async function repositoryOf(root) {
+export async function repositoryOf(root) {
   const store = await recordStoreOf(root).catch(() => null);
   return store?.repository ?? repositoryId(root);
 }
 
-/** Where a run's code lives: { repository, remote, branch, head, dirty }; dirty is known only when the run hashed its work tree. */
+// This machine's host name up to its first ".", which a run's checkout names.
+const hostName = () => os.hostname().split(".")[0];
+
+/** Where a run's code lives: { repository, remote, branch, head, dirty, host }; dirty is known only when the run hashed its work tree. */
 export async function checkoutOf(root, config, tree = null) {
   const [repository, remote, branch, head] = await Promise.all([
     repositoryOf(root),
@@ -462,7 +484,7 @@ export async function checkoutOf(root, config, tree = null) {
     const committed = await contentTree(root, config, { commit: head, timeoutMs: DIRTY_TIMEOUT_MS }).catch(() => null);
     if (committed) dirty = tree !== committed;
   }
-  return { repository, remote, branch, head, dirty };
+  return { repository, remote, branch, head, dirty, host: hostName() };
 }
 
 // One run per slice at a time: a repeated call joins the running one, so a host that returns early can call again to keep waiting.
