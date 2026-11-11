@@ -44,6 +44,31 @@ test("clause 22: an open page makes the app fetch the store on its own timer, an
   assert.equal(fetched(clone, "artifacts/requirements/second.md"), false, "no page is connected, so nothing fetches");
 });
 
+test("clause 22: reading the index of a workspace served through a checkout starts no fetch while no page is connected", async (context) => {
+  const where = await place(context);
+  const store = await networkStore(where);
+  const root = await checkout(where, "api", { store: store.url, sync: "on" });
+  const agent = await server(context, where, root);
+  ok(await agent.call("get_roadmap", {}));
+  await agent.close();
+  // Every record read now finds the store's last fetch old, as one 30 seconds after the last fetch would.
+  const { configureRecordSync } = await import("../../dist/server/workflow/record-store-sync.mjs");
+  configureRecordSync({ pullIntervalMs: 0 });
+  context.after(() => configureRecordSync({ pullIntervalMs: 30000 }));
+  const prism = await startApp(context, where, { workspaceFetchMs: 300 });
+  await prism.register(root);
+  const id = workspaceId(store.identity);
+  const clone = path.join(where.app, "stores", storeFolderId(store.identity));
+  await pushToRemote(where, store.bare, { "artifacts/requirements/unread.md": "# Unread\n" });
+  for (let read = 0; read < 5; read += 1) {
+    const index = await prism.get(`/w/${id}/api/index`);
+    assert.equal(index.status, 200, index.body);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  assert.equal(fetched(clone, "artifacts/requirements/unread.md"), false, "no page is connected, so reading the index fetches nothing");
+});
+
 test("clause 23: failed fetches back off by doubling up to the maximum, and a success restores the interval", async (context) => {
   const { store, prism, id, sync } = await addedWorkspace(context);
   await rename(store.bare, `${store.bare}.away`);
@@ -96,7 +121,7 @@ test("clause 25: a gate answer on a store-only workspace is committed and pushed
   const listed = await prism.get(`/w/${id}/api/actions?target=${encodeURIComponent(target)}`);
   assert.equal(listed.status, 200, listed.body);
   const action = listed.json.actions.find((item) => item.id === "gate.answer");
-  const applied = await prism.post(`/w/${id}/api/actions/apply`, { action: "gate.answer", target, input: {}, revision: action.revision });
+  const applied = await prism.post(`/w/${id}/api/actions/apply`, { action: "gate.answer", target, input: { choice: "approve" }, revision: action.revision });
   assert.equal(applied.status, 200, applied.body);
   await eventually(() => /answeredAt/.test(git(store.bare, "log", "-1", "-p", "main")), 15000, "the answer reaching the remote");
 });
