@@ -1114,8 +1114,9 @@ export async function sameRecord(projectRootPath, left, right) {
 }
 
 /**
- * The store artifacts a checkout sees: { root, config, kinds, store, base, repository, scopes }, where base is the store's artifacts folder and scopes lists
- * the workspace scope, the repository's scope under its accepted name, and the scope of each component folder of the repository that the store holds.
+ * The store artifacts a checkout sees: { root, config, kinds, store, base, repository, scopes, all }, where base is the store's artifacts folder, scopes lists
+ * the workspace scope, the repository's scope under its accepted name, and the scope of each component folder of the repository that the store holds, which the checkout writes,
+ * and all lists those and every other repository folder with a valid name and its component folders, which the checkout reads, sorted by label.
  * It refuses with store_not_configured without a store, and with the store's own refusal when the store is unavailable or the repository name is refused, before it reads or writes anything else.
  */
 export async function seenScopes(projectRootPath) {
@@ -1134,10 +1135,23 @@ async function scopesOf(root, config, store) {
   const own = repositoryScope(store.repository);
   const components = path.join(base, scopeFolder(own), "components");
   await assertUnlinked(store.base, path.join(components, "x"));
-  let names = [];
-  try { names = (await readdir(components, { withFileTypes: true })).filter((entry) => entry.isDirectory() && COMPONENT_NAME.test(entry.name)).map((entry) => entry.name).sort(); }
-  catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
-  return { root, config, kinds: artifactKinds(config), store, base, repository: store.repository, scopes: [WORKSPACE_SCOPE, own, ...names.map((name) => componentScope(store.repository, name))] };
+  const scopes = [WORKSPACE_SCOPE, own, ...(await folderNames(components, COMPONENT_NAME)).map((name) => componentScope(store.repository, name))];
+  // Agents read every scope the store holds, so the scopes of other repositories and their components are listed beside the checkout's own, which alone it writes.
+  const others = [];
+  for (const name of await folderNames(path.join(base, REPOSITORIES), portableRepositoryName)) {
+    if (name === store.repository) continue;
+    others.push(repositoryScope(name));
+    for (const component of await folderNames(path.join(base, REPOSITORIES, name, "components"), COMPONENT_NAME)) others.push(componentScope(name, component));
+  }
+  const all = [...scopes, ...others].sort((left, right) => left.label < right.label ? -1 : left.label > right.label ? 1 : 0);
+  return { root, config, kinds: artifactKinds(config), store, base, repository: store.repository, scopes, all };
+}
+
+// The sorted names of the folders in a folder that match a name form or test, without following a link; none when the folder is missing.
+async function folderNames(folder, form) {
+  const named = typeof form === "function" ? form : (name) => form.test(name);
+  try { return (await readdir(folder, { withFileTypes: true })).filter((entry) => entry.isDirectory() && named(entry.name)).map((entry) => entry.name).sort(); }
+  catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return []; throw error; }
 }
 
 // No folder between the store and an artifact may be a symbolic link, so a link placed in the store cannot redirect a read or write elsewhere.
