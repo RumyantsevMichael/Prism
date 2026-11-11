@@ -1,5 +1,8 @@
 # Review loop decisions from the findings
 
+> Shipped history: initiative `review-loop-decisions` shipped on 2026-11-11, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 Low findings can be accepted with tracked follow-ups, and Prism asks the review loop decision itself with a summary, applicable options, and a rule-based recommendation.

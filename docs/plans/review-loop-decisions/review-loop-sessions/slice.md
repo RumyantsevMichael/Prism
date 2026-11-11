@@ -1,5 +1,8 @@
 # Follow the review loop decision in sessions
 
+> Shipped history: initiative `review-loop-decisions` shipped on 2026-11-11, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 Orchestration follows Prism's review loop decision, files the follow-ups, and the common terms and user guide say so.

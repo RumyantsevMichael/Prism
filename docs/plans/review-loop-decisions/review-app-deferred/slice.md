@@ -1,5 +1,8 @@
 # Show deferred findings in the review browser
 
+> Shipped history: initiative `review-loop-decisions` shipped on 2026-11-11, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 The review browser shows deferred findings apart and the review loop gate's summary.

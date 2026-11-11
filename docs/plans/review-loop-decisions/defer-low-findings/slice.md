@@ -1,5 +1,8 @@
 # Defer low findings
 
+> Shipped history: initiative `review-loop-decisions` shipped on 2026-11-11, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 The coordinator accepts a wave with low findings deferred by the user's gate, each with a follow-up, and Prism reads them back apart.
