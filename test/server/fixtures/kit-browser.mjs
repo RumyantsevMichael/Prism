@@ -33,7 +33,8 @@ export const skip = playwright ? false : "Playwright is not installed; run npm i
 
 async function temporary(context, prefix) {
   const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), prefix)));
-  defer(context, () => rm(directory, { recursive: true, force: true }));
+  // A Git command that the review server started for a page may still be ending in the folder, which Windows reports as busy for a moment.
+  defer(context, () => rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
   return directory;
 }
 

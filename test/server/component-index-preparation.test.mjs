@@ -125,7 +125,8 @@ test("a stored component index loads at once instead of waiting behind a build",
   assert.deepEqual(built(later.control), [NET_FILES]);
   later.control.release("packages/net/retry.ts");
   await settled(later.runtime, root);
-  assert.equal((await search(root, later.runtime)).status, "ready");
+  const after = await search(root, later.runtime);
+  assert.equal(after.status, "ready", JSON.stringify({ components: after.components, problems: after.problems ?? after.notes ?? null }));
 });
 
 test("a stored index pointer whose index is gone hands the component back to the build queue", async (t) => {
