@@ -353,6 +353,8 @@ It keeps its state in `~/Library/Application Support/Prism` on macOS, `%LOCALAPP
 A session serves its project from its own review server when the shared app cannot start, and `PRISM_REVIEW_APP=off` makes every session do so.
 When a session falls back on its own, its page shows a banner with the reason, and the agent's review links say that the link belongs to that session, because another session may show the same project at a different link.
 Each fallback also adds a line with the time, project, and reason to `fallbacks.log` in that state directory and to the session's error output.
+A shared app that is still running but slow to answer, for example on a busy machine, counts as busy rather than gone: a session waits up to 30 seconds more for it and never starts a second app beside it.
+A session that fell back tries the shared app again at most once a minute while the review is in use, and its new review links lead to the shared app once it answers, while tabs already open on the session's own server keep working.
 
 `prism review` opens the project in the shared review app and returns.
 It opens the system browser only when no review tab that can make changes is open, and such a tab shows the project or a notice with a link to it instead.
