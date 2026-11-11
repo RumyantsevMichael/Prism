@@ -20,7 +20,7 @@ import { entityContext, entityExists, forgetWorkspace, loadClaims, loadEntity, l
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
-import { readPreferences, writePreferences } from "./review-preferences.mjs";
+import { readStoredPreferences, writePreferences } from "./review-preferences.mjs";
 import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
 import { createViewerHub, openEventStream, writeEvent } from "./viewer-hub.mjs";
 
@@ -671,6 +671,15 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   // Reading the session first lets moved records' tabs follow them, so every reader sees the records where they now live.
+  // Reads and changes of the session run in the order they arrive, so a page that reloads right after a change reads that change,
+  // however long the file listing that each of them waits on takes, as it does on a slow disk.
+  let sessionWork = Promise.resolve();
+  function inSessionOrder(task) {
+    const run = sessionWork.then(task);
+    sessionWork = run.catch(() => {});
+    return run;
+  }
+
   async function currentSession() {
     return followMovedRecords(await reviewableFiles());
   }
@@ -796,7 +805,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       if (asset) await serveFile(response, asset.file, asset.type);
       else send(response, 404, "Not found");
     } else if (route === "/api/preferences" && request.method === "GET") {
-      send(response, 200, JSON.stringify(await readPreferences()), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify(await readStoredPreferences()), "application/json; charset=utf-8");
     } else if (route === "/api/preferences" && request.method === "PUT") {
       if (!fromPage(request)) {
         send(response, 403, "Preferences must come from the review page as JSON.");
@@ -848,10 +857,10 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       if (conflict) send(response, 200, JSON.stringify(conflict), "application/json; charset=utf-8");
       else send(response, 404, "No saved conflict has that name.");
     } else if (route === "/api/session" && request.method === "GET") {
-      send(response, 200, JSON.stringify(await currentSession()), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify(await inSessionOrder(currentSession)), "application/json; charset=utf-8");
     } else if (route === "/api/session" && request.method === "PUT") {
       const body = await readJson(request);
-      send(response, 200, JSON.stringify(await updateSession(body)), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify(await inSessionOrder(() => updateSession(body))), "application/json; charset=utf-8");
     } else if (route === "/api/actions" && request.method === "GET") {
       try {
         const listed = await listActions({ projectRoot, target: url.searchParams.get("target"), indexer });

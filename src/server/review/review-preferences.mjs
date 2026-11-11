@@ -37,6 +37,11 @@ export function validatePreferenceChange(change) {
 // Writes of one process run one after another, so two quick choices never lose either value.
 let queue = Promise.resolve();
 
+/** The stored preferences once every write this process started has finished, so a page that reloads right after a choice reads it. */
+export function readStoredPreferences(env = process.env) {
+  return queue.then(() => readPreferences(env));
+}
+
 /** Stores the given values, keeps the stored value of a key the change leaves out, and returns the full stored preferences. */
 export function writePreferences(change, env = process.env) {
   const valid = validatePreferenceChange(change);
