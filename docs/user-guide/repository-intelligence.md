@@ -171,7 +171,9 @@ A search of the current files with `filters.paths` prepares and reads only the c
 A search without paths prepares and reads every component that holds a file.
 Prism builds one index at a time: the declared components in declaration order, then the root component, which usually holds the largest tree of documents and would otherwise hold back every package queued behind it.
 The components that a later call needs move ahead of components that only an earlier call waits for.
-When a call needs a component that has no index at all and is not being built, and the running build is of a component that the call does not need, Prism pauses that build at once and starts the call's components.
+When a call needs a component that has no index at all and is not being built, and the running build is of a component that the call does not need, Prism pauses that build at once and starts the call's components, once that build has sent its request to the native runtime.
+Before that, while it checks the runtime assets, waits for its storage lock, or copies its files, the running build is not paused, and the call's components start directly after it.
+A call that needs the component of the running build never pauses it, and while that build embeds after it published its structure, the component answers from that structure.
 A paused build records no failure, is reported `waiting`, runs again directly after the call's components, and resumes from the embeddings it saved, so it loses at most the batch it was embedding.
 A component that only has an out-of-date index keeps answering from it and waits its turn without pausing the running build.
 A component whose index for its current files is already stored, as after a restart, only loads it, which runs at once beside the running build instead of waiting in the queue.
