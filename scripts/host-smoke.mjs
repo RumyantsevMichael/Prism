@@ -3,7 +3,8 @@
 // No model or API key is needed: Codex calls the tool through its app server, and Claude Code talks to a scripted local Messages API.
 // The project names a remote record store, so the call proves the server starts the way the host starts it and can clone that store.
 // A third check, codex-turn, runs one real Codex model turn against a scripted local Responses API, so the hooks run too.
-// Usage: node scripts/host-smoke.mjs [claude|codex|codex-turn]...  (all by default; CLAUDE_BIN and CODEX_BIN override the executables)
+// Usage: node scripts/host-smoke.mjs [--marketplace <dir>] [claude|codex|codex-turn]...  (all by default; CLAUDE_BIN and CODEX_BIN override the executables)
+// --marketplace installs prism@prism from that marketplace instead of this checkout, which is how a release checks its package.
 // A CLAUDE_BIN or CODEX_BIN that names a JavaScript file runs under this Node, which is how Windows starts an npm launcher without its .cmd shim.
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -16,13 +17,18 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { writeDevMarketplace } from "./dev-marketplace.mjs";
 
 const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const hosts = process.argv.slice(2).length ? process.argv.slice(2) : ["claude", "codex", "codex-turn"];
+const args = process.argv.slice(2);
+const option = args.indexOf("--marketplace");
+const [, givenPath] = option === -1 ? [] : args.splice(option, 2);
+if (option !== -1 && !givenPath) throw new Error("--marketplace needs a directory.");
+const given = givenPath ? path.resolve(givenPath) : null;
+const hosts = args.length ? args : ["claude", "codex", "codex-turn"];
 const TOOL = "get_roadmap";
 const TIMEOUT_MS = 180000;
 
 const work = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-host-smoke-")));
 // The repository's own marketplace files describe the published package, so both hosts install the checkout through a generated one.
-const marketplace = await writeDevMarketplace(path.join(work, "marketplace"), checkout);
+const marketplace = given ?? await writeDevMarketplace(path.join(work, "marketplace"), checkout);
 const launcher = (bin, args) => /\.[cm]?js$/i.test(bin) ? [process.execPath, [bin, ...args]] : [bin, args];
 const run = (command, args, options = {}) => execFileSync(...launcher(command, args), { stdio: "pipe", encoding: "utf8", ...options });
 const start = (command, args, options) => spawn(...launcher(command, args), options);
