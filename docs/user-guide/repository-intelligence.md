@@ -148,7 +148,7 @@ A later call with the same files still finishes the build, so embeddings keep fi
 `get_repository_intelligence_status` and `discover_repository_intelligence` give `stage`, which is `none` before any index exists, `structure` while only the structure is published, and `complete` once the complete index is stored.
 A build that embeds after it published its structure stays `preparing`.
 
-A concept search waits its usual bound for the complete index, and when only the structure is ready, it searches the structure's fragment text lexically.
+`search_repository_concepts` waits its usual bound for the complete index, and when only the structure is ready, it searches the structure's fragment text lexically.
 Each of its results has a `cosineSimilarity` of `null`, and `capabilities.semanticSearch` and `capabilities.hybridSearch` are `false` unless another answering index is complete.
 The result names the indexes that answered without embeddings in an `embeddings_pending` diagnostic:
 
