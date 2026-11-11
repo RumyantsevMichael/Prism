@@ -206,7 +206,7 @@ async function main() {
   try {
     const projectRoot = path.join(parent, "demo");
     execFileSync(process.execPath, [path.join(ROOT, "scripts/review-demo/seed.mjs"), projectRoot], { stdio: "ignore" });
-    const { startStandaloneReview } = await import(path.join(ROOT, "dist/server/review/review-server-pool.mjs"));
+    const { startStandaloneReview } = await import(pathToFileURL(path.join(ROOT, "dist/server/review/review-server-pool.mjs")).href);
     const env = { ...process.env, PRISM_REVIEW_APP_DIR: appDirectory, PLUGIN_DATA: path.join(parent, "demo-data") };
     delete env.PRISM_REVIEW_APP;
     const review = await startStandaloneReview({ projectRoot, env, openBrowser: async () => false });
