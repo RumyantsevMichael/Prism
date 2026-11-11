@@ -15,6 +15,7 @@ Serves: Reliable planning and resumable work in Prism's spec-driven engineering 
 - **Shipped work as history** (`shipped-work-history`): Treat a shipped initiative's state as immutable history that tools and skills recognise, and let fixes to done work ship inside the initiative that has not shipped yet.
 - **Launched sessions from the review app** (`launched-sessions`): Let the person start, watch, stop, and continue an initiative's orchestration as a headless Claude Code or Codex session on their own machine, resumed by Prism when they answer its gates.
 - **Review loop decisions from the findings** (`review-loop-decisions`): Let the user accept a slice whose remaining review findings are all low with tracked follow-ups, and ask the review loop decision with a findings summary, only options Prism can carry out, and a recommendation by a stated rule.
+- **Index preparation that finishes** (`index-preparation`): Make every native index build finish while it makes progress, publish structure before embeddings, keep a stopped build's work, keep scoped calls fast, and rank searches across indexes as well as inside one.
 
 ### Next
 
@@ -23,6 +24,9 @@ Serves: Reliable planning and resumable work in Prism's spec-driven engineering 
 - **Show a whole workspace in the review app** (`workspace-view`): Make the workspace, one record store, the unit the review app opens: list workspaces only, combine every scope's artifacts for people and agents, add a workspace from its store URL alone, and show code-repository content from Prism-kept clones. Requires `workspace-artifacts`.
 - **Nested work items** (`nested-work-items`): Replace initiatives with one nested work item, so any node of the work tree is a work item and a leaf done in one session stays a slice, and migrate existing records, terms, tools and skills to it while a top work item pins each reference repository it reads to a commit that its children inherit. Requires `workspace-artifacts`.
 - **Artifact formats and migration** (`artifact-formats`): Give every normative artifact type one format with a conforming example, report artifacts that break it, and migrate them behind a gate without losing or inventing content.
+- **Questions about records and code** (`record-search`): Answer with records rather than passages, find similar and governing records for an intent, and read the recorded links between records and code in both directions. Requires `index-preparation`.
+- **Search of reference repositories and libraries** (`reference-search`): Let a separate search_references tool answer from reference repositories, libraries, and peer workspaces' records at the commit or version a work item pins, without mixing them into the project's own results. Requires `index-preparation`, `record-search`, `reference-repositories`.
+- **Reference repositories in the workspace** (`reference-repositories`): Let a workspace list repositories it reads but does not work in, with their components and default version, list each component's libraries, pin and cite the outside code each work item builds on, and show both on a workspace page and a work item settings page. Requires `workspace-artifacts`, `workspace-view`, `nested-work-items`.
 
 ### Shipped
 
@@ -39,11 +43,15 @@ Serves: Reliable planning and resumable work in Prism's spec-driven engineering 
 - **Repository intelligence**: Kept in Now while repository-intelligence work continues on main.
 - **Launched sessions from the review app**: Now, because Michael approved the requirements on 2026-11-09 after agreeing the scope in the project thread; it builds on the review app action registry and gate answers.
 - **Review loop decisions from the findings**: Now, because the user asked on 2026-11-10: review loop gates always offered the same three options, agents always recommended another wave, and accepting low findings left no record.
+- **Index preparation that finishes**: Now, because indexing reliability is stabilization work Michael asked threads to drive: large builds never finish today (#14), coverage reports almost nothing covered (#119), and scoped reports miss sibling components (#120). Measured on 7 November 2026; approved on 11 November under Michael's overnight delegation.
 - **Agent execution evidence and continuity**: Next, because observed-range reporting consumes verified ranges from repository context planning, while pause checkpoints and diagram-readability assessment can proceed independently after design. The new work stays together until design shows that its outcomes need separate sequencing.
 - **Workspace artifacts in the store**: Next, because Michael decided on 7 November 2026 that descriptive artifacts move to the store so every session's progress is visible in one place, and that Prism's own documents leave its public repository.
 - **Show a whole workspace in the review app**: Next, after workspace-artifacts, whose store artifacts and scopes it builds on and whose scope filter it amends; Michael asked for it on 10 November 2026 and agreed the design the same day.
 - **Nested work items**: Next, after workspace-artifacts, whose store artifacts the migration moves; Michael decided on 8 November 2026 to drop initiatives for one nested work item, and that a top work item pins the reference repositories it reads, with children inheriting the pins.
 - **Artifact formats and migration**: Next, from issue #59 and Michael's feedback on 10 November 2026 that an agent invented a glossary format because Prism defines none. Requirements approved on 11 November 2026 under the full autonomy Michael granted overnight.
+- **Questions about records and code**: Next, because Michael asked on 8 November 2026 for duplicate, governing-record, gap, and record-to-code questions; the November record-question baseline showed search alone cannot answer them. It needs cross-index ranking from index-preparation.
+- **Search of reference repositories and libraries**: Next, because Michael decided on 9 November 2026 that workspaces declare reference repositories and libraries pinned per work item; it searches the entries and pins that reference-repositories declares, returns records shaped by record-search, and needs finishing builds from index-preparation.
+- **Reference repositories in the workspace**: Next, because Michael agreed the decisions on 9 November 2026 in thread "Brainstorm indexing an external stack" and gave overnight autonomy on 11 November 2026; search over these sources is reference-search, which needs these entries and pins.
 
 ## Open questions
 
