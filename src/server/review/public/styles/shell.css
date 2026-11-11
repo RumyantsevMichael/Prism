@@ -439,6 +439,32 @@ body {
   margin: var(--prism-space-8) auto;
 }
 
+/* A welcome's actions wrap under each other on a narrow window. */
+.welcome-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--prism-space-3);
+  margin-top: var(--prism-space-5);
+}
+
+.welcome-store {
+  color: var(--prism-color-ink-muted);
+  overflow-wrap: anywhere;
+}
+
+/* The Add workspace dialog: the address field, and what the store answered, such as that it holds no commit yet. */
+.workspace-add-form {
+  display: grid;
+  gap: var(--prism-space-4);
+  min-width: 0;
+}
+
+.workspace-add-note {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  overflow-wrap: anywhere;
+}
+
 /* ---------- The side panel island ---------- */
 
 .side {

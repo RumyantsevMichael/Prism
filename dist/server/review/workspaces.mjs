@@ -4,7 +4,7 @@ import path from "node:path";
 import { listMachineCheckouts } from "../workflow/machine-checkouts.mjs";
 import { managedStoresDirectory, remoteLabel, storeIdentity } from "../workflow/remote-url.mjs";
 import { REPOSITORIES, REPOSITORY_NAME } from "../workflow/repository-names.mjs";
-import { readWorkspaceName } from "../workflow/roadmap.mjs";
+import { readStoreWorkspaceName, readWorkspaceName } from "../workflow/roadmap.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { workspaceTitle } from "./workspace-identity.mjs";
 import { loadAttention } from "./workspace-model.mjs";
@@ -33,8 +33,8 @@ export async function checkoutWorkspace(root) {
 
 const real = (target) => realpath(target).catch(() => path.resolve(target));
 
-// The folder that holds a store's records on this machine: a folder store's real path, or the managed clone of a network store.
-async function storeFolder(identity, env) {
+/** The folder that holds a store's records on this machine: a folder store's real path, or the managed clone of a network store. */
+export async function storeFolder(identity, env = process.env) {
   if (identity.startsWith("file:")) return identity.slice("file:".length);
   return real(path.join(managedStoresDirectory(env), sha16(identity)));
 }
@@ -52,8 +52,9 @@ async function gateCount(root) {
 }
 
 /** A workspace's name: the workspace name its store's roadmap record holds, else its store's last segment, else its checkout's folder. */
-export async function nameOfWorkspace(view) {
-  const workspaceName = view.kind === "store" && view.root ? await readWorkspaceName(view.root) : null;
+// A workspace that a person added and that no checkout here serves reads the name from its store's folder.
+export async function nameOfWorkspace(view, env = process.env) {
+  const workspaceName = view.kind !== "store" ? null : view.root ? await readWorkspaceName(view.root) : await readStoreWorkspaceName(await storeFolder(view.identity, env));
   return workspaceTitle({ workspaceName, identity: view.identity, root: view.root });
 }
 
@@ -62,7 +63,8 @@ const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "bas
 
 /**
  * The review app's workspace entries, live workspaces first, then by most recent use, then by name.
- * Each view is { id, kind, identity, urls, root, members, live, lastSeen }: members lists its registered checkouts as { root, repository }, and root is the checkout it reads records through.
+ * Each view is { id, kind, identity, urls, root, members, live, lastSeen, added }: members lists its registered checkouts as { root, repository }, root is the checkout it reads records through or null for an added workspace without one,
+ * and added is whether a person added it from its store URL.
  * urlOf(id) gives the absolute URL of the workspace's page; no field of an entry names a URL of a checkout, repository, or component.
  */
 export async function listWorkspaces(views, { urlOf, env = process.env } = {}) {
@@ -89,9 +91,9 @@ export async function listWorkspaces(views, { urlOf, env = process.env } = {}) {
     return {
       entry: {
         id: view.id,
-        name: await nameOfWorkspace(view),
+        name: await nameOfWorkspace(view, env),
         kind: view.kind,
-        added: false,
+        added: view.added === true,
         live: view.live,
         gates: await gateCount(view.root),
         store,

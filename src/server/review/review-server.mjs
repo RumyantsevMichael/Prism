@@ -527,7 +527,7 @@ const ACTION_STATUS = { unknown_target: 404, unknown_action: 404, stale_revision
 const ACTION_FIELDS = ["current", "reason", "field", "accepted"];
 export const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
 
-function sendJson(response, statusCode, body) {
+export function sendJson(response, statusCode, body) {
   send(response, statusCode, JSON.stringify(body), "application/json; charset=utf-8");
 }
 
@@ -542,7 +542,7 @@ function sendActionError(response, error) {
 }
 
 // A write comes from the review page itself: JSON, and an Origin, when the browser sends one, of the same host.
-function fromPage(request) {
+export function fromPage(request) {
   const origin = request.headers.origin;
   if (String(request.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase() !== "application/json") return false;
   if (!origin) return true;
@@ -553,7 +553,7 @@ function fromPage(request) {
   }
 }
 
-async function readJson(request) {
+export async function readJson(request) {
   const text = await readBody(request);
   try {
     return parseStoreJson(text);

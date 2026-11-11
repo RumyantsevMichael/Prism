@@ -121,6 +121,14 @@
     <prism-button slot="footer" id="action-dialog-cancel">Cancel</prism-button>
     <prism-button slot="footer" id="action-dialog-confirm" variant="primary">Confirm</prism-button>
   </prism-dialog>
+  <prism-dialog id="workspace-add-dialog" heading="Add a workspace">
+    <form id="workspace-add-form" class="workspace-add-form" novalidate>
+      <prism-field id="workspace-add-url" name="url" label="Store address" placeholder="https://github.com/acme/store.git" hint="An HTTPS or SSH URL, a host:path address, or the absolute path of a folder. Credentials come from this machine's Git configuration, never from the address." required></prism-field>
+      <p id="workspace-add-empty" class="workspace-add-note" hidden></p>
+    </form>
+    <prism-button slot="footer" id="workspace-add-cancel">Cancel</prism-button>
+    <prism-button slot="footer" id="workspace-add-submit" variant="primary">Add workspace</prism-button>
+  </prism-dialog>
   <prism-dialog id="palette" class="palette" heading="Command palette" size="lg">
     <prism-field id="palette-input" type="search" label="Search or jump to" placeholder="An initiative, slice, document, or file, or text in a document"></prism-field>
     <div class="palette-body">

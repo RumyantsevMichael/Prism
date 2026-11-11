@@ -140,3 +140,27 @@ export function legacyStoresDirectory(env = process.env) {
 export function withoutCredentials(text) {
   return typeof text === "string" ? text.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^/\s@'"]*@/gi, "$1") : text;
 }
+
+/**
+ * Whether a store value carries a credential: any user information before the host of an http:// or https:// URL, where it is how tokens are passed,
+ * any user information of a git:// URL, which has no login at all, or a password, a ':' in the user information, of an ssh:// or scp-form address.
+ * An SSH login name such as the git of git@github.com:acme/store.git only selects the host's account, since SSH authenticates with the machine's keys, so it is no credential.
+ * A query or fragment of a network URL can carry a token too, and Git uses neither to find a store, so either counts as a credential.
+ */
+export function credentialsIn(value) {
+  if (typeof value !== "string") return false;
+  const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(value)?.[1]?.toLowerCase();
+  if (scheme && ["http", "https", "git", "ssh"].includes(scheme)) {
+    // The authority ends at the first '/', '?', or '#', so an '@' further on belongs to the path.
+    const rest = value.slice(scheme.length + 3);
+    const authority = rest.split(/[/?#]/, 1)[0];
+    const at = authority.lastIndexOf("@");
+    if (/[?#]/.test(rest)) return true;
+    if (at < 0) return false;
+    return scheme === "ssh" ? authority.slice(0, at).includes(":") : true;
+  }
+  if (scheme) return false;
+  // The scp form [user@]host:path names its user before the last '@' ahead of the host's ':'.
+  const scp = /^([^/\\\s]*)@[A-Za-z0-9][A-Za-z0-9.-]+:/.exec(value);
+  return Boolean(scp && scp[1].includes(":"));
+}

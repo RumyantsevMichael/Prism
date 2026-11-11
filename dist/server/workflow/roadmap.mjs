@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { lstat, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
@@ -316,6 +316,19 @@ export async function readWorkspaceName(projectRoot) {
     const { bytes } = await readRecord(projectRoot, { kind: "roadmap" });
     if (!bytes) return null;
     const name = parseStoreJson(bytes.toString("utf8"))?.workspaceName;
+    return typeof name === "string" && !workspaceNameProblem(name) ? name : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The workspace name that the roadmap record of a store folder holds, read from the folder itself for a store that no checkout here names, or null. */
+export async function readStoreWorkspaceName(folder) {
+  try {
+    const file = path.join(folder, "roadmap.json");
+    const info = await lstat(file);
+    if (!info.isFile() || info.size > RECORD_MAX_BYTES) return null;
+    const name = parseStoreJson(await readFile(file, "utf8"))?.workspaceName;
     return typeof name === "string" && !workspaceNameProblem(name) ? name : null;
   } catch {
     return null;

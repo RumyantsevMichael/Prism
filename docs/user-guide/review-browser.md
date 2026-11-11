@@ -291,8 +291,32 @@ The switcher's button shows the workspace's name first, as `workspace · reposit
 An older link to a checkout's page, which has `p/<id>/` in its address, opens the same page of the checkout's workspace, and an artifact it names by the checkout's path opens by its place in the store.
 Open tabs name each store artifact by its place in the store, so a tab opened from one checkout stays the same artifact from every other checkout of the workspace.
 The app's own address opens the workspace an agent session used most recently, else the workspace used most recently.
-With no workspace yet, it shows a page that says how to add one, and opens the first workspace as soon as a Prism session or `prism review` in a project adds it.
+With no workspace yet, it shows a page that offers to add one, and opens the first workspace as soon as you add it or a Prism session or `prism review` in a project adds it.
 When an agent presents a review for another project while a tab that can make changes is open, that tab shows a notice with a link instead of a second tab opening.
+
+### Add a workspace from its store
+
+Choose **Add workspace…** in the switcher, or **Add a workspace** on the page without one, and give the store's address: an HTTPS or SSH URL, a `host:path` address such as `git@github.com:acme/store.git`, or the absolute path of a folder.
+Only a tab that can make changes adds or removes a workspace; see [Which tabs can make changes](#which-tabs-can-make-changes).
+Prism clones only the store, into `stores/` of its state directory, with the machine's Git configuration and credential helpers, and never asks for a password on a terminal.
+A store that this machine already keeps, because a checkout here names it, is added without cloning.
+An address that carries credentials is refused before Git runs: a user name, password, or token in an HTTP or HTTPS URL, any user name in a `git://` URL, a password in SSH user information, or a query or fragment, which can carry a token.
+An SSH login name such as the `git` of `git@github.com:acme/store.git` is no credential and is accepted, because SSH signs in with the machine's keys.
+Credentials come from the machine's Git configuration, such as a credential helper or SSH keys.
+When the clone fails, the dialog shows Git's reason without any user name, password, or token, and Prism keeps no folder and no workspace.
+Prism also refuses, and leaves as it is, a folder at the clone's place in `stores/` that is no clone of that store.
+A store with no commit yet is added only after you confirm it with **Add empty store**.
+When the store turns out to be one this machine already keeps under another address, such as an SSH host alias, the address joins that workspace instead, which Prism tells by the store's first commit; it never joins a workspace whose address is a plain `http://` or `git://` one.
+An added workspace stays in the switcher across restarts of the app until you remove it.
+Until a checkout of one of its repositories is registered with the app, its page names the workspace and its store, and says that its records open there once a Prism session or `prism review` runs in such a checkout.
+
+### Remove a workspace
+
+Choose **Remove** for the open workspace in the switcher, or **Remove workspace** on its page.
+Removing never changes the store itself.
+Prism deletes the store's clone on this machine only when no checkout here names the store and the clone holds no commit, changed file, or saved conflict copy that is not pushed; otherwise it keeps the clone and says which checkout names the store or that the clone holds changes that are not pushed.
+A folder store is your own folder, which Prism never deletes.
+A removed workspace that still has registered checkouts stays in the switcher, no longer marked as added.
 
 The app starts with the MCP server of the first Prism session, outlives that session, and exits after 30 minutes with no session and no open viewer.
 A session of a newer Prism release replaces an app of an older release on the same port, and open review pages reload into the new version.

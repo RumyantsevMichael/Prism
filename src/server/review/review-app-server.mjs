@@ -5,6 +5,7 @@ import path from "node:path";
 import { ConservationStore, conservationStore } from "../conservation/conservation-store.mjs";
 import { withFileLock } from "../workflow/artifact-store.mjs";
 import { useManagedStores } from "../workflow/record-store-remote.mjs";
+import { remoteLabel } from "../workflow/remote-url.mjs";
 import { describeRecordStore, outsideToolCall } from "../workflow/record-store.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
 import {
@@ -26,10 +27,12 @@ import {
 } from "./review-app-discovery.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
-import { createProjectReview, exchangeWriteGrant, isTrustedHost, normalizeTabs, readBody, send, servePageRoute, storeTabRef } from "./review-server.mjs";
+import { createProjectReview, exchangeWriteGrant, fromPage, isTrustedHost, normalizeTabs, READ_ONLY_NOTICE, readBody, readJson, send, sendJson, servePageRoute, storeTabRef } from "./review-server.mjs";
 import { loadAttention } from "./workspace-model.mjs";
 import { readWorkspaceIdentity, workspaceLabel } from "./workspace-identity.mjs";
-import { checkoutWorkspace, listWorkspaces, nameOfWorkspace } from "./workspaces.mjs";
+import { createAddedWorkspaces } from "./added-workspaces.mjs";
+import { checkoutWorkspace, listWorkspaces, nameOfWorkspace, storeFolder, storeWorkspaceId } from "./workspaces.mjs";
+import { listMachineCheckouts } from "../workflow/machine-checkouts.mjs";
 import { createWriteSessions } from "./write-sessions.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
 
@@ -109,6 +112,9 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
   // Presentations nobody could see yet, by presenting workspace id, handed to the next viewer of another workspace.
   const pendingNotices = new Map();
   const stores = new Map();
+  // The workspaces a person added from a store URL, which stay listed until the person removes them, and when each one's own page was last opened.
+  const added = await createAddedWorkspaces({ directory });
+  const addedUsage = new Map();
   let openGrantedAt = -Infinity;
   // Recency is a counter rather than a clock, so projects touched within one millisecond keep their order.
   let sequence = 0;
@@ -264,7 +270,9 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     project.repository = found.repository;
     let view = workspaces.get(found.id);
     if (!view) {
-      view = { id: found.id, kind: found.kind, identity: found.identity, urls: [], usedAt: 0, review: null, get root() { return this.review.projectRoot; } };
+      // A workspace that a person added keeps the URLs it was added by first, in the order first seen.
+      const addedEntry = added.list().find((entry) => entry.id === found.id);
+      view = { id: found.id, kind: found.kind, identity: found.identity, urls: [...(addedEntry?.urls ?? [])], usedAt: addedUsage.get(found.id) ?? 0, review: null, get root() { return this.review.projectRoot; } };
       view.review = createProjectReview({ projectRoot: project.root, baseUrl: `http://127.0.0.1:${port}${viewerPrefix()}/w/${view.id}`, instance, appVersion: pluginVersion,
         onViewer: (sendNotice) => {
           view.usedAt = ++sequence;
@@ -281,13 +289,108 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     return view;
   }
 
+  // Every workspace with a review, and each added workspace that no registered checkout serves, which reads its store's folder alone.
   function workspaceViews() {
     const now = Date.now();
-    return [...workspaces.values()].map((view) => {
+    const addedEntries = added.list();
+    const views = [...workspaces.values()].map((view) => {
       const members = membersOf(view);
+      const entry = addedEntries.find((item) => item.id === view.id);
+      for (const url of entry?.urls ?? []) if (!view.urls.includes(url)) view.urls.push(url);
       return { id: view.id, kind: view.kind, identity: view.identity, urls: view.urls, root: view.root, members: members.map(({ root, repository }) => ({ root, repository })),
-        live: members.some((project) => live(project, now)), lastSeen: Math.max(view.usedAt, ...members.map((project) => project.lastSeen)) };
+        live: members.some((project) => live(project, now)), lastSeen: Math.max(view.usedAt, ...members.map((project) => project.lastSeen)), added: Boolean(entry) };
     });
+    for (const entry of addedEntries) {
+      if (workspaces.has(entry.id)) continue;
+      views.push({ id: entry.id, kind: "store", identity: entry.identity, urls: entry.urls, root: null, members: [], live: false, lastSeen: addedUsage.get(entry.id) ?? 0, added: true });
+    }
+    return views;
+  }
+
+  // An added workspace that no registered checkout serves, as { id, kind, identity, root }, or null.
+  const storeOnlyView = (id) => workspaces.has(id) ? null : workspaceViews().find((view) => view.id === id && view.root === null) ?? null;
+
+  // The checkouts on this machine that name a workspace's store: its registered checkouts, then the machine's checkout list entries of its store folder.
+  async function checkoutsNaming(identity) {
+    const id = storeWorkspaceId(identity);
+    const registered = [...projects.values()].filter((project) => project.workspaceId === id).map((project) => project.root);
+    const folder = await storeFolder(identity);
+    const listed = (await listMachineCheckouts().catch(() => [])).filter((entry) => entry.store === folder).map((entry) => entry.path);
+    return [...new Set([...registered, ...listed])];
+  }
+
+  // The network stores this machine keeps for a workspace, which an added store joins when it shares their root commit.
+  async function keptStores() {
+    const kept = [];
+    for (const view of workspaceViews()) {
+      if (view.kind === "store" && !view.identity.startsWith("file:")) kept.push({ identity: view.identity, folder: await storeFolder(view.identity) });
+    }
+    return kept;
+  }
+
+  // A change to the app's own workspaces comes from the review page with its write session, as an action does.
+  function refuseChange(request, response) {
+    if (!fromPage(request)) {
+      sendJson(response, 403, { code: "origin_refused", message: "A change must come from the review page as JSON." });
+      return true;
+    }
+    if (!writeSessions?.valid(request.headers["x-prism-write"])) {
+      sendJson(response, 403, { code: "write_forbidden", message: READ_ONLY_NOTICE });
+      return true;
+    }
+    return false;
+  }
+
+  async function addWorkspace(request, response) {
+    if (refuseChange(request, response)) return;
+    let body;
+    try { body = await readJson(request); } catch (error) { sendJson(response, 400, { code: "invalid_request", message: error.message }); return; }
+    if (!body || typeof body !== "object" || Array.isArray(body) || (body.confirmEmpty !== undefined && typeof body.confirmEmpty !== "boolean")) {
+      sendJson(response, 400, { code: "invalid_request", message: "The request must be a JSON object of url and, optionally, confirmEmpty true or false." });
+      return;
+    }
+    try {
+      const { identity, merged } = await added.add(body.url, { confirmEmpty: body.confirmEmpty === true, keptStores });
+      const id = storeWorkspaceId(identity);
+      addedUsage.set(id, ++sequence);
+      const view = workspaces.get(id);
+      if (view) view.usedAt = addedUsage.get(id);
+      const workspace = (await workspaceList()).find((entry) => entry.id === id);
+      sendJson(response, 200, { workspace, merged });
+    } catch (error) {
+      if (!error.status || !error.code) throw error;
+      sendJson(response, error.status, { code: error.code, message: error.message });
+    }
+  }
+
+  async function removeWorkspace(request, response, id) {
+    if (refuseChange(request, response)) return;
+    await readBody(request);
+    if (!added.has(id)) {
+      const known = (await workspaceList()).some((entry) => entry.id === id);
+      sendJson(response, known ? 409 : 404, known
+        ? { code: "workspace_not_added", message: "This workspace was not added from its store URL; it is listed while a checkout of it is registered." }
+        : { code: "workspace_unknown", message: "No workspace has that id on this machine." });
+      return;
+    }
+    const removed = await added.remove(id, { checkoutsNaming });
+    addedUsage.delete(id);
+    sendJson(response, 200, { removed: true, clone: removed.clone, message: removed.message });
+  }
+
+  // The page of an added workspace that no checkout serves names the workspace, and the page's own files are those every page shares.
+  async function serveStoreOnly(request, response, view, rest) {
+    if (rest === "/api/index" && request.method === "GET") {
+      sendJson(response, 200, { workspace: { ...(await describeWorkspace(view)), added: true }, storeOnly: true, store: { label: remoteLabel(view.urls[0]) ?? view.urls[0] ?? view.identity } });
+      return;
+    }
+    if (rest === "/" || rest === "/review") {
+      addedUsage.set(view.id, ++sequence);
+      await servePageRoute(request, response, rest);
+      return;
+    }
+    if (rest !== "/api/workspaces" && await servePageRoute(request, response, rest)) return;
+    send(response, 404, "Not found");
   }
 
   const workspaceList = () => listWorkspaces(workspaceViews(), { urlOf: workspaceUrl });
@@ -525,7 +628,8 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       const inWorkspace = /^\/w\/([0-9a-f]{16})(\/.*)?$/.exec(route);
       if (inWorkspace) {
         const view = workspaces.get(inWorkspace[1]);
-        if (!view) {
+        const storeOnly = view ? null : storeOnlyView(inWorkspace[1]);
+        if (!view && !storeOnly) {
           send(response, 404, "No workspace has that id on this machine.");
           return;
         }
@@ -533,6 +637,10 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
         if (!inWorkspace[2]) {
           response.writeHead(308, { Location: `${prefix}${route}/${url.search}`, "Cache-Control": "no-store" });
           response.end();
+          return;
+        }
+        if (storeOnly) {
+          await serveStoreOnly(request, response, storeOnly, inWorkspace[2]);
           return;
         }
         if (inWorkspace[2] === "/api/projects" && request.method === "GET") {
@@ -557,6 +665,15 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
         send(response, 200, JSON.stringify({ workspaces: await workspaceList() }), "application/json; charset=utf-8");
         return;
       }
+      if (route === "/api/workspaces" && request.method === "POST") {
+        await addWorkspace(request, response);
+        return;
+      }
+      const removing = /^\/api\/workspaces\/([^/]+)$/.exec(route);
+      if (removing && request.method === "DELETE") {
+        await removeWorkspace(request, response, removing[1]);
+        return;
+      }
       if (route === "/api/write-session" && request.method === "POST") {
         await exchangeWriteGrant(request, response, writeSessions);
         return;
@@ -579,6 +696,19 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
 
   // A successor keeps the port and viewer credential only from a recent handed-off file and only on that same port, so a tab reconnects
   // after a replacement but a credential that a tab may have sent to another listener after a crash or long ago is never served again.
+  // Bytes after a request that names no length, such as the body of a DELETE that Node's own client sends unframed, read as a malformed next request.
+  // A response still being written for the request before them is finished first, and only then does the connection close, so that request keeps its answer.
+  server.on("clientError", (error, socket) => {
+    const pending = socket._httpMessage;
+    if (pending && !pending.writableFinished && !pending.destroyed) {
+      pending.once("close", () => socket.destroy());
+      return;
+    }
+    const status = error.code === "HPE_HEADER_OVERFLOW" ? "431 Request Header Fields Too Large" : error.code === "ERR_HTTP_REQUEST_TIMEOUT" ? "408 Request Timeout" : "400 Bad Request";
+    if (socket.writable) socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`);
+    socket.destroy();
+  });
+
   let bound = false;
   const handedOffAt = Date.parse(previous?.handedOffAt);
   if (previous?.handoff === true && Date.now() - handedOffAt <= LOCK_STALE_MS) {

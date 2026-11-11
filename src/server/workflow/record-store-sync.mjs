@@ -2577,3 +2577,20 @@ export async function pruneArtifactFolders(base, target) {
     } catch { return; }
   }
 }
+
+/**
+ * What a store clone holds that its upstream lacks: { commits, files, conflicts }, commits whether any branch has a commit that no remote branch holds,
+ * files whether a store file on disk differs from its branch's commit, is missing from it, or is a file the commit lacks, and conflicts whether a saved local copy of a conflict waits.
+ * It reads Git's objects and the files' bytes and changes nothing, so a caller decides from it whether deleting the clone loses work.
+ */
+export async function localStoreChanges(base) {
+  const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  const ahead = await git(base, ["rev-list", "--count", "--branches", "--not", "--remotes"]);
+  const commits = !ahead.ok || Number(ahead.text) > 0 || await unpublished(base);
+  const committed = head.ok ? (await partition(await treeFiles(base, head.text))).shared : new Map();
+  const withheld = new Map();
+  const onDisk = await localFiles(base, true, committed, withheld);
+  let files = withheld.size > 0 || onDisk.size !== committed.size;
+  for (const [file, entry] of onDisk) if (!files && committed.get(file)?.object !== entry.object) files = true;
+  return { commits, files, conflicts: (await listSavedConflicts(base)).length > 0 };
+}

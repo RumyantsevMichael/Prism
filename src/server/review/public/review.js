@@ -19,6 +19,7 @@ import { DENSITIES, savePreferences, THEMES } from "./kit/preferences.js";
 import { shownActionEntries } from "./views/actions.js";
 import { artifactReviewHtml, focusAfterMore, mountArtifactReview, readListedComments } from "./views/artifact-review.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
+import { createWorkspaceForms } from "./views/workspace-forms.js";
 
 const project = document.getElementById("project");
 const navRoot = document.getElementById("nav");
@@ -115,19 +116,32 @@ function welcome() {
   setBusy(false);
 }
 
-// The app's root without a workspace: the switcher says how to add one, and the page opens the first workspace as soon as the app lists one.
+// A button of an empty state that runs one action.
+function emptyStateButton(text, onClick, variant = "primary") {
+  const button = document.createElement("prism-button");
+  button.setAttribute("variant", variant);
+  button.textContent = text;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+// The app's root without a workspace: the page offers to add one from its store address, and opens the first workspace as soon as the app lists one.
 function showNoWorkspace() {
   renderedPath = null;
   project.textContent = "No workspace";
   document.title = "Prism review";
   projectButton.removeAttribute("disabled");
+  watchWorkspaceMenu();
   void refreshProjects();
   const empty = document.createElement("prism-empty-state");
   empty.className = "welcome";
   empty.setAttribute("heading", "No workspace yet");
+  const actions = element("div", "welcome-actions");
+  actions.append(emptyStateButton("Add a workspace", () => workspaceForms().openAdd()));
   empty.append(
     element("p", "", "A workspace is one record store with every checkout and repository that shares it, or a project that keeps its records itself."),
-    element("p", "", "To add a workspace, start a Prism session in one of its projects, or run prism review there; it opens here as soon as it is added.")
+    element("p", "", "Add one from its store's address, or start a Prism session in one of its projects; it opens here as soon as it is added."),
+    actions
   );
   artifact.replaceChildren(empty);
   setBusy(false);
@@ -137,6 +151,96 @@ function showNoWorkspace() {
     else setTimeout(check, 5000);
   };
   setTimeout(check, 5000);
+}
+
+// An added workspace that no registered checkout serves: its page names it and says where its records open, and offers to remove it.
+function showStoreOnly(index) {
+  renderedPath = null;
+  thisWorkspace = index.workspace;
+  project.textContent = index.workspace.name;
+  document.title = `${index.workspace.name} · Prism review`;
+  projectButton.removeAttribute("disabled");
+  projectButton.setAttribute("tip", [`Workspace: ${index.workspace.name}`, index.store?.label ? `Store: ${index.store.label}` : ""].filter(Boolean).join("\n"));
+  watchWorkspaceMenu();
+  void refreshProjects();
+  const empty = document.createElement("prism-empty-state");
+  empty.className = "welcome";
+  empty.setAttribute("heading", index.workspace.name);
+  const actions = element("div", "welcome-actions");
+  actions.append(
+    emptyStateButton("Remove workspace", () => void removeCurrentWorkspace(), "danger"),
+    emptyStateButton("Add another workspace", () => workspaceForms().openAdd(), "default")
+  );
+  const store = element("p", "welcome-store", `Store: ${index.store?.label ?? ""}`);
+  store.hidden = !index.store?.label;
+  empty.append(
+    store,
+    element("p", "", "This machine keeps a clone of this workspace's store, and no checkout of it is registered with the review app."),
+    element("p", "", "Its records open here once a Prism session runs in a checkout of one of its repositories, or once prism review runs there."),
+    actions
+  );
+  artifact.replaceChildren(empty);
+  setBusy(false);
+}
+
+// The forms that add and remove the app's workspaces, made once the page first needs them.
+let forms = null;
+function workspaceForms() {
+  forms ??= createWorkspaceForms({
+    appRoot,
+    writeHeaders,
+    canWrite: () => Boolean(writeSession()),
+    confirm: confirmAction,
+    toast: (message, options) => showToast(message, options),
+    open: (url, notice) => openWithNotice(url, notice)
+  });
+  return forms;
+}
+
+// A notice that a page leaves for the page it opens, such as what a removal did with a store's clone, which the next page of this tab shows once.
+const NOTICE_KEY = "prism-review-notice";
+function openWithNotice(url, notice) {
+  try { sessionStorage.setItem(NOTICE_KEY, JSON.stringify(notice)); } catch { /* The next page then shows no notice. */ }
+  if (new URL(url, location.href).href === location.href) location.reload();
+  else location.href = url;
+}
+
+function showLeftNotice() {
+  let notice = null;
+  try {
+    notice = JSON.parse(sessionStorage.getItem(NOTICE_KEY) ?? "null");
+    sessionStorage.removeItem(NOTICE_KEY);
+  } catch { /* A notice that cannot be read is dropped. */ }
+  if (typeof notice?.message === "string" && notice.message) showToast(notice.message, { tone: notice.tone });
+}
+
+// The listing entry of the open workspace, from the switcher's latest listing.
+let listedWorkspaces = [];
+const currentEntry = () => listedWorkspaces.find((entry) => entry.id === thisWorkspace?.id) ?? null;
+
+// Removing the open workspace reloads it while a checkout keeps it listed, and otherwise opens the app's root.
+async function removeCurrentWorkspace() {
+  const entry = currentEntry();
+  if (!entry?.added) return;
+  const removed = await workspaceForms().remove(entry);
+  if (!removed) return;
+  const listed = await fetch(`${appRoot}api/workspaces`, { cache: "no-store" }).then((response) => response.ok ? response.json() : null, () => null);
+  const notice = { message: removed.message, tone: removed.clone === "kept" ? "warning" : "success" };
+  openWithNotice(listed?.workspaces?.some((item) => item.id === entry.id) ? location.href : appRoot, notice);
+}
+
+// The workspace menu opens the chosen workspace's page, or runs its Add and Remove items.
+let watchingWorkspaceMenu = false;
+function watchWorkspaceMenu() {
+  if (watchingWorkspaceMenu) return;
+  watchingWorkspaceMenu = true;
+  projectButton.addEventListener("click", () => void refreshProjects());
+  projectMenu.addEventListener("prism-select", (event) => {
+    const url = event.detail?.value;
+    if (url === "workspace:add") workspaceForms().openAdd();
+    else if (url === "workspace:remove") void removeCurrentWorkspace();
+    else if (url && url !== location.href) location.href = url;
+  });
 }
 
 // The pages this browser tab visited sit in the browser's own history, each entry numbered, so Back and Forward know whether there is a page to go to.
@@ -458,7 +562,8 @@ function stateHint(entry, { gates = true } = {}) {
   // Only a running or failed build is marked, because the status bar covers the open project's other states.
   if (entry.indexing === "preparing") states.push("indexing");
   if (entry.indexing === "failed") states.push("index failed");
-  if (gates && entry.gates === null) states.push("unreadable");
+  // An added workspace without a checkout here reads no records yet, which its page says, so it is not marked unreadable.
+  if (gates && entry.gates === null && entry.checkouts?.length !== 0) states.push("unreadable");
   else if (gates && entry.gates) states.push(countText(entry.gates, "gate", "gates"));
   if (!states.length) return null;
   const hint = element("span", "project-states", states.join(" · "));
@@ -544,17 +649,37 @@ async function refreshProjects() {
   const text = JSON.stringify(entries);
   if (text === projectListing) return;
   projectListing = text;
+  listedWorkspaces = entries;
   const group = document.createElement("prism-menu-group");
   group.setAttribute("label", "Workspaces");
   if (entries.length) group.append(...entries.map((entry) => workspaceItem(entry, current)));
   else group.append(noWorkspaceItem());
-  projectMenu.replaceChildren(group);
+  projectMenu.replaceChildren(group, manageGroup(entries.find((entry) => entry.id === current) ?? null));
+}
+
+// Adding a workspace is offered on every page of the app, and removing one on the page of a workspace that a person added.
+function manageGroup(entry) {
+  const group = document.createElement("prism-menu-group");
+  group.setAttribute("label", "Manage");
+  const add = document.createElement("prism-menu-item");
+  add.setAttribute("value", "workspace:add");
+  add.setAttribute("detail", "Clone a store from its address");
+  add.append("Add workspace…");
+  group.append(add);
+  if (entry?.added) {
+    const remove = document.createElement("prism-menu-item");
+    remove.setAttribute("value", "workspace:remove");
+    remove.setAttribute("detail", entry.checkouts.length ? "Its checkouts keep it listed" : "Deletes its clone when nothing here uses it");
+    remove.append(`Remove ${entry.name}…`);
+    group.append(remove);
+  }
+  return group;
 }
 
 function noWorkspaceItem() {
   const item = document.createElement("prism-menu-item");
   item.setAttribute("disabled", "");
-  item.setAttribute("detail", "Start a Prism session or run prism review in a project to add its workspace");
+  item.setAttribute("detail", "Add one from its store address, or start a Prism session in a project");
   item.append("No workspace yet");
   return item;
 }
@@ -1601,9 +1726,14 @@ function watchDrawerWidth() {
 
 async function initialize() {
   await takeWriteGrant();
+  showLeftNotice();
   const index = await fetchJson("./api/index");
   if (index.workspace === null && !index.projectRoot) {
     showNoWorkspace();
+    return;
+  }
+  if (index.storeOnly === true) {
+    showStoreOnly(index);
     return;
   }
   useStoreRefs(index);
@@ -1648,11 +1778,7 @@ async function initialize() {
     sectionFrame = requestAnimationFrame(() => markCurrentSection(artifact, workspace.getBoundingClientRect().top));
   }, { passive: true });
   // Choosing another project opens its review page; opening the menu refreshes the list first.
-  projectButton.addEventListener("click", () => void refreshProjects());
-  projectMenu.addEventListener("prism-select", (event) => {
-    const url = event.detail?.value;
-    if (url && url !== location.href) location.href = url;
-  });
+  watchWorkspaceMenu();
   void refreshProjects();
   // The project list is checked 5 s after its last check ended, so checks never overlap.
   const checkProjects = () => refreshProjects().catch(() => {}).finally(() => setTimeout(checkProjects, 5000));
