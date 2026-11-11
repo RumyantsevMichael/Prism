@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // The detached supervisor of one run of a launched session: node launch-supervisor.mjs <launch folder> <cause> <token>.
-// It starts the run's host in the checkout with its own environment, which the starter prepared, reads the host's output,
-// renews the heartbeat in the launch record, and records the run's end with the host's exit code and signal.
+// It starts the run's host in the checkout with its own environment, which the starter prepared, holds the host's standard input,
+// gives the host its prompt there and closes it once the host's work is over, reads the host's output, renews the heartbeat in the
+// launch record, and records the run's end with the host's exit code and signal.
 // It watches its launch folder for a stop request that names its run, and then ends the host and every process it started.
 // It names its launch folder on its command line, so any process on this machine can find it.
 import { spawn } from "node:child_process";
@@ -9,7 +10,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { endProcessTree, stopGraceMs, STOP_FINISH_MS } from "./process-tree.mjs";
 import { readLaunchRecord, readStopRequest, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
-import { hostArguments, redactSessionId, resolveHost, streamReader, validHostSessionId } from "./launch-hosts.mjs";
+import { hostArguments, hostConversation, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
 
 const STDERR_KEEP = 64 * 1024;
 const OUTPUT_DRAIN_MS = 2000;
@@ -48,19 +49,26 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
     await failStart("The session never reported its host session id, so it cannot be resumed.");
     return;
   }
-  const args = hostArguments({ host: record.host, initiative: record.initiative, hostSessionId: record.hostSessionId, resume });
+  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume });
   const number = record.runs.length + 1;
   const graceMs = stopGraceMs(env);
   // The launch folder lies in <review app folder>/launches/, whose review-app.json names the review app that a stop spares.
   const reviewAppFolder = path.dirname(path.dirname(path.resolve(folder)));
   let stderr = Buffer.alloc(0);
-  const reader = streamReader(record.host, {
-    hostSessionId: record.hostSessionId,
-    onSessionId: (id) => update((current) => { if (!current.hostSessionId) current.hostSessionId = id; })
-  });
 
   // Every listener is attached as soon as the host process exists, so no early output or exit is missed.
   const watch = (child) => {
+    // The host's input is written only through the conversation, which closes it once the host's work is over.
+    child.stdin.on("error", () => {});
+    const conversation = hostConversation(record.host, {
+      initiative: record.initiative,
+      checkout: record.checkout,
+      hostSessionId: record.hostSessionId,
+      resume,
+      send: (message) => child.stdin.write(`${JSON.stringify(message)}\n`),
+      closeInput: () => child.stdin.end(),
+      onSessionId: (id) => update((current) => { if (!current.hostSessionId) current.hostSessionId = id; })
+    });
     let started = false;
     let heartbeat = null;
     let spoke = false;
@@ -79,6 +87,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
       });
       child.once("spawn", () => {
         started = true;
+        conversation.start();
         const at = new Date().toISOString();
         update((current) => {
           delete current.startFailure;
@@ -110,7 +119,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
         }, STOP_POLL_MS);
       });
       child.stdout.on("data", (chunk) => {
-        reader.push(chunk);
+        conversation.push(chunk);
         if (spoke) return;
         spoke = true;
         const at = new Date().toISOString();
@@ -145,9 +154,9 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
         // while a request written after the host ended on its own, during the drain, leaves the end as the host's.
         const read = stopping ? null : await readStopRequest(folder);
         const request = read?.token === token && requestTime(read) <= Date.parse(endedAt) ? read : null;
-        reader.end();
+        conversation.end();
         clearInterval(heartbeat);
-        const { facts } = reader;
+        const { facts } = conversation;
         const lines = stderr.toString("utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
         await update((current) => {
           if (!current.hostSessionId && facts.hostSessionId) current.hostSessionId = facts.hostSessionId;
@@ -171,7 +180,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
     if (!current || tokenVoided(current, token)) return null;
     let child;
     try {
-      child = spawn(resolved.command, [...resolved.prefix, ...args], { cwd: record.checkout, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+      child = spawn(resolved.command, [...resolved.prefix, ...args], { cwd: record.checkout, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     } catch (error) {
       await failStart(`${resolved.label} could not be started: ${error.message}`);
       return null;

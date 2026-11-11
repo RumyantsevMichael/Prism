@@ -195,11 +195,12 @@ function stateOf(record, status, label) {
   if (status === "running") return { state: "running", reason: null };
   if (status === "lost") return { state: "failed", reason: SUPERVISION_LOST };
   if (run.stopRequestedAt) return { state: "stopped", reason: null };
+  // A reported host error comes before the exit code, since Claude Code exits 1 after an error result.
+  if (typeof run.hostError === "string") return { state: "failed", reason: `${label} reported an error: ${run.hostError}` };
   const stderr = lastErrorLine(run.stderr);
   const tail = stderr ? ` ${stderr}` : "";
   if (run.exit?.signal) return { state: "failed", reason: `${label} ended by signal ${run.exit.signal}.${tail}` };
   if (run.exit && run.exit.code !== 0) return { state: "failed", reason: `${label} ended with exit code ${run.exit.code}.${tail}` };
-  if (typeof run.hostError === "string") return { state: "failed", reason: `${label} reported an error: ${run.hostError}` };
   const refusals = Array.isArray(run.refusals) ? run.refusals : [];
   if (refusals.length) {
     const [first] = refusals;

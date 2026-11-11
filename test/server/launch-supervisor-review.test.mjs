@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { CODEX_THREAD, INITIATIVE, launchFixture, waitFor } from "./fixtures/launched-sessions.mjs";
-import { hostArguments, resumeCommandOf, streamReader } from "../../dist/server/session/launch-hosts.mjs";
+import { codexThreadRequest, hostConversation, resumeCommandOf } from "../../dist/server/session/launch-hosts.mjs";
 import { RETENTION_MS, launchView, launchesDirectory } from "../../dist/server/session/launch-records.mjs";
 import { withFileLock } from "../../dist/server/workflow/artifact-store.mjs";
 import { fileURLToPath } from "node:url";
@@ -20,11 +20,16 @@ const posixOnly = process.platform === "win32" ? "process supervision is checked
 const module = () => import("../../dist/server/session/launched-sessions.mjs");
 const UNSAFE_THREADS = ["--dangerously-bypass-approvals-and-sandbox", "a; rm -rf ~", "-c", "id with space", ""];
 
-const feed = (reader, lines) => {
-  for (const line of lines) reader.push(Buffer.from(`${JSON.stringify(line)}\n`));
-  reader.end();
-  return reader.facts;
+// A host conversation fed these output lines, which writes into a list and never reaches a process.
+const feed = (host, lines, options = {}) => {
+  const conversation = hostConversation(host, { initiative: INITIATIVE, checkout: "/work/demo", send: () => {}, closeInput: () => {}, ...options });
+  conversation.start();
+  for (const line of lines) conversation.push(Buffer.from(`${JSON.stringify(line)}\n`));
+  conversation.end();
+  return conversation.facts;
 };
+const answer = (id, result) => ({ jsonrpc: "2.0", id, result });
+const note = (method, params) => ({ jsonrpc: "2.0", method, params });
 
 async function settled(fixture, id, states) {
   const { listLaunches } = await module();
@@ -37,15 +42,13 @@ async function settled(fixture, id, states) {
 test("a Codex thread id that is unsafe on a command line names no session", () => {
   for (const threadId of UNSAFE_THREADS) {
     const named = [];
-    const facts = feed(streamReader("codex", { onSessionId: (id) => named.push(id) }), [
-      { type: "thread.started", thread_id: threadId },
-      { type: "thread.started", thread_id: CODEX_THREAD }
-    ]);
+    const facts = feed("codex", [answer(1, {}), answer(2, { thread: { id: threadId } }), note("thread/started", { thread: { id: CODEX_THREAD } })], { onSessionId: (id) => named.push(id) });
     assert.equal(facts.hostSessionId, null, threadId);
     assert.deepEqual(named, [], threadId);
     assert.equal(resumeCommandOf("codex", threadId), null, threadId);
-    assert.throws(() => hostArguments({ host: "codex", initiative: INITIATIVE, hostSessionId: threadId, resume: true }), threadId);
+    assert.throws(() => codexThreadRequest({ checkout: "/work/demo", hostSessionId: threadId, resume: true }), threadId);
   }
+  assert.equal(feed("codex", [answer(1, {}), answer(2, { thread: { id: CODEX_THREAD } })]).hostSessionId, CODEX_THREAD);
   assert.equal(resumeCommandOf("codex", CODEX_THREAD), `codex resume ${CODEX_THREAD}`);
 });
 
@@ -76,17 +79,19 @@ test("a failed run's reason never carries the host session id", { skip: posixOnl
 test("host error text and refusal reasons have the host session id replaced, in any letter case", () => {
   const id = "0f6b2c1e-5d4a-4c3b-9a8f-7e6d5c4b3a21";
   const upper = id.toUpperCase();
-  const facts = feed(streamReader("claude-code", { hostSessionId: id }), [
+  const facts = feed("claude-code", [
     { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "a", content: `${"y".repeat(470)} session ${upper}` }] } },
     { type: "result", is_error: true, result: `Error: Session ID ${id} is already in use.`, permission_denials: [{ tool_name: "Bash", tool_use_id: "a" }] }
-  ]);
+  ], { hostSessionId: id });
   assert.ok(!JSON.stringify(facts).toLowerCase().includes(id));
   assert.equal(facts.hostError, "Error: Session ID <host session id> is already in use.");
   assert.ok(facts.refusals[0].reason.length <= 500);
-  const codex = feed(streamReader("codex"), [
-    { type: "thread.started", thread_id: CODEX_THREAD },
-    { type: "item.completed", item: { type: "command_execution", status: "declined", command: `echo ${CODEX_THREAD}` } },
-    { type: "turn.failed", error: { message: `thread ${CODEX_THREAD} failed` } }
+  const codex = feed("codex", [
+    answer(1, {}),
+    answer(2, { thread: { id: CODEX_THREAD } }),
+    answer(3, { turn: { id: "turn-1" } }),
+    note("item/completed", { item: { type: "commandExecution", status: "declined", command: `echo ${CODEX_THREAD}` } }),
+    note("turn/completed", { turn: { id: "turn-1", status: "failed", error: { message: `thread ${CODEX_THREAD} failed` } } })
   ]);
   assert.equal(codex.hostSessionId, CODEX_THREAD);
   assert.equal(codex.hostError, "thread <host session id> failed");
