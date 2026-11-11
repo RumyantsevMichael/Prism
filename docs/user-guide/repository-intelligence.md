@@ -170,10 +170,17 @@ A repository without components keeps one index of the whole repository, so an i
 A search of the current files with `filters.paths` prepares and reads only the components that hold a file at or under those paths.
 A search without paths prepares and reads every component that holds a file.
 Prism builds one index at a time: the declared components in declaration order, then the root component, which usually holds the largest tree of documents and would otherwise hold back every package queued behind it.
-The components that a later call needs move ahead of components that only an earlier call waits for, and the running build always finishes.
+The components that a later call needs move ahead of components that only an earlier call waits for.
+When a call needs a component that has no index at all and is not being built, and the running build is of a component that the call does not need, Prism pauses that build at once and starts the call's components.
+A paused build records no failure, is reported `waiting`, runs again directly after the call's components, and resumes from the embeddings it saved, so it loses at most the batch it was embedding.
+A component that only has an out-of-date index keeps answering from it and waits its turn without pausing the running build.
 A component whose index for its current files is already stored, as after a restart, only loads it, which runs at once beside the running build instead of waiting in the queue.
 A component is prepared again only when its own files change, and its new index reuses the embeddings of its unchanged fragments.
 A component that another session is preparing is reported `preparing`, and this server tries it again every few seconds while it prepares the other components.
+A component that waits carries `waitingFor` in its entry of `components`, in a status and in a result, and no other entry carries it.
+While it waits in this server's queue, `waitingFor` is `{ "component": <identity>, "preparationId": <id>, "reason": "queue" }`, naming the build that runs in this server, or a stored index that loads while no build runs.
+While another session holds its storage lock, `waitingFor` is `{ "component": <its own identity>, "preparationId": <id or null>, "reason": "lock" }`, with the preparation id of that session's live progress record, or `null` when it has none.
+A repository without components carries `waitingFor` at the top of `get_repository_intelligence_status` while its one build waits, naming its root component's identity `<repository>/<repository>`.
 A component whose storage lock names a running process but has gone unrenewed for more than 30 seconds, as when a killed session's process id was reused, fails with `lock_timeout`, and its diagnostic names the lock file to delete when no session is preparing that component.
 Each component's index is reused across sessions and after the repository's name changes.
 

@@ -123,7 +123,8 @@ test("a waiting job for content that changed is dropped and writes no failure af
   const newer = await search(root, runtime, { filters: { paths: ["packages/net"] } }, 0);
   control.release("packages/app/client.ts");
   await settled(runtime, root);
-  assert.equal(entry(newer, "root/net").status, "waiting");
+  // net has no index at all, so the newer call pauses the app build it does not need, and net waits or already prepares.
+  assert.ok(["waiting", "preparing"].includes(entry(newer, "root/net").status));
   assert.deepEqual(control.builds.map((build) => build.files[0]), ["packages/app/client.ts", "packages/net/retry.ts", ".prism/workflow.md"]);
   const { directory } = await runtime.location(root, NET);
   assert.deepEqual((await readdir(directory)).filter((name) => name.startsWith("progress-")), []);

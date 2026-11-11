@@ -7,7 +7,7 @@ import { mkdir, lstat, realpath, readdir, open, rename, rm, chmod, utimes } from
 import { fileURLToPath } from "node:url";
 import { withFileLock, withArtifactLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { errorFields, log } from "../log.mjs";
-import { ProgressRecorder, componentStorageKey, gitFingerprint, projectStorageKey, sameFingerprint, writeFreshness } from "./index-progress.mjs";
+import { ProgressRecorder, componentStorageKey, gitFingerprint, lockHolder, projectStorageKey, sameFingerprint, writeFreshness } from "./index-progress.mjs";
 import { assertSafeAncestors, regularBytes, semanticError } from "./native-files.mjs";
 import { publishedUnits, unitsFile } from "./index-files.mjs";
 import { Helper } from "./native-helper.mjs";
@@ -49,6 +49,7 @@ function stallDuration(ms) {
   return minutes === 1 ? "1 minute" : `${minutes} minutes`;
 }
 const progressed = (previous, next, embedded) => embedded || !previous || previous.phase !== next.phase || previous.current !== next.current || previous.item !== next.item || previous.file !== next.file;
+const pausedError = () => Object.assign(semanticError("preparation_failed", "The index build was paused for a component that has no index."), { paused: true });
 const stalledError = (phase, ms) => Object.assign(semanticError("stalled", `The index build made no progress for ${stallDuration(ms)} during ${phase}.`), { stalled: true, phase });
 const pointerStage = (pointer) => pointer?.stage === "structure" ? "structure" : "complete";
 const indexStage = (job, published) => job?.prepared ? job.prepared.stage ?? "complete" : job?.structure ? "structure" : published?.revision ? pointerStage(published) : "none";
@@ -242,10 +243,11 @@ class NativeSemanticRuntime {
     if (declaration) return this.componentStatus(location.root, componentSources(location.root, declaration), waitMs);
     const job = this.jobs.get(location.directory);
     if (waitMs && busy(job)) await boundedWait(job.promise, waitMs);
-    const published = await this.published(location.directory);
+    const published = await this.published(location.directory), waitingFor = await this.waitingFor(job);
     return {
       status: job ? this.legacyStatus(job) : published?.snapshot ? "indexed" : "unprepared",
       preparationId: job?.id || null,
+      ...waitingFor ? { waitingFor } : {},
       stage: indexStage(job, published),
       snapshot: job?.snapshot || published?.snapshot || null,
       indexRevision: job?.revision || job?.structure?.revision || published?.revision || null,
@@ -281,11 +283,13 @@ class NativeSemanticRuntime {
       const job = this.jobs.get(location.directory), published = await this.published(location.directory);
       const status2 = job ? job.status : published?.snapshot ? "indexed" : "unprepared", own = job ? job.diagnostics : published?.diagnostics || [];
       chunker ??= job?.prepared?.index.chunkerVersion || published?.chunkerVersion || null;
+      const waitingFor = await this.waitingFor(job);
       components.push({
         component,
         folder,
         status: status2,
         preparationId: job?.id || null,
+        ...waitingFor ? { waitingFor } : {},
         stage: indexStage(job, published),
         snapshot: job?.snapshot || published?.snapshot || null,
         indexRevision: job?.revision || job?.structure?.revision || published?.revision || null,
@@ -403,7 +407,8 @@ class NativeSemanticRuntime {
     const pending = jobs.filter(busy);
     if (pending.length) await boundedWait(Promise.all(pending.map((job) => this.awaited(job, options))).then(() => {
     }), Math.min(waitMs, 1e4));
-    return jobs.map((job) => ({
+    const waiting = await Promise.all(jobs.map((job) => this.waitingFor(job)));
+    return jobs.map((job, index) => ({
       status: job.status,
       preparationId: job.id,
       snapshot: job.snapshot,
@@ -411,8 +416,24 @@ class NativeSemanticRuntime {
       prepared: job.prepared,
       ...this.structureOf(job, options),
       component: job.component.identity,
-      failure: job.status === "degraded" ? job.failure : null
+      failure: job.status === "degraded" ? job.failure : null,
+      ...waiting[index] ? { waitingFor: waiting[index] } : {}
     }));
+  }
+  // What a job waits behind: while it prepares with the phase `waiting`, the session that holds its storage lock; while it is queued, the build
+  // that runs in this process or, when none runs, a load beside it. None for a job that does not wait, or that has nothing to name.
+  async waitingFor(job) {
+    if (!job) return void 0;
+    if (job.status === "preparing" && job.progress?.phase === "waiting") return { component: await this.identity(job), preparationId: await lockHolder(job.directory, job.recorder), reason: "lock" };
+    if (job.status !== "waiting") return void 0;
+    const ahead = this.running ?? [...this.reloading][0];
+    return ahead && ahead !== job ? { component: await this.identity(ahead), preparationId: ahead.id, reason: "queue" } : void 0;
+  }
+  // A job's component identity; the one job of a repository without components names its root component.
+  async identity(job) {
+    if (job.component) return job.component.identity;
+    const { rootIdentity } = await import("./component-indexes.mjs");
+    return rootIdentity(job.root);
   }
   // A job is shared by every call for the same content. A failed job is prepared again by the next call, except a component's job that reached
   // a native limit, which this process does not prepare again for the same content unless `retryLimited` asks for it.
@@ -448,9 +469,26 @@ class NativeSemanticRuntime {
     for (const job of new Set(jobs)) if (job.reload && job.status === "waiting" && !job.retry) this.reload(job);
     const last = (job) => job.component?.folder === "" ? 1 : 0;
     const needed = [...new Set(jobs.filter((job) => job.status === "waiting" && !job.reload))].sort((left, right) => last(left) - last(right));
-    this.queue = [...needed, ...this.queue.filter((job) => !needed.includes(job))];
+    const running = this.running, missing = running?.component && !jobs.includes(running) && await this.unindexed(needed);
+    const paused = missing && this.running === running && running.pause && running.requestedAttempt === running.attempt && running.pausedAttempt !== running.attempt ? running : void 0;
+    if (paused) this.pauseJob(paused);
+    this.queue = [...needed, ...paused ? [paused] : [], ...this.queue.filter((job) => !needed.includes(job) && job !== paused)];
     this.pump();
     return jobs;
+  }
+  // Whether a component among the jobs has no index of any snapshot, neither in this process nor stored.
+  async unindexed(jobs) {
+    for (const job of jobs) if (job.component && job.status === "waiting" && !job.prepared && !job.structure && !(await this.published(job.directory))?.revision) return true;
+    return false;
+  }
+  // Ends the running job's current run at once as waiting, without a failure or a failed progress record, and stops its build as a stall does;
+  // a request that still completes may save its index, which the job's next run then reuses.
+  pauseJob(job) {
+    log.info("index_paused", { directory: job.directory, component: job.component?.identity, phase: job.progress?.phase });
+    job.pausedAttempt = job.attempt;
+    job.status = "waiting";
+    job.pause?.();
+    void Promise.resolve().then(() => this.store.stop()).catch((error) => log.warn("index_stop_failed", { directory: job.directory, ...errorFields(error) }));
   }
   // The preparation id of a component's content, which its progress records carry.
   componentPreparationId(directory, snapshot, assetIdentity) {
@@ -519,18 +557,36 @@ class NativeSemanticRuntime {
     }), structured = new Promise((resolve) => {
       publish = resolve;
     });
-    const job = { id, directory: location.directory, component, snapshot: snapshot.sourceFingerprint, status: "waiting", diagnostics: [], failure: null, promise, finish, structured, publish, freshness, live, read, run: async () => {
+    const job = { id, root: location.root, directory: location.directory, attempt: 0, component, snapshot: snapshot.sourceFingerprint, status: "waiting", diagnostics: [], failure: null, promise, finish, structured, publish, freshness, live, read, run: async () => {
+      const attempt = ++job.attempt;
       const recorder = job.recorder = new ProgressRecorder(location.directory, job.id);
       const started = privateDirectory(location.directory).then(() => recorder.start()).catch(() => {
       });
       const stalled = this.watch(job);
+      const paused = new Promise((_, reject) => {
+        job.pause = () => reject(pausedError());
+      });
+      paused.catch(() => {
+      });
       try {
-        job.prepared = await Promise.race([this.build(source, snapshot, location, job), stalled]);
+        job.prepared = await Promise.race([this.build(source, snapshot, location, job, attempt), stalled, paused]);
         if (job.freshness !== void 0) await writeFreshness(location.directory, job.snapshot, job.freshness);
         await started;
         await recorder.succeed();
         job.status = "ready";
       } catch (error) {
+        if (job.pausedAttempt === attempt) {
+          job.progress = void 0;
+          await started;
+          await recorder.succeed();
+          if (job.superseded && this.jobs.get(location.directory) !== job) {
+            this.queue = this.queue.filter((item) => item !== job);
+            this.stale(job);
+            return;
+          }
+          job.status = "waiting";
+          return;
+        }
         if (error.reloadMiss) {
           job.reload = false;
           job.progress = void 0;
@@ -587,6 +643,7 @@ class NativeSemanticRuntime {
       } finally {
         job.recorder = void 0;
         job.watchdog = void 0;
+        job.pause = void 0;
         clearTimeout(job.stallTimer);
       }
     } };
@@ -618,7 +675,7 @@ class NativeSemanticRuntime {
       log.info("index_finished", { directory: job.directory, component: job.component?.identity, status: job.status, ms: Math.round(performance.now() - started) });
       log.activity.delete("index");
       this.running = null;
-      if (!job.retry) job.finish();
+      if (!job.retry && job.status !== "waiting") job.finish();
       this.pump();
     });
   }
@@ -664,19 +721,27 @@ class NativeSemanticRuntime {
     job.progress = progress;
     job.recorder?.update(progress);
   }
-  async build(source, snapshot, location, job) {
+  // A run that was paused reports nothing more and sends no request, while a request it already sent may still save its index.
+  async build(source, snapshot, location, job, attempt = job.attempt) {
+    const report = (value, embedded) => {
+      if (job.attempt === attempt && job.pausedAttempt !== attempt) this.report(job, value, embedded);
+    };
+    const current = () => {
+      this.alive(job);
+      if (job.pausedAttempt === attempt) throw pausedError();
+    };
     await privateDirectory(this.directory);
-    const assets = job.assets ??= await this.assets((value) => this.report(job, value));
+    const assets = job.assets ??= await this.assets((value) => report(value));
     const directory = await privateDirectory(location.directory);
     const generation = path.join(directory, `generation-${snapshot.sourceFingerprint}-${assets.assetIdentity}.json`);
     await this.loadStructure(job, directory, generation, snapshot, assets);
     if (job.structureOnly && job.structure) return this.storedStructure(job, source);
-    const waiting = setTimeout(() => this.report(job, { phase: "waiting" }), 1e3);
+    const waiting = setTimeout(() => report({ phase: "waiting" }), 1e3);
     waiting.unref();
     try {
       return await withArtifactLock(directory, () => withFileLock(directory, async () => {
         clearTimeout(waiting);
-        this.alive(job);
+        current();
         let previous;
         try {
           let pointer = await optionalJson(generation);
@@ -713,9 +778,9 @@ class NativeSemanticRuntime {
         if (job.reload && this.running !== job) throw reloadMiss();
         const mirror = await privateDirectory(path.join(directory, `snapshot-${randomUUID()}`));
         try {
-          this.report(job, { phase: "snapshot-copy", current: 0, total: snapshot.files.length, unit: "files" });
+          report({ phase: "snapshot-copy", current: 0, total: snapshot.files.length, unit: "files" });
           for (const [index2, file] of snapshot.files.entries()) {
-            this.alive(job);
+            current();
             const target = path.resolve(mirror, file.file);
             if (!inside(mirror, target)) throw semanticError("invalid_path", "A snapshot path escapes its mirror.");
             await privateDirectory(path.dirname(target));
@@ -727,15 +792,16 @@ class NativeSemanticRuntime {
             } finally {
               await handle.close();
             }
-            this.report(job, { phase: "snapshot-copy", current: index2 + 1, total: snapshot.files.length, unit: "files" });
+            report({ phase: "snapshot-copy", current: index2 + 1, total: snapshot.files.length, unit: "files" });
           }
           await source.verifySnapshot();
-          this.alive(job);
+          current();
           let structureSaved = Promise.resolve();
           const structure = (token2) => {
             structureSaved = this.publishStructure(job, token2, directory, generation, snapshot, assets);
           };
           const structureOnly = Boolean(job.structureOnly);
+          job.requestedAttempt = attempt;
           const token = await this.store.build({
             runtime: assets.runtime,
             directory,
@@ -748,7 +814,7 @@ class NativeSemanticRuntime {
               fragmentsOnly: structureOnly
             },
             ...previous && !structureOnly ? { previous: { indexPath: previous.indexPath, revision: previous.revision } } : {}
-          }, (progress, embedded) => this.report(job, progress, embedded), structureOnly ? void 0 : structure);
+          }, (progress, embedded) => report(progress, embedded), structureOnly ? void 0 : structure);
           if (structureOnly) {
             try {
               this.alive(job);
@@ -758,9 +824,9 @@ class NativeSemanticRuntime {
               });
               throw error;
             }
-            return await this.saveStructureOnly(job, token, directory, generation, snapshot, assets);
+            return await this.saveStructureOnly(job, token, directory, generation, snapshot, assets, report);
           }
-          this.report(job, { phase: "saving" });
+          report({ phase: "saving" });
           await structureSaved;
           try {
             this.alive(job);
@@ -816,7 +882,7 @@ class NativeSemanticRuntime {
   }
   // Stores the result of a structure-only build as its content's structure-only index, unless a complete index of the same content is stored,
   // which then answers instead; unlike a structure that a full build publishes, a structure-only build fails when its index cannot be stored.
-  async saveStructureOnly(job, token, directory, generation, snapshot, assets) {
+  async saveStructureOnly(job, token, directory, generation, snapshot, assets, report = (value) => this.report(job, value)) {
     const existing = await optionalJson(generation).catch(() => null);
     if (existing?.revision && pointerStage(existing) === "complete" && /^[a-f\d]{64}$/.test(existing.revision)) {
       const indexPath2 = path.join(directory, `${existing.revision}.json`), index2 = await this.store.read(indexPath2, existing.revision).catch(() => void 0);
@@ -829,7 +895,7 @@ class NativeSemanticRuntime {
         return { ...assets, index: index2, indexPath: indexPath2, revision: existing.revision, stage: "complete" };
       }
     }
-    this.report(job, { phase: "saving" });
+    report({ phase: "saving" });
     const { revision, indexPath, index } = await this.store.saveStructure(token, { directory, assetIdentity: assets.assetIdentity, incomplete: !snapshot.complete });
     const coverage = coverageOf(index), builtAt = (/* @__PURE__ */ new Date()).toISOString();
     const pointerContents = JSON.stringify({ snapshot: index.snapshot, revision, stage: "structure", chunkerVersion: index.chunkerVersion, coverage, diagnostics: index.diagnostics, builtAt });

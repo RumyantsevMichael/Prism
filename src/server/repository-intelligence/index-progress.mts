@@ -29,6 +29,8 @@ export function processAlive(pid: number) {
 // So every operation on a file runs in one order, and a recorder whose file another recorder has since started is displaced and changes it no more:
 // a replaced build never writes or removes the record of a newer one.
 const shared = new Map<string, { owner?: ProgressRecorder; queue: Promise<void> }>();
+// The recorders of this process that started and have not finished, by storage directory, including one that another recorder displaced.
+const live = new Map<string, Set<ProgressRecorder>>();
 const sharedFile = (file: string) => { let state = shared.get(file); if (!state) shared.set(file, state = { queue: Promise.resolve() }); return state; };
 
 export class ProgressRecorder {
@@ -45,6 +47,8 @@ export class ProgressRecorder {
     this.record = { schemaVersion: 1, pid: process.pid, preparationId, state: "preparing", startedAt: at, updatedAt: at, progress: null, diagnostics: [] };
   }
   async start() {
+    if (!live.has(this.directory)) live.set(this.directory, new Set());
+    live.get(this.directory)!.add(this);
     const state = sharedFile(this.file);
     if (state.owner && state.owner !== this) { state.owner.displaced = true; state.owner.stop(); }
     state.owner = this;
@@ -76,6 +80,8 @@ export class ProgressRecorder {
   stop() { clearInterval(this.heartbeat); clearTimeout(this.trailing); this.trailing = undefined; }
   // Gives the file up once this recorder's last operation has run, so the next build of the directory owns it.
   release() {
+    live.get(this.directory)?.delete(this);
+    if (!live.get(this.directory)?.size) live.delete(this.directory);
     const state = shared.get(this.file);
     if (state?.owner === this) state.owner = undefined;
     if (state && !state.owner && state.queue === this.queue) shared.delete(this.file);
@@ -112,6 +118,16 @@ export async function readProgressRecords(directory: string): Promise<ProgressRe
     }
   }
   return records;
+}
+
+/**
+ * The preparation id of the build that another session runs in a storage directory: a live progress record of another process that is still preparing,
+ * or a recorder of this process other than `self` that has not finished, as another runtime in the same process has; null when there is none.
+ */
+export async function lockHolder(directory: string, self?: ProgressRecorder): Promise<string | null> {
+  for (const record of await readProgressRecords(directory)) if (record.pid !== process.pid && record.state === "preparing" && processAlive(record.pid)) return record.preparationId;
+  for (const recorder of live.get(directory) ?? []) if (recorder !== self) return recorder.record.preparationId;
+  return null;
 }
 
 function git(root: string, args: string[]): Promise<string | null> {

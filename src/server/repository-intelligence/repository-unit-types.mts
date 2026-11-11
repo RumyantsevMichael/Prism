@@ -23,13 +23,18 @@ export type IndexStage = "structure" | "complete";
 export interface PreparedIndex extends RuntimeAssets { index: IndexMetadata; indexPath: string; revision: string; stage?: IndexStage }
 // A component preparation names its component's identity, may wait in the queue, and records why it failed.
 // `structure` is the structure-only index of the preparation's content that its build published, while the preparation still embeds.
-export interface Preparation { status: "waiting" | "preparing" | "ready" | "degraded"; preparationId: string; snapshot: string; diagnostics: Diagnostic[]; prepared?: PreparedIndex; structure?: PreparedIndex; component?: string; failure?: ComponentFailure | null }
+// `waitingFor` names what a waiting preparation waits behind, and only a waiting preparation carries it.
+export interface Preparation { status: "waiting" | "preparing" | "ready" | "degraded"; preparationId: string; snapshot: string; diagnostics: Diagnostic[]; prepared?: PreparedIndex; structure?: PreparedIndex; component?: string; failure?: ComponentFailure | null; waitingFor?: WaitingFor }
+// The build a preparation waits behind: the build that runs in this process for `queue`, or, for `lock`, its own component, whose storage lock
+// another session holds, with that session's preparation id when its progress record names one.
+export interface WaitingFor { component: string; preparationId: string | null; reason: "queue" | "lock" }
 export interface ComponentFailure { code: string; message: string; phase?: string }
 // The component a runtime preparation indexes: its name, its identity <repository>/<component>, and its folder, "" for the root component.
 export interface IndexComponent { name: string; identity: string; folder: string }
 // How a component took part in a result: its up-to-date index answered, it waits or prepares, or its preparation failed.
 // `embeddings: "pending"` marks a component included from its structure-only index, which a search reads lexically.
-export interface ComponentState { component: string; folder: string; status: "included" | "waiting" | "preparing" | "failed"; indexRevision: string | null; failure: ComponentFailure | null; embeddings?: "pending" }
+// `waitingFor` is copied from a waiting preparation.
+export interface ComponentState { component: string; folder: string; status: "included" | "waiting" | "preparing" | "failed"; indexRevision: string | null; failure: ComponentFailure | null; embeddings?: "pending"; waitingFor?: WaitingFor }
 // `vectors` holds the embedding key and vector of each fragment embedded since the previous embedding value; Prism saves and strips them.
 export interface Progress { phase: string; current?: number; total?: number; file?: string; unit?: "bytes" | "files"; item?: number; items?: number; vectors?: [string, number[]][] }
 export interface BuildArguments { mirror: string; files: Pick<SourceFile, "file" | "hash">[]; snapshot: string; modelDirectory: string; modelIdentity: string; previousEmbeddings?: Record<string, number[]>; fragmentsOnly?: boolean }

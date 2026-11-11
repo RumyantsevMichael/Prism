@@ -6,14 +6,14 @@ import { mkdir, lstat, realpath, readdir, open, rename, rm, chmod, utimes } from
 import { fileURLToPath } from "node:url";
 import { withFileLock, withArtifactLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { errorFields, log } from "../log.mjs";
-import { ProgressRecorder, componentStorageKey, gitFingerprint, projectStorageKey, sameFingerprint, writeFreshness } from "./index-progress.mjs";
+import { ProgressRecorder, componentStorageKey, gitFingerprint, lockHolder, projectStorageKey, sameFingerprint, writeFreshness } from "./index-progress.mjs";
 import { assertSafeAncestors, regularBytes, semanticError } from "./native-files.mjs";
 import { publishedUnits, unitsFile } from "./index-files.mjs";
 import { Helper } from "./native-helper.mjs";
 import { LocalIndexStore, ThreadIndexStore } from "./index-store.mjs";
 import type { IndexStore } from "./index-store.mjs";
 import type { GitFingerprint } from "./index-progress.mjs";
-import type { NativeSource, SourceSnapshot, IndexMetadata, IndexStage, PreparedIndex, Preparation, PrepareOptions, Progress, Diagnostic, SearchFilters, ComponentRuntime, Counts, IndexComponent, ComponentFailure } from "./repository-unit-types.mjs";
+import type { NativeSource, SourceSnapshot, IndexMetadata, IndexStage, PreparedIndex, Preparation, PrepareOptions, Progress, Diagnostic, SearchFilters, ComponentRuntime, Counts, IndexComponent, ComponentFailure, WaitingFor } from "./repository-unit-types.mjs";
 
 export { assertSafeAncestors, regularBytes, semanticError } from "./native-files.mjs";
 export { publishedUnits, unitsFile } from "./index-files.mjs";
@@ -29,10 +29,11 @@ interface Coverage extends Counts { structurallyCoveredFiles: number; complete: 
 // `watchdog` restarts the stall period on each progress of the running job, and `stalled` is set once it fired.
 // `structure` is the structure-only index of the job's content, published by its build or stored by an earlier one, and `structured` settles once it is set.
 // `structureOnly` marks a job that builds with `fragmentsOnly`, embeds nothing, and ends ready with its structure-only index as `prepared`.
-interface Job { id: string; directory: string; component?: IndexComponent; snapshot: string; status: "waiting" | "preparing" | "ready" | "degraded"; diagnostics: Diagnostic[]; failure: ComponentFailure | null;
+// `attempt` counts the job's runs, `pausedAttempt` names the run that a call paused, `requestedAttempt` the run that sent its build request, and `pause` ends the current run as paused.
+interface Job { id: string; root: string; directory: string; component?: IndexComponent; snapshot: string; status: "waiting" | "preparing" | "ready" | "degraded"; diagnostics: Diagnostic[]; failure: ComponentFailure | null;
   promise: Promise<void>; finish: () => void; run: () => Promise<void>; prepared?: PreparedIndex; revision?: string; builtAt?: string; progress?: Progress; coverage?: Coverage; recorder?: ProgressRecorder; freshness?: GitFingerprint | null;
   live: boolean; read: number; retry?: NodeJS.Timeout; superseded?: boolean; assets?: Assets; reload?: boolean; requeue?: boolean; watchdog?: () => void; stallTimer?: NodeJS.Timeout; stalled?: boolean;
-  structure?: PreparedIndex; structured: Promise<void>; publish: () => void; structureOnly?: boolean }
+  structure?: PreparedIndex; structured: Promise<void>; publish: () => void; structureOnly?: boolean; attempt: number; pausedAttempt?: number; requestedAttempt?: number; pause?: () => void }
 interface Assets { runtime: string; modelDirectory: string; modelIdentity: string; assetIdentity: string }
 interface Location { root: string; directory: string }
 // `structureOnly` asks for the content's structure alone, as a scoped report asks for the components beside its paths.
@@ -73,6 +74,7 @@ export function stallDuration(ms: number) {
 // A value is progress when its phase, count, item, or file moved, or when it brought new vectors; a repeated heartbeat is not.
 const progressed = (previous: Progress | undefined, next: Progress, embedded: boolean) => embedded || !previous || previous.phase !== next.phase
   || previous.current !== next.current || previous.item !== next.item || previous.file !== next.file;
+const pausedError = () => Object.assign(semanticError("preparation_failed", "The index build was paused for a component that has no index."), { paused: true });
 const stalledError = (phase: string, ms: number) => Object.assign(semanticError("stalled", `The index build made no progress for ${stallDuration(ms)} during ${phase}.`), { stalled: true, phase });
 const pointerStage = (pointer: IndexPointer | null | undefined): IndexStage => pointer?.stage === "structure" ? "structure" : "complete";
 // The stage of the index that answers for a storage location: its job's complete index or published structure, else the published pointer's.
@@ -249,8 +251,8 @@ export class NativeSemanticRuntime implements ComponentRuntime {
     if (declaration) return this.componentStatus(location.root, componentSources(location.root, declaration), waitMs);
     const job = this.jobs.get(location.directory);
     if (waitMs && busy(job)) await boundedWait(job!.promise, waitMs);
-    const published = await this.published(location.directory);
-    return { status: job ? this.legacyStatus(job) : published?.snapshot ? "indexed" : "unprepared", preparationId: job?.id || null, stage: indexStage(job, published),
+    const published = await this.published(location.directory), waitingFor = await this.waitingFor(job);
+    return { status: job ? this.legacyStatus(job) : published?.snapshot ? "indexed" : "unprepared", preparationId: job?.id || null, ...(waitingFor ? { waitingFor } : {}), stage: indexStage(job, published),
       snapshot: job?.snapshot || published?.snapshot || null, indexRevision: job?.revision || job?.structure?.revision || published?.revision || null,
       progress: job?.progress || null, coverage: job?.coverage || published?.coverage || null,
       ...await this.statusFacts(job?.prepared?.index.chunkerVersion || published?.chunkerVersion || null),
@@ -277,7 +279,8 @@ export class NativeSemanticRuntime implements ComponentRuntime {
       const job = this.jobs.get(location.directory), published = await this.published(location.directory);
       const status = job ? job.status : published?.snapshot ? "indexed" : "unprepared", own = job ? job.diagnostics : published?.diagnostics || [];
       chunker ??= job?.prepared?.index.chunkerVersion || published?.chunkerVersion || null;
-      components.push({ component, folder, status, preparationId: job?.id || null, stage: indexStage(job, published), snapshot: job?.snapshot || published?.snapshot || null,
+      const waitingFor = await this.waitingFor(job);
+      components.push({ component, folder, status, preparationId: job?.id || null, ...(waitingFor ? { waitingFor } : {}), stage: indexStage(job, published), snapshot: job?.snapshot || published?.snapshot || null,
         indexRevision: job?.revision || job?.structure?.revision || published?.revision || null, builtAt: job?.builtAt || published?.builtAt || null,
         progress: job?.status === "preparing" && job.progress ? { ...job.progress, component } : null, coverage: job?.coverage || published?.coverage || null,
         failure: job?.status === "degraded" ? job.failure : null, diagnosticCount: own.length });
@@ -362,8 +365,24 @@ export class NativeSemanticRuntime implements ComponentRuntime {
     const jobs = await this.enqueue(entries, undefined, retryLimited);
     const pending = jobs.filter(busy);
     if (pending.length) await boundedWait(Promise.all(pending.map(job => this.awaited(job, options))).then(() => {}), Math.min(waitMs, 10000));
-    return jobs.map(job => ({ status: job.status, preparationId: job.id, snapshot: job.snapshot, diagnostics: job.diagnostics, prepared: job.prepared, ...this.structureOf(job, options),
-      component: job.component!.identity, failure: job.status === "degraded" ? job.failure : null }));
+    const waiting = await Promise.all(jobs.map(job => this.waitingFor(job)));
+    return jobs.map((job, index) => ({ status: job.status, preparationId: job.id, snapshot: job.snapshot, diagnostics: job.diagnostics, prepared: job.prepared, ...this.structureOf(job, options),
+      component: job.component!.identity, failure: job.status === "degraded" ? job.failure : null, ...(waiting[index] ? { waitingFor: waiting[index] } : {}) }));
+  }
+  // What a job waits behind: while it prepares with the phase `waiting`, the session that holds its storage lock; while it is queued, the build
+  // that runs in this process or, when none runs, a load beside it. None for a job that does not wait, or that has nothing to name.
+  async waitingFor(job: Job | undefined): Promise<WaitingFor | undefined> {
+    if (!job) return undefined;
+    if (job.status === "preparing" && job.progress?.phase === "waiting") return { component: await this.identity(job), preparationId: await lockHolder(job.directory, job.recorder), reason: "lock" };
+    if (job.status !== "waiting") return undefined;
+    const ahead = this.running ?? [...this.reloading][0];
+    return ahead && ahead !== job ? { component: await this.identity(ahead), preparationId: ahead.id, reason: "queue" } : undefined;
+  }
+  // A job's component identity; the one job of a repository without components names its root component.
+  async identity(job: Job) {
+    if (job.component) return job.component.identity;
+    const { rootIdentity } = await import("./component-indexes.mjs");
+    return rootIdentity(job.root);
   }
   // A job is shared by every call for the same content. A failed job is prepared again by the next call, except a component's job that reached
   // a native limit, which this process does not prepare again for the same content unless `retryLimited` asks for it.
@@ -403,13 +422,31 @@ export class NativeSemanticRuntime implements ComponentRuntime {
     }
     // A stored index loads at once. The builds this call needs move ahead of every waiting build that it does not need, in the order of the call,
     // except that the root component builds after the declared ones: it holds everything outside them, often a large documentation tree, and
-    // building it first would hold back every package queued with it. The running build is never interrupted.
+    // building it first would hold back every package queued with it. A needed component that has no index of any snapshot pauses a running build
+    // that the call does not need, which then waits directly after the needed builds and resumes from the embeddings it saved. A run that has not
+    // sent its build request yet checks assets, waits for a lock, or copies files, which is short or shared work, so it is not paused.
     for (const job of new Set(jobs)) if (job.reload && job.status === "waiting" && !job.retry) this.reload(job);
     const last = (job: Job) => job.component?.folder === "" ? 1 : 0;
     const needed = [...new Set(jobs.filter(job => job.status === "waiting" && !job.reload))].sort((left, right) => last(left) - last(right));
-    this.queue = [...needed, ...this.queue.filter(job => !needed.includes(job))];
+    const running = this.running, missing = running?.component && !jobs.includes(running) && await this.unindexed(needed);
+    const paused = missing && this.running === running && running!.pause && running!.requestedAttempt === running!.attempt && running!.pausedAttempt !== running!.attempt ? running! : undefined;
+    if (paused) this.pauseJob(paused);
+    this.queue = [...needed, ...(paused ? [paused] : []), ...this.queue.filter(job => !needed.includes(job) && job !== paused)];
     this.pump();
     return jobs;
+  }
+  // Whether a component among the jobs has no index of any snapshot, neither in this process nor stored.
+  async unindexed(jobs: Job[]) {
+    for (const job of jobs) if (job.component && job.status === "waiting" && !job.prepared && !job.structure && !(await this.published(job.directory))?.revision) return true;
+    return false;
+  }
+  // Ends the running job's current run at once as waiting, without a failure or a failed progress record, and stops its build as a stall does;
+  // a request that still completes may save its index, which the job's next run then reuses.
+  pauseJob(job: Job) {
+    log.info("index_paused", { directory: job.directory, component: job.component?.identity, phase: job.progress?.phase });
+    job.pausedAttempt = job.attempt; job.status = "waiting";
+    job.pause?.();
+    void Promise.resolve().then(() => this.store.stop()).catch(error => log.warn("index_stop_failed", { directory: job.directory, ...errorFields(error) }));
   }
   // The preparation id of a component's content, which its progress records carry.
   componentPreparationId(directory: string, snapshot: string, assetIdentity: string) { return sha(`${directory}\0${snapshot}\0${assetIdentity}`); }
@@ -455,19 +492,30 @@ export class NativeSemanticRuntime implements ComponentRuntime {
   job(source: NativeSource, snapshot: SourceSnapshot, location: Location, generationKey: string, id: string, freshness: GitFingerprint | null | undefined, component?: IndexComponent, live = true, read = 0): Job {
     let finish = () => {}, publish = () => {};
     const promise = new Promise<void>(resolve => { finish = resolve; }), structured = new Promise<void>(resolve => { publish = resolve; });
-    const job: Job = { id, directory: location.directory, component, snapshot: snapshot.sourceFingerprint, status: "waiting", diagnostics: [], failure: null, promise, finish, structured, publish, freshness, live, read, run: async () => {
+    const job: Job = { id, root: location.root, directory: location.directory, attempt: 0, component, snapshot: snapshot.sourceFingerprint, status: "waiting", diagnostics: [], failure: null, promise, finish, structured, publish, freshness, live, read, run: async () => {
       // Progress is reported to a file beside the index, so the review app can show builds that run in any session's process.
+      const attempt = ++job.attempt;
       const recorder = job.recorder = new ProgressRecorder(location.directory, job.id);
       const started = privateDirectory(location.directory).then(() => recorder.start()).catch(() => {});
       const stalled = this.watch(job);
+      const paused = new Promise<never>((_, reject) => { job.pause = () => reject(pausedError()); });
+      paused.catch(() => {});
       // A job's new status is set only once its progress record is final, so a caller that sees the job end never finds its record still being written.
       try {
-        // A stalled build fails at once, without waiting for its stopped request to end.
-        job.prepared = await Promise.race([this.build(source, snapshot, location, job), stalled]);
+        // A stalled or paused build ends at once, without waiting for its stopped request to end.
+        job.prepared = await Promise.race([this.build(source, snapshot, location, job, attempt), stalled, paused]);
         if (job.freshness !== undefined) await writeFreshness(location.directory, job.snapshot, job.freshness);
         await started; await recorder.succeed();
         job.status = "ready";
       } catch (error) {
+        // A paused run records no failure and leaves the job waiting in the queue, unless a newer read replaced the job meanwhile.
+        if (job.pausedAttempt === attempt) {
+          job.progress = undefined;
+          await started; await recorder.succeed();
+          if (job.superseded && this.jobs.get(location.directory) !== job) { this.queue = this.queue.filter(item => item !== job); this.stale(job); return; }
+          job.status = "waiting";
+          return;
+        }
         if (error.reloadMiss) {
           job.reload = false; job.progress = undefined;
           await started; await recorder.succeed();
@@ -506,7 +554,7 @@ export class NativeSemanticRuntime implements ComponentRuntime {
         await started; await recorder.fail(diagnostics);
         job.status = "degraded"; job.failure = { code, message: error.message }; job.diagnostics = diagnostics;
         if (component && code === "resource_limit") this.limited.set(generationKey, job);
-      } finally { job.recorder = undefined; job.watchdog = undefined; clearTimeout(job.stallTimer); }
+      } finally { job.recorder = undefined; job.watchdog = undefined; job.pause = undefined; clearTimeout(job.stallTimer); }
     } };
     this.generations.set(generationKey, job);
     // Each generation holds index metadata in memory, so forget the oldest finished ones of the same storage; their indexes stay reusable on disk.
@@ -526,7 +574,8 @@ export class NativeSemanticRuntime implements ComponentRuntime {
     void job.run().catch(() => {}).finally(() => {
       log.info("index_finished", { directory: job.directory, component: job.component?.identity, status: job.status, ms: Math.round(performance.now() - started) });
       log.activity.delete("index");
-      this.running = null; if (!job.retry) job.finish(); this.pump();
+      // A paused job waits in the queue again, so it finishes only after a later run.
+      this.running = null; if (!job.retry && job.status !== "waiting") job.finish(); this.pump();
     });
   }
   // Starts the stall period of a job that runs; the returned promise rejects with the stalled failure once the job makes no progress for that period.
@@ -564,22 +613,25 @@ export class NativeSemanticRuntime implements ComponentRuntime {
     job.progress = progress;
     job.recorder?.update(progress);
   }
-  async build(source: NativeSource, snapshot: SourceSnapshot, location: Location, job: Job): Promise<PreparedIndex> {
+  // A run that was paused reports nothing more and sends no request, while a request it already sent may still save its index.
+  async build(source: NativeSource, snapshot: SourceSnapshot, location: Location, job: Job, attempt = job.attempt): Promise<PreparedIndex> {
+    const report = (value: Progress, embedded?: boolean) => { if (job.attempt === attempt && job.pausedAttempt !== attempt) this.report(job, value, embedded); };
+    const current = () => { this.alive(job); if (job.pausedAttempt === attempt) throw pausedError(); };
     await privateDirectory(this.directory);
     // A component that waits for another session's lock keeps the assets it checked, so a later attempt does not hash the model files again.
-    const assets = job.assets ??= await this.assets(value => this.report(job, value));
+    const assets = job.assets ??= await this.assets(value => report(value));
     const directory = await privateDirectory(location.directory);
     const generation = path.join(directory, `generation-${snapshot.sourceFingerprint}-${assets.assetIdentity}.json`);
     // A structure that a build of this content stored, in this session or another, answers structure at once, also while another session holds the lock.
     await this.loadStructure(job, directory, generation, snapshot, assets);
     if (job.structureOnly && job.structure) return this.storedStructure(job, source);
     // Another session's build holds the project lock, so a wait longer than a moment is reported rather than shown as the last step.
-    const waiting = setTimeout(() => this.report(job, { phase: "waiting" }), 1000);
+    const waiting = setTimeout(() => report({ phase: "waiting" }), 1000);
     waiting.unref();
     try {
       return await withArtifactLock(directory, () => withFileLock(directory, async () => {
         clearTimeout(waiting);
-        this.alive(job);
+        current();
         let previous: { index: IndexMetadata; indexPath: string; revision: string } | undefined;
         try {
           // A structure-only index answers structure but is never reused as complete, and its fragments hold no embedding that a build could reuse.
@@ -611,9 +663,9 @@ export class NativeSemanticRuntime implements ComponentRuntime {
         if (job.reload && this.running !== job) throw reloadMiss();
         const mirror = await privateDirectory(path.join(directory, `snapshot-${randomUUID()}`));
         try {
-          this.report(job, { phase: "snapshot-copy", current: 0, total: snapshot.files.length, unit: "files" });
+          report({ phase: "snapshot-copy", current: 0, total: snapshot.files.length, unit: "files" });
           for (const [index, file] of snapshot.files.entries()) {
-            this.alive(job);
+            current();
             const target = path.resolve(mirror, file.file);
             if (!inside(mirror, target)) throw semanticError("invalid_path", "A snapshot path escapes its mirror.");
             await privateDirectory(path.dirname(target));
@@ -623,23 +675,24 @@ export class NativeSemanticRuntime implements ComponentRuntime {
               if (sha(bytes) !== file.hash) throw semanticError("stale_snapshot", "Source bytes changed while copying the snapshot.");
               await handle.writeFile(bytes);
             } finally { await handle.close(); }
-            this.report(job, { phase: "snapshot-copy", current: index + 1, total: snapshot.files.length, unit: "files" });
+            report({ phase: "snapshot-copy", current: index + 1, total: snapshot.files.length, unit: "files" });
           }
           await source.verifySnapshot();
-          this.alive(job);
+          current();
           // The structure is stored while the build goes on embedding, and the complete index is saved only after it, so the complete index replaces it.
           let structureSaved = Promise.resolve();
           const structure = (token: string) => { structureSaved = this.publishStructure(job, token, directory, generation, snapshot, assets); };
           // A structure-only build embeds nothing, so it reuses no embeddings and saves its whole result as the structure-only index.
           const structureOnly = Boolean(job.structureOnly);
+          job.requestedAttempt = attempt;
           const token = await this.store.build({ runtime: assets.runtime, directory, args: { mirror, files: snapshot.files.map(({ file, hash }) => ({ file, hash })),
             snapshot: snapshot.sourceFingerprint, modelDirectory: assets.modelDirectory, modelIdentity: assets.modelIdentity, fragmentsOnly: structureOnly },
-          ...(previous && !structureOnly ? { previous: { indexPath: previous.indexPath, revision: previous.revision } } : {}) }, (progress, embedded) => this.report(job, progress, embedded), structureOnly ? undefined : structure);
+          ...(previous && !structureOnly ? { previous: { indexPath: previous.indexPath, revision: previous.revision } } : {}) }, (progress, embedded) => report(progress, embedded), structureOnly ? undefined : structure);
           if (structureOnly) {
             try { this.alive(job); await source.verifySnapshot(); } catch (error) { await this.store.discard(token).catch(() => {}); throw error; }
-            return await this.saveStructureOnly(job, token, directory, generation, snapshot, assets);
+            return await this.saveStructureOnly(job, token, directory, generation, snapshot, assets, report);
           }
-          this.report(job, { phase: "saving" });
+          report({ phase: "saving" });
           await structureSaved;
           try { this.alive(job); await source.verifySnapshot(); } catch (error) { await this.store.discard(token).catch(() => {}); throw error; }
           // The structure-only index that this complete index replaces, which no pointer names once the complete pointers are written.
@@ -670,7 +723,7 @@ export class NativeSemanticRuntime implements ComponentRuntime {
   }
   // Stores the result of a structure-only build as its content's structure-only index, unless a complete index of the same content is stored,
   // which then answers instead; unlike a structure that a full build publishes, a structure-only build fails when its index cannot be stored.
-  async saveStructureOnly(job: Job, token: string, directory: string, generation: string, snapshot: SourceSnapshot, assets: Assets): Promise<PreparedIndex> {
+  async saveStructureOnly(job: Job, token: string, directory: string, generation: string, snapshot: SourceSnapshot, assets: Assets, report = (value: Progress) => this.report(job, value)): Promise<PreparedIndex> {
     const existing = await optionalJson(generation).catch(() => null);
     if (existing?.revision && pointerStage(existing) === "complete" && /^[a-f\d]{64}$/.test(existing.revision)) {
       const indexPath = path.join(directory, `${existing.revision}.json`), index = await this.store.read(indexPath, existing.revision).catch(() => undefined);
@@ -680,7 +733,7 @@ export class NativeSemanticRuntime implements ComponentRuntime {
         return { ...assets, index, indexPath, revision: existing.revision, stage: "complete" };
       }
     }
-    this.report(job, { phase: "saving" });
+    report({ phase: "saving" });
     const { revision, indexPath, index } = await this.store.saveStructure(token, { directory, assetIdentity: assets.assetIdentity, incomplete: !snapshot.complete });
     const coverage = coverageOf(index), builtAt = new Date().toISOString();
     const pointerContents = JSON.stringify({ snapshot: index.snapshot, revision, stage: "structure", chunkerVersion: index.chunkerVersion, coverage, diagnostics: index.diagnostics, builtAt });

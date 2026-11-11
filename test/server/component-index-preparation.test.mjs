@@ -85,7 +85,7 @@ test("clauses 3 and 4: a component is prepared again only when its own files cha
   assert.deepEqual((renamed.components ?? []).map((item) => item.component), ["shop/shop", "shop/net", "shop/app"]);
 });
 
-test("clause 5: a later call's waiting components move ahead of components that only an earlier call needs", async (t) => {
+test("clause 5: a later call's waiting components move ahead of components that only an earlier call needs, pausing a build it does not need for a component without an index", async (t) => {
   const { root, storage } = await project(t);
   const { runtime, control } = await fakeRuntime(storage);
   control.hold("packages/net/retry.ts");
@@ -103,10 +103,16 @@ test("clause 5: a later call's waiting components move ahead of components that 
   }
   assert.deepEqual((status.components ?? []).map((item) => [item.component, item.status]), [["root/root", "waiting"], ["root/net", "preparing"], ["root/app", "waiting"]]);
   // The root component builds after the declared ones, until a call that needs it moves it ahead of them.
+  // It has no index at all, so the call pauses the net build that it does not need, and the root component starts at once.
+  control.hold("README.md");
   const scoped = await search(root, runtime, { filters: { paths: ["README.md"] } }, 0);
-  assert.deepEqual((scoped.components ?? []).map((item) => [item.component, item.status]), [["root/root", "waiting"]]);
-  // The running preparation is never interrupted.
-  assert.deepEqual(built(control), [NET_FILES]);
+  assert.deepEqual((scoped.components ?? []).map((item) => item.component), ["root/root"]);
+  assert.ok(["waiting", "preparing"].includes(entry(scoped, "root/root")?.status));
+  await control.reached("README.md");
+  assert.deepEqual(built(control), [NET_FILES, ROOT_FILES]);
+  assert.equal(entry(await runtime.status(root), "root/net")?.status, "waiting");
+  // This helper has no stop, so the paused request goes on, and the index it saves is what the net component's next turn reuses.
+  control.release("README.md");
   control.release("packages/net/retry.ts");
   await settled(runtime, root);
   assert.deepEqual(built(control), [NET_FILES, ROOT_FILES, APP_FILES]);

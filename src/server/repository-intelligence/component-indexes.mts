@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { componentOf, listsComponents, readComponents } from "../workflow/components.mjs";
+import { componentOf, listComponents, listsComponents, readComponents } from "../workflow/components.mjs";
 import { NativeRepositoryIntelligence, RepositoryScan } from "./native-repository-intelligence.mjs";
 import { semanticError } from "./native-semantic-runtime.mjs";
 import { FUSION_OFFSET, fusionWeights } from "../../native-runtime/fusion.mjs";
@@ -25,6 +25,14 @@ export async function indexComponents(projectRoot: string): Promise<Declaration 
   try { config = await readWorkflowConfig(projectRoot); } catch { return null; }
   if (!listsComponents(config)) return null;
   return readComponents(config) as Declaration;
+}
+
+/** The identity of the project's root component, <repository>/<repository>, which names the one index of a repository without components. */
+export async function rootIdentity(projectRoot: string): Promise<string> {
+  let repository: string | null = null;
+  try { repository = listComponents(await readWorkflowConfig(projectRoot)).repository; } catch { /* An unreadable configuration names the default repository. */ }
+  repository ??= "root";
+  return `${repository}/${repository}`;
 }
 
 /** One source per component in component order: the root component first, then the declared components in declaration order. */
@@ -98,6 +106,7 @@ export function answeringPreparation(preparation: Preparation): Preparation {
 /**
  * How each selected component took part: included when its up-to-date index is ready, otherwise waiting, preparing, or failed.
  * A component included from a structure-only index carries `embeddings: "pending"`, and no other component carries `embeddings`.
+ * A waiting or preparing component carries the `waitingFor` of its preparation when it has one.
  */
 export function componentStates(selected: ComponentSource[], preparations: Preparation[]): ComponentState[] {
   return selected.map((entry, index) => {
@@ -105,7 +114,8 @@ export function componentStates(selected: ComponentSource[], preparations: Prepa
     const status = preparation.status === "ready" && preparation.prepared ? "included" : preparation.status === "degraded" ? "failed" : preparation.status === "waiting" ? "waiting" : "preparing";
     const failure = status !== "failed" ? null : preparation.failure ?? { code: preparation.diagnostics[0]?.code ?? "preparation_failed", message: preparation.diagnostics[0]?.message ?? "The component's preparation failed." };
     return { component: entry.component, folder: entry.folder, status, indexRevision: status === "included" ? preparation.prepared!.revision : null, failure,
-      ...(status === "included" && preparation.prepared!.stage === "structure" ? { embeddings: "pending" as const } : {}) };
+      ...(status === "included" && preparation.prepared!.stage === "structure" ? { embeddings: "pending" as const } : {}),
+      ...((status === "waiting" || status === "preparing") && preparation.waitingFor ? { waitingFor: preparation.waitingFor } : {}) };
   });
 }
 

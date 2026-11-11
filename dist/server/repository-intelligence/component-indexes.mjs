@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { componentOf, listsComponents, readComponents } from "../workflow/components.mjs";
+import { componentOf, listComponents, listsComponents, readComponents } from "../workflow/components.mjs";
 import { NativeRepositoryIntelligence, RepositoryScan } from "./native-repository-intelligence.mjs";
 import { semanticError } from "./native-semantic-runtime.mjs";
 import { FUSION_OFFSET, fusionWeights } from "../../native-runtime/fusion.mjs";
@@ -17,6 +17,15 @@ async function indexComponents(projectRoot) {
   }
   if (!listsComponents(config)) return null;
   return readComponents(config);
+}
+async function rootIdentity(projectRoot) {
+  let repository = null;
+  try {
+    repository = listComponents(await readWorkflowConfig(projectRoot)).repository;
+  } catch {
+  }
+  repository ??= "root";
+  return `${repository}/${repository}`;
 }
 function componentSources(root, declaration, options = {}) {
   const scan = new RepositoryScan();
@@ -83,7 +92,8 @@ function componentStates(selected, preparations) {
       status,
       indexRevision: status === "included" ? preparation.prepared.revision : null,
       failure,
-      ...status === "included" && preparation.prepared.stage === "structure" ? { embeddings: "pending" } : {}
+      ...status === "included" && preparation.prepared.stage === "structure" ? { embeddings: "pending" } : {},
+      ...(status === "waiting" || status === "preparing") && preparation.waitingFor ? { waitingFor: preparation.waitingFor } : {}
     };
   });
 }
@@ -210,6 +220,7 @@ export {
   componentStates,
   indexComponents,
   prepareComponents,
+  rootIdentity,
   searchComponents,
   selectComponents,
   selectedComponents,
