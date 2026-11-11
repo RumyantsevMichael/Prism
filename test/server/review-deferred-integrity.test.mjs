@@ -105,6 +105,31 @@ test("a resolve choice cannot replace the option the user chose in the review br
   assert.ok((await getReview(slice)).entries.every((finding) => finding.status === "OPEN"));
 });
 
+test("an answer the user gave for another slice or an earlier wave cannot be moved to defer this slice's findings", async (context) => {
+  const { root, slice, review } = await reviewed(context, LOW);
+  const gate = await ask(root, { slice: "other-slice" });
+  await answer(root, gate, "accept-deferred");
+  const replace = async (change, gateOperations) => {
+    const current = await readCoordinationState({ projectRoot: root, initiative: INITIATIVE });
+    const pending = current.state.pending.map((item) => item.id === gate ? change(item) : item);
+    return updateCoordinationState({ projectRoot: root, initiative: INITIATIVE, expectedRevision: current.revision, changes: { pending, ...(gateOperations ? { gateOperations } : {}) } });
+  };
+  const refused = (error) => error.code === "invalid_changes" && error.message.includes(gate);
+  const later = new Date(Date.now() + 60_000).toISOString();
+  await assert.rejects(replace((item) => ({ ...item, slice: INITIATIVE, askedAt: later })), refused, "moving the gate to this slice");
+  await assert.rejects(replace((item) => ({ ...item, askedAt: later })), refused, "refreshing when it was asked");
+  await assert.rejects(replace((item) => ({ ...item, question: "May the low findings be deferred?" })), refused, "rewording the question");
+  await assert.rejects(replace((item) => ({ ...item, options: item.options.map((option) => ({ ...option, label: `${option.label}.` })) })), refused, "rewording the options");
+  await assert.rejects(replace(({ answer: _answer, ...item }) => item), refused, "removing the answer");
+  await assert.rejects(replace((item) => ({ ...item, slice: INITIATIVE }), [{ op: "resolve", id: gate }]), refused, "moving and resolving in one change");
+  // The gate as it stands, with its fields in another order, is no change.
+  await replace((item) => Object.fromEntries(Object.entries(item).reverse()));
+  const stored = (await readCoordinationState({ projectRoot: root, initiative: INITIATIVE })).state.pending.find((item) => item.id === gate);
+  assert.equal(stored.slice, "other-slice");
+  await assert.rejects(review(coordinator, [deferAll(gate)]), (error) => error.code === "deferral_refused" && error.problems.some((problem) => problem.code === "gate_invalid"));
+  assert.ok((await getReview(slice)).entries.every((finding) => finding.status === "OPEN"));
+});
+
 test("a stored deferral that accept_wave could not have written is refused by every reader and writer of the review", async (context) => {
   const forgeries = {
     "a high finding": (finding) => { finding.severity = "high"; },

@@ -571,6 +571,18 @@ function applyGateOperations(pending, operations) {
   return { pending: next, opened, closed };
 }
 
+// The user answered the question as it was asked, so a replacement pending list keeps an answered gate exactly as it stands:
+// moving it to another slice, refreshing when it was asked, or rewording its question or options would reuse the answer for a question the user never saw.
+function assertAnsweredGatesUnchanged(before, replacement) {
+  if (replacement === undefined) return;
+  const answered = new Map(before.filter((gate) => isRecord(gate) && gate.answer !== undefined).map((gate) => [gate.id, canonicalJson(gate)]));
+  for (const gate of replacement.filter(isRecord)) {
+    if (answered.has(gate.id) && answered.get(gate.id) !== canonicalJson(gate)) {
+      throw error("invalid_changes", `The user gate ${gate.id} has an answer, so the pending list must keep it unchanged; drop it or resolve it instead.`);
+    }
+  }
+}
+
 // Only the review browser records answers, so agent updates may keep an answer but never add or change one.
 function assertAnswersUnchanged(before, after) {
   const previous = new Map(before.filter(isRecord).map((gate) => [gate.id, JSON.stringify(gate.answer ?? null)]));
@@ -1003,6 +1015,7 @@ async function applyStateChange(resolved, expectedRevision, changes) {
     if (changes.active !== undefined && JSON.stringify(changes.active) !== JSON.stringify(before.active)) throw error("gate_blocked", "Use typed activeOperations to change active work; array replacement cannot bypass review gates.");
     return withReviewGatesLocked(resolved.root, resolved.initiative, before.active, changes.activeOperations ?? [], async () => {
     const activeResult = await applyActiveOperations(resolved.root, resolved.initiative, before.active, changes.activeOperations ?? []);
+    assertAnsweredGatesUnchanged(before.pending, changes.pending);
     const dropped = droppedGates(before.pending, changes.pending);
     const gateResult = applyGateOperations(changes.pending ?? before.pending, changes.gateOperations ?? []);
     assertAnswersUnchanged(before.pending, gateResult.pending);
