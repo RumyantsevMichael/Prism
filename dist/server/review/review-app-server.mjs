@@ -310,13 +310,17 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
   // An added workspace that no registered checkout serves, as { id, kind, identity, root }, or null.
   const storeOnlyView = (id) => workspaces.has(id) ? null : workspaceViews().find((view) => view.id === id && view.root === null) ?? null;
 
-  // The checkouts on this machine that name a workspace's store: its registered checkouts, then the machine's checkout list entries of its store folder.
+  // The checkouts on this machine that name a workspace's store, each as { path, url } with the store URL its configuration names:
+  // its registered checkouts, then the machine's checkout list entries of its store folder.
   async function checkoutsNaming(identity) {
     const id = storeWorkspaceId(identity);
     const registered = [...projects.values()].filter((project) => project.workspaceId === id).map((project) => project.root);
     const folder = await storeFolder(identity);
     const listed = (await listMachineCheckouts().catch(() => [])).filter((entry) => entry.store === folder).map((entry) => entry.path);
-    return [...new Set([...registered, ...listed])];
+    return Promise.all([...new Set([...registered, ...listed])].map(async (root) => {
+      const found = await checkoutWorkspace(root).catch(() => null);
+      return { path: root, url: found?.identity === identity ? found.url : null };
+    }));
   }
 
   // The network stores this machine keeps for a workspace, which an added store joins when it shares their root commit.
@@ -387,6 +391,11 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     if (rest === "/" || rest === "/review") {
       addedUsage.set(view.id, ++sequence);
       await servePageRoute(request, response, rest);
+      return;
+    }
+    // The tab that lands here with a write grant exchanges it as on a checkout's page, so it can add and remove workspaces.
+    if (rest === "/api/write-session" && request.method === "POST") {
+      await exchangeWriteGrant(request, response, writeSessions);
       return;
     }
     if (rest !== "/api/workspaces" && await servePageRoute(request, response, rest)) return;

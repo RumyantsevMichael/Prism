@@ -112,7 +112,7 @@ export async function createAddedWorkspaces({ directory, storesDirectory = () =>
       if (!identity) throw fail(400, "url_invalid", "That is no store address: give an HTTPS or SSH URL, a host:path address, or the absolute path of a folder.");
       // A spelling that an earlier add merged into another workspace answers that workspace again without cloning.
       for (const entry of entries) {
-        if (entry.identity === identity) continue;
+        if (entry.identity === identity || plaintext(entry.identity) !== plaintext(identity)) continue;
         for (const known of entry.urls) {
           if (await storeIdentity(known) === identity) {
             await remember(entry.identity, url);
@@ -134,8 +134,9 @@ export async function createAddedWorkspaces({ directory, storesDirectory = () =>
       if (cloned.cloned) {
         const roots = await rootCommits(cloned.base);
         if (roots.size) {
-          // A plaintext identity never takes in another spelling, since its clone's origin is reached without encryption.
-          for (const kept of await keptStores()) {
+          // A plaintext store never joins another workspace, and a plaintext identity never takes in another spelling,
+          // since a plaintext clone's origin is reached without encryption and so never shares a workspace with an encrypted one.
+          for (const kept of plaintext(identity) ? [] : await keptStores()) {
             if (kept.identity === identity || plaintext(kept.identity) || kept.identity.startsWith("file:") || !(await exists(kept.folder))) continue;
             const theirs = await rootCommits(kept.folder);
             if (![...roots].some((root) => theirs.has(root))) continue;
@@ -151,7 +152,7 @@ export async function createAddedWorkspaces({ directory, storesDirectory = () =>
   }
 
   /**
-   * Remove an added workspace by id. checkoutsNaming(identity) lists the checkouts on this machine that name its store.
+   * Remove an added workspace by id. checkoutsNaming(identity) lists the checkouts on this machine that name its store, each as { path, url } with the URL it names the store by.
    * The clone is deleted only when none does, and it holds no commit its upstream lacks, no store file that differs from its commit, and no saved conflict copy.
    */
   function remove(id, { checkoutsNaming = async () => [] } = {}) {
@@ -167,7 +168,8 @@ export async function createAddedWorkspaces({ directory, storesDirectory = () =>
   async function settleClone(entry, checkouts) {
     const label = remoteLabel(entry.urls[0]) ?? entry.identity;
     if (entry.identity.startsWith("file:")) return { clone: "kept", message: `The store is the folder ${entry.identity.slice("file:".length)}, which Prism never deletes.` };
-    if (checkouts.length) return { clone: "kept", message: `The store's clone stays because the checkout ${checkouts[0]} names ${label}.` };
+    // The checkout is quoted with its own spelling of the store, which after a merge is not the spelling the workspace was added by.
+    if (checkouts.length) return { clone: "kept", message: `The store's clone stays because the checkout ${checkouts[0].path} names ${checkouts[0].url ? remoteLabel(checkouts[0].url) ?? checkouts[0].url : "this store"}.` };
     const folder = cloneFolder(entry.identity);
     if (!(await exists(folder))) return { clone: "deleted", message: `The workspace of ${label} is removed, and this machine kept no clone of it.` };
     // A folder that is no clone of this store, or one with work its upstream lacks, is left without even taking its lock.
