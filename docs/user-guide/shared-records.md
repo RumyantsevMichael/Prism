@@ -38,11 +38,15 @@ A `file://` URL or a folder path has the identity of the folder's real path.
 The application folder is `~/Library/Application Support/Prism` on macOS, `%LOCALAPPDATA%\Prism` on Windows, and `$XDG_STATE_HOME/prism` or `~/.local/state/prism` elsewhere, and `PRISM_REVIEW_APP_DIR` overrides it.
 The access waits for the clone, and every later access on the machine uses it.
 Every checkout, worktree, and host on the machine whose configuration names the same store shares that one clone, whatever spelling of it each one uses, so Claude Code and Codex read and write the same clone.
+The clone never syncs over an unencrypted `http://` or `git://` URL once any access names the store with an encrypted spelling (`https://`, `ssh://`, or the scp form).
+An access with an encrypted spelling that finds the clone's origin unencrypted sets the origin to its own URL before any fetch or push, and an access with an unencrypted spelling keeps an encrypted origin as it is.
+Between two encrypted spellings the clone keeps the origin it has.
 Prism 0.20 and earlier named the clone after the spelling instead, so an HTTPS and an SSH spelling of one store had a clone each.
 On the first record access, a clone that Prism 0.20 named for the configured spelling moves to its new folder with any commit it has not pushed yet, when its origin names the same store and no clone is at the new folder yet.
 A clone already at the new folder is used as before, and the old folder stays untouched, so move any unpushed commit from it yourself before you delete it.
 While a sync of the old clone is running, or when the move fails, for example because another program has a file open in that folder, the access is refused with `store_unavailable` naming the old folder, Prism makes no new clone, and the next access tries the move again.
-A clone that Prism 0.16 made under a host's plugin data directory moves to the application folder on the first record access in the same way.
+A clone that Prism 0.16 made under a host's plugin data directory moves to the application folder on the first record access in the same way, and is copied instead when the two folders sit on different file systems.
+When that move or copy fails, or a sync of the old clone is running, the access is refused with `store_unavailable` naming the old folder, Prism makes no new clone, the old clone keeps its files and commits, and the next access tries again.
 Store sync is on by default for a remote store, so Prism keeps the clone in step with the remote without you running Git in it:
 
 - A few seconds after a record write, Prism commits the change, merges the remote's branch, and pushes.

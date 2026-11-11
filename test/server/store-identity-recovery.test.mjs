@@ -4,9 +4,9 @@ import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:f
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { exists, git, isolateGit, networkStore } from "./fixtures/workspace-view.mjs";
+import { alias, exists, git, isolateGit, networkStore } from "./fixtures/workspace-view.mjs";
 
-// Store identity beyond the frozen tests: Git remote-helper values, percent-encoded paths, and a 0.20 clone that cannot move yet.
+// Store identity beyond the frozen tests: Git remote-helper values, percent-encoded paths, earlier clones that cannot move yet, and plaintext spellings of a store.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 const { isRemoteStore, legacyStoreId, managedStoreId, storeIdentity } = await import("../../dist/server/workflow/remote-url.mjs");
@@ -25,8 +25,8 @@ async function place(context) {
 }
 
 // A clone at the folder that Prism 0.20 named for the store's URL, holding one commit that its remote does not have.
-async function earlierClone(where, store) {
-  const old = path.join(where.stores, legacyStoreId(store.url));
+async function earlierClone(where, store, folder = where.stores) {
+  const old = path.join(folder, legacyStoreId(store.url));
   git(where.parent, "clone", "-q", store.bare, old);
   git(old, "remote", "set-url", "origin", store.url);
   await writeFile(path.join(old, "LOCAL.md"), "kept\n");
@@ -102,4 +102,57 @@ test("a 0.20 clone whose sync lock is held stays in place until the lock is free
   await managedRecordStore(where.root, store.url, unavailable);
   assert.equal(await exists(old), false);
   assert.doesNotThrow(() => git(target, "cat-file", "-e", `${unpushed}^{commit}`));
+});
+
+test("a failed move of a 0.16 clone makes no new clone, and a later access moves it", async (context) => {
+  const where = await place(context);
+  const store = await networkStore(where);
+  const data = path.join(where.parent, "plugin-data");
+  await mkdir(path.join(data, "stores"), { recursive: true });
+  const before = process.env.PLUGIN_DATA;
+  process.env.PLUGIN_DATA = data;
+  context.after(() => { if (before === undefined) delete process.env.PLUGIN_DATA; else process.env.PLUGIN_DATA = before; });
+  const { old, unpushed, target } = await earlierClone(where, store, path.join(data, "stores"));
+  const failing = async () => { throw Object.assign(new Error("permission denied"), { code: "EPERM" }); };
+  await assert.rejects(managedRecordStore(where.root, store.url, unavailable, { renameFolder: failing }), (error) => {
+    assert.equal(error.code, "store_unavailable");
+    assert.ok(error.message.includes(old), error.message);
+    return true;
+  });
+  assert.equal(await exists(target), false, "no clone is made at the new folder");
+  assert.equal(git(old, "rev-parse", "HEAD"), unpushed, "the old folder keeps its commit");
+  assert.equal(await exists(path.join(old, ".prism-sync", "sync.lock")), false, "the old folder's sync lock is released");
+  await managedRecordStore(where.root, store.url, unavailable);
+  assert.equal(await exists(old), false);
+  assert.doesNotThrow(() => git(target, "cat-file", "-e", `${unpushed}^{commit}`));
+});
+
+// The http:// spelling of a network store, reaching the same remote.
+function plaintextSpelling(store) {
+  const url = store.url.replace(/^https:/, "http:");
+  alias(url, store.bare);
+  return url;
+}
+
+test("an https access to a clone made from the http:// spelling syncs through the https URL", async (context) => {
+  const where = await place(context);
+  const store = await networkStore(where);
+  const http = plaintextSpelling(store);
+  const base = await managedRecordStore(where.root, http, unavailable);
+  assert.equal(git(base, "config", "--get", "remote.origin.url"), http, "the plaintext access clones through its own spelling");
+  assert.equal(await managedRecordStore(where.root, store.url, unavailable), base, "both spellings share one clone");
+  assert.equal(git(base, "config", "--get", "remote.origin.url"), store.url);
+  assert.equal(await managedRecordStore(where.root, http, unavailable), base);
+  assert.equal(git(base, "config", "--get", "remote.origin.url"), store.url, "a later plaintext access keeps the encrypted origin");
+});
+
+test("a plaintext access to a clone made from the https spelling keeps the https origin", async (context) => {
+  const where = await place(context);
+  const store = await networkStore(where);
+  const http = plaintextSpelling(store);
+  const base = await managedRecordStore(where.root, store.url, unavailable);
+  for (const value of [http, http.replace(/^http:/, "git:")]) {
+    assert.equal(await managedRecordStore(where.root, value, unavailable), base, value);
+    assert.equal(git(base, "config", "--get", "remote.origin.url"), store.url, value);
+  }
 });

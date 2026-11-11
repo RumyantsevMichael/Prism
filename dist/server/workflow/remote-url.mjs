@@ -33,6 +33,14 @@ export function isRemoteStore(value) {
   return typeof value === "string" && (STORE_URL.test(value) || STORE_SCP.test(value));
 }
 
+/** Whether a remote store value reaches its remote over an encrypted transport (https://, ssh://, or the scp form), over plaintext (http://, git://), or names no network remote (null). */
+export function storeTransport(value) {
+  if (typeof value !== "string") return null;
+  if (/^(?:http|git):\/\//i.test(value)) return "plaintext";
+  if (/^(?:https|ssh):\/\//i.test(value)) return "encrypted";
+  return !STORE_URL.test(value) && STORE_SCP.test(value) ? "encrypted" : null;
+}
+
 // The remote as messages may name it: scheme, host, and path, never user information, query, or fragment.
 function remoteParts(value) {
   if (!isRemoteStore(value)) return null;

@@ -4,7 +4,7 @@ import path from "node:path";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { gitTransportPath } from "./git-local-repository.mjs";
 import { describeOversizedEntry, describeUnsafeEntry, gitTimeoutMs, gitTooOld, gitUrlText, helperForRepository, localRemoteRepository, markManagedStore, moveUnderSyncLock, oversizedStoreEntry, runGit, unsafeStoreEntry, writeCommitFiles } from "./record-store-sync.mjs";
-import { legacyStoreId, legacyStoresDirectory, managedStoreId, managedStoresDirectory, remoteLabel, storeIdentity, withoutCredentials } from "./remote-url.mjs";
+import { legacyStoreId, legacyStoresDirectory, managedStoreId, managedStoresDirectory, remoteLabel, storeIdentity, storeTransport, withoutCredentials } from "./remote-url.mjs";
 
 // A record store named by its remote lives in a clone Prism keeps in its application folder, one per store identity, shared by every checkout and host that names any spelling of it.
 // Prism creates that clone because no checkout owns it, and never changes, replaces, or deletes a folder it finds there.
@@ -56,15 +56,11 @@ async function sweepAbandoned(directory, id) {
   }
 }
 
-// Prism 0.20 named a clone after its configured spelling; the first access with no clone at the identity's folder renames that folder, so its unpushed commits stay.
-// Only the top of a Git clone whose origin has the same store identity moves, and a folder already at the new path leaves the old one untouched.
-// The rename holds the old folder's sync lock, so no sync there loses its folder midway, and when that lock is held or the rename fails the access refuses and makes no clone,
+// Move a clone that an earlier Prism made at source to target, so its unpushed commits stay.
+// Only the top of a Git clone whose origin has the configured store's identity moves, and a folder already at the new path leaves the old one untouched.
+// The move holds the old folder's sync lock, so no sync there loses its folder midway, and when that lock is held or the move fails the access refuses and makes no clone,
 // so the old folder keeps its commits and a later access moves it.
-async function renameSpellingClone(directory, target, configured, unavailable, renameFolder) {
-  const old = legacyStoreId(configured);
-  if (!old) return;
-  const source = path.join(directory, old);
-  if (source === target) return;
+async function moveEarlierClone(source, target, configured, unavailable, move) {
   const identity = await storeIdentity(configured);
   const qualifies = async () => {
     if (!(await exists(source)) || await exists(target)) return false;
@@ -77,28 +73,57 @@ async function renameSpellingClone(directory, target, configured, unavailable, r
   if (!(await qualifies())) return;
   const kept = `Its clone from an earlier Prism version at ${source} keeps its files and commits`;
   try {
-    await moveUnderSyncLock(source, target, qualifies, renameFolder);
+    await moveUnderSyncLock(source, target, qualifies, move);
   } catch (error) {
     if (error.code === "lock_timeout") throw unavailable(`${kept}, and a sync of that clone is still running; try again when it finishes.`);
     throw unavailable(`${kept}, and Prism could not move it to ${target}${error.code ? ` (${error.code})` : ""}; close any program that uses that folder and try again.`);
   }
 }
 
-// Prism 0.16 kept clones under each host's plugin data directory, named as 0.20 named them; the first access here moves that clone, so commits it has not pushed yet stay.
-// A copy replaces the move when the two folders sit on different file systems, and a folder there with another origin stays where it is.
-async function moveLegacyClone(directory, target, configured) {
+// Prism 0.20 named a clone after its configured spelling; the first access with no clone at the identity's folder renames that folder.
+async function renameSpellingClone(directory, target, configured, unavailable, renameFolder) {
+  const old = legacyStoreId(configured);
+  if (!old) return;
+  const source = path.join(directory, old);
+  if (source === target) return;
+  await moveEarlierClone(source, target, configured, unavailable, renameFolder);
+}
+
+// Prism 0.16 kept clones under each host's plugin data directory, named as 0.20 named them; the first access here moves that clone the same way.
+// A copy replaces the move when the two folders sit on different file systems, and a copy that fails leaves nothing at the new path.
+async function moveLegacyClone(directory, target, configured, unavailable, renameFolder) {
   const legacy = legacyStoresDirectory();
   const old = legacyStoreId(configured);
   if (!legacy || !old || path.resolve(legacy) === path.resolve(directory)) return;
-  const source = path.join(legacy, old);
-  if (!(await exists(source)) || await exists(target)) return;
-  if (!(await originIs(source, await storeIdentity(configured)))) return;
-  try {
-    await rename(source, target);
-  } catch (error) {
-    if (error.code !== "EXDEV") return;
-    await cp(source, target, { recursive: true, verbatimSymlinks: true, errorOnExist: true }).catch(() => rm(target, { recursive: true, force: true }));
-  }
+  const move = async (source, destination) => {
+    try {
+      await renameFolder(source, destination);
+    } catch (error) {
+      if (error.code !== "EXDEV") throw error;
+      try {
+        await cp(source, destination, { recursive: true, verbatimSymlinks: true, errorOnExist: true });
+      } catch (copyError) {
+        await rm(destination, { recursive: true, force: true });
+        throw copyError;
+      }
+    }
+  };
+  await moveEarlierClone(path.join(legacy, old), target, configured, unavailable, move);
+}
+
+// A shared clone never fetches or pushes over a plaintext transport (http://, git://) when an access names the store with an encrypted spelling (https://, ssh://, scp):
+// such an access sets a plaintext origin to its own URL before any sync, and a plaintext access, or another encrypted spelling, keeps the origin there.
+async function encryptedOrigin(base, configured, unavailable) {
+  if (storeTransport(configured) !== "encrypted") return;
+  const plaintext = async () => {
+    const origin = await runGit(base, ["config", "--local", "--get", "remote.origin.url"]);
+    return origin.ok && storeTransport(origin.text) === "plaintext" ? origin.text : null;
+  };
+  const origin = await plaintext();
+  if (!origin) return;
+  const set = await runGit(base, ["config", "--local", "remote.origin.url", configured]);
+  // Another access may have set it at the same moment, so only an origin that is still plaintext refuses.
+  if (!set.ok && await plaintext()) throw unavailable(`Its clone at ${base} has the unencrypted origin ${remoteLabel(origin) ?? "of another spelling"}, and Git could not set it to ${remoteLabel(configured) ?? "the configured remote"}: ${withoutCredentials(set.stderr)}`);
 }
 
 // The origin URL that git clone records for a remote: a local path made absolute from the folder the clone ran in, as clone's absolute_pathdup does, or the URL as it is.
@@ -121,7 +146,7 @@ async function cloneOnce(directory, id, target, configured, unavailable, renameF
     const again = await adopt(target, configured, unavailable);
     if (again) return again;
     await renameSpellingClone(directory, target, configured, unavailable, renameFolder);
-    await moveLegacyClone(directory, target, configured);
+    await moveLegacyClone(directory, target, configured, unavailable, renameFolder);
     const moved = await adopt(target, configured, unavailable);
     if (moved) return moved;
     await sweepAbandoned(directory, id);
@@ -168,7 +193,7 @@ async function cloneOnce(directory, id, target, configured, unavailable, renameF
 /**
  * The folder of a remote store's managed clone, cloned on first use and reused by every later access in this process.
  * makeUnavailable(message, remote) builds the store_unavailable error, so every refusal names the remote without its user information.
- * renameFolder moves a clone that an earlier Prism named, and tests pass one that fails.
+ * renameFolder moves a clone that an earlier Prism made, and tests pass one that fails.
  */
 export async function managedRecordStore(projectRoot, configured, makeUnavailable, { renameFolder = rename } = {}) {
   const label = remoteLabel(configured);
@@ -182,7 +207,7 @@ export async function managedRecordStore(projectRoot, configured, makeUnavailabl
   const target = path.join(directory, id);
   const cached = clones.get(target);
   // A clone that disappeared since it was cached is looked for again, so the access reports what is there now.
-  if (cached && (!cached.done || await exists(target))) return cached.pending;
+  if (cached && (!cached.done || await exists(target))) return withEncryptedOrigin(cached.pending, configured, unavailable);
   const entry = { done: false };
   entry.pending = cloneOnce(directory, id, target, configured, unavailable, renameFolder).then((base) => {
     entry.done = true;
@@ -194,5 +219,12 @@ export async function managedRecordStore(projectRoot, configured, makeUnavailabl
     throw error;
   });
   clones.set(target, entry);
-  return entry.pending;
+  return withEncryptedOrigin(entry.pending, configured, unavailable);
+}
+
+// Every access checks the origin, since another access may have made the clone or set its origin since.
+async function withEncryptedOrigin(pending, configured, unavailable) {
+  const base = await pending;
+  await encryptedOrigin(base, configured, unavailable);
+  return base;
 }
