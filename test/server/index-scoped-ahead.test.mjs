@@ -77,10 +77,13 @@ test("clause 20: a call whose components all have a stored index waits its turn 
 test("clause 20: a call that needs the running component does not pause it", async (t) => {
   const { root, runtime, control } = await runningNet(t);
   const scoped = await search(root, runtime, ["packages/net"], 100);
-  assert.equal(entry(scoped, "root/net").status, "preparing");
-  assert.equal(control.stops, 0);
+  assert.equal(entry(scoped, "root/net").status, "included", "the running build's published structure answers the call, as clause 18 states");
+  assert.equal(entry(scoped, "root/net").embeddings, "pending");
+  assert.equal(entry(await runtime.status(root), "root/net").status, "preparing", "the running build goes on embedding");
+  assert.equal(control.stops, 0, "the running build's helper is not stopped");
   control.release("packages/net/timeout.ts");
   await settled(runtime, root);
+  assert.equal(built(control).filter((files) => files.join() === NET_FILES.join()).length, 1, "the net build ran once, without a pause and a resumed run");
 });
 
 test("clause 21: a component waiting in this process's queue names the build it waits behind, in the status and in results", async (t) => {

@@ -66,7 +66,9 @@ Michael delegated every internal decision for this initiative, so design settled
 
 ### Scoped calls ahead of unrelated builds
 
-20. When a call prepares components and one of them has no stored index of any snapshot and no running build, while this process runs a build of a component that the call did not ask for, Prism pauses that build at once.
+20. When a call prepares components and one of them has no stored index of any snapshot and no running build, while this process runs a build of a component that the call did not ask for and that build has sent its build request to the runtime, Prism pauses that build at once.
+    - A build that has not sent its build request yet, while it checks assets, waits for a storage lock, or copies the snapshot, is not paused, and the components that the call asked for start directly after it.
+    - A call that asks for the component of the running build never pauses that build, and while the build embeds after it published structure, that component answers as clauses 16 and 18 state.
     - A paused build is stopped as clause 4 states, records no failure and no failed progress record, reports `waiting`, and is queued directly after the components that the call asked for, which start at once in the order that today's queue gives them.
     - A paused build resumes from its saved embeddings when its turn comes, and when the paused request still completes, its index may be used.
 21. A component whose preparation waits carries `waitingFor` in its `components` entry of a status and of a result, and a repository without components carries it at the top of its status while its one build waits; no other entry carries it.
