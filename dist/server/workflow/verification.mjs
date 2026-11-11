@@ -552,7 +552,7 @@ async function awaitJob(jobKey, signature, start, { signal, onProgress, maxWaitM
 }
 
 // Reported defects are kept as a run entry, which outlives the initiative record, and block the slice until design revises the contract.
-async function reportContractDefects(root, initiative, slice, design, defects) {
+export async function reportContractDefects(root, initiative, slice, design, defects) {
   const id = `contract-defect-${String(Date.now()).padStart(15, "0")}-${randomBytes(3).toString("hex")}`;
   // A defect report hashes no work tree, so its checkout leaves dirty unknown.
   const checkout = await checkoutOf(root, await readWorkflowConfig(root)).catch(() => null);
