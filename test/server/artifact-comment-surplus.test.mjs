@@ -100,10 +100,14 @@ for (const [how, race] of [
     let release;
     const held = withFileLock(path.join(b, "artifacts"), () => new Promise((resolve) => { release = resolve; }));
     await new Promise((resolve) => setTimeout(resolve, 50));
-    setTimeout(() => release(), 1500);
-    const synced = await syncRecordStoreNow(b);
+    const head = git(b, "rev-parse", "HEAD");
+    // The sync that finds the lock busy commits, merges, and pushes nothing, so the comment stays on disk for the next sync, which merges it.
+    const busy = await syncRecordStoreNow(b);
+    release();
     await held;
-    return synced;
+    assert.equal(busy.state, "merge_failed", JSON.stringify(busy));
+    assert.equal(git(b, "rev-parse", "HEAD"), head);
+    return syncRecordStoreNow(b);
   }]
 ]) {
   test(`a comment written ${how}, which no commit of the sync holds, is saved and named rather than left past the folder's bound on disk`, { timeout: 240000 }, async (context) => {
