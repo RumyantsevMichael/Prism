@@ -122,6 +122,7 @@ A store holds at most 250000 files in all, a sync never leaves a file out to sta
 A sync always fetches and judges the tree it would push, this machine's changes merged with the other machine's as fetched, so where this machine's own changes alone would pass 250000 files but the other machine removed enough, the sync commits only the merge of both and pushes it.
 When the merged tree would pass 250000 files, the sync commits, merges, and pushes nothing and ends with `merge_failed` and a message that gives that count and the bound.
 The store's branch and every file on disk stay as they were, and no file is listed under `withheld` for that bound.
+The one exception is a sync whose first push lost to another machine that pushed first: it keeps the merge it already made, which is within the bound, and its message says so, while this machine's later changes stay on disk.
 Remove files that the store no longer needs, on this machine or another, until it holds at most 250000, and the first sync after that shares every change of both machines, moved artifacts and the comments and status records of each artifact among them.
 
 Every kind of file that a store shares has a size limit well above the largest file of that kind that Prism or a Git host writes:
