@@ -221,13 +221,13 @@ test("clauses 14, 15, 16: [ and the rail's sidebar button hide the sidebar and k
   await page.waitForTimeout(700);
   assert.match(await shownTooltip(page) ?? "", /\(\[\)$/, "the tooltip names the key");
   await page.reload();
-  await page.waitForTimeout(800);
+  assert.equal(await shownPlace(page), "Work", "the reload kept the place");
   assert.equal(await sidebar(page).isVisible(), false, "the hidden sidebar stays hidden after a reload");
   await choosePlace(page, "Knowledge");
   assert.equal(await sidebar(page).isVisible(), true, "choosing a place on the collapsed rail shows the sidebar");
   assert.equal((await placeTitle(sidebar(page)).innerText()).trim(), "Knowledge");
   await page.reload();
-  await page.waitForTimeout(800);
+  assert.equal(await shownPlace(page), "Knowledge", "the reload kept the place");
   assert.equal(await sidebar(page).isVisible(), true, "and stores it as shown");
   await sidebarButton(rail(page)).click();
   await page.waitForTimeout(300);

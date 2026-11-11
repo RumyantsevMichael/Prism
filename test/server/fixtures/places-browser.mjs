@@ -64,8 +64,9 @@ export async function eventually(read, expected, { timeout = 10000 } = {}) {
  * so this waits for the place head's title instead of reading the page after a fixed pause.
  */
 export async function shownPlace(page) {
-  await page.waitForFunction(() => Boolean(document.querySelector("#place-head .prism-place-head-title")?.textContent.trim()), null, { timeout: 15000 });
-  return (await placeTitle(sidebar(page)).innerText()).trim();
+  // It reads the title's text rather than the heading's role, which a hidden sidebar leaves out of the accessibility tree.
+  const title = await page.waitForFunction(() => document.querySelector("#place-head .prism-place-head-title")?.textContent.trim() || null, null, { timeout: 15000 });
+  return title.jsonValue();
 }
 export const groupHeadings = async (scope) => (await scope.getByRole("heading", { level: 3 }).allInnerTexts()).map((text) => text.replace(/\s+\d+\s*$/, "").replace(/\s+/g, " ").trim());
 export const item = (scope, name) => scope.getByRole("treeitem", { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) }).first();

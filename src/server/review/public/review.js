@@ -2433,6 +2433,10 @@ function setSidebarCollapsed(collapsed, { remember = true } = {}) {
   sidebarToggle.setAttribute("tip", `${action} ([)`);
   if (remember) void setPreference("sidebar.collapsed", collapsed).catch(() => showToast("The sidebar changed here, but the review app could not store the choice."));
 }
+// The sidebar shows as this browser last left it as soon as the page runs, and the review app's stored choice applies once the workspace loads.
+setSidebarCollapsed(readSidebarCollapsed(), { remember: false });
+// The rail's sidebar button works from the first moment too, so a click while the workspace loads is not lost.
+sidebarToggle.addEventListener("prism-select", () => setSidebarCollapsed(!shell.classList.contains("sidebar-collapsed")));
 
 // The drawer places its children in its body a microtask after they arrive, so focus moves once the sidebar sits inside the open drawer.
 // How long the drawer keeps showing a place whose choice also opened a page, so the switch is seen before the drawer closes.
@@ -2701,7 +2705,6 @@ async function initialize() {
   onPreferencesChange((keys, preferences) => {
     if (keys.includes("sidebar.collapsed") && preferences["sidebar.collapsed"] !== shell.classList.contains("sidebar-collapsed")) setSidebarCollapsed(preferences["sidebar.collapsed"], { remember: false });
   });
-  sidebarToggle.addEventListener("prism-select", () => setSidebarCollapsed(!shell.classList.contains("sidebar-collapsed")));
   navDrawer.addEventListener("prism-close", closeDrawer);
   watchDrawerWidth();
   document.getElementById("jump").addEventListener("click", () => palette.show());
