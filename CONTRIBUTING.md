@@ -55,15 +55,18 @@ A `--plugin-dir` plugin shadows an installed one of the same name for that sessi
 
 After editing a skill, run `/reload-plugins` to pick it up without restarting.
 
-Load the native Codex package through the repository marketplace:
+Load the native Codex package through a development marketplace that serves a copy of the working tree:
 
 ```bash
-codex plugin marketplace add .
+codex plugin marketplace add "$(node scripts/dev-marketplace.mjs)"
 codex plugin add prism@prism
 ```
 
+The repository's own marketplace files describe what users install, so they are not the way to load a working tree.
+The script copies the working tree without `.git`, `node_modules`, or built runtime archives into a temporary directory and prints its path.
+It copies rather than links, because Claude Code does not run the hooks of a plugin whose directory is a link.
+After package changes, run it again, then run `codex plugin add prism@prism` again and restart Codex.
 Codex `0.147.0` or later is required.
-Restart Codex after package changes when the installed copy does not refresh.
 
 ## Validation
 
@@ -75,7 +78,7 @@ npm run validate:sdm
 The Claude validator checks the manifests and parses every skill frontmatter block.
 `--strict` promotes unrecognized-field warnings to errors, which catches typos in field names.
 The SDM validator checks the supported version and selected structural conventions.
-CI also installs the native Codex package from an isolated temporary marketplace.
+CI also installs the native Codex package from an isolated development marketplace.
 Run both checks before opening a pull request.
 
 CI then calls a Prism record tool through real Claude Code and Codex CLIs, with a remote record store, and needs no model or API key:

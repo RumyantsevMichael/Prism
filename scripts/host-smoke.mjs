@@ -13,6 +13,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { writeDevMarketplace } from "./dev-marketplace.mjs";
 
 const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const hosts = process.argv.slice(2).length ? process.argv.slice(2) : ["claude", "codex", "codex-turn"];
@@ -20,6 +21,8 @@ const TOOL = "get_roadmap";
 const TIMEOUT_MS = 180000;
 
 const work = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-host-smoke-")));
+// The repository's own marketplace files describe the published package, so both hosts install the checkout through a generated one.
+const marketplace = await writeDevMarketplace(path.join(work, "marketplace"), checkout);
 const launcher = (bin, args) => /\.[cm]?js$/i.test(bin) ? [process.execPath, [bin, ...args]] : [bin, args];
 const run = (command, args, options = {}) => execFileSync(...launcher(command, args), { stdio: "pipe", encoding: "utf8", ...options });
 const start = (command, args, options) => spawn(...launcher(command, args), options);
@@ -69,13 +72,13 @@ function checkClone(name, appFolder, id) {
   if (!existsSync(path.join(clone, ".git"))) throw new Error(`${name}: the remote store was not cloned to ${clone}`);
 }
 
-// Claude Code: install from the checkout's marketplace, then run one print-mode turn against a scripted model that calls the tool once.
+// Claude Code: install the checkout, then run one print-mode turn against a scripted model that calls the tool once.
 async function claude({ project, id }) {
   const bin = process.env.CLAUDE_BIN || "claude";
   const { root, appFolder, env } = hostEnvironment("claude");
   env.CLAUDE_CONFIG_DIR = path.join(root, "config");
   await mkdir(env.HOME, { recursive: true });
-  run(bin, ["plugin", "marketplace", "add", checkout], { env });
+  run(bin, ["plugin", "marketplace", "add", marketplace], { env });
   run(bin, ["plugin", "install", "prism@prism"], { env });
   const tool = `mcp__plugin_prism_prism-review__${TOOL}`;
   let result = null;
@@ -191,7 +194,7 @@ async function appServer(bin, cwd, env) {
   return { request, close: () => child.kill() };
 }
 
-// Codex: install from the checkout's marketplace into a private home.
+// Codex: install the checkout into a private home.
 function installCodex(name) {
   const bin = process.env.CODEX_BIN || "codex";
   const host = hostEnvironment(name);
@@ -202,7 +205,7 @@ function installCodex(name) {
 async function addCodexPlugin({ bin, env }) {
   await mkdir(env.HOME, { recursive: true });
   await mkdir(env.CODEX_HOME, { recursive: true });
-  run(bin, ["plugin", "marketplace", "add", checkout], { env });
+  run(bin, ["plugin", "marketplace", "add", marketplace], { env });
   run(bin, ["plugin", "add", "prism@prism"], { env });
 }
 
