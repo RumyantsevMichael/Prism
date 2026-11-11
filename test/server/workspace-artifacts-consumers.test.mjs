@@ -28,11 +28,12 @@ const revision = async (prism) => ok(await prism.call("get_initiative", { initia
 
 test("clause 22: design proposal, acceptance, and the design view read slice.md and diagrams from the store, and the generated views are written there", async (context) => {
   const { place, api, prism } = await designed(context);
+  // Design writes the design view while it holds the design claim, which accepting the proposal ends.
+  ok(await prism.call("update_design_view", { initiative: "reports", slice: "reports", examples: [{ clause: 1, file: TEST_FILE, test: "check exits 0", example: "Running check.mjs exits 0." }] }));
   ok(await prism.call("update_initiative", { initiative: "reports", expectedRevision: await revision(prism), operations: [{ op: "propose_design", slug: "reports", operations: [{ op: "accept_design", slug: "reports", frozenTests: [TEST_FILE], review: "none" }] }] }));
   ok(await prism.call("update_initiative", { initiative: "reports", expectedRevision: await revision(prism), operations: [{ op: "accept_proposal", slug: "reports", reviewRequired: [] }] }));
   const accepted = ok(await prism.call("get_initiative", { initiative: "reports" }));
   assert.ok(accepted.record.slices.reports.design, "the design was accepted from the store's slice.md");
-  ok(await prism.call("update_design_view", { initiative: "reports", slice: "reports", examples: [{ clause: 1, file: TEST_FILE, test: "check exits 0", example: "Running check.mjs exits 0." }] }));
 
   assert.match(await text(path.join(place.store, "artifacts", "plans", "reports", "initiative.md")) ?? "", /Reports/, "the initiative view is generated in the store");
   ok(await prism.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] }] }));
