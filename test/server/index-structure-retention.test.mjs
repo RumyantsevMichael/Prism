@@ -34,3 +34,27 @@ test("a complete index removes the structure-only index it replaced, so earlier 
   assert.deepEqual(entries.filter((name) => name.startsWith("units-")).map((name) => name.slice(6, 70)).sort(), revisions);
   for (const name of entries.filter((name) => name.startsWith("generation-"))) assert.equal((await readJson(path.join(directory, name))).stage, "complete");
 });
+
+test("a component whose structure-only search failed carries no embeddings mark", async (t) => {
+  const { root, storage, write } = await project(t);
+  const { runtime, control } = await stagedRuntime(storage);
+  assert.equal((await searchRepositoryConcepts({ projectRoot: root, query: "retry" }, { runtime, waitMs: 2000 })).status, "ready");
+  await write(HELD, `${FILES[HELD]}// changed\n`);
+  control.hold(HELD);
+  t.after(() => control.release(HELD));
+  const search = runtime.search.bind(runtime);
+  runtime.search = async (prepared, ...rest) => {
+    if (prepared.stage === "structure") throw Object.assign(new Error("The structure search failed."), { code: "preparation_failed" });
+    return search(prepared, ...rest);
+  };
+  await searchRepositoryConcepts({ projectRoot: root, query: "retry" }, { runtime, waitMs: 0 });
+  await control.reached(HELD);
+  const answer = await until(async () => {
+    const value = await searchRepositoryConcepts({ projectRoot: root, query: "retry" }, { runtime, waitMs: 0 });
+    return value.components?.find((item) => item.component === "root/net")?.status === "failed" && value;
+  }, "The net component's structure search did not fail.");
+  const net = answer.components.find((item) => item.component === "root/net");
+  assert.equal(net.failure.code, "preparation_failed");
+  assert.equal("embeddings" in net, false);
+  assert.equal(answer.diagnostics.some((item) => item.code === "embeddings_pending"), false);
+});

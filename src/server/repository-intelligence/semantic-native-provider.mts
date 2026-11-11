@@ -254,7 +254,7 @@ export class ComponentRepositoryIntelligence extends SemanticNativeRepositoryInt
     if (failed.length) {
       for (const { index, provider } of failed) {
         const [failure] = provider.preparation.diagnostics.slice(-1);
-        this.parts.states[index] = { ...this.parts.states[index], status: "failed", indexRevision: null, failure: { code: failure.code, message: failure.message } };
+        this.parts.states[index] = failedState(this.parts.states[index], failure);
       }
       this.members = this.members.filter(member => !failed.includes(member));
       this.result = componentResult(this.parts.states, this.parts.snapshot);
@@ -344,6 +344,11 @@ async function lexicalResults(sources: NativeSource[], input: ConceptSearchInput
   return results;
 }
 
+// A component whose index failed to answer, which drops the embeddings mark that only an included component carries.
+function failedState({ embeddings: _, ...state }: ComponentState, failure: { code: string; message: string }): ComponentState {
+  return { ...state, status: "failed", indexRevision: null, failure: { code: failure.code, message: failure.message } };
+}
+
 // A retained baseline's source of the files that a filter accepts, for a call with snapshotId in a repository with components.
 const retainedSources = (projectRoot: string, snapshotId?: string): OpenSource | undefined => snapshotId ? filter => conservationStore.source(projectRoot, snapshotId, filter) : undefined;
 
@@ -364,7 +369,7 @@ async function searchComponentIndexes(input: ConceptSearchInput, declaration: De
   for (const [position, { index, provider }] of included.entries()) {
     if (searched.answers[position] !== null) continue;
     const [failure] = provider.preparation.diagnostics.slice(-1);
-    states[index] = { ...states[index], status: "failed", indexRevision: null, failure: { code: failure.code, message: failure.message } };
+    states[index] = failedState(states[index], failure);
   }
   const providers = included.filter((_, position) => searched.answers[position] !== null).map(entry => entry.provider);
   const result = componentResult(states, snapshot);

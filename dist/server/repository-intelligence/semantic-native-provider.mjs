@@ -286,7 +286,7 @@ class ComponentRepositoryIntelligence extends SemanticNativeRepositoryIntelligen
     if (failed.length) {
       for (const { index, provider } of failed) {
         const [failure] = provider.preparation.diagnostics.slice(-1);
-        this.parts.states[index] = { ...this.parts.states[index], status: "failed", indexRevision: null, failure: { code: failure.code, message: failure.message } };
+        this.parts.states[index] = failedState(this.parts.states[index], failure);
       }
       this.members = this.members.filter((member) => !failed.includes(member));
       this.result = componentResult(this.parts.states, this.parts.snapshot);
@@ -396,6 +396,9 @@ async function lexicalResults(sources, input, limit, components = []) {
   }
   return results;
 }
+function failedState({ embeddings: _, ...state }, failure) {
+  return { ...state, status: "failed", indexRevision: null, failure: { code: failure.code, message: failure.message } };
+}
 const retainedSources = (projectRoot, snapshotId) => snapshotId ? (filter) => conservationStore.source(projectRoot, snapshotId, filter) : void 0;
 async function searchComponentIndexes(input, declaration, options) {
   const runtime = options.runtime || nativeSemanticRuntime, limit = input.limit || 10;
@@ -409,7 +412,7 @@ async function searchComponentIndexes(input, declaration, options) {
   for (const [position, { index, provider }] of included.entries()) {
     if (searched.answers[position] !== null) continue;
     const [failure] = provider.preparation.diagnostics.slice(-1);
-    states[index] = { ...states[index], status: "failed", indexRevision: null, failure: { code: failure.code, message: failure.message } };
+    states[index] = failedState(states[index], failure);
   }
   const providers = included.filter((_, position) => searched.answers[position] !== null).map((entry) => entry.provider);
   const result = componentResult(states, snapshot);
