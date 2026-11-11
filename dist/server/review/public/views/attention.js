@@ -705,7 +705,7 @@ export function render(container, entity, ctx) {
   const needs = [
     ...gates.map((item) => ({
       key: `gate:${item.id}`,
-      row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: KIND_LOOK[item.kind]?.tone ?? "neutral", unread: true, title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, liveHolder(item) ? `${item.claim.label} is waiting on your answer` : item.slice?.title ?? item.initiative?.title].filter(Boolean).join(" · ")), end: escapeHtml(shortAgo(item.askedAt)) },
+      row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: KIND_LOOK[item.kind]?.tone ?? "neutral", unread: true, title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, liveHolder(item) ? `${item.claim.label} is waiting on your answer` : item.slice?.title ?? item.initiative?.title ?? item.artifact?.path].filter(Boolean).join(" · ")), end: escapeHtml(shortAgo(item.askedAt)) },
       detail: gateDetail(item, ctx, drafts[item.id] ?? { choice: null, note: "" })
     })),
     ...notes.map((item, index) => ({ key: `note:${index}`, ...noteEntry(item, ctx) }))
@@ -713,7 +713,7 @@ export function render(container, entity, ctx) {
   // A shipped initiative's open questions can no longer be answered, so they list apart from Needs you and raise no count.
   const shippedRows = (data.shippedGates ?? []).map((item) => ({
     key: `shipped:${item.id}`,
-    row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: "neutral", title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, "Cannot be answered", item.slice?.title ?? item.initiative?.title].filter(Boolean).join(" · ")), end: escapeHtml(shortAgo(item.askedAt)) },
+    row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: "neutral", title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, "Cannot be answered", item.slice?.title ?? item.initiative?.title ?? item.artifact?.path].filter(Boolean).join(" · ")), end: escapeHtml(shortAgo(item.askedAt)) },
     detail: gateDetail(item, ctx, {})
   }));
   const waiting = answered.map((item) => ({
