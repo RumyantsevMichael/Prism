@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { defer } from "./teardown.mjs";
 
 export const INITIATIVE = "reports";
 export const AUTHOR = { name: "Ada Reviewer", email: "ada@example.invalid" };
@@ -27,7 +28,7 @@ export async function actionProject(context, { gates = true, components = false 
   const { updateRoadmap } = await import("../../../dist/server/workflow/roadmap.mjs");
   const { updateCoordinationState } = await import("../../../dist/server/workflow/state.mjs");
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-actions-")));
-  context.after(() => rm(root, { recursive: true, force: true }));
+  defer(context, () => rm(root, { recursive: true, force: true }));
   await mkdir(path.join(root, ".prism"), { recursive: true });
   await mkdir(path.join(root, "docs/plans", INITIATIVE), { recursive: true });
   const declared = components ? "\n## Workspace\n- Repository: reports-app\n\n## Components\n- api: packages/api\n" : "";
@@ -59,7 +60,7 @@ export async function startActionReview(context, root, options = {}) {
   const { startReviewServer } = await import("../../../dist/server/review/review-server.mjs");
   const opened = [];
   const review = await startReviewServer({ projectRoot: root, openBrowser: async (url) => { opened.push(url); return true; }, ...options });
-  context.after(() => review.close());
+  defer(context, () => review.close());
   return { review, base: review.baseUrl, opened };
 }
 

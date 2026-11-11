@@ -145,7 +145,7 @@ function commandFailure(code, message, cause) {
 
 function runCommand(command, args, { cwd, timeoutMs, maxOutputBytes }) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     const stdout = [];
     let stdoutBytes = 0;
     let settled = false;

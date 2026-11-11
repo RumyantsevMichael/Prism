@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { access, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
@@ -48,7 +49,8 @@ function syncIgnoringCase(store) {
   return JSON.parse(child.stdout);
 }
 
-const listing = (folder) => readdir(folder, { recursive: true }).then((names) => names.sort());
+// readdir names nested entries with the platform separator, which the expected listings write as /.
+const listing = (folder) => readdir(folder, { recursive: true }).then((names) => names.map((name) => name.split(path.sep).join("/")).sort());
 
 for (const [label, local, upstream, kept] of [
   ["record", { "initiatives/Reports/state.json": "{\"v\":\"b\"}\n" }, { "initiatives/reports/state.json": "{\"v\":\"a\"}\n" }, ["reports", "reports/state.json"]]
@@ -112,11 +114,13 @@ const SUITES = [
   "record-store-sync-crash.test.mjs"
 ];
 
-test("the store sync suites pass on a file system that ignores letter case", { timeout: 900000 }, async (context) => {
+// The emulation hooks POSIX folders below TMPDIR; NTFS ignores letter case itself, so on Windows the suites already run that way directly.
+const NATIVE = process.platform === "win32" && "Windows file systems ignore letter case themselves, and the store sync suites run on them directly";
+test("the store sync suites pass on a file system that ignores letter case", { timeout: 900000, skip: NATIVE }, async (context) => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-sync-case-suites-")));
   context.after(() => rm(root, { recursive: true, force: true }));
   const marker = path.join(root, "case-insensitive.loaded");
-  const here = path.dirname(new URL(import.meta.url).pathname);
+  const here = path.dirname(fileURLToPath(import.meta.url));
   const { NODE_TEST_CONTEXT: _, ...inherited } = process.env;
   const output = await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--test", "--test-reporter=tap", ...SUITES.map((suite) => path.join(here, suite))], {

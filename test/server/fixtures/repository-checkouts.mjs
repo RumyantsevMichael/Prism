@@ -4,6 +4,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isolatedEnv } from "./isolated-env.mjs";
+import { defer } from "./teardown.mjs";
 
 // Git checkouts of separate repositories that share one record store, each driven by a real Prism server over stdio.
 // A test file sets HOME, the Git configuration, and the Git identity in process.env before it uses these helpers, as the M1 tests do.
@@ -121,7 +122,7 @@ export async function prismServer(context, root, { appFolder, hostRoot = true, e
     clearTimeout(timer);
   };
   running.add(close);
-  context.after(close);
+  defer(context, close);
   let next = 1;
   const request = (method, params) => new Promise((resolve, reject) => {
     const id = next++;

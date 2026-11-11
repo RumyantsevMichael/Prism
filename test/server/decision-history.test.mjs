@@ -29,7 +29,8 @@ test("writes private records through the shared atomic writer, which refuses a s
   await setDecisionRecording({ ...options, enabled: true });
   const directory = path.join(options.dataDirectory, "decision-history");
   const config = (await readdir(directory)).find((name) => name.endsWith(".config.json"));
-  assert.equal((await lstat(path.join(directory, config))).mode & 0o777, 0o600);
+  // Windows has no POSIX permission bits; its per-user folders keep these files private there.
+  if (process.platform !== "win32") assert.equal((await lstat(path.join(directory, config))).mode & 0o777, 0o600);
   const outside = path.join(options.dataDirectory, "outside.json");
   await writeFile(outside, "keep");
   await rm(path.join(directory, config));

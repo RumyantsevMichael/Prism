@@ -4,6 +4,7 @@
 // The project names a remote record store, so the call proves the server starts the way the host starts it and can clone that store.
 // A third check, codex-turn, runs one real Codex model turn against a scripted local Responses API, so the hooks run too.
 // Usage: node scripts/host-smoke.mjs [claude|codex|codex-turn]...  (all by default; CLAUDE_BIN and CODEX_BIN override the executables)
+// A CLAUDE_BIN or CODEX_BIN that names a JavaScript file runs under this Node, which is how Windows starts an npm launcher without its .cmd shim.
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -19,7 +20,9 @@ const TOOL = "get_roadmap";
 const TIMEOUT_MS = 180000;
 
 const work = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-host-smoke-")));
-const run = (command, args, options = {}) => execFileSync(command, args, { stdio: "pipe", encoding: "utf8", ...options });
+const launcher = (bin, args) => /\.[cm]?js$/i.test(bin) ? [process.execPath, [bin, ...args]] : [bin, args];
+const run = (command, args, options = {}) => execFileSync(...launcher(command, args), { stdio: "pipe", encoding: "utf8", ...options });
+const start = (command, args, options) => spawn(...launcher(command, args), options);
 const git = (cwd, ...args) => run("git", ["-c", "user.name=Prism Smoke", "-c", "user.email=smoke@example.invalid", ...args], { cwd });
 
 // A bare remote with one commit, and a project whose workflow config names it as the record store.
@@ -77,11 +80,14 @@ async function claude({ project, id }) {
   const tool = `mcp__plugin_prism_prism-review__${TOOL}`;
   let result = null;
   let offered = false;
+  let announced = false;
   const model = http.createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += chunk;
     let json = {};
     try { json = JSON.parse(body); } catch {}
+    // The SessionStart hook adds the session key to the context, so seeing it here proves the plugin's hooks ran.
+    announced ||= /Prism session correlation key: [0-9a-f]{64}/.test(body);
     if (!request.url.startsWith("/v1/messages") || request.url.includes("count_tokens")) {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ input_tokens: 1 }));
@@ -119,7 +125,7 @@ async function claude({ project, id }) {
   try {
     const base = `http://127.0.0.1:${model.address().port}`;
     await new Promise((resolve, reject) => {
-      const child = spawn(bin, ["-p", "Call the Prism roadmap tool.", "--allowedTools", tool, "--output-format", "json"], {
+      const child = start(bin, ["-p", "Call the Prism roadmap tool.", "--allowedTools", tool, "--output-format", "json"], {
         cwd: project, stdio: ["ignore", "pipe", "pipe"],
         env: { ...env, ANTHROPIC_BASE_URL: base, ANTHROPIC_API_KEY: "sk-ant-prism-smoke", ENABLE_TOOL_SEARCH: "false", NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" }
       });
@@ -132,6 +138,7 @@ async function claude({ project, id }) {
   } finally {
     model.close();
   }
+  if (!announced) throw new Error("claude: no Prism hook announced the session key, so the hooks did not run");
   if (!offered) throw new Error(`claude: the model was never offered ${tool}, so the plugin's MCP server did not load`);
   if (!result) throw new Error(`claude: ${tool} was offered but no tool result came back`);
   const text = typeof result.content === "string" ? result.content : firstText(result.content);
@@ -142,7 +149,7 @@ async function claude({ project, id }) {
 
 // Starts `codex app-server` in a folder and returns a JSON-RPC `request` and a `close`.
 async function appServer(bin, cwd, env) {
-  const child = spawn(bin, ["app-server"], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+  const child = start(bin, ["app-server"], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
   let stderr = "";
   child.stderr.on("data", (chunk) => { stderr = (stderr + chunk).slice(-4000); });
   const pending = new Map();
@@ -284,9 +291,9 @@ async function codexTurn() {
     const existing = existsSync(config) ? await readFile(config, "utf8") : "";
     await writeFile(config, `model = "gpt-6-luna"\nopenai_base_url = ${JSON.stringify(base)}\n${existing}${trust}`);
     const turnEnv = { ...env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" };
-    execFileSync(bin, ["login", "--with-api-key"], { env: turnEnv, input: "sk-prism-smoke", stdio: ["pipe", "pipe", "pipe"] });
+    run(bin, ["login", "--with-api-key"], { env: turnEnv, input: "sk-prism-smoke", stdio: ["pipe", "pipe", "pipe"] });
     await new Promise((resolve, reject) => {
-      const child = spawn(bin, ["exec", "--skip-git-repo-check", "-s", "read-only", "-c", "approval_policy=\"never\"", "Run the Prism checks."], { cwd: project, env: turnEnv, stdio: ["ignore", "pipe", "pipe"] });
+      const child = start(bin, ["exec", "--skip-git-repo-check", "-s", "read-only", "-c", "approval_policy=\"never\"", "Run the Prism checks."], { cwd: project, env: turnEnv, stdio: ["ignore", "pipe", "pipe"] });
       let log = "";
       child.stdout.on("data", (chunk) => { log = (log + chunk).slice(-4000); });
       child.stderr.on("data", (chunk) => { log = (log + chunk).slice(-4000); });

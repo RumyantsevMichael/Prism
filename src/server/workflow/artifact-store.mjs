@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { open, lstat, readFile, rm, rename } from "node:fs/promises";
+import { open, lstat, readFile, rm, rename, utimes } from "node:fs/promises";
 import path from "node:path";
 
 const LOCK_TIMEOUT_MS = 5000;
@@ -23,8 +23,13 @@ async function acquireFileLock(artifactPath, makeError, options) {
     try {
       const handle = await open(lockPath, "wx", 0o600);
       const token = randomBytes(16).toString("hex");
-      await handle.writeFile(JSON.stringify({ pid: process.pid, token, renewable: options.renew === true, at: new Date().toISOString() }));
-      return { handle, lockPath, token };
+      try {
+        await handle.writeFile(JSON.stringify({ pid: process.pid, token, renewable: options.renew === true, at: new Date().toISOString() }));
+      } finally {
+        // The lock is the file and its token, never an open handle: Windows refuses to rename a folder while a file in it is open, as a store sync does when another machine changed the folder's letter case.
+        await handle.close();
+      }
+      return { lockPath, token };
     } catch (caught) {
       if (caught.code !== "EEXIST") {
         throw caught;
@@ -64,19 +69,16 @@ async function acquireFileLock(artifactPath, makeError, options) {
 export async function withFileLock(artifactPath, action, makeError = defaultError, options = {}) {
   const lock = await acquireFileLock(artifactPath, makeError, options);
   const heartbeat = options.renew ? setInterval(async () => {
+    const owner = await readFile(lock.lockPath, "utf8").then(JSON.parse).catch(() => null);
     const now = new Date();
-    lock.handle.utimes(now, now).catch(() => {});
-    if (options.onRenew) {
-      const owner = await readFile(lock.lockPath, "utf8").then(JSON.parse).catch(() => null);
-      options.onRenew(owner?.token === lock.token);
-    }
+    if (owner?.token === lock.token) await utimes(lock.lockPath, now, now).catch(() => {});
+    options.onRenew?.(owner?.token === lock.token);
   }, options.heartbeatMs ?? 5000) : null;
   heartbeat?.unref();
   try {
     return await action();
   } finally {
     clearInterval(heartbeat);
-    await lock.handle.close().catch(() => {});
     const owner = await readFile(lock.lockPath, "utf8").then(JSON.parse).catch(() => null);
     if (owner?.token === lock.token) await rm(lock.lockPath, { force: true }).catch(() => {});
   }
@@ -100,8 +102,20 @@ export async function withArtifactLock(artifactPath, action) {
   }
 }
 
+// Windows refuses to rename a file or folder while another process holds it, as another reader, Git that has just exited, or a virus scanner reading new files does,
+// so there a rename is retried for a few seconds while the refusal says the path is in use.
+export async function renameWhenFree(from, to) {
+  for (let delay = 10; ; delay *= 2) {
+    try { return await rename(from, to); }
+    catch (error) {
+      if (process.platform !== "win32" || !["EPERM", "EACCES", "EBUSY"].includes(error.code) || delay > 2560) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
+
 /** @param {string} artifactPath @param {string | Uint8Array} contents @param {{ renameFile?: typeof rename, mode?: number, beforeTemporary?: (path: string) => Promise<void>, afterTemporary?: (path: string) => Promise<void> }} options */
-export async function writeAtomically(artifactPath, contents, { renameFile = rename, mode: requestedMode, beforeTemporary, afterTemporary } = {}) {
+export async function writeAtomically(artifactPath, contents, { renameFile = renameWhenFree, mode: requestedMode, beforeTemporary, afterTemporary } = {}) {
   let mode = requestedMode ?? 0o644;
   try {
     const info = await lstat(artifactPath);

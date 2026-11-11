@@ -47,7 +47,9 @@ test("clause 27: the strip of tabs keeps its preview, Keep, close, middle-click 
   await page.waitForTimeout(400);
   assert.deepEqual(await tabs(page), ["initiative:activity-reports*", "decisions"], "Keep kept the preview tab");
   await page.reload();
-  await page.waitForTimeout(1000);
+  // The page draws the tabs once the review server answers with the session, which takes longer than a second on a slow disk.
+  await page.waitForFunction(() => document.querySelectorAll("#open-tabs prism-doc-tab").length > 0, null, { timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(400);
   assert.deepEqual(await tabs(page), ["initiative:activity-reports*", "decisions"], "the tabs came back after a reload");
   await page.getByRole("tab", { name: /^Decisions/ }).click({ button: "middle" });
   await page.waitForTimeout(400);

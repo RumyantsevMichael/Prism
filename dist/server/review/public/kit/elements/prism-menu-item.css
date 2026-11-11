@@ -79,14 +79,23 @@
   display: block;
 }
 
+/* The hint keeps its own width up to its limit, so a long detail line shortens the item's text rather than the hint. */
 .hint {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-width: 0;
   max-width: 40%;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--prism-color-ink-muted);
   font-size: var(--prism-font-size-xs);
+}
+
+/* Slotted detail and hint text stays inside its line and ends with an ellipsis itself, so a long folder path never reaches past the item. */
+.detail > slot::slotted(*),
+.hint > slot::slotted(*) {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 :host(:hover),

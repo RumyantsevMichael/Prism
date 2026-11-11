@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
@@ -35,7 +36,7 @@ async function fixture(context) {
   return `http://127.0.0.1:${server.address().port}/kit/catalog`;
 }
 
-const audit = () => import(path.join(ROOT, "scripts/review-demo/layout-audit.mjs"));
+const audit = () => import(pathToFileURL(path.join(ROOT, "scripts/review-demo/layout-audit.mjs")).href);
 
 test("clause 60: a catalog entry that escapes its container, cuts off a control, or scrolls the page is named with its width and theme", { skip, timeout: 120000 }, async (context) => {
   const { checkCatalog } = await audit();

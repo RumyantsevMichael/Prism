@@ -265,7 +265,14 @@ function tail(value, limit) {
   return value.length > limit ? value.slice(value.length - limit) : value;
 }
 
+// Windows has no process groups and killing the shell leaves the command it started running, so there the whole tree is ended by taskkill.
 function killGroup(child, signal) {
+  if (process.platform === "win32") {
+    if (!child.pid) return;
+    const killer = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore", windowsHide: true });
+    killer.on("error", () => { try { child.kill(signal); } catch { /* The process already ended. */ } });
+    return;
+  }
   try { process.kill(-child.pid, signal); }
   catch { try { child.kill(signal); } catch { /* The process already ended. */ } }
 }
@@ -285,7 +292,7 @@ function execute(command, cwd, { signal, timeoutMs, onProgress, logPath = null }
     log?.on("error", () => { log = null; });
     const started = Date.now();
     let output = "", timedOut = false, cancelled = false, forced = null;
-    const child = spawn(command, { cwd, env: commandEnvironment(), shell: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, { cwd, env: commandEnvironment(), shell: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     // Only the end of the output is kept, so failing test names are read line by line as the output arrives, before it is cut.
     const failing = new Set();
     const scanners = new Map();
@@ -437,7 +444,7 @@ async function verificationRun({ root, initiative, slice, target, key, design, s
 // Git answers about the checkout are optional, so any error is an unknown value rather than a failed run.
 function gitValue(root, args) {
   return new Promise((resolve) => {
-    execFile("git", ["-C", root, ...args], { timeout: 10000 }, (error, stdout) => resolve(error ? null : stdout.trim() || null));
+    execFile("git", ["-C", root, ...args], { timeout: 10000, windowsHide: true }, (error, stdout) => resolve(error ? null : stdout.trim() || null));
   });
 }
 

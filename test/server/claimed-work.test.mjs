@@ -8,6 +8,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { callSessionId, sessionHolder } from "../../dist/server/workflow/slice-claims.mjs";
+import { defer } from "./fixtures/teardown.mjs";
 
 const SERVER_PATH = fileURLToPath(new URL("../../dist/server/mcp.mjs", import.meta.url));
 
@@ -15,7 +16,7 @@ const SERVER_PATH = fileURLToPath(new URL("../../dist/server/mcp.mjs", import.me
 async function server(context) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "claimed-work-")));
   const data = await mkdtemp(path.join(os.tmpdir(), "claimed-work-data-"));
-  context.after(() => Promise.all([rm(root, { recursive: true, force: true }), rm(data, { recursive: true, force: true })]));
+  defer(context, () => Promise.all([rm(root, { recursive: true, force: true }), rm(data, { recursive: true, force: true })]));
   await mkdir(path.join(root, ".prism"), { recursive: true });
   await mkdir(path.join(root, "docs", "plans"), { recursive: true });
   await writeFile(path.join(root, ".prism", "workflow.md"), "## Paths\n- Plans: docs/plans\n\n## Stack\n- Test command: npm test\n");
@@ -29,7 +30,7 @@ async function server(context) {
     waiting.get(message.id)?.(message);
     waiting.delete(message.id);
   });
-  context.after(() => new Promise((resolve) => { child.once("exit", resolve); child.stdin.end(); }));
+  defer(context, () => new Promise((resolve) => { child.once("exit", resolve); child.stdin.end(); }));
   let id = 0;
   const send = (method, params) => new Promise((resolve) => {
     id += 1;

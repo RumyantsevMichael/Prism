@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { DECLARATION, INITIATIVE, THREE, command, componentProject, planAndAccept, plannedSlice, read, refusal, slicePlan, update, workflow } from "./fixtures/components.mjs";
 import { prismServer } from "./fixtures/repository-checkouts.mjs";
+import { defer } from "./fixtures/teardown.mjs";
 
 // Requirements: docs/requirements/components.md §3-§14.
 // Contract: docs/plans/components/component-slices/slice.md clauses 1-15 and 36-38.
@@ -83,7 +84,7 @@ test("clause 5: the root component is named root without a store and after the R
   assert.equal(accepted.record.slices["billing-totals"].component, "root/root");
 
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-components-store-")));
-  context.after(() => rm(parent, { recursive: true, force: true }));
+  defer(context, () => rm(parent, { recursive: true, force: true }));
   const store = path.join(parent, "store");
   await mkdir(store);
   // A project folder sits directly in the temporary folder, so the store is one folder up from it.
@@ -231,7 +232,7 @@ test("clause 15: a scope spans components, and a proposal with one refused slice
 // A path store beside the project, named relative to it, for a configuration that names its repository.
 async function storeLines(context, repository) {
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-components-store-")));
-  context.after(() => rm(parent, { recursive: true, force: true }));
+  defer(context, () => rm(parent, { recursive: true, force: true }));
   await mkdir(path.join(parent, "store"));
   return [`- Store: ../${path.relative(await realpath(os.tmpdir()), path.join(parent, "store"))}`, `- Repository: ${repository}`];
 }

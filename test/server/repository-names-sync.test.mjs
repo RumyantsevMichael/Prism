@@ -24,7 +24,8 @@ const remoteRegistration = (remote, name) => JSON.parse(git(remote, "show", `mai
 // Two machines: each has its own Prism application folder and a synced store that is a clone of one bare remote.
 async function machines(context) {
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-repository-sync-")));
-  context.after(async () => { await closeServers(); await rm(parent, { recursive: true, force: true }); });
+  // A Git command that a stopped server started may still be ending in a store, which Windows reports as busy for a moment.
+  context.after(async () => { await closeServers(); await rm(parent, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); });
   git(parent, "init", "-q", "--bare", "-b", "main", "store-remote.git");
   const remote = path.join(parent, "store-remote.git");
   git(parent, "clone", "-q", remote, "store-a");

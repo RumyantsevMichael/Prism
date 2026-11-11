@@ -53,9 +53,15 @@ async function privateDirectory(directory) {
     if (error.code !== "EEXIST") throw error;
   });
   const info = await lstat(directory);
-  if (info.isSymbolicLink() || !info.isDirectory() || await realpath(directory) !== path.resolve(directory)) throw semanticError("invalid_path", "Private storage must not follow a symlink.");
+  if (info.isSymbolicLink() || !info.isDirectory() || !await ownRealPath(directory)) throw semanticError("invalid_path", "Private storage must not follow a symlink.");
   await chmod(directory, 448);
   return directory;
+}
+async function ownRealPath(directory) {
+  const real = await realpath(directory);
+  if (process.platform !== "win32") return real === path.resolve(directory);
+  const named = path.join(await realpath(path.dirname(path.resolve(directory))), path.basename(directory));
+  return real.toLowerCase() === named.toLowerCase();
 }
 async function readJson(file) {
   return JSON.parse((await regularBytes(file)).toString("utf8"));

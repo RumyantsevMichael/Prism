@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { withFileLock, writeAtomically } from "./artifact-store.mjs";
+import { renameWhenFree, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { commitProblem, gitFileName, isLinkMode, LINK_TARGET_BYTES_MAX, linkTargetProblem, TREE_DEPTH_MAX, TREE_DEPTH_TEXT, tooDeepTree, treeEntries, treeProblems } from "./git-objects.mjs";
 import { hasRecordMerge, recordMergeFor } from "./record-merge.mjs";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
@@ -90,7 +91,7 @@ export function runGit(base, args, options) {
 
 function git(base, args, { env = {}, input, maxBuffer = 64 * 1024 * 1024 } = {}) {
   return new Promise((resolve) => {
-    const child = execFile("git", [...FIXED_CONFIG, "-C", base, ...args], { env: gitEnvironment(env), timeout: SETTINGS.gitTimeoutMs, maxBuffer, encoding: "buffer" }, (error, stdout, stderr) => {
+    const child = execFile("git", [...FIXED_CONFIG, "-C", base, ...args], { env: gitEnvironment(env), timeout: SETTINGS.gitTimeoutMs, maxBuffer, encoding: "buffer", windowsHide: true }, (error, stdout, stderr) => {
       resolve({ ok: !error, code: error ? (typeof error.code === "number" ? error.code : -1) : 0, missing: error?.code === "ENOENT", stdout, text: stdout.toString("utf8").trim(), stderr: stderr.toString("utf8").trim() });
     });
     if (input !== undefined) child.stdin.end(input);
@@ -112,7 +113,7 @@ export function gitTooOld() {
   const key = process.env.PATH ?? "";
   if (!versionChecks.has(key)) {
     versionChecks.set(key, new Promise((resolve) => {
-      execFile("git", ["--version"], { env: gitEnvironment(), timeout: SETTINGS.gitTimeoutMs }, (error, stdout) => {
+      execFile("git", ["--version"], { env: gitEnvironment(), timeout: SETTINGS.gitTimeoutMs, windowsHide: true }, (error, stdout) => {
         const found = /^git version (\d+)\.(\d+)(?:\.(\d+))?/.exec(error ? "" : String(stdout).trim());
         if (!found) return resolve(null);
         const [major, minor] = GIT_MINIMUM.split(".").map(Number);
@@ -1700,6 +1701,14 @@ async function storedInSpelling(base, file, cache) {
   return true;
 }
 
+// Windows refuses to rename a folder to another spelling of its own name, so there the folder first moves to a unique name beside it.
+async function respell(from, to) {
+  if (process.platform !== "win32") return rename(from, to);
+  const between = `${from}.respell-${process.pid}-${randomBytes(4).toString("hex")}`;
+  await renameWhenFree(from, between);
+  try { await renameWhenFree(between, to); } catch (error) { await renameWhenFree(between, from).catch(() => {}); throw error; }
+}
+
 /**
  * Give each folder above a path that the file system stores in another letter case, and finds by this spelling too, this spelling, as it would after a removal emptied it,
  * so a file written below it lands at the target's spelling, which the next commit reads back; a file system that tells letter case apart keeps the two spellings as two folders.
@@ -1713,7 +1722,7 @@ async function respellFolders(base, file) {
     if (stored === undefined) return;
     if (stored !== name) {
       if (!(await lstat(path.join(folder, name)).then((stats) => stats.isDirectory(), () => false))) return;
-      await rename(path.join(folder, stored), path.join(folder, name));
+      await respell(path.join(folder, stored), path.join(folder, name));
     }
     folder = path.join(folder, name);
   }

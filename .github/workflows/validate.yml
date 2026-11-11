@@ -32,6 +32,58 @@ jobs:
           npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
           npm test
 
+  # Windows users install the same plugin, and its hooks, MCP server, and Git calls behave differently there.
+  windows:
+    runs-on: windows-2025
+    # The browser tests take about as long again as the rest of the suite on Windows.
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Claude Code and Codex
+        run: npm install -g @anthropic-ai/claude-code @openai/codex@0.147.0
+
+      # The review app's browser tests run on Windows too, through the same global Playwright and Chromium as on Linux.
+      - name: Install Playwright and Chromium for the browser tests
+        run: |
+          npm install -g playwright@1.63.0
+          npx playwright install chromium
+
+      - name: Test the server on Windows
+        env:
+          PRISM_REQUIRE_BROWSER: "1"
+        run: |
+          npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          node --test --test-timeout=1800000 test/server/*.test.mjs
+
+      # npm starts both CLIs through .cmd shims, which Node cannot spawn without a shell, so the smoke test runs their real entry points.
+      - name: Smoke-test Prism tools and hooks in real Claude Code and Codex on Windows
+        if: ${{ !cancelled() }}
+        run: |
+          root="$(npm root -g)"
+          export CLAUDE_BIN="$root/@anthropic-ai/claude-code/bin/claude.exe"
+          export CODEX_BIN="$root/@openai/codex/bin/codex.js"
+          node scripts/host-smoke.mjs claude codex
+
+      # As on Linux, the oldest supported Codex installs the plugin above and the model turn runs on the latest Codex.
+      - name: Smoke-test a Codex model turn with Prism hooks on the latest Codex on Windows
+        if: ${{ !cancelled() }}
+        run: |
+          npm install --prefix "$RUNNER_TEMP/codex-current" @openai/codex@latest
+          export CODEX_BIN="$RUNNER_TEMP/codex-current/node_modules/@openai/codex/bin/codex.js"
+          node "$CODEX_BIN" --version
+          node scripts/host-smoke.mjs codex-turn
+
   validate:
     runs-on: ubuntu-latest
     steps:
