@@ -214,10 +214,15 @@ A search, a structural report, or a context plan builds the components it reads,
 #### Report and plan across component indexes
 
 In a repository with components, the six structural reports select and prepare components as a search does.
-A report with `filters.paths` reads only the components that hold a file at or under those paths, and a report without paths reads every component that holds a file.
+A report without paths reads every component that holds a file.
+`report_cohesion_clusters` and `report_complex_units` with `filters.paths` read only the components that hold a file at or under those paths.
+`find_shared_dependencies`, `find_shared_literals`, `find_same_name_units`, and `report_module_interfaces` with `filters.paths` read every component that holds a file, because a group's members and a module's importers can sit in any component.
+They report only the groups or modules that have a member inside the paths, with their members and importers in every component they read.
+Such a report prepares the components that hold the paths as a search does, and every other component with structure only, which builds that component's structure without starting its embeddings.
+The component is then `ready` with a structure-only index, and a later search that needs its embeddings builds it in full.
+A component outside the paths that is not yet included is named by the `components_missing` diagnostic and leaves the result `partial`, so repeat the report once it is ready.
 A report runs over its included components as over one index that held all of their units, references, and files, so its ordering, `limit`, `offset`, totals, and `coverage` apply to that union.
-A group of `find_shared_dependencies`, `find_shared_literals`, or `find_same_name_units` keeps only members in the components that the report reads, and `report_module_interfaces` counts only importers in those components.
-A path-scoped report sees only the components that hold those paths, so matches in other components appear only in an unscoped report.
+A group keeps only members in the components that the report reads, and `report_module_interfaces` counts only importers in those components.
 Each report result has the `components`, `status`, `components_missing` diagnostic, `snapshot`, and `indexRevision` that a search result has, and a `preparing` result has a `preparationId` of `null`.
 A component's index does not resolve references into other components, so a report that includes such a component can report incomplete structure.
 A search or report with `snapshotId` splits the retained baseline's files into components by the current declaration and prepares one index per component from the baseline's content.
@@ -292,7 +297,7 @@ Test code is left out unless `includeTests` is true.
 Test code is a file in a test directory or with a test name, such as `store.test.ts`, `test_store.py`, `store_test.go`, or `StoreTest.java`, and a Rust `#[cfg(test)]` module or `#[test]` function.
 Generated, vendored, and minified files are always left out.
 With `filters.paths`, a group is reported when one of its members is inside the paths, and it keeps its members elsewhere, so a scoped analysis still sees code that the scope repeats.
-In a repository with components, `filters.paths` also selects the components that the report reads, so a group keeps only its members in the components that hold those paths, as [Report and plan across component indexes](#report-and-plan-across-component-indexes) describes.
+In a repository with components, a report with `filters.paths` still reads every component, so a group keeps its members in other components, as [Report and plan across component indexes](#report-and-plan-across-component-indexes) describes.
 A function that only uses core operations has no dependency profile, so use search for small helpers.
 `coverage` gives the number of profiled units, and a `dependency_names_unavailable` diagnostic means that the index was prepared without library call names.
 A shared dependency set identifies candidates for investigation and does not establish equivalent behavior.
@@ -319,7 +324,7 @@ A test-only export is often a deliberate test seam.
 `namesPerImporter` is the median number of exports that one importer uses, so a low value on a module with many exports shows that each caller needs only a small part of the interface.
 By default, only modules with unused or test-only exports appear, and `allModules` reports every exporting module.
 With `filters.paths`, only modules inside the paths are reported, while importers outside the paths still count.
-In a repository with components, only importers in the components that hold those paths count.
+In a repository with components, importers in every component count, also with `filters.paths`.
 Use `offset` and `nextOffset` to page through modules.
 
 Imports resolve through relative paths, `package.json` names and `exports` maps of workspace packages, `tsconfig` path aliases, and built output that mirrors a `src/` file.

@@ -57,9 +57,15 @@ async function selectionSnapshot(selected) {
 `);
   return sha(lines.join(""));
 }
-async function prepareComponents(runtime, selected, waitMs, options = {}) {
+async function prepareComponents(runtime, selected, waitMs, { siblings = [], ...options } = {}) {
   if (!selected.length) return [];
-  const preparations = await runtime.prepareComponents(selected.map((entry) => ({ source: entry.source, component: { name: entry.name, identity: entry.component, folder: entry.folder } })), waitMs, options);
+  const ordered = [...selected.filter((entry) => !siblings.includes(entry)), ...selected.filter((entry) => siblings.includes(entry))];
+  const prepared = await runtime.prepareComponents(ordered.map((entry) => ({
+    source: entry.source,
+    component: { name: entry.name, identity: entry.component, folder: entry.folder },
+    ...siblings.includes(entry) ? { structureOnly: true } : {}
+  })), waitMs, options);
+  const preparations = selected.map((entry) => prepared[ordered.indexOf(entry)]);
   return options.structure ? preparations.map(answeringPreparation) : preparations;
 }
 function answeringPreparation(preparation) {
@@ -171,13 +177,15 @@ async function searchComponents(included, limit, query = "") {
   const merged = [...ranked.flatMap((entry) => [entry.result, ...entry.followers]), ...orphans];
   return { answers, results: merged.slice(0, limit).map((result, index) => ({ ...result, fusedRank: index + 1 })) };
 }
-async function selectedComponents(projectRoot, declaration, paths, expectedSnapshot, baseline) {
+async function selectedComponents(projectRoot, declaration, paths, expectedSnapshot, baseline, { siblings: withSiblings = false } = {}) {
   const root = await realpath(projectRoot);
   const sources = baseline ? await baselineSources(declaration, baseline) : componentSources(root, declaration);
   const selected = await selectComponents(declaration, sources, paths);
-  const snapshot = await selectionSnapshot(selected);
+  const siblings = withSiblings && paths?.length ? (await selectComponents(declaration, sources)).filter((entry) => !selected.includes(entry)) : [];
+  const read = siblings.length ? sources.filter((entry) => selected.includes(entry) || siblings.includes(entry)) : selected;
+  const snapshot = await selectionSnapshot(read);
   if (expectedSnapshot && expectedSnapshot !== snapshot) throw semanticError("stale_snapshot", "The expected repository snapshot has changed. Repeat the reuse search.");
-  return { root, sources, selected, snapshot };
+  return { root, sources, selected, siblings, read, snapshot };
 }
 async function baselineIndex(selected, preparations, result) {
   const included = result.components.flatMap((state, index2) => state.status === "included" ? [{ component: state.component, prepared: preparations[index2].prepared }] : []);

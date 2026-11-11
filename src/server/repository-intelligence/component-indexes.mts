@@ -8,7 +8,8 @@ import { FUSION_OFFSET, fusionWeights } from "../../native-runtime/fusion.mjs";
 import type { ComponentRuntime, ComponentState, Diagnostic, IndexMetadata, NativeSource, Preparation, PrepareOptions, PreparedIndex, SearchResult, SourceSnapshot } from "./repository-unit-types.mjs";
 
 // A repository that declares components has one native index per component. Each component's source scans only that component's files,
-// and a call prepares and reads only the components that hold the paths it names, or every component that holds a file.
+// and a call prepares and reads only the components that hold the paths it names, or every component that holds a file; a scoped cross-file report
+// also reads the sibling components beside them, which it prepares with structure only.
 
 interface Component { name: string; identity: string; folder: string }
 export interface Declaration { repository: string; root: Component; declared: Component[]; components: Component[] }
@@ -74,10 +75,14 @@ export async function selectionSnapshot(selected: ComponentSource[]) {
 /**
  * Queues the selected components that are missing or out of date, waits at most the call's bound for them, and returns each one's preparation.
  * With `structure`, a component whose build published its structure answers from that structure-only index, as answeringPreparation describes.
+ * Each of `siblings` is prepared with structure only and queued after the other components, while the preparations keep the order of `selected`.
  */
-export async function prepareComponents(runtime: ComponentRuntime, selected: ComponentSource[], waitMs?: number, options: PrepareOptions = {}): Promise<Preparation[]> {
+export async function prepareComponents(runtime: ComponentRuntime, selected: ComponentSource[], waitMs?: number, { siblings = [], ...options }: PrepareOptions & { siblings?: ComponentSource[] } = {}): Promise<Preparation[]> {
   if (!selected.length) return [];
-  const preparations = await runtime.prepareComponents(selected.map(entry => ({ source: entry.source, component: { name: entry.name, identity: entry.component, folder: entry.folder } })), waitMs, options);
+  const ordered = [...selected.filter(entry => !siblings.includes(entry)), ...selected.filter(entry => siblings.includes(entry))];
+  const prepared = await runtime.prepareComponents(ordered.map(entry => ({ source: entry.source, component: { name: entry.name, identity: entry.component, folder: entry.folder },
+    ...(siblings.includes(entry) ? { structureOnly: true } : {}) })), waitMs, options);
+  const preparations = selected.map(entry => prepared[ordered.indexOf(entry)]);
   return options.structure ? preparations.map(answeringPreparation) : preparations;
 }
 
@@ -209,14 +214,18 @@ export async function searchComponents(included: ComponentSearch[], limit: numbe
 /**
  * Reads the declaration and the selected components of a call, of the live project or, with `baseline`, of a retained baseline split into components,
  * and refuses an expected snapshot that differs from the selection's snapshot. `sources` holds every component's source, selected or not.
+ * With `siblings` and paths, `siblings` holds every other component that holds a file, `read` holds the selected and sibling components in component
+ * order, and the snapshot is `read`'s; otherwise `siblings` is empty and `read` is the selection.
  */
-export async function selectedComponents(projectRoot: string, declaration: Declaration, paths: string[] | undefined, expectedSnapshot?: string, baseline?: OpenSource) {
+export async function selectedComponents(projectRoot: string, declaration: Declaration, paths: string[] | undefined, expectedSnapshot?: string, baseline?: OpenSource, { siblings: withSiblings = false } = {}) {
   const root = await realpath(projectRoot);
   const sources = baseline ? await baselineSources(declaration, baseline) : componentSources(root, declaration);
   const selected = await selectComponents(declaration, sources, paths);
-  const snapshot = await selectionSnapshot(selected);
+  const siblings = withSiblings && paths?.length ? (await selectComponents(declaration, sources)).filter(entry => !selected.includes(entry)) : [];
+  const read = siblings.length ? sources.filter(entry => selected.includes(entry) || siblings.includes(entry)) : selected;
+  const snapshot = await selectionSnapshot(read);
   if (expectedSnapshot && expectedSnapshot !== snapshot) throw semanticError("stale_snapshot", "The expected repository snapshot has changed. Repeat the reuse search.");
-  return { root, sources, selected, snapshot };
+  return { root, sources, selected, siblings, read, snapshot };
 }
 
 /**

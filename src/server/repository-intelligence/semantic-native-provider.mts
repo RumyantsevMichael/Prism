@@ -31,7 +31,11 @@ const pinned = (hit: SearchHit) => hit.reasons?.some(reason => ["explicit-design
 // The six structural reports read components as the search does.
 // A structural report needs no embeddings, so it answers from the structure that a build publishes before it embeds.
 const STRUCTURE_REPORT = " While a build embeds, the report answers from the structure that the build published first, in any session that shares the index storage, with status ready and that structure's revision as indexRevision, and also after the build failed while embedding; in a repository that declares components, such a component is included and its components entry carries embeddings: pending.";
-const COMPONENT_REPORT = STRUCTURE_REPORT + " In a repository that declares components, filters.paths selects the components that the report reads, and a report without paths reads every component that holds a file, as one index: groups keep members and module reports count importers only in the selected components, so matches in other components appear only in an unscoped report. components gives each read component's status, and the components_missing diagnostic names each one that is not included.";
+const COMPONENT_STATES = " components gives each read component's status in component order, and the components_missing diagnostic names each one that is not included.";
+// A cross-file report reads the components beside its paths, with structure only, because a group or an importer can sit in any component.
+const SIBLING_REPORT = STRUCTURE_REPORT + " In a repository that declares components, the report reads every component that holds a file as one index, also with filters.paths, which then limits the reported groups or modules to those with a member inside the paths while their members and importers come from every component; a component outside the paths is prepared with structure only, which starts no embeddings, and leaves the result partial until it is included." + COMPONENT_STATES;
+// A report of units inside its paths needs only the components that hold them.
+const SCOPED_REPORT = STRUCTURE_REPORT + " In a repository that declares components, filters.paths selects the components that the report reads, and a report without paths reads every component that holds a file, as one index." + COMPONENT_STATES;
 
 export const NATIVE_INTELLIGENCE_TOOLS = [
   {
@@ -62,43 +66,43 @@ export const NATIVE_INTELLIGENCE_TOOLS = [
   },
   {
     name: "find_shared_dependencies",
-    description: "Group functions and methods in different files that call the same rare set of operations, such as a repeated safety check, write protocol, or copied helper. Uses the same prepared index as search_repository_concepts. A shared dependency set identifies candidates for investigation and does not establish equivalent behavior." + COMPONENT_REPORT,
+    description: "Group functions and methods in different files that call the same rare set of operations, such as a repeated safety check, write protocol, or copied helper. Uses the same prepared index as search_repository_concepts. A shared dependency set identifies candidates for investigation and does not establish equivalent behavior." + SIBLING_REPORT,
     inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
       projectRoot: { type: "string" }, expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" }, snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
       limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
       includeTests: { type: "boolean", default: false, description: "Include test files, which often repeat setup code on purpose." },
       filters: { type: "object", additionalProperties: false, properties: {
-        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes. A group is reported when one of its members is inside these paths, and it keeps its members elsewhere.", items: { type: "string", minLength: 1, maxLength: 512 } }
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes. A group is reported when one of its members is inside these paths, and it keeps its members elsewhere, also in other components.", items: { type: "string", minLength: 1, maxLength: 512 } }
       } }
     } }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   },
   {
     name: "report_module_interfaces",
-    description: "Report JavaScript and TypeScript module exports with the modules that import each one, exports that no other module imports, exports that only tests import, and classes that forward most public methods to one field. Uses the same prepared index as search_repository_concepts. The report gives facts for interface design review and does not decide whether an interface is too shallow." + COMPONENT_REPORT,
+    description: "Report JavaScript and TypeScript module exports with the modules that import each one, exports that no other module imports, exports that only tests import, and classes that forward most public methods to one field. Uses the same prepared index as search_repository_concepts. The report gives facts for interface design review and does not decide whether an interface is too shallow." + SIBLING_REPORT,
     inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
       projectRoot: { type: "string" }, expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" }, snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
       limit: { type: "integer", minimum: 1, maximum: 100, default: 20 }, offset: { type: "integer", minimum: 0, default: 0 },
       allModules: { type: "boolean", default: false, description: "Report every exporting module, not only modules with unused or test-only exports." },
       filters: { type: "object", additionalProperties: false, properties: {
-        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes of the modules and classes to report. Importers anywhere in the project still count, or in a repository that declares components, anywhere in the components that hold these paths.", items: { type: "string", minLength: 1, maxLength: 512 } }
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes of the modules and classes to report. Importers anywhere in the project still count, also in other components of a repository that declares components.", items: { type: "string", minLength: 1, maxLength: 512 } }
       } }
     } }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   },
   {
     name: "find_shared_literals",
-    description: "Group functions, methods, classes, constants, and instruction list items or paragraphs in different files that spell the same rare set of identifier-like literals, such as ids, states, keys, event names, method names, or tool names in backticks. Also report key sets that several objects, interfaces, or schemas repeat. Uses the same prepared index as search_repository_concepts. A shared literal set or shape shows names that several places must know and does not establish that one owner is better." + COMPONENT_REPORT,
+    description: "Group functions, methods, classes, constants, and instruction list items or paragraphs in different files that spell the same rare set of identifier-like literals, such as ids, states, keys, event names, method names, or tool names in backticks. Also report key sets that several objects, interfaces, or schemas repeat. Uses the same prepared index as search_repository_concepts. A shared literal set or shape shows names that several places must know and does not establish that one owner is better." + SIBLING_REPORT,
     inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
       projectRoot: { type: "string" }, expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" }, snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
       limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
       includeTests: { type: "boolean", default: false, description: "Include test files, which often repeat expected values on purpose." },
       filters: { type: "object", additionalProperties: false, properties: {
-        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes. A group is reported when one of its members is inside these paths, and it keeps its members elsewhere.", items: { type: "string", minLength: 1, maxLength: 512 } }
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes. A group is reported when one of its members is inside these paths, and it keeps its members elsewhere, also in other components.", items: { type: "string", minLength: 1, maxLength: 512 } }
       } }
     } }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   },
   {
     name: "report_cohesion_clusters",
-    description: "Report large classes, Rust and Go types, and modules whose members fall into separate clusters of shared state and calls, with the members and state of each cluster. Uses the same prepared index as search_repository_concepts. Clusters identify candidate responsibilities for investigation and do not decide whether a split is better." + COMPONENT_REPORT,
+    description: "Report large classes, Rust and Go types, and modules whose members fall into separate clusters of shared state and calls, with the members and state of each cluster. Uses the same prepared index as search_repository_concepts. Clusters identify candidate responsibilities for investigation and do not decide whether a split is better." + SCOPED_REPORT,
     inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
       projectRoot: { type: "string" }, expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" }, snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
       limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
@@ -110,19 +114,19 @@ export const NATIVE_INTELLIGENCE_TOOLS = [
   },
   {
     name: "find_same_name_units",
-    description: "Group functions in different files that have the same name: identical copies, and diverged variants with the dependencies that only each variant uses and its throw count. Uses the same prepared index as search_repository_concepts. A diverged name shows candidates for one contract and does not establish that the variants should behave alike." + COMPONENT_REPORT,
+    description: "Group functions in different files that have the same name: identical copies, and diverged variants with the dependencies that only each variant uses and its throw count. Uses the same prepared index as search_repository_concepts. A diverged name shows candidates for one contract and does not establish that the variants should behave alike." + SIBLING_REPORT,
     inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
       projectRoot: { type: "string" }, expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" }, snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
       limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
       includeTests: { type: "boolean", default: false, description: "Include test code, which often repeats small helpers on purpose." },
       filters: { type: "object", additionalProperties: false, properties: {
-        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes. A group is reported when one of its functions is inside these paths, and it keeps its functions elsewhere.", items: { type: "string", minLength: 1, maxLength: 512 } }
+        paths: { type: "array", maxItems: 50, description: "Project-relative files or directory prefixes. A group is reported when one of its functions is inside these paths, and it keeps its functions elsewhere, also in other components.", items: { type: "string", minLength: 1, maxLength: 512 } }
       } }
     } }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   },
   {
     name: "report_complex_units",
-    description: "Report long or branchy functions and methods with their lines, branches, nesting depth, parameters, nested functions, and the expression that they compare with the most literal values. Uses the same prepared index as search_repository_concepts. The facts identify candidates for a split and do not decide that a unit is too complex." + COMPONENT_REPORT,
+    description: "Report long or branchy functions and methods with their lines, branches, nesting depth, parameters, nested functions, and the expression that they compare with the most literal values. Uses the same prepared index as search_repository_concepts. The facts identify candidates for a split and do not decide that a unit is too complex." + SCOPED_REPORT,
     inputSchema: { type: "object", required: ["projectRoot"], additionalProperties: false, properties: {
       projectRoot: { type: "string" }, expectedSnapshot: { type: "string", pattern: "^[a-f0-9]{64}$" }, snapshotId: { type: "string", pattern: "^[a-f0-9]{64}$" },
       limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
@@ -448,10 +452,11 @@ interface Analysis {
 }
 
 // Prepare the snapshot that an analysis reads: the retained baseline when the caller names one, or the live project.
-async function preparedAnalysis(input: { projectRoot: string; snapshotId?: string; expectedSnapshot?: string; filters?: { paths?: string[] } }, options: ProviderOptions): Promise<Analysis> {
+// A cross-file report passes `siblings`, which in a repository with components also reads the components beside its paths.
+async function preparedAnalysis(input: { projectRoot: string; snapshotId?: string; expectedSnapshot?: string; filters?: { paths?: string[] } }, options: ProviderOptions, siblings = false): Promise<Analysis> {
   // A retained baseline is split by the current declaration, so an invalid one refuses it too, as it refuses the live project.
   const declaration = options.nativeSource ? null : await indexComponents(input.projectRoot);
-  if (declaration) return componentAnalysis(input, declaration, options);
+  if (declaration) return componentAnalysis(input, declaration, options, siblings);
   const nativeSource = input.snapshotId ? await conservationStore.source(input.projectRoot, input.snapshotId) : options.nativeSource;
   const { provider, preparation } = await prepareNativeProvider(input.projectRoot, { ...options, nativeSource, expectedSnapshot: input.expectedSnapshot, structure: true, structureSuffices: true });
   const identity = { status: provider.preparation.status, preparationId: preparation.preparationId, snapshot: preparation.snapshot, snapshotId: input.snapshotId || null };
@@ -460,11 +465,13 @@ async function preparedAnalysis(input: { projectRoot: string; snapshotId?: strin
 
 // In a repository with components, an analysis reads the components that its paths select, or every component that holds a file, as one index
 // over the included components, so its file contents, such as the importers a module report counts, come only from those components.
+// With `siblings`, a scoped analysis also reads every other component that holds a file, prepared with structure only.
 // A call with snapshotId reads the retained baseline's components the same way.
-async function componentAnalysis(input: { projectRoot: string; snapshotId?: string; expectedSnapshot?: string; filters?: { paths?: string[] } }, declaration: Declaration, options: ProviderOptions): Promise<Analysis> {
+async function componentAnalysis(input: { projectRoot: string; snapshotId?: string; expectedSnapshot?: string; filters?: { paths?: string[] } }, declaration: Declaration, options: ProviderOptions, withSiblings: boolean): Promise<Analysis> {
   const runtime = (options.runtime || nativeSemanticRuntime) as ComponentRuntime;
-  const { selected, snapshot } = await selectedComponents(input.projectRoot, declaration, input.filters?.paths, input.expectedSnapshot, retainedSources(input.projectRoot, input.snapshotId));
-  const preparations = await prepareComponents(runtime, selected, options.waitMs, { structure: true, structureSuffices: true });
+  const { read: selected, siblings, snapshot } = await selectedComponents(input.projectRoot, declaration, input.filters?.paths, input.expectedSnapshot,
+    retainedSources(input.projectRoot, input.snapshotId), { siblings: withSiblings });
+  const preparations = await prepareComponents(runtime, selected, options.waitMs, { structure: true, structureSuffices: true, siblings });
   const parts = { selected, preparations, states: componentStates(selected, preparations), snapshot };
   const result = componentResult(parts.states, snapshot), preparation = componentPreparation(result, parts);
   const sources = selected.filter((_, index) => result.components[index].status === "included").map(entry => entry.source);
@@ -479,7 +486,7 @@ const missingFirst = (diagnostics: Diagnostic[]) => [...diagnostics.filter(item 
 
 export async function findSharedDependencies(input: SharedDependencyInput, options: ProviderOptions = {}) {
   validateSharedDependencies(input);
-  const analysis = await preparedAnalysis(input, options), { preparation, identity, prepared } = analysis;
+  const analysis = await preparedAnalysis(input, options, true), { preparation, identity, prepared } = analysis;
   if (preparation.status === "preparing") return { ...preparation, prepared: undefined, groups: [] };
   if (!prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: analysis.diagnostics.slice(0, 20), diagnosticCount: analysis.diagnostics.length, groups: [] };
   const { index } = prepared, contents = new Map((await analysis.snapshot()).files.map(file => [file.file, file.content]));
@@ -497,7 +504,7 @@ export async function findSharedDependencies(input: SharedDependencyInput, optio
 
 export async function reportModuleInterfaces(input: ModuleInterfaceInput, options: ProviderOptions = {}) {
   validateModuleInterfaces(input);
-  const analysis = await preparedAnalysis(input, options), { preparation, identity, prepared } = analysis;
+  const analysis = await preparedAnalysis(input, options, true), { preparation, identity, prepared } = analysis;
   if (preparation.status === "preparing") return { ...preparation, prepared: undefined, modules: [], delegatingClasses: [] };
   if (!prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: analysis.diagnostics.slice(0, 20), diagnosticCount: analysis.diagnostics.length, modules: [], delegatingClasses: [] };
   const contents = new Map((await analysis.snapshot()).files.map(file => [file.file, file.content]));
@@ -544,7 +551,7 @@ function analysisScope(input: { includeTests?: boolean; filters?: { paths?: stri
 
 export async function findSharedLiterals(input: SharedDependencyInput, options: ProviderOptions = {}) {
   validateSharedLiterals(input);
-  const analysis = await preparedAnalysis(input, options), { preparation, identity, prepared } = analysis;
+  const analysis = await preparedAnalysis(input, options, true), { preparation, identity, prepared } = analysis;
   if (preparation.status === "preparing") return { ...preparation, prepared: undefined, groups: [], shapes: [] };
   if (!prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: analysis.diagnostics.slice(0, 20), diagnosticCount: analysis.diagnostics.length, groups: [], shapes: [] };
   const contents = new Map((await analysis.snapshot()).files.map(file => [file.file, file.content]));
@@ -581,7 +588,7 @@ export async function reportCohesionClusters(input: ScopedAnalysisInput, options
 
 export async function findSameNameUnits(input: ScopedAnalysisInput, options: ProviderOptions = {}) {
   validateSameNameUnits(input);
-  const analysis = await preparedAnalysis(input, options), { preparation, identity, prepared } = analysis;
+  const analysis = await preparedAnalysis(input, options, true), { preparation, identity, prepared } = analysis;
   if (preparation.status === "preparing") return { ...preparation, prepared: undefined, groups: [] };
   if (!prepared) return { ...identity, indexRevision: null, coverage: null, diagnostics: analysis.diagnostics.slice(0, 20), diagnosticCount: analysis.diagnostics.length, groups: [] };
   const contents = new Map((await analysis.snapshot()).files.map(file => [file.file, file.content]));

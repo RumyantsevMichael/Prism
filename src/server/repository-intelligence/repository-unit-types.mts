@@ -62,5 +62,6 @@ export interface SemanticRuntime {
   replacingIndex?(prepared: PreparedIndex): Promise<PreparedIndex | undefined>;
 }
 export interface ComponentRuntime extends SemanticRuntime {
-  prepareComponents(entries: { source: NativeSource; component: IndexComponent }[], waitMs?: number, options?: { retryLimited?: boolean } & PrepareOptions): Promise<Preparation[]>;
+  /** An entry with `structureOnly` builds with `fragmentsOnly`, stores a structure-only index, and ends ready, unless its content is built in full. */
+  prepareComponents(entries: { source: NativeSource; component: IndexComponent; structureOnly?: boolean }[], waitMs?: number, options?: { retryLimited?: boolean } & PrepareOptions): Promise<Preparation[]>;
 }

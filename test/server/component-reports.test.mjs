@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { FILES, entry, fakeRuntime, manifestPath, project, settled } from "./fixtures/component-indexes.mjs";
 
-// Acceptance tests of components.md §24-§26 for the component-indexes contract, clauses 9, 10, 12, 18, 19 for analysis receipts, and 20.
+// Acceptance tests of components.md §24-§26 for the component-indexes contract, clauses 9, 10, 12, 18, 19 for analysis receipts, and 20;
+// the clause 9 test follows index-preparation.md §9, which narrows §24 for scoped cross-file reports.
 process.env.PLUGIN_DATA ||= mkdtempSync(path.join(os.tmpdir(), "prism-component-reports-data-"));
 // The shared runtime never downloads assets in these tests; each test passes its own runtime.
 process.env.PRISM_NATIVE_ASSET_MANIFEST ||= manifestPath;
@@ -39,17 +40,19 @@ test("clauses 10 and 18: an unscoped structural report reads every component as 
   assert.equal(modules.nextOffset, 2);
 });
 
-test("clause 9: a path-scoped report answers only from the components that hold the paths", async (t) => {
+test("clause 9: a path-scoped same-name or module report reads the sibling components beside the components that hold the paths", async (t) => {
   const { root, storage } = await project(t, { files: REPORT_FILES });
   const { runtime, control } = await fakeRuntime(storage);
   const scoped = await findSameNameUnits({ projectRoot: root, filters: { paths: ["packages/net"] } }, options(runtime));
-  assert.deepEqual(control.builds.map((build) => build.files), [["packages/net/is.ts", "packages/net/retry.ts", "packages/net/timeout.ts"]]);
-  assert.deepEqual(scoped.groups, []);
-  assert.deepEqual((scoped.components ?? []).map((item) => item.component), ["root/net"]);
-  // Importers count only in the selected components.
-  const modules = async (input) => (await reportModuleInterfaces({ projectRoot: root, allModules: true, ...input }, options(runtime))).modules.find((module) => module.file === "packages/net/retry.ts");
-  assert.equal((await modules({ filters: { paths: ["packages/net"] } })).importers, 0);
-  assert.equal((await modules({})).importers, 1);
+  assert.equal(control.builds.length, 3);
+  assert.deepEqual(groupFiles(scoped), [["packages/app/is.ts", "packages/net/is.ts"]], "a group keeps its member in a sibling component");
+  assert.deepEqual((scoped.components ?? []).map((item) => item.component), ["root/root", "root/net", "root/app"]);
+  // Importers count in sibling components too, while only modules inside the paths are reported.
+  const modules = async (input) => (await reportModuleInterfaces({ projectRoot: root, allModules: true, ...input }, options(runtime))).modules;
+  const scopedModules = await modules({ filters: { paths: ["packages/net"] } });
+  assert.equal(scopedModules.find((module) => module.file === "packages/net/retry.ts").importers, 1);
+  assert.ok(scopedModules.every((module) => module.file.startsWith("packages/net/")));
+  assert.equal((await modules({})).find((module) => module.file === "packages/net/retry.ts").importers, 1);
 });
 
 test("clause 12: a report while a component prepares names the component it left out", async (t) => {

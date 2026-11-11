@@ -28,13 +28,15 @@ interface Coverage extends Counts { structurallyCoveredFiles: number; complete: 
 // `superseded` is set when a newer read replaced the job while it ran, and `assets` keeps the checked assets for the job's next lock attempt.
 // `watchdog` restarts the stall period on each progress of the running job, and `stalled` is set once it fired.
 // `structure` is the structure-only index of the job's content, published by its build or stored by an earlier one, and `structured` settles once it is set.
+// `structureOnly` marks a job that builds with `fragmentsOnly`, embeds nothing, and ends ready with its structure-only index as `prepared`.
 interface Job { id: string; directory: string; component?: IndexComponent; snapshot: string; status: "waiting" | "preparing" | "ready" | "degraded"; diagnostics: Diagnostic[]; failure: ComponentFailure | null;
   promise: Promise<void>; finish: () => void; run: () => Promise<void>; prepared?: PreparedIndex; revision?: string; builtAt?: string; progress?: Progress; coverage?: Coverage; recorder?: ProgressRecorder; freshness?: GitFingerprint | null;
   live: boolean; read: number; retry?: NodeJS.Timeout; superseded?: boolean; assets?: Assets; reload?: boolean; requeue?: boolean; watchdog?: () => void; stallTimer?: NodeJS.Timeout; stalled?: boolean;
-  structure?: PreparedIndex; structured: Promise<void>; publish: () => void }
+  structure?: PreparedIndex; structured: Promise<void>; publish: () => void; structureOnly?: boolean }
 interface Assets { runtime: string; modelDirectory: string; modelIdentity: string; assetIdentity: string }
 interface Location { root: string; directory: string }
-interface Entry { source: NativeSource; component?: IndexComponent }
+// `structureOnly` asks for the content's structure alone, as a scoped report asks for the components beside its paths.
+interface Entry { source: NativeSource; component?: IndexComponent; structureOnly?: boolean }
 // A pointer without `stage` was written before structure-only indexes existed and names a complete index.
 interface IndexPointer { snapshot?: string; revision?: string; stage?: IndexStage; chunkerVersion?: string; coverage?: Coverage; diagnostics?: Diagnostic[]; builtAt?: string }
 
@@ -355,7 +357,8 @@ export class NativeSemanticRuntime implements ComponentRuntime {
   structureOf(job: Job, { structure = false }: PrepareOptions): { structure?: PreparedIndex } { return structure && job.structure && !job.prepared ? { structure: job.structure } : {}; }
   // Queues the components a call needs, in the order given, and waits at most the call's bound in total for all of them.
   // `retryLimited` prepares again a component whose content reached a native limit in this process, as the review browser's rebuild does.
-  async prepareComponents(entries: { source: NativeSource; component: IndexComponent }[], waitMs = 10000, { retryLimited = false, ...options }: { retryLimited?: boolean } & PrepareOptions = {}): Promise<Preparation[]> {
+  // An entry with `structureOnly` is prepared with structure only, unless a job that builds its content in full already exists.
+  async prepareComponents(entries: { source: NativeSource; component: IndexComponent; structureOnly?: boolean }[], waitMs = 10000, { retryLimited = false, ...options }: { retryLimited?: boolean } & PrepareOptions = {}): Promise<Preparation[]> {
     const jobs = await this.enqueue(entries, undefined, retryLimited);
     const pending = jobs.filter(busy);
     if (pending.length) await boundedWait(Promise.all(pending.map(job => this.awaited(job, options))).then(() => {}), Math.min(waitMs, 10000));
@@ -364,11 +367,13 @@ export class NativeSemanticRuntime implements ComponentRuntime {
   }
   // A job is shared by every call for the same content. A failed job is prepared again by the next call, except a component's job that reached
   // a native limit, which this process does not prepare again for the same content unless `retryLimited` asks for it.
+  // A structure-only job serves a call that needs structure only; a call that needs the content in full turns a waiting one into a full job,
+  // and replaces a running or finished one with a full job, which starts from the structure that the structure-only job stored.
   async enqueue(entries: Entry[], expectedSnapshot?: string, retryLimited = false): Promise<Job[]> {
     const manifest = await this.manifest(), jobs: Job[] = [];
     // Every component of a call lives in one project, so the call reads its Git fingerprint once.
     const fingerprints = new Map<string, Promise<GitFingerprint | null>>();
-    for (const { source, component } of entries) {
+    for (const { source, component, structureOnly = false } of entries) {
       // The Git fingerprint is read before the snapshot, so a concurrent edit can only make the index look stale, never fresh.
       const projectRoot = (source as { projectRoot?: unknown }).projectRoot;
       if (typeof projectRoot === "string" && !fingerprints.has(projectRoot)) fingerprints.set(projectRoot, gitFingerprint(projectRoot));
@@ -380,10 +385,12 @@ export class NativeSemanticRuntime implements ComponentRuntime {
       const generationKey = `${location.directory}\0${snapshot.sourceFingerprint}\0${manifest.identity}`;
       if (retryLimited && this.limited.get(generationKey)?.status === "degraded") this.limited.delete(generationKey);
       let job = this.limited.get(generationKey) ?? this.generations.get(generationKey);
-      if (!job || (job.status === "degraded" && !this.limited.has(generationKey))) {
+      if (job?.structureOnly && !structureOnly && job.status === "waiting") job.structureOnly = false;
+      if (!job || (job.status === "degraded" && !this.limited.has(generationKey)) || (job.structureOnly && !structureOnly)) {
         job = this.job(source, snapshot, location, generationKey, component ? this.componentPreparationId(location.directory, snapshot.sourceFingerprint, manifest.identity) : sha(`${location.root}\0${snapshot.sourceFingerprint}\0${manifest.identity}`), live ? fingerprint : undefined, component, live, read);
         // A component whose index for this content is already stored only loads it, which needs no place in the build queue.
         if (component) job.reload = (await readdir(location.directory).catch(() => [] as string[])).some(name => name.startsWith(`generation-${snapshot.sourceFingerprint}-`));
+        job.structureOnly = structureOnly;
       } else if (live && fingerprint && job.status === "ready" && !sameFingerprint(job.freshness ?? null, fingerprint)) {
         // A commit or checkout that leaves indexed content unchanged reuses the index, so only its freshness record moves forward.
         job.freshness = fingerprint;
@@ -565,6 +572,7 @@ export class NativeSemanticRuntime implements ComponentRuntime {
     const generation = path.join(directory, `generation-${snapshot.sourceFingerprint}-${assets.assetIdentity}.json`);
     // A structure that a build of this content stored, in this session or another, answers structure at once, also while another session holds the lock.
     await this.loadStructure(job, directory, generation, snapshot, assets);
+    if (job.structureOnly && job.structure) return this.storedStructure(job, source);
     // Another session's build holds the project lock, so a wait longer than a moment is reported rather than shown as the last step.
     const waiting = setTimeout(() => this.report(job, { phase: "waiting" }), 1000);
     waiting.unref();
@@ -576,7 +584,11 @@ export class NativeSemanticRuntime implements ComponentRuntime {
         try {
           // A structure-only index answers structure but is never reused as complete, and its fragments hold no embedding that a build could reuse.
           let pointer = await optionalJson(generation);
-          if (pointer && pointerStage(pointer) === "structure") { await this.loadStructure(job, directory, generation, snapshot, assets); pointer = null; }
+          if (pointer && pointerStage(pointer) === "structure") {
+            await this.loadStructure(job, directory, generation, snapshot, assets);
+            if (job.structureOnly && job.structure) return await this.storedStructure(job, source);
+            pointer = null;
+          }
           pointer ??= await optionalJson(path.join(directory, "current.json"));
           if (pointer && pointerStage(pointer) === "structure") pointer = null;
           if (!pointer) throw Object.assign(new Error("No complete index is stored."), { code: "ENOENT" });
@@ -618,9 +630,15 @@ export class NativeSemanticRuntime implements ComponentRuntime {
           // The structure is stored while the build goes on embedding, and the complete index is saved only after it, so the complete index replaces it.
           let structureSaved = Promise.resolve();
           const structure = (token: string) => { structureSaved = this.publishStructure(job, token, directory, generation, snapshot, assets); };
+          // A structure-only build embeds nothing, so it reuses no embeddings and saves its whole result as the structure-only index.
+          const structureOnly = Boolean(job.structureOnly);
           const token = await this.store.build({ runtime: assets.runtime, directory, args: { mirror, files: snapshot.files.map(({ file, hash }) => ({ file, hash })),
-            snapshot: snapshot.sourceFingerprint, modelDirectory: assets.modelDirectory, modelIdentity: assets.modelIdentity },
-          ...(previous ? { previous: { indexPath: previous.indexPath, revision: previous.revision } } : {}) }, (progress, embedded) => this.report(job, progress, embedded), structure);
+            snapshot: snapshot.sourceFingerprint, modelDirectory: assets.modelDirectory, modelIdentity: assets.modelIdentity, fragmentsOnly: structureOnly },
+          ...(previous && !structureOnly ? { previous: { indexPath: previous.indexPath, revision: previous.revision } } : {}) }, (progress, embedded) => this.report(job, progress, embedded), structureOnly ? undefined : structure);
+          if (structureOnly) {
+            try { this.alive(job); await source.verifySnapshot(); } catch (error) { await this.store.discard(token).catch(() => {}); throw error; }
+            return await this.saveStructureOnly(job, token, directory, generation, snapshot, assets);
+          }
           this.report(job, { phase: "saving" });
           await structureSaved;
           try { this.alive(job); await source.verifySnapshot(); } catch (error) { await this.store.discard(token).catch(() => {}); throw error; }
@@ -642,6 +660,39 @@ export class NativeSemanticRuntime implements ComponentRuntime {
         } finally { await rm(mirror, { recursive: true, force: true }); }
       }, job.component ? heldError : semanticError, { renew: true, timeoutMs: job.component ? 250 : 120000 }));
     } finally { clearTimeout(waiting); }
+  }
+  // A structure-only job that found its content's structure stored ends with it, as a load of a stored index ends.
+  async storedStructure(job: Job, source: NativeSource): Promise<PreparedIndex> {
+    await source.verifySnapshot();
+    const structure = job.structure!, pointer = await optionalJson(path.join(job.directory, `generation-${job.snapshot}-${structure.assetIdentity}.json`)).catch(() => null);
+    job.revision = structure.revision; job.coverage = pointer?.coverage ?? coverageOf(structure.index); job.diagnostics = structure.index.diagnostics; job.builtAt = pointer?.builtAt;
+    return structure;
+  }
+  // Stores the result of a structure-only build as its content's structure-only index, unless a complete index of the same content is stored,
+  // which then answers instead; unlike a structure that a full build publishes, a structure-only build fails when its index cannot be stored.
+  async saveStructureOnly(job: Job, token: string, directory: string, generation: string, snapshot: SourceSnapshot, assets: Assets): Promise<PreparedIndex> {
+    const existing = await optionalJson(generation).catch(() => null);
+    if (existing?.revision && pointerStage(existing) === "complete" && /^[a-f\d]{64}$/.test(existing.revision)) {
+      const indexPath = path.join(directory, `${existing.revision}.json`), index = await this.store.read(indexPath, existing.revision).catch(() => undefined);
+      if (index && index.snapshot === snapshot.sourceFingerprint && index.assetIdentity === assets.assetIdentity) {
+        await this.store.discard(token);
+        job.revision = existing.revision; job.coverage = existing.coverage; job.diagnostics = index.diagnostics; job.builtAt = existing.builtAt;
+        return { ...assets, index, indexPath, revision: existing.revision, stage: "complete" };
+      }
+    }
+    this.report(job, { phase: "saving" });
+    const { revision, indexPath, index } = await this.store.saveStructure(token, { directory, assetIdentity: assets.assetIdentity, incomplete: !snapshot.complete });
+    const coverage = coverageOf(index), builtAt = new Date().toISOString();
+    const pointerContents = JSON.stringify({ snapshot: index.snapshot, revision, stage: "structure", chunkerVersion: index.chunkerVersion, coverage, diagnostics: index.diagnostics, builtAt });
+    await writeAtomically(generation, pointerContents, { mode: 0o600 });
+    await writeAtomically(path.join(directory, "current.json"), pointerContents, { mode: 0o600 });
+    job.revision = revision; job.coverage = coverage; job.diagnostics = index.diagnostics; job.builtAt = builtAt;
+    log.info("index_structure_built", { directory, revision, component: job.component?.identity, files: snapshot.files.length });
+    await pruneIndexes(directory, revision).catch(() => {});
+    const prepared: PreparedIndex = { ...assets, index, indexPath, revision, stage: "structure" };
+    job.structure = undefined;
+    this.structured(job, prepared);
+    return prepared;
   }
   // Sets a job's published structure once.
   structured(job: Job, prepared: PreparedIndex) {

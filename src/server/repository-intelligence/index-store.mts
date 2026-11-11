@@ -49,13 +49,14 @@ export class LocalIndexStore implements IndexStore {
   // The runtime's `structure` value is the index without embeddings; it is held for `structure`, never forwarded, and its phase alone is reported.
   async build({ runtime, directory, args, previous }: StoreBuild, progress: StoreProgress, structure?: StoreStructure) {
     const stops = this.stops;
-    // Reuse saves embedding time only, so a previous index that can no longer be read leaves the build to embed every fragment.
-    const indexed = previous ? await readIndex(previous.indexPath, previous.revision).then(storedEmbeddings, error => {
+    // Reuse saves embedding time only, so a previous index that can no longer be read leaves the build to embed every fragment,
+    // and a structure-only build, which embeds nothing, reads no saved embeddings.
+    const indexed = previous && !args.fragmentsOnly ? await readIndex(previous.indexPath, previous.revision).then(storedEmbeddings, error => {
       log.warn("index_reuse_unreadable", { indexPath: previous.indexPath, ...errorFields(error) });
       return {};
     }) : {};
     // The embedding store holds what earlier builds of this location embedded, including builds that never saved an index.
-    const saved = await readEmbeddings(directory, { limit: REUSED_EMBEDDINGS - Object.keys(indexed).length, skip: indexed });
+    const saved = args.fragmentsOnly ? {} : await readEmbeddings(directory, { limit: REUSED_EMBEDDINGS - Object.keys(indexed).length, skip: indexed });
     const previousEmbeddings = { ...indexed, ...saved };
     if (this.stops !== stops) throw semanticError("preparation_failed", "The index build was stopped before it started.");
     let saving = true;
