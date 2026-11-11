@@ -88,6 +88,11 @@ try {
       const page = await context.newPage();
       let current = "";
       page.on("pageerror", (error) => record(`page error: ${error.message}`, current));
+      // A failed load names its resource and the browser's reason, which the console's own message leaves out.
+      page.on("requestfailed", (request) => {
+        const reason = request.failure()?.errorText ?? "";
+        if (reason !== "net::ERR_ABORTED") record(`request failed: ${new URL(request.url()).pathname.replace(/^\/session\/[^/]+/, "")} ${reason}`, current);
+      });
       page.on("console", (message) => {
         // The vendored PlantUML runtime sets a style attribute while it renders, which the page's style policy refuses without effect on the result.
         // Chromium words that refusal either way, depending on its version.
