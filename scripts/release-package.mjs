@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { rmSync } from "node:fs";
-import { chmod, copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { PLATFORMS, publishedManifest } from "./native-build/published-manifest.mjs";
@@ -21,9 +21,13 @@ export const releaseTag = version => `v${version}`;
 export const packageTag = version => `${PACKAGE_TAG_PREFIX}${version}`;
 export const releaseBase = (repository, tag) => `https://github.com/${repository}/releases/download/${tag}`;
 
-// Tracked files only, so ignored build output such as staged dependencies and local archives never ships.
+// Generated runtime output is built in CI rather than committed, so the package takes it from the working tree.
+// Everything else is tracked files only, so local and ignored files never ship.
+const GENERATED = ["dist/server", "dist/native-runtime", "dist/hooks"];
+
 function trackedFiles(checkout) {
-  const output = execFileSync("git", ["ls-files", "-s", "-z", "--", ...PACKAGE_ENTRIES], { cwd: checkout, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  const entries = PACKAGE_ENTRIES.filter(entry => entry !== "dist");
+  const output = execFileSync("git", ["ls-files", "-s", "-z", "--", ...entries], { cwd: checkout, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   return output.split("\0").filter(Boolean).map(line => {
     const [stage, file] = line.split("\t");
     const mode = stage.split(" ")[0];
@@ -32,13 +36,33 @@ function trackedFiles(checkout) {
   });
 }
 
+// Staged dependencies under dist/native-runtime/node_modules belong to the runtime archive, not the package.
+async function generatedFiles(checkout) {
+  const found = [];
+  async function walk(relative) {
+    let entries;
+    try { entries = await readdir(path.join(checkout, relative), { withFileTypes: true }); }
+    catch (error) { if (error.code === "ENOENT") return; throw error; }
+    for (const entry of entries) {
+      const child = path.posix.join(relative, entry.name);
+      if (entry.name === "node_modules") continue;
+      if (entry.isDirectory()) await walk(child);
+      else if (entry.isFile()) found.push({ file: child, executable: ((await stat(path.join(checkout, child))).mode & 0o111) !== 0 });
+      else throw new Error(`Packages hold only regular files: ${child}.`);
+    }
+  }
+  for (const directory of GENERATED) await walk(directory);
+  if (!found.some(({ file }) => file === "dist/server/mcp.mjs")) throw new Error("Build the runtime first: npm run build:native.");
+  return found.sort((a, b) => a.file.localeCompare(b.file));
+}
+
 async function readRecords(directory) {
   return Object.fromEntries(await Promise.all(PLATFORMS.map(async platform => [platform, JSON.parse(await readFile(path.join(directory, `${platform}.json`), "utf8"))])));
 }
 
 // Writes the package tree for one release into `out`, which must not exist or must be replaceable.
 export async function buildPackage({ checkout, out, repository, tag, metadata }) {
-  const files = trackedFiles(checkout);
+  const files = [...trackedFiles(checkout), ...await generatedFiles(checkout)];
   await rm(out, { recursive: true, force: true });
   for (const { file, executable } of files) {
     const target = path.join(out, file);

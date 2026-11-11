@@ -26,7 +26,7 @@ src/                 # editable server, native helper, and hook sources
     session/         # host adapters, session facts, capacity, and tracing
   native-runtime/    # native helper packaged into runtime archives
   hooks/             # session hook entry points
-dist/                # committed executable runtime and browser assets, same layout as src/
+dist/                # generated runtime and browser assets, same layout as src/; built, not committed
 test/                # server and native helper tests
 vendor/plantuml/     # pinned MIT PlantUML browser runtime
 bin/                 # MCP and standalone review launchers
@@ -43,6 +43,14 @@ Claude Code also reads a root `.mcp.json` as project config when a session runs 
 That project server has no `${CLAUDE_PLUGIN_ROOT}` value, so it fails to start.
 
 ## Local development
+
+The plugin runs from `dist/`, which is generated and not committed, so build it after cloning and after every change under `src/`:
+
+```bash
+npm ci --prefix scripts/native-build --ignore-scripts
+npm ci --prefix src/native-runtime --ignore-scripts
+npm run build:native
+```
 
 Load the working tree into Claude Code:
 
@@ -226,8 +234,8 @@ Older server modules remain JavaScript, and newer modules such as the conservati
 Shared source unit, index, and worker message types live in `src/server/repository-intelligence/repository-unit-types.mts`.
 Edit runtime sources under `src/`, then regenerate the complete runtime tree under `dist/`.
 The build compiles TypeScript and copies handwritten JavaScript, browser assets, and runtime registries.
-Commit both the edited sources and generated output.
-The package ships generated JavaScript, so users do not need a TypeScript compiler.
+`dist/` is ignored, so commit only the sources.
+CI builds `dist/` in every job that runs the plugin, and each release package ships the generated JavaScript, so users do not need a TypeScript compiler.
 
 ```bash
 npm ci --prefix src/native-runtime --ignore-scripts
@@ -242,9 +250,9 @@ node scripts/native-build/smoke.mjs dist/native
 node scripts/native-build/mcp-smoke.mjs dist/native
 ```
 
-The freshness check verifies the complete output file set, contents, and executable permissions.
+The freshness check, `npm run check:native`, verifies the complete output file set, contents, and executable permissions.
 It rejects missing, changed, and obsolete output without changing files.
-CI runs this check before any build that could repair committed output.
+The runtime archive builder runs it, so an archive never packs stale output.
 The dependency staging command copies installed helper dependencies into ignored `dist/native-runtime/node_modules`.
 Run staging after installing or patching helper dependencies.
 The build preserves staged dependencies and the ignored `dist/native` archive directory.
