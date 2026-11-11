@@ -114,11 +114,28 @@ A `preparing` response is unfinished discovery, not an empty search result.
 Keep the original `snapshotId` through retries and edits so new code cannot appear as preexisting reuse evidence.
 Use `discover_repository_intelligence` for native runtime, model, index, and coverage status without starting downloads or preparation.
 
+An index build has no limit on its total duration, so a large repository finishes as long as its build keeps making progress.
+A build makes progress when it reaches a new phase, moves its count, file, or item forward, or embeds more fragments.
+A build that makes no progress for the stall period is stopped, and its index or component fails with the code `stalled`, which names the phase it stalled in:
+
+```json
+{"code": "stalled", "message": "The index build made no progress for 10 minutes during embedding.", "phase": "embedding", "recovery": "Repeat the call to resume the build from its saved work."}
+```
+
+The stall period is 10 minutes.
+Set `PRISM_INDEX_STALL_MINUTES` to a whole number of minutes from 1 through 1440 to change it; Prism ignores any other value.
+A search keeps its 30 minute limit and fails with `resource_limit` when it reaches it.
+
+A build saves the embeddings it makes as it makes them, in a private embedding store beside the index.
+A stall is not a native limit, so the next call that needs the index prepares it again.
+That build, and any later build of the same index or component in any session that shares the storage, reuses every saved embedding of unchanged fragment text and embeds only the rest.
+A build that failed or ended with its process keeps its saved embeddings the same way.
+
 #### Index a repository per component
 
 A repository that declares components under `## Components` in `.prism/workflow.md` has one native index per component.
 Each declared component's index holds only the files in its folder, and the root component's index holds every other file, including documents outside every declared folder.
-The native limits of 20,000 files, 64 MiB of source, a 512 MiB index file, and 30 minutes of preparation apply to each component's index on its own.
+The native limits of 20,000 files, 64 MiB of source, a 512 MiB index file, and the stall period apply to each component's index on its own.
 A repository without components keeps one index of the whole repository, so an index that it prepared earlier is reused.
 
 A search of the current files with `filters.paths` prepares and reads only the components that hold a file at or under those paths.

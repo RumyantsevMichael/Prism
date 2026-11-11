@@ -20,14 +20,16 @@ export { publishedUnits, unitsFile } from "./index-files.mjs";
 
 interface Asset { url: string; bytes: number; sha256: string; unpackedBytes?: number }
 interface AssetManifest { schemaVersion: 1; identity: string; assetVersion: string; bundles: Record<string, Asset>; modelMirror?: string; model: { id: string; revision: string; files: (Omit<Asset, "url"> & { path: string; url?: string })[] } }
-interface Options { directory?: string; manifestPath?: string; idleMs?: number; operationMs?: number }
+// `stallMs` replaces the stall period that PRISM_INDEX_STALL_MINUTES or the default sets.
+interface Options { directory?: string; manifestPath?: string; idleMs?: number; operationMs?: number; stallMs?: number }
 interface Coverage extends Counts { structurallyCoveredFiles: number; complete: boolean }
 // A job prepares one storage location: the whole project in a repository without components, otherwise one component.
 // `read` orders the jobs of one storage location by when their content was read, `retry` is set while another session holds the component's lock,
 // `superseded` is set when a newer read replaced the job while it ran, and `assets` keeps the checked assets for the job's next lock attempt.
+// `watchdog` restarts the stall period on each progress of the running job, and `stalled` is set once it fired.
 interface Job { id: string; directory: string; component?: IndexComponent; snapshot: string; status: "waiting" | "preparing" | "ready" | "degraded"; diagnostics: Diagnostic[]; failure: ComponentFailure | null;
   promise: Promise<void>; finish: () => void; run: () => Promise<void>; prepared?: PreparedIndex; revision?: string; builtAt?: string; progress?: Progress; coverage?: Coverage; recorder?: ProgressRecorder; freshness?: GitFingerprint | null;
-  live: boolean; read: number; retry?: NodeJS.Timeout; superseded?: boolean; assets?: Assets; reload?: boolean; requeue?: boolean }
+  live: boolean; read: number; retry?: NodeJS.Timeout; superseded?: boolean; assets?: Assets; reload?: boolean; requeue?: boolean; watchdog?: () => void; stallTimer?: NodeJS.Timeout; stalled?: boolean }
 interface Assets { runtime: string; modelDirectory: string; modelIdentity: string; assetIdentity: string }
 interface Location { root: string; directory: string }
 interface Entry { source: NativeSource; component?: IndexComponent }
@@ -50,6 +52,23 @@ const reloadMiss = () => Object.assign(semanticError("preparation_failed", "The 
 // even when the process it names is running, as a reused process id after a restart can be.
 const UNRENEWED_LOCK_MS = 30000;
 const heldError = (code: string, message: string) => Object.assign(semanticError(code, message), { held: code === "lock_timeout" });
+// A build has no limit on its total duration; it is stopped only after it reports no progress for the stall period.
+const DEFAULT_STALL_MS = 10 * 60 * 1000;
+const STALL_RECOVERY = "Repeat the call to resume the build from its saved work.";
+export function stallPeriod(stallMs?: number, minutes = process.env.PRISM_INDEX_STALL_MINUTES) {
+  if (stallMs !== undefined) return stallMs;
+  const value = /^\d+$/.test(minutes?.trim() ?? "") ? Number(minutes!.trim()) : NaN;
+  return value >= 1 && value <= 1440 ? value * 60 * 1000 : DEFAULT_STALL_MS;
+}
+export function stallDuration(ms: number) {
+  if (ms < 60 * 1000) return `${Math.round(ms / 1000)} seconds`;
+  const minutes = Math.round(ms / 60000);
+  return minutes === 1 ? "1 minute" : `${minutes} minutes`;
+}
+// A value is progress when its phase, count, item, or file moved, or when it brought new vectors; a repeated heartbeat is not.
+const progressed = (previous: Progress | undefined, next: Progress, embedded: boolean) => embedded || !previous || previous.phase !== next.phase
+  || previous.current !== next.current || previous.item !== next.item || previous.file !== next.file;
+const stalledError = (phase: string, ms: number) => Object.assign(semanticError("stalled", `The index build made no progress for ${stallDuration(ms)} during ${phase}.`), { stalled: true, phase });
 const stableFailure = (error: Error & { code?: string }) => ["invalid_path", "lock_timeout", "stale_snapshot", "unsupported_runtime", "corrupt_asset", "resource_limit", "validation_failed"].includes(error.code || "") ? error.code! : error.code === "snapshot-changed" ? "stale_snapshot" : "preparation_failed";
 
 export async function privateDirectory(directory: string): Promise<string> {
@@ -415,9 +434,11 @@ export class NativeSemanticRuntime implements ComponentRuntime {
       // Progress is reported to a file beside the index, so the review app can show builds that run in any session's process.
       const recorder = job.recorder = new ProgressRecorder(location.directory, job.id);
       const started = privateDirectory(location.directory).then(() => recorder.start()).catch(() => {});
+      const stalled = this.watch(job);
       // A job's new status is set only once its progress record is final, so a caller that sees the job end never finds its record still being written.
       try {
-        job.prepared = await this.build(source, snapshot, location, job);
+        // A stalled build fails at once, without waiting for its stopped request to end.
+        job.prepared = await Promise.race([this.build(source, snapshot, location, job), stalled]);
         if (job.freshness !== undefined) await writeFreshness(location.directory, job.snapshot, job.freshness);
         await started; await recorder.succeed();
         job.status = "ready";
@@ -431,6 +452,15 @@ export class NativeSemanticRuntime implements ComponentRuntime {
         // A job that a newer read replaced while it ran is dropped, as a waiting one is, and leaves no progress record, whether it ended
         // waiting for another session's lock or failed on the source that changed under it.
         if (job.superseded && this.jobs.get(location.directory) !== job) { await started; await recorder.succeed(); this.stale(job); return; }
+        // A stall is not a native limit: the build's saved embeddings stay, and the next call that needs the content prepares it again.
+        if (error.stalled) {
+          const failure = { code: "stalled", message: error.message, phase: error.phase as string };
+          log.warn("index_stalled", { directory: location.directory, component: component?.identity, phase: failure.phase });
+          const diagnostics = [{ ...failure, recovery: STALL_RECOVERY }];
+          await started; await recorder.fail(diagnostics);
+          job.status = "degraded"; job.failure = failure; job.diagnostics = diagnostics;
+          return;
+        }
         let recovery = "Retry preparation after correcting the reported runtime, network, or source problem.";
         if (component && error.held) {
           const lock = `${location.directory}.lock`, info = await lstat(lock).catch(() => null);
@@ -451,7 +481,7 @@ export class NativeSemanticRuntime implements ComponentRuntime {
         await started; await recorder.fail(diagnostics);
         job.status = "degraded"; job.failure = { code, message: error.message }; job.diagnostics = diagnostics;
         if (component && code === "resource_limit") this.limited.set(generationKey, job);
-      } finally { job.recorder = undefined; }
+      } finally { job.recorder = undefined; job.watchdog = undefined; clearTimeout(job.stallTimer); }
     } };
     this.generations.set(generationKey, job);
     // Each generation holds index metadata in memory, so forget the oldest finished ones of the same storage; their indexes stay reusable on disk.
@@ -474,7 +504,32 @@ export class NativeSemanticRuntime implements ComponentRuntime {
       this.running = null; if (!job.retry) job.finish(); this.pump();
     });
   }
-  report(job: Job, progress: Progress) {
+  // Starts the stall period of a job that runs; the returned promise rejects with the stalled failure once the job makes no progress for that period.
+  watch(job: Job): Promise<never> {
+    const period = stallPeriod(this.options.stallMs);
+    let reject: (error: Error) => void = () => {};
+    const stalled = new Promise<never>((_, fail) => { reject = fail; });
+    stalled.catch(() => {});
+    const fire = () => {
+      if (!job.watchdog) return;
+      job.stalled = true; job.watchdog = undefined;
+      const phase = job.progress?.phase ?? "starting";
+      // The helper is stopped without waiting for its request, which then ends with the build it ran.
+      void this.store.stop().catch(error => log.warn("index_stop_failed", { directory: job.directory, ...errorFields(error) }));
+      reject(stalledError(phase, period));
+    };
+    job.stalled = false;
+    job.watchdog = () => { clearTimeout(job.stallTimer); job.stallTimer = setTimeout(fire, period); job.stallTimer.unref(); };
+    job.watchdog();
+    return stalled;
+  }
+  // A job that stalled has failed, so its abandoned build may not go on to copy, build, or save.
+  alive(job: Job) { if (job.stalled) throw semanticError("preparation_failed", "The stalled build was stopped."); }
+  report(job: Job, value: Progress & { index?: unknown }, embedded = Boolean(value.vectors)) {
+    // A stopped build's late messages change nothing, and no reported value keeps vectors or an index.
+    if (job.stalled) return;
+    const { vectors: _vectors, index: _index, ...progress } = value;
+    if (progressed(job.progress, progress, embedded)) job.watchdog?.();
     // A phase change is logged once, and the phase stays the index activity that a record of a stalled event loop names.
     if (job.progress?.phase !== progress.phase) {
       log.debug("index_phase", { directory: job.directory, component: job.component?.identity, phase: progress.phase, total: progress.total });
@@ -494,6 +549,7 @@ export class NativeSemanticRuntime implements ComponentRuntime {
     try {
       return await withArtifactLock(directory, () => withFileLock(directory, async () => {
         clearTimeout(waiting);
+        this.alive(job);
         let previous: { index: IndexMetadata; indexPath: string; revision: string } | undefined;
         try {
           const pointer = await readJson<IndexPointer>(path.join(directory, `generation-${snapshot.sourceFingerprint}-${assets.assetIdentity}.json`))
@@ -519,6 +575,7 @@ export class NativeSemanticRuntime implements ComponentRuntime {
         try {
           this.report(job, { phase: "snapshot-copy", current: 0, total: snapshot.files.length, unit: "files" });
           for (const [index, file] of snapshot.files.entries()) {
+            this.alive(job);
             const target = path.resolve(mirror, file.file);
             if (!inside(mirror, target)) throw semanticError("invalid_path", "A snapshot path escapes its mirror.");
             await privateDirectory(path.dirname(target));
@@ -531,11 +588,12 @@ export class NativeSemanticRuntime implements ComponentRuntime {
             this.report(job, { phase: "snapshot-copy", current: index + 1, total: snapshot.files.length, unit: "files" });
           }
           await source.verifySnapshot();
-          const token = await this.store.build({ runtime: assets.runtime, args: { mirror, files: snapshot.files.map(({ file, hash }) => ({ file, hash })),
+          this.alive(job);
+          const token = await this.store.build({ runtime: assets.runtime, directory, args: { mirror, files: snapshot.files.map(({ file, hash }) => ({ file, hash })),
             snapshot: snapshot.sourceFingerprint, modelDirectory: assets.modelDirectory, modelIdentity: assets.modelIdentity },
-          ...(previous ? { previous: { indexPath: previous.indexPath, revision: previous.revision } } : {}) }, progress => this.report(job, progress));
+          ...(previous ? { previous: { indexPath: previous.indexPath, revision: previous.revision } } : {}) }, (progress, embedded) => this.report(job, progress, embedded));
           this.report(job, { phase: "saving" });
-          try { await source.verifySnapshot(); } catch (error) { await this.store.discard(token).catch(() => {}); throw error; }
+          try { this.alive(job); await source.verifySnapshot(); } catch (error) { await this.store.discard(token).catch(() => {}); throw error; }
           const { revision, indexPath, bytes, index } = await this.store.save(token, { directory, assetIdentity: assets.assetIdentity, incomplete: !snapshot.complete });
           const coverage = { ...index.counts, structurallyCoveredFiles: Object.values(index.fileCoverage).filter(Boolean).length, complete: index.structureComplete && Object.values(index.fileCoverage).every(Boolean) };
           const builtAt = new Date().toISOString();
@@ -557,8 +615,12 @@ export class NativeSemanticRuntime implements ComponentRuntime {
   get store(): IndexStore { return this.indexStore ??= new ThreadIndexStore({ ...this.options, directory: this.directory }); }
   set store(store: IndexStore) { this.indexStore = store; }
   /** A store that builds through this runtime's `helper` in this thread, for a helper that runs in process. */
-  inProcessStore(): IndexStore { return new LocalIndexStore((runtime, args, progress) => this.helper(runtime, "build").request("build", args, progress)); }
-  helper(runtime: string, role: "build" | "search" = "search"): Pick<Helper, "request"> {
+  inProcessStore(): IndexStore {
+    let used: string | undefined;
+    return new LocalIndexStore((runtime, args, progress) => { used = runtime; return this.helper(runtime, "build").request("build", args, progress); },
+      () => { if (used) this.helper(used, "build").stop?.(); });
+  }
+  helper(runtime: string, role: "build" | "search" = "search"): Pick<Helper, "request"> & Partial<Pick<Helper, "stop">> {
     let helper = this.processes.get(role);
     if (helper?.runtime !== runtime) { helper?.stop(); helper = new Helper(runtime, { ...this.options, directory: this.directory }, role); this.processes.set(role, helper); }
     return helper;

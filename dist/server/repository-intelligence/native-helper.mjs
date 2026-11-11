@@ -68,11 +68,11 @@ class Helper {
     this.start();
     return new Promise((resolve, reject) => {
       const id = ++this.counter;
-      const timeout = setTimeout(() => {
+      const timeout = method === "search" ? setTimeout(() => {
         log.warn("native_helper_timed_out", { role: this.role, method, limitMs: this.options.operationMs ?? 30 * 60 * 1e3 });
-        this.stop(semanticError("resource_limit", "Native preparation exceeded its 30 minute operation limit."));
-      }, this.options.operationMs ?? 30 * 60 * 1e3);
-      timeout.unref();
+        this.stop(semanticError("resource_limit", "Native search exceeded its 30 minute operation limit."));
+      }, this.options.operationMs ?? 30 * 60 * 1e3) : void 0;
+      timeout?.unref();
       this.requests.set(id, { resolve: (value) => resolve(value), reject, timeout, progress, method });
       this.child.stdin.write(jsonLine({ id, method, args }), (error) => {
         if (error) this.stop(semanticError("preparation_failed", "The native helper input channel failed."));

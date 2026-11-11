@@ -13,18 +13,19 @@ let helper: Helper | null = null;
 const store = new LocalIndexStore((runtime, args, progress) => {
   if (helper?.runtime !== runtime) { helper?.stop(); helper = new Helper(runtime, options, "build"); }
   return helper.request("build", args, progress);
-});
+}, () => helper?.stop());
 const operations: Record<string, (...args: never[]) => Promise<unknown>> = {
   read: (indexPath: string, revision: string) => store.read(indexPath, revision),
   save: (token: string, finish: Parameters<LocalIndexStore["save"]>[1]) => store.save(token, finish),
   discard: (token: string) => store.discard(token),
+  stop: () => store.stop(),
   close: async () => { await store.close(); await helper?.close(); helper = null; await log.flush(); }
 };
 
 parentPort!.on("message", async ({ id, op, args }: { id: number; op: string; args: never[] }) => {
   try {
     const result = op === "build"
-      ? await store.build(args[0], (progress: Progress) => parentPort!.postMessage({ id, progress }))
+      ? await store.build(args[0], (progress: Progress, embedded?: boolean) => parentPort!.postMessage({ id, progress, ...(embedded ? { embedded } : {}) }))
       : await operations[op](...args);
     parentPort!.postMessage({ id, result });
   } catch (error) {

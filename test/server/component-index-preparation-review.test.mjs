@@ -79,18 +79,18 @@ test("CC-1: a search of a ready component answers while another component's buil
   assert.equal(entry(await runtime.status(root), "root/app").status, "preparing");
 });
 
-test("CC-1: a build that reaches the operation limit does not fail a concurrent search of another component", { skip: process.platform === "win32" }, async (t) => {
+test("CC-1: a build that stalls does not fail a concurrent search of another component", { skip: process.platform === "win32" }, async (t) => {
   const { directory, root, storage } = await project(t);
-  const runtime = await serialRuntime(t, directory, storage, { operationMs: 2500 });
+  const runtime = await serialRuntime(t, directory, storage, { stallMs: 2500 });
   assert.equal((await search(root, runtime, { filters: { paths: ["packages/net"] } }, 10000)).status, "ready");
   await search(root, runtime, { filters: { paths: ["packages/app"] } }, 0);
-  // The search is still answering when the build of packages/app reaches its limit.
+  // The search is still answering when the build of packages/app, which reports no progress, reaches its stall period.
   await delay(2000);
   const found = await search(root, runtime, { filters: { paths: ["packages/net"] } });
   assert.equal(found.status, "ready");
   assert.equal(found.results.length, 2);
   const status = await settled(runtime, root);
-  assert.deepEqual([entry(status, "root/app").status, entry(status, "root/app").failure?.code], ["degraded", "resource_limit"]);
+  assert.deepEqual([entry(status, "root/app").status, entry(status, "root/app").failure?.code, entry(status, "root/app").failure?.phase], ["degraded", "stalled", "snapshot-copy"]);
 });
 
 test("CC-3: a component that another session holds is reported preparing and does not hold the other components", async (t) => {

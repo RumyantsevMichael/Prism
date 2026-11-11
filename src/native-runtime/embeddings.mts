@@ -22,7 +22,8 @@ export async function embedFragments(chunks: Fragment[], modelIdentity: string, 
     const embedded = await embed(batch.map(([, group]) => group.text));
     if (embedded.length !== batch.length || !embedded.every(validVector)) throw new Error("The model returned invalid embedding vectors.");
     batch.forEach(([key], index) => vectors.set(key, embedded[index]));
-    progress({ phase: "embedding", current: Math.min(offset + 8, missing.length), total: missing.length });
+    // Each batch's vectors travel with its progress, so Prism saves them before the build goes on and a stopped build keeps them.
+    progress({ phase: "embedding", current: Math.min(offset + 8, missing.length), total: missing.length, vectors: batch.map(([key], index) => [key, embedded[index]]) });
   }
   for (const [key, group] of groups) for (const chunk of group.chunks) {
     chunk.embeddingKey = key;

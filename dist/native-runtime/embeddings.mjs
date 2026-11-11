@@ -19,7 +19,7 @@ async function embedFragments(chunks, modelIdentity, previous, embed, progress) 
     const embedded = await embed(batch.map(([, group]) => group.text));
     if (embedded.length !== batch.length || !embedded.every(validVector)) throw new Error("The model returned invalid embedding vectors.");
     batch.forEach(([key], index) => vectors.set(key, embedded[index]));
-    progress({ phase: "embedding", current: Math.min(offset + 8, missing.length), total: missing.length });
+    progress({ phase: "embedding", current: Math.min(offset + 8, missing.length), total: missing.length, vectors: batch.map(([key], index) => [key, embedded[index]]) });
   }
   for (const [key, group] of groups) for (const chunk of group.chunks) {
     chunk.embeddingKey = key;

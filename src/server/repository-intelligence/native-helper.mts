@@ -15,7 +15,7 @@ const STDERR_TAIL = 8000;
 export class Helper {
   child: ChildProcessWithoutNullStreams | null = null;
   idle?: NodeJS.Timeout;
-  requests = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timeout: NodeJS.Timeout; progress?: (value: Progress) => void; method: string }>();
+  requests = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timeout?: NodeJS.Timeout; progress?: (value: Progress) => void; method: string }>();
   counter = 0;
   stderr = "";
   constructor(public runtime: string, private options: HelperOptions, public role = "build") {}
@@ -54,11 +54,12 @@ export class Helper {
     clearTimeout(this.idle); this.start();
     return new Promise((resolve, reject) => {
       const id = ++this.counter;
-      const timeout = setTimeout(() => {
+      // A search has a fixed limit, while a build has none: the runtime that requested it stops it once it makes no progress for its stall period.
+      const timeout = method === "search" ? setTimeout(() => {
         log.warn("native_helper_timed_out", { role: this.role, method, limitMs: this.options.operationMs ?? 30 * 60 * 1000 });
-        this.stop(semanticError("resource_limit", "Native preparation exceeded its 30 minute operation limit."));
-      }, this.options.operationMs ?? 30 * 60 * 1000);
-      timeout.unref(); this.requests.set(id, { resolve: value => resolve(value as WorkerMethods[K]["output"]), reject, timeout, progress, method });
+        this.stop(semanticError("resource_limit", "Native search exceeded its 30 minute operation limit."));
+      }, this.options.operationMs ?? 30 * 60 * 1000) : undefined;
+      timeout?.unref(); this.requests.set(id, { resolve: value => resolve(value as WorkerMethods[K]["output"]), reject, timeout, progress, method });
       this.child!.stdin.write(jsonLine({ id, method, args }), error => { if (error) this.stop(semanticError("preparation_failed", "The native helper input channel failed.")); });
     });
   }

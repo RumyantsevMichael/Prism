@@ -36,6 +36,20 @@ const RELOAD_CONCURRENCY = 4;
 const reloadMiss = () => Object.assign(semanticError("preparation_failed", "The stored index no longer matches its content."), { reloadMiss: true });
 const UNRENEWED_LOCK_MS = 3e4;
 const heldError = (code, message) => Object.assign(semanticError(code, message), { held: code === "lock_timeout" });
+const DEFAULT_STALL_MS = 10 * 60 * 1e3;
+const STALL_RECOVERY = "Repeat the call to resume the build from its saved work.";
+function stallPeriod(stallMs, minutes = process.env.PRISM_INDEX_STALL_MINUTES) {
+  if (stallMs !== void 0) return stallMs;
+  const value = /^\d+$/.test(minutes?.trim() ?? "") ? Number(minutes.trim()) : NaN;
+  return value >= 1 && value <= 1440 ? value * 60 * 1e3 : DEFAULT_STALL_MS;
+}
+function stallDuration(ms) {
+  if (ms < 60 * 1e3) return `${Math.round(ms / 1e3)} seconds`;
+  const minutes = Math.round(ms / 6e4);
+  return minutes === 1 ? "1 minute" : `${minutes} minutes`;
+}
+const progressed = (previous, next, embedded) => embedded || !previous || previous.phase !== next.phase || previous.current !== next.current || previous.item !== next.item || previous.file !== next.file;
+const stalledError = (phase, ms) => Object.assign(semanticError("stalled", `The index build made no progress for ${stallDuration(ms)} during ${phase}.`), { stalled: true, phase });
 const stableFailure = (error) => ["invalid_path", "lock_timeout", "stale_snapshot", "unsupported_runtime", "corrupt_asset", "resource_limit", "validation_failed"].includes(error.code || "") ? error.code : error.code === "snapshot-changed" ? "stale_snapshot" : "preparation_failed";
 async function privateDirectory(directory) {
   const parent = path.dirname(directory);
@@ -477,8 +491,9 @@ class NativeSemanticRuntime {
       const recorder = job.recorder = new ProgressRecorder(location.directory, job.id);
       const started = privateDirectory(location.directory).then(() => recorder.start()).catch(() => {
       });
+      const stalled = this.watch(job);
       try {
-        job.prepared = await this.build(source, snapshot, location, job);
+        job.prepared = await Promise.race([this.build(source, snapshot, location, job), stalled]);
         if (job.freshness !== void 0) await writeFreshness(location.directory, job.snapshot, job.freshness);
         await started;
         await recorder.succeed();
@@ -497,6 +512,17 @@ class NativeSemanticRuntime {
           await started;
           await recorder.succeed();
           this.stale(job);
+          return;
+        }
+        if (error.stalled) {
+          const failure = { code: "stalled", message: error.message, phase: error.phase };
+          log.warn("index_stalled", { directory: location.directory, component: component?.identity, phase: failure.phase });
+          const diagnostics2 = [{ ...failure, recovery: STALL_RECOVERY }];
+          await started;
+          await recorder.fail(diagnostics2);
+          job.status = "degraded";
+          job.failure = failure;
+          job.diagnostics = diagnostics2;
           return;
         }
         let recovery = "Retry preparation after correcting the reported runtime, network, or source problem.";
@@ -528,6 +554,8 @@ class NativeSemanticRuntime {
         if (component && code === "resource_limit") this.limited.set(generationKey, job);
       } finally {
         job.recorder = void 0;
+        job.watchdog = void 0;
+        clearTimeout(job.stallTimer);
       }
     } };
     this.generations.set(generationKey, job);
@@ -562,7 +590,41 @@ class NativeSemanticRuntime {
       this.pump();
     });
   }
-  report(job, progress) {
+  // Starts the stall period of a job that runs; the returned promise rejects with the stalled failure once the job makes no progress for that period.
+  watch(job) {
+    const period = stallPeriod(this.options.stallMs);
+    let reject = () => {
+    };
+    const stalled = new Promise((_, fail) => {
+      reject = fail;
+    });
+    stalled.catch(() => {
+    });
+    const fire = () => {
+      if (!job.watchdog) return;
+      job.stalled = true;
+      job.watchdog = void 0;
+      const phase = job.progress?.phase ?? "starting";
+      void this.store.stop().catch((error) => log.warn("index_stop_failed", { directory: job.directory, ...errorFields(error) }));
+      reject(stalledError(phase, period));
+    };
+    job.stalled = false;
+    job.watchdog = () => {
+      clearTimeout(job.stallTimer);
+      job.stallTimer = setTimeout(fire, period);
+      job.stallTimer.unref();
+    };
+    job.watchdog();
+    return stalled;
+  }
+  // A job that stalled has failed, so its abandoned build may not go on to copy, build, or save.
+  alive(job) {
+    if (job.stalled) throw semanticError("preparation_failed", "The stalled build was stopped.");
+  }
+  report(job, value, embedded = Boolean(value.vectors)) {
+    if (job.stalled) return;
+    const { vectors: _vectors, index: _index, ...progress } = value;
+    if (progressed(job.progress, progress, embedded)) job.watchdog?.();
     if (job.progress?.phase !== progress.phase) {
       log.debug("index_phase", { directory: job.directory, component: job.component?.identity, phase: progress.phase, total: progress.total });
       if (job === this.running) log.activity.set("index", `${job.component?.identity ?? "project"} ${progress.phase}`);
@@ -579,6 +641,7 @@ class NativeSemanticRuntime {
     try {
       return await withArtifactLock(directory, () => withFileLock(directory, async () => {
         clearTimeout(waiting);
+        this.alive(job);
         let previous;
         try {
           const pointer = await readJson(path.join(directory, `generation-${snapshot.sourceFingerprint}-${assets.assetIdentity}.json`)).catch((error) => {
@@ -612,6 +675,7 @@ class NativeSemanticRuntime {
         try {
           this.report(job, { phase: "snapshot-copy", current: 0, total: snapshot.files.length, unit: "files" });
           for (const [index2, file] of snapshot.files.entries()) {
+            this.alive(job);
             const target = path.resolve(mirror, file.file);
             if (!inside(mirror, target)) throw semanticError("invalid_path", "A snapshot path escapes its mirror.");
             await privateDirectory(path.dirname(target));
@@ -626,8 +690,10 @@ class NativeSemanticRuntime {
             this.report(job, { phase: "snapshot-copy", current: index2 + 1, total: snapshot.files.length, unit: "files" });
           }
           await source.verifySnapshot();
+          this.alive(job);
           const token = await this.store.build({
             runtime: assets.runtime,
+            directory,
             args: {
               mirror,
               files: snapshot.files.map(({ file, hash }) => ({ file, hash })),
@@ -636,9 +702,10 @@ class NativeSemanticRuntime {
               modelIdentity: assets.modelIdentity
             },
             ...previous ? { previous: { indexPath: previous.indexPath, revision: previous.revision } } : {}
-          }, (progress) => this.report(job, progress));
+          }, (progress, embedded) => this.report(job, progress, embedded));
           this.report(job, { phase: "saving" });
           try {
+            this.alive(job);
             await source.verifySnapshot();
           } catch (error) {
             await this.store.discard(token).catch(() => {
@@ -687,7 +754,16 @@ class NativeSemanticRuntime {
   }
   /** A store that builds through this runtime's `helper` in this thread, for a helper that runs in process. */
   inProcessStore() {
-    return new LocalIndexStore((runtime, args, progress) => this.helper(runtime, "build").request("build", args, progress));
+    let used;
+    return new LocalIndexStore(
+      (runtime, args, progress) => {
+        used = runtime;
+        return this.helper(runtime, "build").request("build", args, progress);
+      },
+      () => {
+        if (used) this.helper(used, "build").stop?.();
+      }
+    );
   }
   helper(runtime, role = "search") {
     let helper = this.processes.get(role);
@@ -732,5 +808,7 @@ export {
   publishedUnits2 as publishedUnits,
   regularBytes2 as regularBytes,
   semanticError2 as semanticError,
+  stallDuration,
+  stallPeriod,
   unitsFile2 as unitsFile
 };

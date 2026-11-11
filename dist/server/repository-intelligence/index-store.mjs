@@ -3,22 +3,38 @@ import { Worker } from "node:worker_threads";
 import { errorFields, log } from "../log.mjs";
 import { semanticError } from "./native-files.mjs";
 import { indexMetadata, readIndex, storedEmbeddings, writeIndex } from "./index-files.mjs";
+import { appendEmbeddings, readEmbeddings, replaceEmbeddings } from "./embedding-store.mjs";
 class LocalIndexStore {
-  constructor(request) {
+  constructor(request, stopHelper = () => {
+  }) {
     this.request = request;
+    this.stopHelper = stopHelper;
   }
   built = /* @__PURE__ */ new Map();
   counter = 0;
   async read(indexPath, revision) {
     return indexMetadata(await readIndex(indexPath, revision));
   }
-  async build({ runtime, args, previous }, progress) {
-    const previousEmbeddings = previous ? await readIndex(previous.indexPath, previous.revision).then(storedEmbeddings, (error) => {
+  async build({ runtime, directory, args, previous }, progress) {
+    const indexed = previous ? await readIndex(previous.indexPath, previous.revision).then(storedEmbeddings, (error) => {
       log.warn("index_reuse_unreadable", { indexPath: previous.indexPath, ...errorFields(error) });
       return {};
     }) : {};
+    const previousEmbeddings = { ...indexed, ...await readEmbeddings(directory) };
+    let saving = true;
+    const forward = ({ vectors, index: _index, ...value }) => {
+      if (vectors && saving) {
+        try {
+          appendEmbeddings(directory, vectors);
+        } catch (error) {
+          saving = false;
+          log.warn("embedding_store_unwritable", { directory, ...errorFields(error) });
+        }
+      }
+      progress(value, Boolean(vectors));
+    };
     const started = performance.now();
-    const index = await this.request(runtime, { ...args, previousEmbeddings }, progress);
+    const index = await this.request(runtime, { ...args, previousEmbeddings }, forward);
     index.resources = { ...index.resources, indexMilliseconds: performance.now() - started };
     const token = String(++this.counter);
     this.built.set(token, index);
@@ -33,7 +49,12 @@ class LocalIndexStore {
       index.structureComplete = false;
       index.diagnostics.push({ code: "resource_limit", message: "The native source snapshot is incomplete." });
     }
-    return { ...await writeIndex(directory, index), index: indexMetadata(index) };
+    const stored = await writeIndex(directory, index);
+    await replaceEmbeddings(directory, index.chunks).catch((error) => log.warn("embedding_store_unwritable", { directory, ...errorFields(error) }));
+    return { ...stored, index: indexMetadata(index) };
+  }
+  async stop() {
+    this.stopHelper();
   }
   async discard(token) {
     this.built.delete(token);
@@ -57,7 +78,7 @@ class ThreadIndexStore {
       const call = this.calls.get(message.id);
       if (!call) return;
       if (message.progress) {
-        call.progress?.(message.progress);
+        call.progress?.(message.progress, message.embedded);
         return;
       }
       this.calls.delete(message.id);
@@ -90,6 +111,10 @@ class ThreadIndexStore {
   }
   build(request, progress) {
     return this.call("build", [request], progress);
+  }
+  // A thread that never started runs no build, so there is nothing to stop.
+  async stop() {
+    if (this.worker) await this.call("stop", []);
   }
   save(token, finish) {
     return this.call("save", [token, finish]);

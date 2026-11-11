@@ -12,11 +12,12 @@ const store = new LocalIndexStore((runtime, args, progress) => {
     helper = new Helper(runtime, options, "build");
   }
   return helper.request("build", args, progress);
-});
+}, () => helper?.stop());
 const operations = {
   read: (indexPath, revision) => store.read(indexPath, revision),
   save: (token, finish) => store.save(token, finish),
   discard: (token) => store.discard(token),
+  stop: () => store.stop(),
   close: async () => {
     await store.close();
     await helper?.close();
@@ -26,7 +27,7 @@ const operations = {
 };
 parentPort.on("message", async ({ id, op, args }) => {
   try {
-    const result = op === "build" ? await store.build(args[0], (progress) => parentPort.postMessage({ id, progress })) : await operations[op](...args);
+    const result = op === "build" ? await store.build(args[0], (progress, embedded) => parentPort.postMessage({ id, progress, ...embedded ? { embedded } : {} })) : await operations[op](...args);
     parentPort.postMessage({ id, result });
   } catch (error) {
     parentPort.postMessage({ id, error: { message: error.message, ...error.code === void 0 ? {} : { code: error.code } } });
