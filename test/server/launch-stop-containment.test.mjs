@@ -39,6 +39,7 @@ test("Linux subreaper stop ends shell-backgrounded and detached host processes",
     }
     return found.length >= 2 ? found.slice(0, 2) : null;
   }, "marked sleep processes");
+  t.after(() => { for (const pid of pids) { try { process.kill(pid, "SIGKILL"); } catch {} } });
   const stopped = await stopLaunch({ id: launch.id, env });
   assert.equal(stopped.state, "stopped");
   for (const pid of pids) await until(() => [null, "Z"].includes(state(pid)), `process ${pid} to end`);
@@ -53,24 +54,30 @@ test("Linux stop targets include held descendants and exact launch markers, and 
 test("Windows process listings and stop targets honor job membership and reject stale parent ids", { skip: process.platform !== "win32" }, async () => {
   const table = await listProcesses({ platform: "win32", run: async () => JSON.stringify([{ p: 100, q: 4, s: "100", a: "claude.exe" }, { p: 200, q: 100, s: "200", a: "sleep.exe" }]) });
   assert.equal(table.get(100).pid, 100);
-  assert.deepEqual(stopTargets({ platform: "win32", processes: [entry(100, 4), entry(200, 100, { job: true }), entry(300, 100, { started: "50", job: true }), entry(400, 4, { launch: "launch-0123456789abcdef" })], host: 100, supervisor: 4, held: true, launch: "launch-0123456789abcdef", spared: [4] }), [100, 200, 400]);
-  const invocation = windowsHostStart({ command: "C:\\host.exe", args: ["exec"], cwd: "C:\\work", job: "Local\\prism-launch-0123456789abcdef-1", env: { PRISM_LAUNCH: "launch-0123456789abcdef" } });
+  assert.equal(table.get(200).ppid, 100);
+  const launch = "launch-0123456789abcdef";
+  const processes = [entry(100, 4), entry(200, 100), entry(300, 100, { started: "50", job: true }), entry(500, 100, { started: "50" }), entry(600, 7, { launch })];
+  assert.deepEqual(new Set(stopTargets({ platform: "win32", processes, host: 100, supervisor: 4, held: true, launch, spared: [4] })), new Set([100, 200, 300]));
+  const invocation = windowsHostStart({ command: "C:\\host.exe", args: ["exec"], cwd: "C:\\work", job: "Local\\prism-launch-0123456789abcdef-1", env: { PRISM_LAUNCH: launch } });
   assert.ok(invocation.command.toLowerCase().endsWith("powershell.exe"));
-  assert.ok(invocation.args.includes("-Command"));
+  assert.ok(!invocation.args.join(" ").includes("C:\\host.exe"), "the host command reaches the script only through its environment");
 });
 
-test("Windows failed containment reports the fixed unavailable reason", { skip: process.platform !== "win32" }, () => {
-  assert.deepEqual(stopTargets({ platform: "win32", processes: [entry(10, 1), entry(20, 1, { launch: "launch-0123456789abcdef" })], host: 10, supervisor: 1, held: false, launch: "launch-0123456789abcdef", spared: [] }), [10, 20]);
+test("Windows failed containment walks the tree only and reports the fixed unavailable reason", { skip: process.platform !== "win32" }, () => {
+  const launch = "launch-0123456789abcdef";
+  assert.deepEqual(new Set(stopTargets({ platform: "win32", processes: [entry(10, 1), entry(11, 10, { started: "200" }), entry(20, 7, { launch })], host: 10, supervisor: 1, held: false, launch, spared: [1] })), new Set([10, 11]));
   assert.equal(stoppedReason({ held: false }), "Stopped, but process containment was unavailable, so a process this session started may still run.");
+  assert.equal(stoppedReason({ held: true }), null);
 });
 
 test("macOS process listings read the environment separately from command text", { skip: process.platform !== "darwin" }, async () => {
-  const output = "  10 1 Mon Nov 9 10:00:00 2026 /bin/sh PRISM_LAUNCH=launch-0123456789abcdef\n  11 1 Mon Nov 9 10:00:01 2026 /bin/sh launch-0123456789abcdef";
-  const table = await listProcesses({ platform: "darwin", run: async () => output });
-  assert.equal(table.get(10).launch, "launch-0123456789abcdef");
+  const launch = "launch-0123456789abcdef";
+  const plain = `   10     1 Mon Nov  9 10:00:00 2026 /bin/sh\n   11     1 Mon Nov  9 10:00:01 2026 /bin/sh ${launch}\n    9     1 Mon Nov  9 09:59:59 2026 /usr/local/bin/claude -p\n`;
+  const withEnvironment = `   10     1 Mon Nov  9 10:00:00 2026 /bin/sh PRISM_LAUNCH=${launch} HOME=/Users/a\n   11     1 Mon Nov  9 10:00:01 2026 /bin/sh ${launch} HOME=/Users/a\n    9     1 Mon Nov  9 09:59:59 2026 /usr/local/bin/claude -p PRISM_LAUNCH=${launch}\n`;
+  const table = await listProcesses({ platform: "darwin", run: async (_command, args) => (args.includes("-E") ? withEnvironment : plain) });
+  assert.equal(table.get(10).launch, launch);
   assert.equal(table.get(11).launch, null);
-  assert.deepEqual(stopTargets({ platform: "darwin", processes: [...table.values()], host: 9, supervisor: 8, held: false, launch: "launch-0123456789abcdef", spared: [] }), [10]);
-  assert.equal(stoppedReason({ held: false }), "Stopped, but process containment was unavailable, so a process this session started may still run.");
+  assert.deepEqual(new Set(stopTargets({ platform: "darwin", processes: [...table.values()], host: 9, supervisor: 8, held: false, launch, spared: [8] })), new Set([9, 10]));
 });
 
 // Keep this test file independent from test fixtures that launch a Node host; every process started by the Linux stub is sh or sleep.

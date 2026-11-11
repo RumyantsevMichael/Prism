@@ -85,7 +85,7 @@ The module functions below are exported from `dist/server/session/launched-sessi
     A host that ends before the grace period is over ends the wait at once.
     The run's processes are found in the machine's process list:
     - They are the host's descendants and, while clause 8 holds the run, on `linux` every descendant of the supervisor and on `win32` every process in the run's job.
-    - They also are every process whose environment sets `PRISM_LAUNCH` to exactly the launch id; a command line that only mentions the id marks nothing, and a process whose environment cannot be read is not marked.
+    - On `linux` and `darwin` they also are every process whose environment sets `PRISM_LAUNCH` to exactly the launch id, read from `/proc/<pid>/environ` on `linux` and, on `darwin`, from the part of `ps -E -ww` output that follows the command line `ps -ww` gives for the same process, so a command line that only mentions the id marks nothing; a process whose environment cannot be read is not marked.
     - A service, container engine, scheduler, operating system service, or broker can start work outside the supervisor's containment and process tree, which this stop may not find.
     - On macOS, or on Linux without an active subreaper, a process that clears its environment and leaves the process tree may keep running after the stop.
     - A process is a child of the parent process id it names, and in a `win32` listing only when it started no earlier than that parent, since Windows keeps and reuses the id of a parent that ended.
