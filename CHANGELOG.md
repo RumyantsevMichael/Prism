@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.22.0](https://github.com/RumyantsevMichael/Prism/compare/v0.21.0...v0.22.0) (2026-11-11)
+
+
+### Added
+
+* refuse work on a slice without its holder's claim ([#173](https://github.com/RumyantsevMichael/Prism/issues/173)) ([c631ea1](https://github.com/RumyantsevMichael/Prism/commit/c631ea14fd10caef86e6b0b6103cad98cee82cb4))
+* relicense Prism under the Apache License 2.0 ([#182](https://github.com/RumyantsevMichael/Prism/issues/182)) ([95ac431](https://github.com/RumyantsevMichael/Prism/commit/95ac4310b55f08fb954e8980d0e42d97d8722d68))
+* **review:** group, rearrange and navigate tabs; keep preferences ([#171](https://github.com/RumyantsevMichael/Prism/issues/171)) ([593fc27](https://github.com/RumyantsevMichael/Prism/commit/593fc27c5419143ba3f98dc4d3adb40b57fca04a))
+* **review:** navigate the review app by places ([#177](https://github.com/RumyantsevMichael/Prism/issues/177)) ([10e2ef1](https://github.com/RumyantsevMichael/Prism/commit/10e2ef1d5b6bfb414cda92d63886d8f9b1925374))
+
+
+### Fixed
+
+* keep session-end hook timeouts within Codex's 3-second limit ([#172](https://github.com/RumyantsevMichael/Prism/issues/172)) ([7b67a01](https://github.com/RumyantsevMichael/Prism/commit/7b67a01f2416f17447b0147a7bef07c54dc8418b))
+* **review:** fit the contents panel and join markdown paragraphs ([#167](https://github.com/RumyantsevMichael/Prism/issues/167)) ([fb516bc](https://github.com/RumyantsevMichael/Prism/commit/fb516bc2ebd6aeccbafd9c68dcb49d0bce3056f5))
+* **review:** line up single-slice initiatives with multi-slice ones in the sidebar ([#180](https://github.com/RumyantsevMichael/Prism/issues/180)) ([96195fd](https://github.com/RumyantsevMichael/Prism/commit/96195fd733211a1058c36705148ba34e04b0db12))
+* **review:** never show Attention before the current place is known ([#183](https://github.com/RumyantsevMichael/Prism/issues/183)) ([49d58be](https://github.com/RumyantsevMichael/Prism/commit/49d58bec80bc8dfc740fc0e4461151097818cff6))
+* **review:** stop a tab drop from swallowing the next click ([#179](https://github.com/RumyantsevMichael/Prism/issues/179)) ([ddf4e94](https://github.com/RumyantsevMichael/Prism/commit/ddf4e94d8eb08fead31f396b170b84d39c3732cb))
+* settle a component's progress record before its job reports the end ([#175](https://github.com/RumyantsevMichael/Prism/issues/175)) ([2ea1f95](https://github.com/RumyantsevMichael/Prism/commit/2ea1f95e9d71b261d65525d7d6a99e3854c62e95)), closes [#132](https://github.com/RumyantsevMichael/Prism/issues/132)
+* stop shipping sharp's LGPL library and check dependency licenses ([#184](https://github.com/RumyantsevMichael/Prism/issues/184)) ([be1c842](https://github.com/RumyantsevMichael/Prism/commit/be1c84284bbd6a9f502e3f59d8fbdf349c05b8d1))
+
+
+### Documentation
+
+* ship navigating the review app by places on the roadmap ([#181](https://github.com/RumyantsevMichael/Prism/issues/181)) ([990c97a](https://github.com/RumyantsevMichael/Prism/commit/990c97a0bab9d9694d782604230ceec7dcea3b93)), closes [#178](https://github.com/RumyantsevMichael/Prism/issues/178)
+
 ## [0.21.0](https://github.com/RumyantsevMichael/Prism/compare/v0.20.0...v0.21.0) (2026-11-10)
 
 
