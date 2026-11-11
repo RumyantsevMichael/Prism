@@ -801,7 +801,9 @@ class NativeSemanticRuntime {
             structureSaved = this.publishStructure(job, token2, directory, generation, snapshot, assets);
           };
           const structureOnly = Boolean(job.structureOnly);
-          job.requestedAttempt = attempt;
+          const sent = () => {
+            job.requestedAttempt = attempt;
+          };
           const token = await this.store.build({
             runtime: assets.runtime,
             directory,
@@ -814,7 +816,7 @@ class NativeSemanticRuntime {
               fragmentsOnly: structureOnly
             },
             ...previous && !structureOnly ? { previous: { indexPath: previous.indexPath, revision: previous.revision } } : {}
-          }, (progress, embedded) => report(progress, embedded), structureOnly ? void 0 : structure);
+          }, (progress, embedded) => report(progress, embedded), structureOnly ? void 0 : structure, sent);
           if (structureOnly) {
             try {
               this.alive(job);

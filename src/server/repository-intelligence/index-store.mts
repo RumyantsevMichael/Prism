@@ -17,13 +17,15 @@ export interface StoreBuild { runtime: string; directory: string; args: Omit<Bui
 export type StoreProgress = (value: Progress, embedded?: boolean) => void;
 // Called once when the runtime reports its structure, with the token under which the store holds that index until `saveStructure` or `discard`.
 export type StoreStructure = (token: string) => void;
+// Called once, just before the store sends the build request to the runtime, after it read the embeddings that the request reuses.
+export type StoreSent = () => void;
 export interface StoreFinish { directory: string; assetIdentity: string; incomplete: boolean }
 export interface StoredIndex { revision: string; indexPath: string; bytes: number; index: IndexMetadata }
 export interface IndexStore {
   /** The metadata of a stored index, after its bytes match its revision. */
   read(indexPath: string, revision: string): Promise<IndexMetadata>;
   /** Builds an index, reusing the embeddings of `previous`, and holds it until it is saved or discarded; resolves to its token. */
-  build(request: StoreBuild, progress: StoreProgress, structure?: StoreStructure): Promise<string>;
+  build(request: StoreBuild, progress: StoreProgress, structure?: StoreStructure, sent?: StoreSent): Promise<string>;
   /** Writes a reported structure under its revision with its units sidecar, leaving the embedding store as it is. */
   saveStructure(token: string, finish: StoreFinish): Promise<StoredIndex>;
   /** Stops the helper that runs the build request, without waiting for that request to end. */
@@ -47,7 +49,7 @@ export class LocalIndexStore implements IndexStore {
   constructor(private request: BuildRequest, private stopHelper: () => void = () => {}) {}
   async read(indexPath: string, revision: string) { return indexMetadata(await readIndex(indexPath, revision)); }
   // The runtime's `structure` value is the index without embeddings; it is held for `structure`, never forwarded, and its phase alone is reported.
-  async build({ runtime, directory, args, previous }: StoreBuild, progress: StoreProgress, structure?: StoreStructure) {
+  async build({ runtime, directory, args, previous }: StoreBuild, progress: StoreProgress, structure?: StoreStructure, sent?: StoreSent) {
     const stops = this.stops;
     // Reuse saves embedding time only, so a previous index that can no longer be read leaves the build to embed every fragment,
     // and a structure-only build, which embeds nothing, reads no saved embeddings.
@@ -74,6 +76,7 @@ export class LocalIndexStore implements IndexStore {
       progress(value, Boolean(vectors));
     };
     const started = performance.now();
+    sent?.();
     const index = await this.request(runtime, { ...args, previousEmbeddings }, forward);
     index.resources = { ...index.resources, indexMilliseconds: performance.now() - started };
     const token = String(++this.counter);
@@ -111,7 +114,7 @@ function finished(index: UnitIndex, assetIdentity: string, incomplete: boolean) 
   if (incomplete) { index.structureComplete = false; index.diagnostics.push({ code: "resource_limit", message: "The native source snapshot is incomplete." }); }
 }
 
-type Call = { resolve: (value: unknown) => void; reject: (error: Error) => void; progress?: StoreProgress; structure?: StoreStructure };
+type Call = { resolve: (value: unknown) => void; reject: (error: Error) => void; progress?: StoreProgress; structure?: StoreStructure; sent?: StoreSent };
 
 /** The default store: a LocalIndexStore in a worker thread whose build helper is a bundled Node process. */
 export class ThreadIndexStore implements IndexStore {
@@ -123,9 +126,10 @@ export class ThreadIndexStore implements IndexStore {
     if (this.worker) return this.worker;
     const worker = new Worker(new URL("./index-store-thread.mjs", import.meta.url), { workerData: { helper: this.helper, log: { name: log.name, directory: log.directory, level: log.level } }, execArgv: [] });
     this.worker = worker;
-    worker.on("message", (message: { id: number; progress?: Progress; embedded?: boolean; structure?: string; result?: unknown; error?: { code?: string; message: string } }) => {
+    worker.on("message", (message: { id: number; progress?: Progress; embedded?: boolean; structure?: string; sent?: boolean; result?: unknown; error?: { code?: string; message: string } }) => {
       const call = this.calls.get(message.id);
       if (!call) return;
+      if (message.sent) { call.sent?.(); return; }
       if (message.progress) { call.progress?.(message.progress, message.embedded); return; }
       if (message.structure !== undefined) { call.structure?.(message.structure); return; }
       this.calls.delete(message.id);
@@ -145,17 +149,17 @@ export class ThreadIndexStore implements IndexStore {
     worker.unref();
     return worker;
   }
-  call<T>(op: string, args: unknown[], progress?: StoreProgress, structure?: StoreStructure): Promise<T> {
+  call<T>(op: string, args: unknown[], progress?: StoreProgress, structure?: StoreStructure, sent?: StoreSent): Promise<T> {
     const worker = this.start(), id = ++this.counter;
     return new Promise<T>((resolve, reject) => {
-      this.calls.set(id, { resolve: value => resolve(value as T), reject, progress, structure });
+      this.calls.set(id, { resolve: value => resolve(value as T), reject, progress, structure, sent });
       worker.ref();
       worker.postMessage({ id, op, args });
     });
   }
   read(indexPath: string, revision: string) { return this.call<IndexMetadata>("read", [indexPath, revision]); }
   // The thread is told whether to hold a reported structure, so a build whose caller cannot save one never holds it.
-  build(request: StoreBuild, progress: StoreProgress, structure?: StoreStructure) { return this.call<string>("build", [request, Boolean(structure)], progress, structure); }
+  build(request: StoreBuild, progress: StoreProgress, structure?: StoreStructure, sent?: StoreSent) { return this.call<string>("build", [request, Boolean(structure)], progress, structure, sent); }
   saveStructure(token: string, finish: StoreFinish) { return this.call<StoredIndex>("saveStructure", [token, finish]); }
   // A thread that never started runs no build, so there is nothing to stop.
   async stop() { if (this.worker) await this.call<void>("stop", []); }

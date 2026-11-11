@@ -31,7 +31,8 @@ parentPort.on("message", async ({ id, op, args }) => {
     const result = op === "build" ? await store.build(
       args[0],
       (progress, embedded) => parentPort.postMessage({ id, progress, ...embedded ? { embedded } : {} }),
-      args[1] ? (structure) => parentPort.postMessage({ id, structure }) : void 0
+      args[1] ? (structure) => parentPort.postMessage({ id, structure }) : void 0,
+      () => parentPort.postMessage({ id, sent: true })
     ) : await operations[op](...args);
     parentPort.postMessage({ id, result });
   } catch (error) {

@@ -20,7 +20,7 @@ class LocalIndexStore {
     return indexMetadata(await readIndex(indexPath, revision));
   }
   // The runtime's `structure` value is the index without embeddings; it is held for `structure`, never forwarded, and its phase alone is reported.
-  async build({ runtime, directory, args, previous }, progress, structure) {
+  async build({ runtime, directory, args, previous }, progress, structure, sent) {
     const stops = this.stops;
     const indexed = previous && !args.fragmentsOnly ? await readIndex(previous.indexPath, previous.revision).then(storedEmbeddings, (error) => {
       log.warn("index_reuse_unreadable", { indexPath: previous.indexPath, ...errorFields(error) });
@@ -47,6 +47,7 @@ class LocalIndexStore {
       progress(value, Boolean(vectors));
     };
     const started = performance.now();
+    sent?.();
     const index = await this.request(runtime, { ...args, previousEmbeddings }, forward);
     index.resources = { ...index.resources, indexMilliseconds: performance.now() - started };
     const token = String(++this.counter);
@@ -104,6 +105,10 @@ class ThreadIndexStore {
     worker.on("message", (message) => {
       const call = this.calls.get(message.id);
       if (!call) return;
+      if (message.sent) {
+        call.sent?.();
+        return;
+      }
       if (message.progress) {
         call.progress?.(message.progress, message.embedded);
         return;
@@ -129,10 +134,10 @@ class ThreadIndexStore {
     worker.unref();
     return worker;
   }
-  call(op, args, progress, structure) {
+  call(op, args, progress, structure, sent) {
     const worker = this.start(), id = ++this.counter;
     return new Promise((resolve, reject) => {
-      this.calls.set(id, { resolve: (value) => resolve(value), reject, progress, structure });
+      this.calls.set(id, { resolve: (value) => resolve(value), reject, progress, structure, sent });
       worker.ref();
       worker.postMessage({ id, op, args });
     });
@@ -141,8 +146,8 @@ class ThreadIndexStore {
     return this.call("read", [indexPath, revision]);
   }
   // The thread is told whether to hold a reported structure, so a build whose caller cannot save one never holds it.
-  build(request, progress, structure) {
-    return this.call("build", [request, Boolean(structure)], progress, structure);
+  build(request, progress, structure, sent) {
+    return this.call("build", [request, Boolean(structure)], progress, structure, sent);
   }
   saveStructure(token, finish) {
     return this.call("saveStructure", [token, finish]);

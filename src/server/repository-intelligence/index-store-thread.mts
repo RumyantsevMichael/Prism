@@ -27,7 +27,7 @@ parentPort!.on("message", async ({ id, op, args }: { id: number; op: string; arg
   try {
     const result = op === "build"
       ? await store.build(args[0], (progress: Progress, embedded?: boolean) => parentPort!.postMessage({ id, progress, ...(embedded ? { embedded } : {}) }),
-        args[1] ? (structure: string) => parentPort!.postMessage({ id, structure }) : undefined)
+        args[1] ? (structure: string) => parentPort!.postMessage({ id, structure }) : undefined, () => parentPort!.postMessage({ id, sent: true }))
       : await operations[op](...args);
     parentPort!.postMessage({ id, result });
   } catch (error) {

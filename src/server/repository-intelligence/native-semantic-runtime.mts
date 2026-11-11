@@ -684,10 +684,11 @@ export class NativeSemanticRuntime implements ComponentRuntime {
           const structure = (token: string) => { structureSaved = this.publishStructure(job, token, directory, generation, snapshot, assets); };
           // A structure-only build embeds nothing, so it reuses no embeddings and saves its whole result as the structure-only index.
           const structureOnly = Boolean(job.structureOnly);
-          job.requestedAttempt = attempt;
+          // A call may pause this run only once the store sent its request, after it read the saved embeddings that the request reuses.
+          const sent = () => { job.requestedAttempt = attempt; };
           const token = await this.store.build({ runtime: assets.runtime, directory, args: { mirror, files: snapshot.files.map(({ file, hash }) => ({ file, hash })),
             snapshot: snapshot.sourceFingerprint, modelDirectory: assets.modelDirectory, modelIdentity: assets.modelIdentity, fragmentsOnly: structureOnly },
-          ...(previous && !structureOnly ? { previous: { indexPath: previous.indexPath, revision: previous.revision } } : {}) }, (progress, embedded) => report(progress, embedded), structureOnly ? undefined : structure);
+          ...(previous && !structureOnly ? { previous: { indexPath: previous.indexPath, revision: previous.revision } } : {}) }, (progress, embedded) => report(progress, embedded), structureOnly ? undefined : structure, sent);
           if (structureOnly) {
             try { this.alive(job); await source.verifySnapshot(); } catch (error) { await this.store.discard(token).catch(() => {}); throw error; }
             return await this.saveStructureOnly(job, token, directory, generation, snapshot, assets, report);
