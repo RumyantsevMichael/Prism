@@ -64,7 +64,9 @@ async function acquireFileLock(artifactPath, makeError, options) {
 
 export async function withFileLock(artifactPath, action, makeError = defaultError, options = {}) {
   const lock = await acquireFileLock(artifactPath, makeError, options);
-  const heartbeat = options.renew ? setInterval(async () => {
+  // A lock whose action moves the folder that holds it keeps no file open there, as Windows renames no folder with an open file inside.
+  if (options.closeHandle) await lock.handle.close();
+  const heartbeat = options.renew && !options.closeHandle ? setInterval(async () => {
     const now = new Date();
     lock.handle.utimes(now, now).catch(() => {});
     if (options.onRenew) {

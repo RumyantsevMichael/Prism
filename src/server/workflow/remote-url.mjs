@@ -25,7 +25,8 @@ export function publicRemote(url) {
 // A one-letter host is a Windows drive, as Git reads it, so C:store stays a path.
 const STORE_URL = /^(?:https?|ssh|git|file):\/\//i;
 const NETWORK_URL = /^(?:https?|ssh|git):\/\//i;
-const STORE_SCP = /^(?:[^@/\\\s]+@)?[A-Za-z0-9][A-Za-z0-9.-]+:[^\s]+$/;
+// A path that begins with a second ':' is Git's <transport>::<address> form, which starts the remote helper git-remote-<transport>, so it names no network store.
+const STORE_SCP = /^(?:[^@/\\\s]+@)?[A-Za-z0-9][A-Za-z0-9.-]+:[^:\s][^\s]*$/;
 
 /** Whether a Workspace Store value names a Git remote rather than a folder. */
 export function isRemoteStore(value) {
@@ -94,7 +95,10 @@ export async function storeIdentity(value, { root = process.cwd() } = {}) {
   if (NETWORK_URL.test(value)) {
     let parsed;
     try { parsed = new URL(value); } catch { return null; }
-    return networkIdentity(parsed.hostname, parsed.pathname);
+    // The URL parser percent-encodes the path that the scp form spells as it is, so the decoded path gives both spellings one identity.
+    let decoded = parsed.pathname;
+    try { decoded = decodeURIComponent(decoded); } catch { /* A malformed escape stays as it is spelled. */ }
+    return networkIdentity(parsed.hostname, decoded);
   }
   if (/^file:\/\//i.test(value)) {
     let parsed;

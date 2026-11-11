@@ -586,6 +586,26 @@ const migrated = new Set();
 const syncLockOptions = () => ({ renew: true, abandonWhenUnrenewed: true, staleMs: SETTINGS.gitTimeoutMs * 2 });
 
 /**
+ * Move a clone's folder from source to target while holding the clone's sync lock, so no sync of source, from this or an earlier Prism, runs while it moves.
+ * qualifies() runs under the lock and decides whether the move happens; renameFolder does the move.
+ * It answers whether the folder moved, throws an error with code lock_timeout when a sync holds the lock, and throws the rename's error when the move fails, leaving source as it was.
+ * The lock moves with the folder and is removed at its new place.
+ */
+export async function moveUnderSyncLock(source, target, qualifies, renameFolder = rename) {
+  await mkdir(syncPath(source), { recursive: true });
+  const lock = `${syncPath(source, "sync")}.lock`;
+  return withFileLock(syncPath(source, "sync"), async () => {
+    if (!(await qualifies())) return false;
+    const token = (await readFile(lock, "utf8").then(parseStoreJson).catch(() => null))?.token;
+    await renameFolder(source, target);
+    const moved = path.join(target, path.relative(source, lock));
+    const owner = await readFile(moved, "utf8").then(parseStoreJson).catch(() => null);
+    if (token && owner?.token === token) await rm(moved, { force: true });
+    return true;
+  }, undefined, { ...syncLockOptions(), timeoutMs: 1, closeHandle: true });
+}
+
+/**
  * Prepare a store's files for syncing, once per clone, before any Prism write in this process reaches them: an earlier Prism checked a first clone's files out through Git's line-ending conversion,
  * so every file it has not rewritten since may hold its blob's text with each line ending in CR LF instead.
  * Each file at a path the store shares whose bytes differ from the branch's blob only in that way is rewritten with the blob's bytes, and the sync folder records that the clone is migrated,

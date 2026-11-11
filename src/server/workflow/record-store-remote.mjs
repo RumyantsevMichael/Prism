@@ -3,7 +3,7 @@ import { cp, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promise
 import path from "node:path";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { gitTransportPath } from "./git-local-repository.mjs";
-import { describeOversizedEntry, describeUnsafeEntry, gitTimeoutMs, gitTooOld, gitUrlText, helperForRepository, localRemoteRepository, markManagedStore, oversizedStoreEntry, runGit, unsafeStoreEntry, writeCommitFiles } from "./record-store-sync.mjs";
+import { describeOversizedEntry, describeUnsafeEntry, gitTimeoutMs, gitTooOld, gitUrlText, helperForRepository, localRemoteRepository, markManagedStore, moveUnderSyncLock, oversizedStoreEntry, runGit, unsafeStoreEntry, writeCommitFiles } from "./record-store-sync.mjs";
 import { legacyStoreId, legacyStoresDirectory, managedStoreId, managedStoresDirectory, remoteLabel, storeIdentity, withoutCredentials } from "./remote-url.mjs";
 
 // A record store named by its remote lives in a clone Prism keeps in its application folder, one per store identity, shared by every checkout and host that names any spelling of it.
@@ -58,17 +58,30 @@ async function sweepAbandoned(directory, id) {
 
 // Prism 0.20 named a clone after its configured spelling; the first access with no clone at the identity's folder renames that folder, so its unpushed commits stay.
 // Only the top of a Git clone whose origin has the same store identity moves, and a folder already at the new path leaves the old one untouched.
-async function renameSpellingClone(directory, target, configured) {
+// The rename holds the old folder's sync lock, so no sync there loses its folder midway, and when that lock is held or the rename fails the access refuses and makes no clone,
+// so the old folder keeps its commits and a later access moves it.
+async function renameSpellingClone(directory, target, configured, unavailable, renameFolder) {
   const old = legacyStoreId(configured);
   if (!old) return;
   const source = path.join(directory, old);
-  if (source === target || !(await exists(source)) || await exists(target)) return;
-  let base;
-  try { base = await realpath(source); } catch { return; }
-  const top = await runGit(base, ["rev-parse", "--show-toplevel"]);
-  if (!top.ok || await realpath(top.text).catch(() => null) !== base) return;
-  if (!(await originIs(base, await storeIdentity(configured)))) return;
-  await rename(source, target).catch(() => {});
+  if (source === target) return;
+  const identity = await storeIdentity(configured);
+  const qualifies = async () => {
+    if (!(await exists(source)) || await exists(target)) return false;
+    let base;
+    try { base = await realpath(source); } catch { return false; }
+    const top = await runGit(base, ["rev-parse", "--show-toplevel"]);
+    if (!top.ok || await realpath(top.text).catch(() => null) !== base) return false;
+    return originIs(base, identity);
+  };
+  if (!(await qualifies())) return;
+  const kept = `Its clone from an earlier Prism version at ${source} keeps its files and commits`;
+  try {
+    await moveUnderSyncLock(source, target, qualifies, renameFolder);
+  } catch (error) {
+    if (error.code === "lock_timeout") throw unavailable(`${kept}, and a sync of that clone is still running; try again when it finishes.`);
+    throw unavailable(`${kept}, and Prism could not move it to ${target}${error.code ? ` (${error.code})` : ""}; close any program that uses that folder and try again.`);
+  }
 }
 
 // Prism 0.16 kept clones under each host's plugin data directory, named as 0.20 named them; the first access here moves that clone, so commits it has not pushed yet stay.
@@ -99,7 +112,7 @@ async function clonedUrl(directory, configured) {
 }
 
 // One process at a time clones a remote, into a temporary sibling that is renamed into place, so the clone path never holds a partial clone.
-async function cloneOnce(directory, id, target, configured, unavailable) {
+async function cloneOnce(directory, id, target, configured, unavailable, renameFolder) {
   const found = await adopt(target, configured, unavailable);
   if (found) return found;
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -107,7 +120,7 @@ async function cloneOnce(directory, id, target, configured, unavailable) {
   return withArtifactLock(target, () => withFileLock(target, async () => {
     const again = await adopt(target, configured, unavailable);
     if (again) return again;
-    await renameSpellingClone(directory, target, configured);
+    await renameSpellingClone(directory, target, configured, unavailable, renameFolder);
     await moveLegacyClone(directory, target, configured);
     const moved = await adopt(target, configured, unavailable);
     if (moved) return moved;
@@ -155,8 +168,9 @@ async function cloneOnce(directory, id, target, configured, unavailable) {
 /**
  * The folder of a remote store's managed clone, cloned on first use and reused by every later access in this process.
  * makeUnavailable(message, remote) builds the store_unavailable error, so every refusal names the remote without its user information.
+ * renameFolder moves a clone that an earlier Prism named, and tests pass one that fails.
  */
-export async function managedRecordStore(projectRoot, configured, makeUnavailable) {
+export async function managedRecordStore(projectRoot, configured, makeUnavailable, { renameFolder = rename } = {}) {
   const label = remoteLabel(configured);
   const unavailable = (reason) => makeUnavailable(`The record store ${label ? `${label} ` : ""}named under Workspace in .prism/workflow.md is a Git remote. ${reason}`, label);
   const directory = managedStoresOf(projectRoot);
@@ -170,7 +184,7 @@ export async function managedRecordStore(projectRoot, configured, makeUnavailabl
   // A clone that disappeared since it was cached is looked for again, so the access reports what is there now.
   if (cached && (!cached.done || await exists(target))) return cached.pending;
   const entry = { done: false };
-  entry.pending = cloneOnce(directory, id, target, configured, unavailable).then((base) => {
+  entry.pending = cloneOnce(directory, id, target, configured, unavailable, renameFolder).then((base) => {
     entry.done = true;
     markManagedStore(base);
     return base;
