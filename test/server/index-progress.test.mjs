@@ -155,6 +155,22 @@ test("the recorder throttles progress writes but always writes a new step", asyn
   assert.ok(record.finishedAt);
 });
 
+test("a recorder that a newer recorder of the same storage replaced changes the progress file no more", async t => {
+  const { directory } = await fixture(t);
+  const file = path.join(directory, `progress-${process.pid}.json`);
+  const replaced = new ProgressRecorder(directory, "replaced"), newer = new ProgressRecorder(directory, "newer");
+  await replaced.start();
+  await newer.start();
+  replaced.update({ phase: "saving" });
+  assert.equal(JSON.parse(await readFile(file, "utf8")).preparationId, "newer");
+  await newer.succeed();
+  await replaced.fail([{ code: "stale_snapshot", message: "The source changed." }]);
+  await assert.rejects(readFile(file, "utf8"), { code: "ENOENT" });
+  // A failure recorded before any build still writes the file once no recorder holds it.
+  await new ProgressRecorder(directory, "background").fail([{ code: "preparation_failed", message: "Unreadable." }]);
+  assert.equal(JSON.parse(await readFile(file, "utf8")).preparationId, "background");
+});
+
 test("a published index carries a units sidecar that is read without the full index and without preparing", async t => {
   const { root, cache, runtime } = await fixture(t);
   assert.equal(await readPublishedUnits(root, [cache]), null);
@@ -168,7 +184,8 @@ test("a published index carries a units sidecar that is read without the full in
   const prepared = await runtime.prepare(await openNativeRepositoryIntelligence(root));
   const storage = (await runtime.location(root)).directory, revision = prepared.prepared.revision;
   const sidecar = path.join(storage, `units-${revision}.json`);
-  assert.equal((await stat(sidecar)).mode & 0o777, 0o600);
+  // Windows has no POSIX permission bits; its per-user folders keep these files private there.
+  if (process.platform !== "win32") assert.equal((await stat(sidecar)).mode & 0o777, 0o600);
   // An index published before sidecars existed reads as no units until a later preparation reuses it and writes its sidecar.
   await rm(sidecar);
   assert.equal(await readPublishedUnits(root, [cache]), null);

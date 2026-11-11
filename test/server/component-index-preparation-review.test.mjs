@@ -138,11 +138,16 @@ test("CC-4: a component whose lock is held and renewed is tried again without ch
   await mkdir(path.dirname(directory), { recursive: true });
   await writeFile(`${directory}.lock`, JSON.stringify({ pid: process.ppid, token: "other-session", renewable: true, at: new Date().toISOString() }));
   const checks = [], attempts = [], assets = runtime.assets.bind(runtime), build = runtime.build.bind(runtime);
+  let retried;
+  const retry = new Promise((resolve) => { retried = resolve; });
   runtime.assets = (...args) => { checks.push(1); return assets(...args); };
-  runtime.build = (source, snapshot, location, job) => { if (location.directory === directory) attempts.push(job.id); return build(source, snapshot, location, job); };
+  runtime.build = (source, snapshot, location, job) => {
+    if (location.directory === directory && attempts.push(job.id) === 2) retried();
+    return build(source, snapshot, location, job);
+  };
   await search(root, runtime, { filters: { paths: ["packages/net"] } }, 0);
-  await delay(4800);
-  assert.ok(attempts.length >= 2, `the held component was attempted ${attempts.length} times`);
+  // The retry waits for the first attempt's progress record, whose writes a loaded machine can slow, so the test waits for the attempt itself.
+  await within(retry, 30000, "The second attempt of the held component");
   assert.equal(new Set(attempts).size, 1);
   assert.equal(checks.length, 1);
   assert.equal(entry(await runtime.status(root), "root/net").status, "preparing");
@@ -203,6 +208,28 @@ test("CC-5: a running job that a newer read replaced is dropped when it finds th
   assert.deepEqual((await readdir(directory)).filter((name) => name.startsWith("progress-")), []);
   assert.equal(entry(await runtime.status(root), "root/net").status, "ready");
   assert.equal((await search(root, runtime, paths)).status, "ready");
+});
+
+test("a running job that a newer read replaced with a stored index leaves no failure when its build ends on the changed source", async (t) => {
+  const { root, storage, write } = await project(t);
+  const { runtime, control } = await fakeRuntime(storage);
+  const paths = { filters: { paths: ["packages/net"] } };
+  assert.equal((await search(root, runtime, paths)).status, "ready");
+  // The source changes, and changes back while the build of the changed content runs, so the newer read reuses the stored index.
+  control.hold("packages/net/retry.ts");
+  await write("packages/net/retry.ts", `${FILES["packages/net/retry.ts"]}// changed\n`);
+  await search(root, runtime, paths, 0);
+  await control.reached("packages/net/retry.ts");
+  const replaced = runtime.running;
+  await write("packages/net/retry.ts", FILES["packages/net/retry.ts"]);
+  assert.equal((await search(root, runtime, paths, 0)).status, "ready");
+  control.release("packages/net/retry.ts");
+  await replaced.promise;
+  await settled(runtime, root);
+  assert.equal(replaced.failure.code, "stale_snapshot");
+  const { directory } = await runtime.location(root, NET);
+  assert.deepEqual((await readdir(directory)).filter((name) => name.startsWith("progress-")), []);
+  assert.equal(entry(await runtime.status(root), "root/net").status, "ready");
 });
 
 // A project without Git, so its files come from the bounded filesystem scan.

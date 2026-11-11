@@ -201,18 +201,18 @@ test("gives every tab a breadcrumb trail and sidebar scope", async (context) => 
     const contextOf = async (ref) => (await get(`${review.baseUrl}/api/context?ref=${encodeURIComponent(ref)}`)).json();
     const labels = (value) => value.trail.map((crumb) => crumb.label);
     const sliceFile = await contextOf(".prism/initiatives/reports/slices/download/review.json");
-    assert.deepEqual(labels(sliceFile), ["Roadmap", "Export reports", "Download signed reports", "review.json"]);
+    assert.deepEqual(labels(sliceFile), ["Work", "Export reports", "Download signed reports", "review.json"]);
     assert.equal(sliceFile.scope.kind, "initiative");
     assert.equal(sliceFile.scope.current, "download");
     assert.deepEqual(sliceFile.scope.tree.map((node) => [node.slug, node.depth, node.status]), [["reports", 0, "split"], ["authorize", 1, "not-started"], ["download", 1, "in-progress"]]);
     const state = await contextOf(".prism/initiatives/reports/state.json");
-    assert.deepEqual([labels(state), state.scope.current], [["Roadmap", "Export reports", "state.json"], null]);
+    assert.deepEqual([labels(state), state.scope.current], [["Work", "Export reports", "state.json"], null]);
     const requirement = await contextOf("docs/requirements/reports.md");
-    assert.deepEqual(labels(requirement), ["Library", "Requirements", "Activity reports"]);
+    assert.deepEqual(labels(requirement), ["Knowledge", "Requirements", "Activity reports"]);
     assert.deepEqual([requirement.scope.kind, requirement.scope.section, requirement.scope.current], ["library", "requirements", "docs/requirements/reports.md"]);
-    assert.deepEqual(labels(await contextOf("decisions")), ["Library", "Decisions"]);
+    assert.deepEqual(labels(await contextOf("decisions")), ["Knowledge", "Decisions"]);
     assert.deepEqual((await contextOf("attention")).scope, { kind: "global" });
-    assert.deepEqual(labels(await contextOf("docs/requirements/README.md")), ["Library", "Requirements", "README.md"]);
+    assert.deepEqual(labels(await contextOf("docs/requirements/README.md")), ["Knowledge", "Requirements", "README.md"]);
   } finally {
     await review.close();
   }

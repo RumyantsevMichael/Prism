@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { defer } from "./teardown.mjs";
 
 // Projects that declare components, for the acceptance tests of components.md.
 // A test file sets PLUGIN_DATA before it uses these helpers, because Prism modules read their data folder when they load,
@@ -90,7 +91,7 @@ export async function write(root, files) {
  */
 export async function componentProject(context, { config = workflow(), files = {}, requirements = ["r.md#1", "r.md#2", "r.md#3"] } = {}) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-components-")));
-  context.after(() => rm(root, { recursive: true, force: true }));
+  defer(context, () => rm(root, { recursive: true, force: true }));
   await write(root, { ...FILES, ...files, ".prism/workflow.md": config, [`${PLANS}/slice.md`]: "# Work\n\n## Contract\n1. Billing totals.\n2. Shared values.\n3. Web pages.\n" });
   git(root, "init", "-q", "-b", "main");
   commitAll(root, "start");
@@ -155,7 +156,7 @@ export async function runLog(context) {
   const file = path.join(folder, "runs.jsonl");
   const previous = process.env.COMPONENT_LOG;
   process.env.COMPONENT_LOG = file;
-  context.after(async () => {
+  defer(context, async () => {
     if (previous === undefined) delete process.env.COMPONENT_LOG; else process.env.COMPONENT_LOG = previous;
     await rm(folder, { recursive: true, force: true });
   });
@@ -165,5 +166,5 @@ export async function runLog(context) {
 /** Set FAIL_<name> for this test so that component's check exits 1. */
 export function failing(context, name) {
   process.env[`FAIL_${name}`] = "1";
-  context.after(() => { delete process.env[`FAIL_${name}`]; });
+  defer(context, () => { delete process.env[`FAIL_${name}`]; });
 }

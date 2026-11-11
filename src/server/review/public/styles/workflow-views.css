@@ -1409,6 +1409,7 @@ a.inspect-tile:focus-visible {
 }
 
 @media (max-width: 720px) {
+  /* On a phone a row keeps its tile, its text, and its action, and leaves out its kind and its time. */
   .attention-stats {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));

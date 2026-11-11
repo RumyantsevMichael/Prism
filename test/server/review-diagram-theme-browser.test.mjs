@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
@@ -29,7 +30,7 @@ const render = (page, base, sources) => page.evaluate(async ([base, sources]) =>
 const colorsOf = (svg) => [...svg.matchAll(/\b(?:fill|stroke)="(#[0-9a-fA-F]{3,8})"/g)].map((match) => match[1].toUpperCase());
 
 test("clause 63: the PlantUML default color table names the vendored runtime and maps each default to a diagram role or keeps it", async () => {
-  const { PLANTUML_DEFAULTS, PLANTUML_RUNTIME } = await import(path.join(ROOT, "dist/server/review/public/kit/plantuml-defaults.js"));
+  const { PLANTUML_DEFAULTS, PLANTUML_RUNTIME } = await import(pathToFileURL(path.join(ROOT, "dist/server/review/public/kit/plantuml-defaults.js")).href);
   assert.equal(PLANTUML_RUNTIME, "1.2026.8");
   assert.ok(Object.isFrozen(PLANTUML_DEFAULTS), "the table is frozen");
   for (const [color, role] of Object.entries(PLANTUML_DEFAULTS)) {

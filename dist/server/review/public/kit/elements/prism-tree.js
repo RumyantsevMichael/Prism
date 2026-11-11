@@ -3,14 +3,17 @@ import { Base, emit, setAttribute } from "./base.js";
 
 export class PrismTree extends Base {
   static tag = "prism-tree";
-  static observedAttributes = ["label"];
+  static observedAttributes = ["label", "branching"];
   static catalog = {
     purpose: "A tree of items that expand and collapse and one of which is selected, such as the sidebar's places, initiatives, and library.",
     options: [
       { name: "label", values: ["text"], default: "", description: "The tree's accessible name." },
-      { name: "rail", values: ["boolean"], default: "false", description: "Shows each top item's start glyph alone, with a count badge on it and the label as its tooltip, as a collapsed sidebar does." }
+      { name: "branching", values: ["boolean"], default: "false", description: "Its top items may hold children, as initiatives hold slices, so a top leaf keeps the twisty's room and lines up with the parents of other groups' trees." },
+      { name: "rail", values: ["boolean"], default: "false", description: "Shows each top item's start glyph alone, with a count badge on it and the label as its tooltip, as a collapsed sidebar does." },
+      { name: "h3.prism-group-heading", values: ["kit class"], default: "", description: "A group's heading above its tree: the name in a span and, in a .prism-group-count span, its count; it reads as a quiet caption in small capitals." },
+      { name: "p.prism-foot-note", values: ["kit class"], default: "", description: "A closing note below the groups: a .prism-foot-note-glyph span with a glyph, then the note in a span, in a quiet tone." }
     ],
-    states: ["default", "nested", "selected", "rail"],
+    states: ["default", "nested", "leaf-beside-parent", "selected", "rail", "group-heading", "foot-note"],
     keyboard: [
       "Only one item is in the Tab order.",
       "ArrowDown and ArrowUp move to the next and previous visible item; Home and End move to the first and last.",
@@ -36,6 +39,7 @@ export class PrismTree extends Base {
 
   attributeChangedCallback() {
     setAttribute(this, "aria-label", this.getAttribute("label") || null);
+    if (this.isConnected) this.schedule();
   }
 
   /** Every item of the tree in document order. */
@@ -57,6 +61,8 @@ export class PrismTree extends Base {
     this.pending = true;
     queueMicrotask(() => {
       this.pending = false;
+      // An item's twisty room depends on its siblings, so every item settles again once the burst of changes is over.
+      for (const item of this.items) if (item.row) item.sync();
       const visible = this.visibleItems;
       const current = visible.includes(this.current) ? this.current : visible.find((item) => item.selected) ?? visible[0];
       this.rove(current);

@@ -1,5 +1,6 @@
 import { spawn as defaultSpawn } from "node:child_process";
 import path from "node:path";
+import { commandLaunch } from "../../command-launch.mjs";
 
 const CONFIG_KEYS = [
   "model",
@@ -67,10 +68,13 @@ function requestWithAppServer({ cwd, environment, spawnProcess = defaultSpawn, t
     let outputBytes = 0;
     let configRequestSent = false;
     let serverInfo = null;
-    const child = spawnProcess(configuredCommand(environment), configuredArguments(environment), {
+    const started = commandLaunch(configuredCommand(environment), configuredArguments(environment));
+    const child = spawnProcess(started.command, started.args, {
       cwd,
       env: environment,
-      stdio: ["pipe", "pipe", "ignore"]
+      stdio: ["pipe", "pipe", "ignore"],
+      shell: started.shell,
+      windowsHide: true
     });
     const finish = (error, value) => {
       if (settled) return;

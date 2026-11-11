@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
@@ -8,7 +9,7 @@ import test from "node:test";
 import { deliverGateAnswers } from "../../dist/hooks/deliver-gate-answers.mjs";
 import { answerUserGate, readCoordinationState, updateCoordinationState } from "../../dist/server/workflow/state.mjs";
 
-const HOOK = new URL("../../dist/hooks/deliver-gate-answers.mjs", import.meta.url).pathname;
+const HOOK = fileURLToPath(new URL("../../dist/hooks/deliver-gate-answers.mjs", import.meta.url));
 
 async function project(context) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-gate-hook-")));

@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -43,7 +44,7 @@ sdm: "0.3"
 });
 
 test("accepts every shipped skill", async () => {
-  const root = new URL("../../", import.meta.url).pathname;
+  const root = fileURLToPath(new URL("../../", import.meta.url));
   const results = await validateRepositorySkills(root);
 
   assert.ok(results.length > 0);

@@ -6,13 +6,15 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { defer } from "./teardown.mjs";
 
 export const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
 function loadPlaywright() {
   const bases = [ROOT];
   try {
-    bases.push(execFileSync("npm", ["root", "-g"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
+    // npm is a .cmd shim on Windows, which starts only through the shell.
+    bases.push(execFileSync("npm", ["root", "-g"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], shell: process.platform === "win32", windowsHide: true }).trim());
   } catch {
   }
   for (const base of bases) {
@@ -31,7 +33,8 @@ export const skip = playwright ? false : "Playwright is not installed; run npm i
 
 async function temporary(context, prefix) {
   const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), prefix)));
-  context.after(() => rm(directory, { recursive: true, force: true }));
+  // A Git command that the review server started for a page may still be ending in the folder, which Windows reports as busy for a moment.
+  defer(context, () => rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
   return directory;
 }
 
@@ -40,7 +43,7 @@ export async function useAppDirectory(context) {
   const directory = await temporary(context, "prism-kit-app-");
   const previous = process.env.PRISM_REVIEW_APP_DIR;
   process.env.PRISM_REVIEW_APP_DIR = directory;
-  context.after(() => {
+  defer(context, () => {
     if (previous === undefined) delete process.env.PRISM_REVIEW_APP_DIR;
     else process.env.PRISM_REVIEW_APP_DIR = previous;
   });
@@ -73,13 +76,13 @@ export async function serveProject(context, projectRoot) {
       await review.close();
     }
   };
-  context.after(close);
+  defer(context, close);
   return { base: review.baseUrl.replace(/\/$/, ""), close };
 }
 
 export async function launch(context) {
   const browser = await playwright.chromium.launch();
-  context.after(() => browser.close());
+  defer(context, () => browser.close());
   return browser;
 }
 

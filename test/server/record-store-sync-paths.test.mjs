@@ -18,6 +18,13 @@ test.after(async () => { cancelRecordSyncs(); await rm(environment, { recursive:
 
 const git = (cwd, args, input) => execFileSync("git", ["-C", cwd, ...args], { input, stdio: ["pipe", "pipe", "pipe"] }).toString().trim();
 const exists = (target) => access(target).then(() => true, () => false);
+// Whether the crafted entry reached the disk. Windows finds a folder by its 8.3 short name too, so a crafted PRISM-~1 path can name the sync's
+// own folder and a file the sync wrote there; such a file holds the sync's content, not the crafted one.
+const writtenThrough = async (target, contents = "crafted\n") => {
+  if (!(await exists(target))) return false;
+  const text = await readFile(target, "utf8").catch(() => null);
+  return text === null || text === contents;
+};
 // Whether a path is stored on disk in exactly this spelling, as folder listings show it, which a file system that ignores letter case tells apart only that way.
 async function stored(base, ...names) {
   let folder = base;
@@ -118,7 +125,7 @@ for (const { label, names, target, contents, mode } of CRAFTED) {
       assert.equal(status.state, "merge_failed", JSON.stringify(status));
       assert.match(status.message, /which no store may hold/);
       assert.ok(status.message.includes(JSON.stringify(names.join("/"))), "the refusal names the path");
-      assert.equal(await exists(target(storeB)), false, "nothing is written through the crafted path");
+      assert.equal(await writtenThrough(target(storeB), contents), false, "nothing is written through the crafted path");
       assert.equal(isAncestor(storeB, crafted), false, "the branch stays where it was");
       assert.equal(git(storeB, ["status", "--porcelain", "--", ".", ":(exclude).prism-sync"]), "", "the store's files match its branch");
       assert.equal(await exists(path.join(storeB, "artifacts", "plans", "slice.md")), true);
@@ -309,7 +316,8 @@ test("a local artifact whose path differs only in letter case from one the upstr
   assert.ok(!git(storeA, ["ls-tree", "-r", "--name-only", "origin/main"]).includes("Notes.md"), "no tree with both spellings reaches the remote");
 });
 
-test("a branch that took an unportable upstream entry by hand pushes nothing until the remote drops it", async (context) => {
+// The test pulls the entry by hand on a machine whose Git accepts the name, which Windows never is.
+test("a branch that took an unportable upstream entry by hand pushes nothing until the remote drops it", { skip: process.platform === "win32" && "Windows cannot write a file named aux.md, so no branch here can take it by hand" }, async (context) => {
   const { storeA, storeB } = await stores(context);
   const crafted = pushCrafted(storeA, ["notes", "aux.md"]);
   // A person pulls the upstream by hand on a machine whose Git accepts the name.

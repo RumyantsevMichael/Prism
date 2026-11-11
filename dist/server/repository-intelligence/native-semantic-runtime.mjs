@@ -53,9 +53,15 @@ async function privateDirectory(directory) {
     if (error.code !== "EEXIST") throw error;
   });
   const info = await lstat(directory);
-  if (info.isSymbolicLink() || !info.isDirectory() || await realpath(directory) !== path.resolve(directory)) throw semanticError("invalid_path", "Private storage must not follow a symlink.");
+  if (info.isSymbolicLink() || !info.isDirectory() || !await ownRealPath(directory)) throw semanticError("invalid_path", "Private storage must not follow a symlink.");
   await chmod(directory, 448);
   return directory;
+}
+async function ownRealPath(directory) {
+  const real = await realpath(directory);
+  if (process.platform !== "win32") return real === path.resolve(directory);
+  const named = path.join(await realpath(path.dirname(path.resolve(directory))), path.basename(directory));
+  return real.toLowerCase() === named.toLowerCase();
 }
 async function readJson(file) {
   return JSON.parse((await regularBytes(file)).toString("utf8"));
@@ -447,7 +453,7 @@ class NativeSemanticRuntime {
   }
   // A live job that has not started is dropped when a newer read of the same location's live content needs another job, because its source
   // has changed and its build could only fail; it ends as failed with stale_snapshot, without running and without a progress record.
-  // The running job is marked instead, and is dropped the same way if it ends waiting for another session's lock, so it is not tried again.
+  // The running job is marked instead, and is dropped the same way if it ends without an index, so it is not tried again and records no failure.
   supersede(previous, next) {
     if (!previous || previous === next || !previous.live || previous.read >= next.read || !busy(previous)) return;
     if (previous === this.running || this.reloading.has(previous)) {
@@ -479,28 +485,28 @@ class NativeSemanticRuntime {
       });
       try {
         job.prepared = await this.build(source, snapshot, location, job);
-        job.status = "ready";
         if (job.freshness !== void 0) await writeFreshness(location.directory, job.snapshot, job.freshness);
         await started;
         await recorder.succeed();
+        job.status = "ready";
       } catch (error) {
         if (error.reloadMiss) {
           job.reload = false;
-          job.requeue = true;
-          job.status = "waiting";
           job.progress = void 0;
           await started;
           await recorder.succeed();
+          job.requeue = true;
+          job.status = "waiting";
+          return;
+        }
+        if (job.superseded && this.jobs.get(location.directory) !== job) {
+          await started;
+          await recorder.succeed();
+          this.stale(job);
           return;
         }
         let recovery = "Retry preparation after correcting the reported runtime, network, or source problem.";
         if (component && error.held) {
-          if (job.superseded && this.jobs.get(location.directory) !== job) {
-            this.stale(job);
-            await started;
-            await recorder.succeed();
-            return;
-          }
           const lock = `${location.directory}.lock`, info = await lstat(lock).catch(() => null);
           if (!info || Date.now() - info.mtimeMs <= UNRENEWED_LOCK_MS) {
             job.progress = { phase: "waiting" };
@@ -519,12 +525,13 @@ class NativeSemanticRuntime {
         }
         const code = stableFailure(error);
         log.warn("index_failed", { directory: location.directory, component: component?.identity, code, ...errorFields(error) });
+        const diagnostics = [{ code, message: error.message, recovery }];
+        await started;
+        await recorder.fail(diagnostics);
         job.status = "degraded";
         job.failure = { code, message: error.message };
-        job.diagnostics = [{ code, message: error.message, recovery }];
+        job.diagnostics = diagnostics;
         if (component && code === "resource_limit") this.limited.set(generationKey, job);
-        await started;
-        await recorder.fail(job.diagnostics);
       } finally {
         job.recorder = void 0;
       }

@@ -218,7 +218,8 @@ test("a managed clone checks the objects it receives, so a tree with a .. entry 
 
 // A remote whose branch holds an entry that no store shares, pushed by a teammate: the first clone refuses it as a whole, writes no file, and leaves no folder.
 // Add a file to a seed's index by its contents alone, so the commit holds a name that the host's file system could not.
-const stage = (seed, file, contents) => git(seed, "update-index", "--add", "--cacheinfo", `100644,${execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: seed, input: contents }).toString().trim()},${file}`);
+// Git for Windows refuses a name Windows cannot hold unless core.protectNTFS is off, which a seed on another system never needs.
+const stage = (seed, file, contents) => git(seed, "-c", "core.protectNTFS=false", "update-index", "--add", "--cacheinfo", `100644,${execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: seed, input: contents }).toString().trim()},${file}`);
 
 async function refusedClone(context, plant) {
   const parent = await folder(context);

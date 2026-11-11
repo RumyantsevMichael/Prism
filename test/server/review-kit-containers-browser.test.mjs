@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -61,7 +62,7 @@ const record = (page, selector, type) => page.evaluate(([selector, type]) => {
 const events = (page, type) => page.evaluate((type) => (window.__events ?? []).filter((event) => event.type === type), type);
 
 test("clause 57: the kit registry and the catalog hold every container with live specimens", { skip }, async (context) => {
-  const kit = await import(path.join(ROOT, "dist/server/review/public/kit/kit.js"));
+  const kit = await import(pathToFileURL(path.join(ROOT, "dist/server/review/public/kit/kit.js")).href);
   const tags = kit.KIT_ELEMENTS.map((element) => element.tag);
   for (const tag of CONTAINERS) assert.ok(tags.includes(tag), `the kit registers ${tag}`);
   const { page } = await catalog(context);
@@ -260,6 +261,34 @@ test("a first-current listbox shows its first option as current, so the first Ar
   assert.deepEqual(await state(), { active: "slice", current: null });
   await page.keyboard.press("ArrowUp");
   assert.deepEqual(await state(), { active: "roadmap", current: null });
+});
+
+test("a leaf with a glyph beside a parent keeps the twisty's room, so sibling labels line up, and among leaves it starts with its glyph", { skip }, async (context) => {
+  const { page } = await catalog(context);
+  await mount(page, `<prism-tree id="initiatives" label="Initiatives">
+      <prism-tree-item label="Single-slice initiative" value="single"><prism-icon slot="start" name="clock"></prism-icon></prism-tree-item>
+      <prism-tree-item label="Multi-slice initiative" value="multi" expanded><prism-icon slot="start" name="clock"></prism-icon>
+        <prism-tree-item label="First slice" value="first"><prism-icon slot="start" name="clock"></prism-icon></prism-tree-item>
+        <prism-tree-item label="Second slice" value="second"><prism-icon slot="start" name="clock"></prism-icon></prism-tree-item>
+      </prism-tree-item>
+    </prism-tree>`);
+  await page.waitForTimeout(50);
+  const left = (value, part) => page.evaluate(([value, part]) => document.querySelector(`#initiatives prism-tree-item[value="${value}"] > .prism-tree-row > ${part}`).getBoundingClientRect().left, [value, part]);
+  assert.equal(await left("single", ".prism-tree-label"), await left("multi", ".prism-tree-label"), "a single-slice initiative's label lines up with a multi-slice initiative's");
+  assert.equal(await left("single", ".prism-tree-start"), await left("multi", ".prism-tree-start"), "and so does its glyph");
+  assert.equal(await left("first", ".prism-tree-label"), await left("second", ".prism-tree-label"));
+  assert.equal(await left("first", ".prism-tree-start"), await left("multi", ".prism-tree-start"), "a slice's glyph sits exactly under its initiative's glyph");
+  assert.ok(await left("first", ".prism-tree-start") > await left("single", ".prism-tree-twisty"), "and deeper than the initiatives' twisties");
+  // A branching tree, one group of a longer list, keeps the room for its top leaves although it holds no parent itself.
+  await mount(page, `<prism-tree id="one" label="In progress" branching><prism-tree-item label="One slice" value="alone"><prism-icon slot="start" name="clock"></prism-icon></prism-tree-item></prism-tree>
+    <prism-tree id="initiatives" label="Initiatives"><prism-tree-item label="Single-slice initiative" value="single"><prism-icon slot="start" name="clock"></prism-icon></prism-tree-item><prism-tree-item label="Multi-slice initiative" value="multi" expanded><prism-icon slot="start" name="clock"></prism-icon><prism-tree-item label="First slice" value="first"><prism-icon slot="start" name="clock"></prism-icon></prism-tree-item></prism-tree-item></prism-tree>`);
+  await page.waitForTimeout(50);
+  const alone = await page.evaluate(() => document.querySelector('#one prism-tree-item[value="alone"] > .prism-tree-row > .prism-tree-label').getBoundingClientRect().left);
+  assert.equal(alone, await left("multi", ".prism-tree-label"), "a branching group's leaf lines up with another group's parent");
+  // When the only parent loses its children, its siblings start with their glyphs again.
+  await page.evaluate(() => document.querySelectorAll('#initiatives prism-tree-item[value="multi"] prism-tree-item').forEach((item) => item.remove()));
+  await page.waitForTimeout(50);
+  assert.equal(await page.evaluate(() => document.querySelector('#initiatives prism-tree-item[value="single"] > .prism-tree-row > .prism-tree-twisty').classList.contains("is-gone")), true);
 });
 
 test("clause 45: a dialog opens modally over a blurred scrim, keeps focus inside, closes with Escape, its button, or the scrim, and returns focus", { skip }, async (context) => {

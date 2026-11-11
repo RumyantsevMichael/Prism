@@ -64,11 +64,20 @@ export async function privateDirectory(directory: string): Promise<string> {
   }
   await mkdir(directory, { mode: 0o700 }).catch(error => { if (error.code !== "EEXIST") throw error; });
   const info = await lstat(directory);
-  if (info.isSymbolicLink() || !info.isDirectory() || await realpath(directory) !== path.resolve(directory)) throw semanticError("invalid_path", "Private storage must not follow a symlink.");
+  if (info.isSymbolicLink() || !info.isDirectory() || !(await ownRealPath(directory))) throw semanticError("invalid_path", "Private storage must not follow a symlink.");
   await chmod(directory, 0o700);
   return directory;
 }
 
+// Whether a folder's real path is the path it was named by. Windows names a folder by its short 8.3 name (RUNNER~1) or in another letter
+// case as readily as by its own name, and resolving either is not following a link, so there the real path is compared with the real path
+// of the parent, whose every ancestor the caller has already checked for links, joined with the folder's name, ignoring letter case.
+async function ownRealPath(directory: string): Promise<boolean> {
+  const real = await realpath(directory);
+  if (process.platform !== "win32") return real === path.resolve(directory);
+  const named = path.join(await realpath(path.dirname(path.resolve(directory))), path.basename(directory));
+  return real.toLowerCase() === named.toLowerCase();
+}
 
 
 async function readJson<T>(file: string): Promise<T> { return JSON.parse((await regularBytes(file)).toString("utf8")); }
@@ -393,7 +402,7 @@ export class NativeSemanticRuntime implements ComponentRuntime {
   }
   // A live job that has not started is dropped when a newer read of the same location's live content needs another job, because its source
   // has changed and its build could only fail; it ends as failed with stale_snapshot, without running and without a progress record.
-  // The running job is marked instead, and is dropped the same way if it ends waiting for another session's lock, so it is not tried again.
+  // The running job is marked instead, and is dropped the same way if it ends without an index, so it is not tried again and records no failure.
   supersede(previous: Job | undefined, next: Job) {
     if (!previous || previous === next || !previous.live || previous.read >= next.read || !busy(previous)) return;
     if (previous === this.running || this.reloading.has(previous)) { previous.superseded = true; return; }
@@ -415,20 +424,24 @@ export class NativeSemanticRuntime implements ComponentRuntime {
       // Progress is reported to a file beside the index, so the review app can show builds that run in any session's process.
       const recorder = job.recorder = new ProgressRecorder(location.directory, job.id);
       const started = privateDirectory(location.directory).then(() => recorder.start()).catch(() => {});
+      // A job's new status is set only once its progress record is final, so a caller that sees the job end never finds its record still being written.
       try {
-        job.prepared = await this.build(source, snapshot, location, job); job.status = "ready";
+        job.prepared = await this.build(source, snapshot, location, job);
         if (job.freshness !== undefined) await writeFreshness(location.directory, job.snapshot, job.freshness);
         await started; await recorder.succeed();
+        job.status = "ready";
       } catch (error) {
         if (error.reloadMiss) {
-          job.reload = false; job.requeue = true; job.status = "waiting"; job.progress = undefined;
+          job.reload = false; job.progress = undefined;
           await started; await recorder.succeed();
+          job.requeue = true; job.status = "waiting";
           return;
         }
+        // A job that a newer read replaced while it ran is dropped, as a waiting one is, and leaves no progress record, whether it ended
+        // waiting for another session's lock or failed on the source that changed under it.
+        if (job.superseded && this.jobs.get(location.directory) !== job) { await started; await recorder.succeed(); this.stale(job); return; }
         let recovery = "Retry preparation after correcting the reported runtime, network, or source problem.";
         if (component && error.held) {
-          // A job that a newer read replaced while it ran is dropped, as a waiting one is, and leaves no progress record.
-          if (job.superseded && this.jobs.get(location.directory) !== job) { this.stale(job); await started; await recorder.succeed(); return; }
           const lock = `${location.directory}.lock`, info = await lstat(lock).catch(() => null);
           if (!info || Date.now() - info.mtimeMs <= UNRENEWED_LOCK_MS) {
             // Another session is preparing this component, so it stays preparing here and is tried again later, while the queue moves on.
@@ -443,10 +456,10 @@ export class NativeSemanticRuntime implements ComponentRuntime {
         }
         const code = stableFailure(error);
         log.warn("index_failed", { directory: location.directory, component: component?.identity, code, ...errorFields(error) });
-        job.status = "degraded"; job.failure = { code, message: error.message };
-        job.diagnostics = [{ code, message: error.message, recovery }];
+        const diagnostics = [{ code, message: error.message, recovery }];
+        await started; await recorder.fail(diagnostics);
+        job.status = "degraded"; job.failure = { code, message: error.message }; job.diagnostics = diagnostics;
         if (component && code === "resource_limit") this.limited.set(generationKey, job);
-        await started; await recorder.fail(job.diagnostics);
       } finally { job.recorder = undefined; }
     } };
     this.generations.set(generationKey, job);

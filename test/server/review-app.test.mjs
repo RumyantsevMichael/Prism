@@ -14,6 +14,7 @@ import { createReviewAppClient, launchReviewApp } from "../../dist/server/review
 import { startReviewApp } from "../../dist/server/review/review-app-server.mjs";
 import { createReviewServerPool, startStandaloneReview } from "../../dist/server/review/review-server-pool.mjs";
 import { withFileLock } from "../../dist/server/workflow/artifact-store.mjs";
+import { defer } from "./fixtures/teardown.mjs";
 
 const SERVER_PATH = fileURLToPath(new URL("../../dist/server/mcp.mjs", import.meta.url));
 const CLI_PATH = fileURLToPath(new URL("../../bin/prism", import.meta.url));
@@ -21,7 +22,7 @@ const POSIX = process.platform !== "win32";
 
 async function project(context, name) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), `prism-app-${name}-`)));
-  context.after(() => rm(root, { recursive: true, force: true }));
+  defer(context, () => rm(root, { recursive: true, force: true }));
   await mkdir(path.join(root, "docs"), { recursive: true });
   await writeFile(path.join(root, "docs", `${name}.md`), `# ${name}\n`);
   return root;
@@ -31,7 +32,7 @@ async function project(context, name) {
 async function appDirectory(context) {
   const parent = await mkdtemp(path.join(os.tmpdir(), "prism-app-state-"));
   const directory = path.join(parent, "prism");
-  context.after(async () => {
+  defer(context, async () => {
     await shutdownApp(directory);
     await rm(parent, { recursive: true, force: true });
   });
@@ -108,6 +109,8 @@ async function shutdownApp(directory) {
   }
   try {
     const owner = JSON.parse(await readFile(path.join(directory, "review-app.lock"), "utf8"));
+    // Windows ends a process at once without running its shutdown, which leaves its lock file behind, so the app first gets time to stop by itself.
+    if (owner.pid !== process.pid) await eventually(() => !alive(owner.pid), 5000).catch(() => {});
     if (owner.pid !== process.pid && alive(owner.pid)) process.kill(owner.pid);
     // Windows cannot delete the directory while the app still holds its lock file open.
     await eventually(() => !alive(owner.pid), 5000);
@@ -117,7 +120,7 @@ async function shutdownApp(directory) {
 
 function pool(context, options) {
   const value = createReviewServerPool(options);
-  context.after(() => value.close());
+  defer(context, () => value.close());
   return value;
 }
 
@@ -144,8 +147,10 @@ test("two sessions in different projects share one review app on one port", asyn
   assert.equal(discovery.port, Number(urlA.port));
   assert.ok(!urlA.href.includes(discovery.controlToken), "the control credential never appears in a browser URL");
   if (POSIX) {
-    assert.equal((await stat(directory)).mode & 0o777, 0o700);
-    assert.equal((await stat(path.join(directory, "review-app.json"))).mode & 0o777, 0o600);
+    // Windows has no POSIX permission bits; its per-user folders keep these files private there.
+    if (process.platform !== "win32") assert.equal((await stat(directory)).mode & 0o777, 0o700);
+    // Windows has no POSIX permission bits; its per-user folders keep these files private there.
+    if (process.platform !== "win32") assert.equal((await stat(path.join(directory, "review-app.json"))).mode & 0o777, 0o600);
   }
 });
 
@@ -203,7 +208,7 @@ test("a session never sends the control credential to a listener that cannot pro
     incoming.on("end", () => outgoing.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ protocol: 1, url: "http://127.0.0.1:1/look-alike", open: true })));
   });
   await new Promise((resolve) => impostor.listen(0, "127.0.0.1", resolve));
-  context.after(() => new Promise((resolve) => { impostor.closeAllConnections(); impostor.close(resolve); }));
+  defer(context, () => new Promise((resolve) => { impostor.closeAllConnections(); impostor.close(resolve); }));
   const { port } = impostor.address();
   // A stale discovery file from a crashed app names a port that another listener now holds.
   const staleViewerToken = randomBytes(24).toString("base64url");
@@ -273,7 +278,7 @@ async function viewerEvents(context, url, token = null) {
   const address = new URL("api/events", url);
   if (token) address.searchParams.set("write", token);
   const stream = http.get(address);
-  context.after(() => stream.destroy());
+  defer(context, () => stream.destroy());
   const response = await new Promise((resolve) => stream.once("response", resolve));
   let buffer = "";
   response.setEncoding("utf8");
@@ -542,7 +547,7 @@ test("a tab that connects to the presenting project drops its pending notice ins
 test("a pending notice expires", async (context) => {
   const directory = await appDirectory(context);
   const app = await startReviewApp({ directory, noticeMs: 200 });
-  context.after(() => app.close());
+  defer(context, () => app.close());
   const first = await project(context, "expiring");
   const second = await project(context, "expired");
   const discovery = await readDiscovery(directory);
@@ -611,7 +616,7 @@ test("addresses the app cannot open show the app's own page or a project, never 
 test("an app with no project yet shows the app's own page at its address", async (context) => {
   const directory = await appDirectory(context);
   const app = await startReviewApp({ directory, idleMs: 60000 });
-  context.after(() => app.close());
+  defer(context, () => app.close());
   const answer = await request(app.viewerUrl, { headers: { Accept: "text/html" } });
   assert.equal(answer.status, 404);
   assert.match(answer.body, /data-reason="empty"/);
@@ -637,7 +642,7 @@ test("an MCP server lists its project in the app from start until it exits", asy
   const env = isolatedEnv({ CLAUDE_PROJECT_DIR: root, PRISM_REVIEW_APP_DIR: directory, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) });
   delete env.PRISM_REVIEW_APP;
   const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
-  context.after(() => child.kill());
+  defer(context, () => child.kill());
   readline.createInterface({ input: child.stdout }).on("line", () => {});
   const listed = async () => {
     const response = await control(await readDiscovery(directory), "projects");
@@ -658,11 +663,14 @@ test("an MCP server lists its project in the app from start until it exits", asy
 test("an MCP server in a host that names no project starts the app at once and lists the project from its first Prism tool call", async (context) => {
   const directory = await appDirectory(context);
   const root = await project(context, "codex");
+  // The app watches the project that the server registered until its lease ends, and Windows cannot remove a watched folder, so the app stops before the project is removed.
+  defer(context, () => shutdownApp(directory));
   const env = isolatedEnv({ PRISM_REVIEW_APP_DIR: directory, PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) });
   delete env.PRISM_REVIEW_APP;
   delete env.CLAUDE_PROJECT_DIR;
   const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
-  context.after(() => child.kill());
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  defer(context, async () => { child.kill(); await exited; });
   readline.createInterface({ input: child.stdout }).on("line", () => {});
   // The app starts with the server, before any tool call names the project.
   const started = await eventually(async () => (await control(await readDiscovery(directory), "health")).proven, 30000);
@@ -680,7 +688,7 @@ test("a session whose shared app cannot start stops launching it", async (contex
   const root = await project(context, "nolaunch");
   let launches = 0;
   const client = createReviewAppClient({ directory, launch: () => { launches += 1; return null; }, startTimeoutMs: 300 });
-  context.after(() => client.close());
+  defer(context, () => client.close());
   context.mock.timers.enable({ apis: ["setInterval"] });
   await assert.rejects(client.register(root), { reachable: false });
   assert.equal(launches, 1);
@@ -781,7 +789,7 @@ test("a cold restart serves the last port with a new viewer credential, and take
   await stop(second);
   const squatter = http.createServer();
   await new Promise((resolve) => squatter.listen(second.port, "127.0.0.1", resolve));
-  context.after(() => new Promise((resolve) => squatter.close(resolve)));
+  defer(context, () => new Promise((resolve) => squatter.close(resolve)));
   const third = await start();
   assert.notEqual(third.port, second.port);
   await stop(third);
@@ -820,7 +828,7 @@ async function standInApp(context, directory, health) {
     });
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  context.after(() => { server.close(() => stopStandIn()); server.closeAllConnections(); });
+  defer(context, () => { server.close(() => stopStandIn()); server.closeAllConnections(); });
   const { port } = server.address();
   const held = withFileLock(path.join(directory, "review-app"), async () => {
     await writeFile(path.join(directory, "review-app.json"), JSON.stringify({ ...health, port, controlToken, viewerToken, pid: process.pid }), { mode: 0o600 });
@@ -852,7 +860,7 @@ test("a session of a newer plugin release replaces an app of an older release wi
   const root = await project(context, "release-upgrade");
   const standIn = await standInApp(context, directory, { protocol: 1, pluginVersion: "0.1.0" });
   const client = createReviewAppClient({ directory, pluginVersion: "0.2.0" });
-  context.after(() => client.close());
+  defer(context, () => client.close());
   await client.register(root);
   await standIn.held;
   assert.deepEqual(standIn.shutdowns, [{ handoff: true }]);
@@ -865,10 +873,10 @@ test("a session of an older plugin release keeps a newer app", async (context) =
   const directory = await appDirectory(context);
   const root = await project(context, "release-downgrade");
   const app = await startReviewApp({ directory, pluginVersion: "9.0.0" });
-  context.after(() => app.close());
+  defer(context, () => app.close());
   const before = await readDiscovery(directory);
   const client = createReviewAppClient({ directory, pluginVersion: "0.1.0" });
-  context.after(() => client.close());
+  defer(context, () => client.close());
   await client.register(root);
   assert.equal((await readDiscovery(directory)).controlToken, before.controlToken, "the newer app keeps serving");
 });
@@ -877,9 +885,9 @@ test("a tab learns the plugin release of the app that serves it", async (context
   const directory = await appDirectory(context);
   const root = await project(context, "release-tab");
   const app = await startReviewApp({ directory, pluginVersion: "1.2.3" });
-  context.after(() => app.close());
+  defer(context, () => app.close());
   const client = createReviewAppClient({ directory, pluginVersion: "1.2.3" });
-  context.after(() => client.close());
+  defer(context, () => client.close());
   const { url } = await client.register(root);
   const index = JSON.parse((await request(new URL("api/index", `${url}`))).body);
   assert.equal(index.appVersion, "1.2.3");
@@ -912,7 +920,7 @@ test("a session start opens one browser while no review tab is connected and sen
 test("a client that does not declare grant support is held back by a read-only tab while a current client opens with a grant", async (context) => {
   const directory = await appDirectory(context);
   const app = await startReviewApp({ directory });
-  context.after(() => app.close());
+  defer(context, () => app.close());
   const root = await project(context, "legacy-client");
   const discovery = await readDiscovery(directory);
   const present = async (body) => JSON.parse((await control(discovery, "present", { method: "POST", body: { projectRoot: root, open: true, ...body } })).body);
@@ -932,7 +940,7 @@ test("a client that does not declare grant support is held back by a read-only t
 test("a session serves its own review server when the shared app cannot start", async (context) => {
   const blocked = path.join(await mkdtemp(path.join(os.tmpdir(), "prism-app-blocked-")), "not-a-directory");
   await writeFile(blocked, "");
-  context.after(() => rm(path.dirname(blocked), { recursive: true, force: true }));
+  defer(context, () => rm(path.dirname(blocked), { recursive: true, force: true }));
   const root = await project(context, "fallback");
   const review = await pool(context, { app: { directory: blocked } }).get(root, "task");
   const url = new URL(await review.reviewUrl([]));
@@ -973,7 +981,7 @@ test("a session on the shared app is not marked private", async (context) => {
 // A standalone review whose held server, if any, closes with the test.
 async function standalone(context, options) {
   const result = await startStandaloneReview(options);
-  context.after(() => result.held?.close());
+  defer(context, () => result.held?.close());
   return result;
 }
 
@@ -1027,7 +1035,7 @@ test("prism review serves the review itself when the app is off or cannot start"
   const directory = await appDirectory(context);
   const blocked = path.join(await mkdtemp(path.join(os.tmpdir(), "prism-app-blocked-")), "not-a-directory");
   await writeFile(blocked, "");
-  context.after(() => rm(path.dirname(blocked), { recursive: true, force: true }));
+  defer(context, () => rm(path.dirname(blocked), { recursive: true, force: true }));
   const root = await project(context, "standalone");
   for (const env of [{ PRISM_REVIEW_APP: "off", PRISM_REVIEW_APP_DIR: directory }, { PRISM_REVIEW_APP_DIR: blocked }]) {
     const result = await standalone(context, { projectRoot: root, env, openBrowser: () => true });
@@ -1043,12 +1051,14 @@ test("the prism review command exits after presenting through a running app", as
   const directory = await appDirectory(context);
   const watched = await project(context, "running");
   const root = await project(context, "cli");
+  // The app watches the project that the command registered until its lease ends, and Windows cannot remove a watched folder, so the app stops before the project is removed.
+  defer(context, () => shutdownApp(directory));
   const review = await pool(context, { app: { directory } }).get(watched, "task");
   const events = await viewerEvents(context, await review.reviewUrl([]));
   await eventually(() => events.some((event) => event.name === "session"));
   const before = await readDiscovery(directory);
   const child = spawn(process.execPath, [CLI_PATH, "review"], { cwd: root, env: isolatedEnv({ PRISM_REVIEW_APP_DIR: directory }), stdio: ["ignore", "pipe", "pipe"] });
-  context.after(() => child.kill());
+  defer(context, () => child.kill());
   let stdout = "";
   child.stdout.on("data", (chunk) => { stdout += chunk; });
   const code = await new Promise((resolve) => {
@@ -1066,7 +1076,7 @@ test("the app serves each project's evidence from the store its sessions report,
   const directory = await appDirectory(context);
   const root = await project(context, "evidence");
   const storeDirectory = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-app-store-")));
-  context.after(() => rm(storeDirectory, { recursive: true, force: true }));
+  defer(context, () => rm(storeDirectory, { recursive: true, force: true }));
   const id = await new ConservationStore(storeDirectory).put(root, { schemaVersion: 1, kind: "migration", project: root, artifactPath: "docs/evidence.md", revision: "a".repeat(64), lines: ["evidence"] });
   const evidenceAt = async (url) => {
     const response = await request(new URL(`api/evidence?id=${id}`, url));
@@ -1087,7 +1097,7 @@ test("the app shows a build that a session reports from its own index storage, a
   const directory = await appDirectory(context);
   const root = await project(context, "indexing");
   const intelligenceDirectory = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-app-intelligence-")));
-  context.after(() => rm(intelligenceDirectory, { recursive: true, force: true }));
+  defer(context, () => rm(intelligenceDirectory, { recursive: true, force: true }));
   const storage = path.join(intelligenceDirectory, "projects", createHash("sha256").update(root).digest("hex"));
   await mkdir(storage, { recursive: true });
   const at = new Date().toISOString();
@@ -1113,7 +1123,7 @@ test("the app reads a project's evidence from every store that sessions of diffe
   const evidence = [];
   for (const host of ["claude", "codex"]) {
     const storeDirectory = await realpath(await mkdtemp(path.join(os.tmpdir(), `prism-app-${host}-`)));
-    context.after(() => rm(storeDirectory, { recursive: true, force: true }));
+    defer(context, () => rm(storeDirectory, { recursive: true, force: true }));
     const id = await new ConservationStore(storeDirectory).put(root, { schemaVersion: 1, kind: "migration", project: root, artifactPath: "docs/hosts.md", revision: "b".repeat(64), lines: [host] });
     evidence.push({ storeDirectory, id, host });
   }
@@ -1133,7 +1143,7 @@ test("a gate answer from the app writes the state record without touching any ev
   const stores = [];
   for (const host of ["older", "newer"]) {
     const storeDirectory = await realpath(await mkdtemp(path.join(os.tmpdir(), `prism-app-${host}-`)));
-    context.after(() => rm(storeDirectory, { recursive: true, force: true }));
+    defer(context, () => rm(storeDirectory, { recursive: true, force: true }));
     await pool(context, { app: { directory, evidenceDirectory: storeDirectory } }).get(root, "task");
     stores.push(storeDirectory);
   }

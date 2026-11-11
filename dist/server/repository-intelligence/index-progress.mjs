@@ -19,6 +19,12 @@ function processAlive(pid) {
     return error.code === "EPERM";
   }
 }
+const shared = /* @__PURE__ */ new Map();
+const sharedFile = (file) => {
+  let state = shared.get(file);
+  if (!state) shared.set(file, state = { queue: Promise.resolve() });
+  return state;
+};
 class ProgressRecorder {
   constructor(directory, preparationId, now = () => /* @__PURE__ */ new Date()) {
     this.directory = directory;
@@ -33,11 +39,32 @@ class ProgressRecorder {
   queue = Promise.resolve();
   trailing;
   heartbeat;
+  displaced = false;
   async start() {
+    const state = sharedFile(this.file);
+    if (state.owner && state.owner !== this) {
+      state.owner.displaced = true;
+      state.owner.stop();
+    }
+    state.owner = this;
     await removeAbandonedProgress(this.directory);
+    if (this.displaced) return;
     this.heartbeat = setInterval(() => this.write(), HEARTBEAT_MS);
     this.heartbeat.unref();
     await this.write();
+  }
+  // A recorder changes the file while it owns it, or, when it never started, as a failure recorded before any build, while no other recorder does.
+  owns() {
+    const owner = shared.get(this.file)?.owner;
+    return !this.displaced && (owner === this || owner === void 0);
+  }
+  enqueue(operation) {
+    const state = sharedFile(this.file);
+    this.queue = state.queue = state.queue.then(async () => {
+      if (this.owns()) await operation();
+    }).catch(() => {
+    });
+    return this.queue;
   }
   update(progress) {
     const phaseChanged = progress.phase !== this.record.progress?.phase;
@@ -58,25 +85,29 @@ class ProgressRecorder {
     this.written = Date.now();
     this.record.updatedAt = this.now().toISOString();
     const contents = JSON.stringify(this.record);
-    this.queue = this.queue.then(() => writeAtomically(this.file, contents, { mode: 384 })).catch(() => {
-    });
-    return this.queue;
+    return this.enqueue(() => writeAtomically(this.file, contents, { mode: 384 }));
   }
   stop() {
     clearInterval(this.heartbeat);
     clearTimeout(this.trailing);
     this.trailing = void 0;
   }
+  // Gives the file up once this recorder's last operation has run, so the next build of the directory owns it.
+  release() {
+    const state = shared.get(this.file);
+    if (state?.owner === this) state.owner = void 0;
+    if (state && !state.owner && state.queue === this.queue) shared.delete(this.file);
+  }
   async succeed() {
     this.stop();
-    await this.queue;
-    await rm(this.file, { force: true }).catch(() => {
-    });
+    await this.enqueue(() => rm(this.file, { force: true }));
+    this.release();
   }
   async fail(diagnostics) {
     this.stop();
     Object.assign(this.record, { state: "failed", diagnostics, finishedAt: this.now().toISOString() });
     await this.write();
+    this.release();
   }
 }
 async function removeAbandonedProgress(directory) {

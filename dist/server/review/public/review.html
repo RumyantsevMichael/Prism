@@ -19,7 +19,6 @@
   <div id="shell" class="shell">
     <header id="topbar" class="topbar">
       <prism-button id="nav-button" class="topbar-navigation" variant="ghost" label="Navigation" tip="Navigation"><prism-icon name="menu"></prism-icon></prism-button>
-      <prism-button id="sidebar-toggle" class="topbar-sidebar-toggle" variant="ghost" label="Collapse the sidebar" tip="Collapse the sidebar ([)" aria-controls="sidebar" aria-expanded="true" aria-keyshortcuts="["><prism-icon name="panel-left"></prism-icon></prism-button>
       <a class="brand" href="./review?artifact=attention" aria-label="Prism review, Attention">
         <img class="brand-mark" src="./prism-mark.svg" alt="" aria-hidden="true">
         <span class="wordmark">Prism</span>
@@ -39,7 +38,7 @@
       <div class="topbar-end">
         <prism-button id="presence-button" class="topbar-presence" variant="chrome" shape="round">0 working</prism-button>
         <prism-popover id="presence" for="presence-button" heading="Who's working"></prism-popover>
-        <prism-button id="attention-button" class="topbar-attention" variant="chrome" label="Attention" tip="Attention"><prism-icon name="bell"></prism-icon><prism-badge id="attention-count" slot="badge" solid size="sm" hidden></prism-badge></prism-button>
+        <prism-rail-item id="attention-button" class="topbar-attention" value="attention" label="Attention" icon="bell" size="sm"></prism-rail-item>
       </div>
     </header>
     <div id="banners" class="banners">
@@ -57,12 +56,14 @@
       <prism-banner id="connection" tone="warning" heading="The review server is not responding. Retrying…" hidden></prism-banner>
     </div>
     <div id="shell-body" class="shell-body">
-      <nav id="sidebar" class="sidebar" aria-label="Workspace navigation">
-        <div id="nav" class="nav">
-          <prism-tree id="nav-places" label="Places"></prism-tree>
-          <div id="nav-scope" class="nav-scope"></div>
-          <div id="nav-library" class="nav-library"></div>
-        </div>
+      <div id="rail-dock" class="rail-dock">
+        <prism-rail id="rail" label="Places">
+          <prism-rail-item slot="head" id="sidebar-toggle" value="sidebar" label="Collapse the sidebar" tip="Collapse the sidebar ([)" icon="panel-left" aria-controls="sidebar" aria-expanded="true" aria-keyshortcuts="["></prism-rail-item>
+        </prism-rail>
+      </div>
+      <nav id="sidebar" class="sidebar" aria-label="Sidebar">
+        <prism-place-head id="place-head"></prism-place-head>
+        <div id="nav" class="nav"></div>
       </nav>
       <prism-panel id="main" class="main" variant="island" flush>
         <prism-doc-tabs id="open-tabs" class="open-documents" label="Open artifacts" empty></prism-doc-tabs>
@@ -120,7 +121,11 @@
       </span>
     </footer>
   </div>
-  <prism-dialog id="nav-drawer" heading="Navigation" placement="start" bare></prism-dialog>
+  <prism-dialog id="nav-drawer" heading="Navigation" placement="start" bare flush>
+    <div id="drawer-places" class="drawer-places">
+      <prism-rail id="drawer-rail" label="Places"></prism-rail>
+    </div>
+  </prism-dialog>
   <prism-dialog id="side-panel-sheet" heading="Side panel" placement="bottom" bare></prism-dialog>
   <prism-dialog id="store-dialog" heading="Record store" size="lg"></prism-dialog>
   <prism-dialog id="action-dialog" heading="Confirm the change">
