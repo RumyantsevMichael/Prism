@@ -299,7 +299,8 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
       // Every checkout of a workspace shows its page through this one review, so an applied action reaches every page of the workspace.
       onAction: (event) => view.review.notify("action", event),
       evidenceStore: () => evidenceStoreOf(currentProject(view)), intelligenceDirectories: () => intelligenceDirectoriesOf(currentProject(view)), writeSessions,
-      workspace: { id: view.id, describe: () => describeWorkspace(view), sync: async () => await syncedClone(view) ? view.watch.state() : null, viewers: (count) => view.watch.viewers(count) } });
+      workspace: { id: view.id, describe: () => describeWorkspace(view), sync: async () => await syncedClone(view) ? view.watch.state() : null, viewers: (count) => view.watch.viewers(count),
+        checkouts: () => membersOf(view).map(({ root: member, repository }) => ({ root: member, repository: repository ?? null })) } });
     workspaces.set(view.id, view);
     return view;
   }

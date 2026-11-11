@@ -1424,3 +1424,23 @@ a.code-link:hover {
   color: var(--prism-color-warning);
   font-weight: var(--prism-font-weight-bold);
 }
+
+/* ---------- Store artifacts of every scope ---------- */
+
+/* The scope filter wraps its chips across the sidebar's width, so many scopes or long labels never widen it. */
+.nav-scope-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  padding: 0 var(--prism-space-3);
+}
+
+/* A link that names no store artifact keeps its text and says so beside it, wrapping within the line's width. */
+.doc-link-unresolved {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2);
+  max-width: 100%;
+}

@@ -7,12 +7,18 @@ function statusBadge(status) {
   return badge(status ?? "no status", STATUS_TONES[value] ?? "neutral");
 }
 
+// The scope label of a store artifact in a workspace, which tells two scopes' files of one name apart, or nothing for a checkout's own file.
+function scopeChip(path, ctx) {
+  const label = ctx.scopeLabel?.(path);
+  return label ? `<prism-chip data-scope-label>${escapeHtml(label)}</prism-chip>` : "";
+}
+
 function requirements(data, ctx) {
   if (!data.entries.length) return card("Requirements", emptyState("No requirements yet", data.directory ? "No requirement file exists yet." : "The workflow settings turn requirements off."));
   const counts = data.entries.reduce((totals, entry) => ({ ...totals, [entry.status ?? "no status"]: (totals[entry.status ?? "no status"] ?? 0) + 1 }), {});
   return `${summaryPanel(`<div class="stat-grid">${Object.entries(counts).map(([status, count]) => stat(status, String(count))).join("")}</div>`)}
   ${card(plural(data.entries.length, "requirement file"), `<div class="table-wrap"><table class="data-table"><thead><tr><th>Requirement</th><th>Status</th><th>Dates</th><th>Assigned to</th></tr></thead><tbody>${data.entries.map((entry) => `<tr>
-    <td><span class="chip-row">${artifactChip(entry.path, ctx, entry.title)}</span></td>
+    <td><span class="chip-row">${artifactChip(entry.path, ctx, entry.title)}${scopeChip(entry.path, ctx)}</span></td>
     <td>${statusBadge(entry.status)}</td>
     <td class="muted dates">${[entry.created && `created ${escapeHtml(entry.created)}`, entry.approved && `approved ${escapeHtml(entry.approved)}`].filter(Boolean).join("<br>") || "—"}</td>
     <td><span class="chip-row">${entry.assignedTo.length ? entry.assignedTo.map((use) => artifactChip(`slice:${use.initiative}/${use.slug}`, ctx, `${use.title}${use.anchor ? ` · requirement ${use.anchor}` : ""}`)).join("") : '<span class="muted">unassigned</span>'}</span></td>
@@ -24,7 +30,7 @@ function decisions(data, ctx) {
   const topics = [...new Set(data.entries.map((entry) => entry.topic ?? "General"))];
   return topics.map((topic) => {
     const entries = data.entries.filter((entry) => (entry.topic ?? "General") === topic);
-    return card(topic, `<ul class="row-list decision-list">${entries.map((entry) => `<li>${statusBadge(entry.status)}${artifactChip(entry.path, ctx, entry.title)}${entry.created ? `<span class="muted">${escapeHtml(entry.created)}</span>` : ""}</li>`).join("")}</ul>`, { eyebrow: plural(entries.length, "decision") });
+    return card(topic, `<ul class="row-list decision-list">${entries.map((entry) => `<li>${statusBadge(entry.status)}${artifactChip(entry.path, ctx, entry.title)}${scopeChip(entry.path, ctx)}${entry.created ? `<span class="muted">${escapeHtml(entry.created)}</span>` : ""}</li>`).join("")}</ul>`, { eyebrow: plural(entries.length, "decision") });
   }).join("");
 }
 

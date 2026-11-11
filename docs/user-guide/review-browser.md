@@ -217,6 +217,7 @@ JSON records such as the coordination state have a Structured and a Raw view.
 Prism stores diagrams as PlantUML `.puml` source files, and the browser renders them without creating image files.
 Markdown links open the linked file or heading in the review.
 A link to a missing file or a target outside the project is marked as missing, and an external link opens in a new browser tab.
+A store artifact's links resolve by its place in the store; see [Every scope in one view](#every-scope-in-one-view).
 A document with three or more headings gets a contents list that marks the current section.
 Each heading with text under it has a fold toggle beside it, and a link or contents entry that leads into a folded section opens it.
 Code in source files, Markdown code blocks, previews, and diagram source is highlighted by language.
@@ -249,6 +250,7 @@ The list is closed when the page opens, and it stays open or closed as you left 
 To comment, enter that line number, with or without spaces around it, and your comment of at most 4000 characters, then select Comment.
 A file takes at most 1000 comments: once it holds 1000, Prism refuses a further comment with `comment_limit` and stores nothing, and a file whose comment folder holds more than 1000 files, as a sync from elsewhere could bring, shows no comments at all.
 The comment goes to the record store as a file of its own, so it reaches every checkout that sees the file and every machine that syncs the store, and the file itself does not change.
+On a workspace's page you can comment on the files of every scope, also another repository's, and the comment names its author by the Git name of the store's clone on this machine.
 Agents read the comments with the file through `get_artifact`.
 A file's comments belong to it: when an agent moves the file to another scope its comments move with it, and when an agent removes the file its comments are removed with it, so a new file at the same path starts without them.
 A comment you are still typing stays in the form when the file moves to another scope, and Comment then sends it to the file in its new scope.
@@ -293,6 +295,23 @@ Open tabs name each store artifact by its place in the store, so a tab opened fr
 The app's own address opens the workspace an agent session used most recently, else the workspace used most recently.
 With no workspace yet, it shows a page that offers to add one, and opens the first workspace as soon as you add it or a Prism session or `prism review` in a project adds it.
 When an agent presents a review for another project while a tab that can make changes is open, that tab shows a notice with a link instead of a second tab opening.
+
+### Every scope in one view
+
+A workspace's page shows the artifacts of every scope its store holds together: the workspace, each repository, and each repository's components, also the repositories with no checkout on this machine.
+The **Store** section at the foot of the sidebar lists each scope by its label, `workspace`, the repository, or `<repository>/<component>`, with its count of artifacts, and each scope opens to list its artifacts by their place in it, such as `requirements/billing.md`.
+A scope lists its first 50 artifacts there, and the Jump palette finds every other one.
+Each store artifact's page names its scope in a label beside its heading and in its Review card, and shows its place in the store, such as `repositories/api/requirements/billing.md`.
+The page names a store artifact by that place, `store:<location>`, in its tabs, links, and address, never by a checkout's path, so one link opens the same file from every checkout and from a workspace with no checkout.
+A link or tab that still names a checkout's path opens the store artifact at that path.
+
+The scope chips above the list are the scope filter: select one or more scopes to show only their artifacts in the sidebar and the Jump palette, select a chosen chip again to drop it, and select **All scopes** to show every scope again.
+The filter stays in the page's address as `scopes=<label>,<label>`, so it survives a reload and a shared link, and it never changes the workspace the page shows.
+
+A relative Markdown link in a store artifact opens the artifact it names, looked for first beside the artifact's place in the store, and then at the path the link names from the file's checkout path, as a checkout of its repository on this machine configures its folders, or as Prism's default folders do without one, in the file's own scope or else the workspace scope.
+A link that names no artifact keeps its text and shows **link not found** beside it, and the page's heading counts such links.
+
+A store that holds no artifacts yet, because no Prism session moved a checkout's files into it, shows a note in the **Store** section that names its repositories and says that each keeps its artifacts in its checkouts until a Prism session there moves them into the store.
 
 ### Add a workspace from its store
 

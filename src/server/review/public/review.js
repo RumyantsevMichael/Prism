@@ -4,7 +4,7 @@ import { openEvidence } from "./views/evidence.js";
 import { ENTITY_LABELS, entityLabel, parseEntityRef, recordKind, recordLabel, renderEntity } from "./views/entities.js";
 import { createPalette } from "./views/palette.js";
 import { highlight, highlightLines, languageOf } from "./views/highlight.js";
-import { anchorTarget, decorateDocuments, HEADING_PREFIX, LINE_RANGE, markCurrentSection, renderText, revealInDocument } from "./views/markdown.js";
+import { anchorTarget, decorateDocuments, HEADING_PREFIX, LINE_RANGE, linkTargets, markCurrentSection, renderText, revealInDocument } from "./views/markdown.js";
 import { createLinkPreview } from "./views/preview.js";
 import { createSidePanel } from "./views/side-panel.js";
 import { createIndexingStatus } from "./views/indexing.js";
@@ -55,13 +55,46 @@ let appVersion = null;
 let sessionConnected = false;
 let sessionStream;
 let saveQueue = Promise.resolve();
-// A workspace's session names each store artifact by its store location, store:<location>, and the page opens it by the path its checkout gives it.
-let refPaths = new Map();
-const localTab = (tab) => typeof tab === "string" ? refPaths.get(tab) ?? tab : tab;
+// A workspace's page names each store artifact by its store location, store:<location>, in its tabs, links, and URLs, never by a checkout's path:
+// a checkout path that a record view or an older link names opens as the store artifact it names.
+const STORE_REF = "store:";
+const isStoreRef = (path) => typeof path === "string" && path.startsWith(STORE_REF);
+let pathRefs = new Map();
+const localTab = (tab) => typeof tab === "string" ? pathRefs.get(tab) ?? tab : tab;
 const localTabs = (tabs) => Array.isArray(tabs) ? [...new Set(tabs.map(localTab))] : tabs;
+// Every scope of the workspace's store that holds an artifact, each store artifact's scope label by ref, and the index's notes about the store.
+let storeScopes = [];
+let refScopes = new Map();
+let storeNotes = [];
+let storeSignature = "";
 
 function useStoreRefs(data) {
-  refPaths = new Map(Object.entries(data.storeRefs ?? {}).map(([path, ref]) => [ref, path]));
+  pathRefs = new Map(Object.entries(data.storeRefs ?? {}));
+  storeScopes = Array.isArray(data.scopes) ? data.scopes : [];
+  refScopes = new Map(Object.entries(data.artifactScopes ?? {}).filter(([ref]) => isStoreRef(ref)));
+  storeNotes = Array.isArray(data.notes) ? data.notes : [];
+  storeSignature = JSON.stringify([storeScopes, storeNotes, [...refScopes.keys()].join("\n")]);
+}
+
+// The scope filter narrows the store's artifacts to the chosen scope labels, or shows every scope while null, and the page keeps it in its URL's scopes parameter.
+function readScopeFilter() {
+  const labels = (new URLSearchParams(location.search).get("scopes") ?? "").split(",").map((label) => label.trim()).filter(Boolean);
+  return labels.length ? new Set(labels) : null;
+}
+let scopeFilter = readScopeFilter();
+const scopeShown = (label) => !scopeFilter || scopeFilter.has(label);
+
+function withScopeFilter(url) {
+  if (scopeFilter) url.searchParams.set("scopes", [...scopeFilter].join(","));
+  else url.searchParams.delete("scopes");
+  return url;
+}
+
+function setScopeFilter(labels) {
+  scopeFilter = labels && labels.size ? labels : null;
+  const url = withScopeFilter(new URL(location.href));
+  history.replaceState(history.state, "", `${url.pathname}${url.search}`);
+  renderNavigation();
 }
 
 // A session snapshot with every store artifact named as the page opens it.
@@ -366,7 +399,7 @@ async function takeWriteGrant() {
 }
 
 function updateLocation(path, push = false) {
-  const url = new URL(location.href);
+  const url = withScopeFilter(new URL(location.href));
   if (path) {
     url.searchParams.set("artifact", path);
   } else {
@@ -408,7 +441,8 @@ function saveSession() {
 
 // Opening a page pushes it onto the browser history, so Back, Forward, and the browser's own buttons move through the same pages.
 // The session keeps the page and a preview of recent ones for the agent; `keep` keeps a page among them when the next one opens.
-function openRef(path, { keep = false, fromHistory = false } = {}) {
+function openRef(given, { keep = false, fromHistory = false } = {}) {
+  const path = localTab(given);
   if (!path || !requireApp()) {
     return;
   }
@@ -768,9 +802,13 @@ function escapeHtml(value) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
-function markdownOptions(basePath) {
-  return { basePath, isKnown: (path) => availableArtifacts.has(path) };
+// A store artifact's read carries its links resolved against its store location, which the page renders in place of resolving them itself.
+function markdownOptions(basePath, links = null) {
+  return { basePath, isKnown: (path) => availableArtifacts.has(path), links: linkTargets(links) };
 }
+
+// The read of a page's file: a store artifact by its ref, and any other file by its path.
+const artifactQuery = (path) => isStoreRef(path) ? `ref=${encodeURIComponent(path)}` : `path=${encodeURIComponent(path)}`;
 
 // A short outage shows the retrying banner; one that outlasts the grace period shows the stopped banner, and any answer clears both.
 function reportRefresh(ok) {
@@ -1099,6 +1137,71 @@ function sliceItems(scope, entity) {
   return scope.tree.filter((node) => node.depth === 1).map(build);
 }
 
+// The store tree lists every scope's artifacts together, each scope with its label and count, behind the scope filter; a scope lists its first artifacts and the palette finds the rest.
+const SCOPE_ITEM = "store-scope:";
+const SCOPE_ARTIFACTS_SHOWN = 50;
+
+// A store artifact's location below its scope's folder, such as requirements/billing.md, as the store tree names it.
+function belowScope(ref) {
+  const names = ref.slice(STORE_REF.length).split("/");
+  const at = names[0] === "repositories" && names.length > 2 ? names[2] === "components" && names.length > 4 ? 4 : 2 : 0;
+  return names.slice(at).join("/");
+}
+
+function scopeFilterChips() {
+  const holder = element("div", "nav-scope-filter");
+  holder.dataset.scopeFilter = "";
+  holder.setAttribute("role", "group");
+  holder.setAttribute("aria-label", "Scope filter");
+  for (const scope of storeScopes) {
+    const chip = element("prism-chip", "", scope.label);
+    chip.setAttribute("interactive", "");
+    chip.setAttribute("pressed", String(Boolean(scopeFilter?.has(scope.label))));
+    chip.setAttribute("tip", scopeFilter?.has(scope.label) ? `Stop narrowing to ${scope.label}` : `Show only ${scope.label} and the other chosen scopes`);
+    chip.append(Object.assign(element("span", "", String(scope.artifacts)), { slot: "meta" }));
+    chip.addEventListener("click", () => {
+      const next = new Set(scopeFilter ?? []);
+      if (next.has(scope.label)) next.delete(scope.label);
+      else next.add(scope.label);
+      setScopeFilter(next);
+    });
+    holder.append(chip);
+  }
+  if (scopeFilter) {
+    const all = element("prism-chip", "", "All scopes");
+    all.setAttribute("interactive", "");
+    all.addEventListener("click", () => setScopeFilter(null));
+    holder.append(all);
+  }
+  return holder;
+}
+
+function storeNavigation() {
+  if (!storeScopes.length && !storeNotes.length) return [];
+  const parts = [section("Store", refScopes.size)];
+  for (const note of storeNotes) parts.push(element("p", "nav-note", note.message ?? String(note)));
+  if (!storeScopes.length) return parts;
+  parts.push(scopeFilterChips());
+  const byScope = new Map(storeScopes.map((scope) => [scope.label, []]));
+  for (const [ref, label] of refScopes) byScope.get(label)?.push(ref);
+  let cut = false;
+  const items = storeScopes.filter((scope) => scopeShown(scope.label)).map((scope) => {
+    const refs = byScope.get(scope.label) ?? [];
+    const value = `${SCOPE_ITEM}${scope.label}`;
+    const holdsCurrent = refs.includes(selectedPath);
+    const shown = refs.slice(0, SCOPE_ARTIFACTS_SHOWN);
+    if (holdsCurrent && !shown.includes(selectedPath)) shown.push(selectedPath);
+    if (shown.length < refs.length) cut = true;
+    const count = element("span", "nav-count", String(scope.artifacts));
+    const children = shown.map((ref) => treeItem(ref, belowScope(ref), { selected: selectedPath === ref }));
+    return treeItem(value, scope.label, { expanded: treeToggles.get(value) ?? holdsCurrent, end: [count], children });
+  });
+  if (items.length) parts.push(tree("Store artifacts by scope", items));
+  else parts.push(element("p", "nav-note", "No scope matches the filter."));
+  if (cut) parts.push(element("p", "nav-note", `A scope lists its first ${SCOPE_ARTIFACTS_SHOWN} artifacts here; press Ctrl K to find any other.`));
+  return parts;
+}
+
 // The sidebar is the only navigation: places, every initiative, the open initiative's slices or the open library section's documents, and the library.
 let navigationKey = "";
 
@@ -1108,7 +1211,7 @@ function renderNavigation() {
   void updateAttentionSignals(attention.gates ?? 0);
   const entity = Boolean(parseEntityRef(selectedPath ?? ""));
   const claims = claimIndex ? [...claimIndex.live(), ...claimIndex.expired()].map((claim) => [claim.ref, claim.expiresAt, claim.label]) : [];
-  const key = JSON.stringify([selectedPath, scope, attention, navigation.initiatives, navigation.glossary, navigation.diagnostics, claims, [...treeToggles]]);
+  const key = JSON.stringify([selectedPath, scope, attention, navigation.initiatives, navigation.glossary, navigation.diagnostics, claims, [...treeToggles], storeSignature, scopeFilter && [...scopeFilter]]);
   if (key === navigationKey) return;
   navigationKey = key;
   const focused = document.activeElement?.closest?.("prism-tree-item");
@@ -1146,7 +1249,7 @@ function renderNavigation() {
     if (scope.section !== "decisions") parts.push(section(name, scope.entries.length));
     for (const [topic, entries] of topics) {
       if (scope.section === "decisions") parts.push(section(topic, entries.length));
-      parts.push(tree(topic, entries.map((entry) => treeItem(entry.path, entry.title, { selected: selectedPath === entry.path, end: entry.status ? [element("span", "nav-state", entry.status)] : [] }))));
+      parts.push(tree(topic, entries.map((entry) => treeItem(localTab(entry.path), entry.title, { selected: selectedPath === localTab(entry.path), end: entry.status ? [element("span", "nav-state", entry.status)] : [] }))));
     }
     if (!scope.entries.length) parts.push(element("p", "nav-note", "No documents."));
   }
@@ -1164,7 +1267,7 @@ function renderNavigation() {
   navLibrary.replaceChildren(section("Library"), tree("Library", [
     ...["requirements", "decisions"].map((ref) => treeItem(ref, ENTITY_LABELS[ref], { selected: selectedPath === ref })),
     treeItem("glossary", "Glossary", { selected: selectedPath === "glossary" || (glossary.path && selectedPath === glossary.path), end: glossary.exists ? [] : [element("span", "nav-state", "missing")] })
-  ]));
+  ]), ...storeNavigation());
   if (refocus) [...navRoot.querySelectorAll("prism-tree-item")].find((item) => item.getAttribute("value") === refocus)?.focus();
   navRoot.querySelector("prism-tree-item[selected]")?.scrollIntoView?.({ block: "nearest" });
 }
@@ -1453,7 +1556,7 @@ async function showArtifact(path) {
     await showEntity(path);
     return;
   }
-  const response = await fetch(`./api/artifact?path=${encodeURIComponent(path)}`, { cache: "no-store" });
+  const response = await fetch(`./api/artifact?${artifactQuery(path)}`, { cache: "no-store" });
   if (response.status === 404) {
     showMissing(path);
     return;
@@ -1465,7 +1568,7 @@ async function showArtifact(path) {
   const data = await response.json();
   const state = viewState(data.path);
   // A Review card that lists further comment reads reads them all again with the first, so its list stays the file's first comments as they now are.
-  const readPage = (commentOffset) => fetchJson(`./api/artifact?path=${encodeURIComponent(data.path)}&commentOffset=${commentOffset}`);
+  const readPage = (commentOffset) => fetchJson(`./api/artifact?${artifactQuery(data.path)}&commentOffset=${commentOffset}`);
   if (data.artifact && (state.commentReads ?? 1) > 1) {
     const listed = await readListedComments(data.artifact, state, readPage).catch(() => null);
     if (path !== selectedPath) return;
@@ -1487,7 +1590,7 @@ async function showArtifact(path) {
     ? `<section class="document-sheet source-sheet" data-code-subject><ol class="source-lines">${highlightLines(data.content.replace(/\r\n/g, "\n").replace(/\n$/, ""), languageOf(data.path)).map((line, index) => `<li id="${HEADING_PREFIX}L${index + 1}"><code>${line || " "}</code></li>`).join("")}</ol></section>`
     : structured || data.path.toLowerCase().endsWith(".puml")
       ? ""
-      : `<section class="document-sheet"><prism-doc class="document-content">${renderText(data.path, data.content, markdownOptions(data.path))}</prism-doc></section>`;
+      : `<section class="document-sheet"><prism-doc class="document-content">${renderText(data.path, data.content, markdownOptions(data.path, data.links))}</prism-doc></section>`;
   const memory = beginRebuild(path);
   // A repository file is named by its path; a record of Prism's by its title and kind, never its file name.
   const named = describe(data.path);
@@ -1499,8 +1602,11 @@ async function showArtifact(path) {
         ${named.code ? "" : `<p class="eyebrow">${escapeHtml(named.kind)}</p>`}
         <h1${named.code ? " data-code-subject" : ""}>${escapeHtml(heading)}</h1>
         ${named.code ? `<p class="artifact-path" data-code-subject>${escapeHtml(data.path)}</p>` : ""}
+        ${data.location ? `<p class="artifact-path" data-code-subject>${escapeHtml(data.location)}</p>` : ""}
       </div>
       <div class="artifact-meta">
+        ${data.scope ? `<prism-chip tone="accent" data-scope-label tip="The scope that holds this artifact in the record store">${escapeHtml(data.scope.label)}</prism-chip>` : ""}
+        ${data.unresolvedLinks ? `<prism-chip tone="warning" tip="Links in this file that name no artifact in the record store">${escapeHtml(countText(data.unresolvedLinks, "link not found", "links not found"))}</prism-chip>` : ""}
         ${named.code || structured ? `<prism-chip>${escapeHtml(kind)}</prism-chip>` : ""}
         ${source ? "<prism-chip>Read-only</prism-chip>" : structured ? "" : `<prism-chip>${diagramLabel}</prism-chip>`}
       </div>
@@ -1556,10 +1662,13 @@ function viewContext(path, state) {
     state,
     escapeHtml,
     showToast,
-    fetchArtifact: (artifactPath) => fetchJson(`./api/artifact?path=${encodeURIComponent(artifactPath)}`),
+    fetchArtifact: (artifactPath) => fetchJson(`./api/artifact?${artifactQuery(localTab(artifactPath))}`),
     fetchEvidence: (id) => fetchJson(`./api/evidence?id=${encodeURIComponent(id)}`),
-    hasArtifact: (artifactPath) => availableArtifacts.has(artifactPath) || Boolean(parseEntityRef(artifactPath)),
-    openArtifact(artifactPath, options = {}) {
+    hasArtifact: (artifactPath) => availableArtifacts.has(localTab(artifactPath)) || Boolean(parseEntityRef(artifactPath)),
+    // A store artifact's scope label, which the record views show beside it, or null for any other file.
+    scopeLabel: (artifactPath) => refScopes.get(localTab(artifactPath)) ?? null,
+    openArtifact(given, options = {}) {
+      const artifactPath = localTab(given);
       if (!availableArtifacts.has(artifactPath) && !parseEntityRef(artifactPath)) {
         showToast(`Not a reviewable artifact: ${artifactPath}`);
         return;
@@ -1584,7 +1693,7 @@ function viewContext(path, state) {
     },
     // A view embeds a PlantUML file as the same diagram card that opening the file shows.
     async mountDiagram(target, diagramPath) {
-      const data = await fetchJson(`./api/artifact?path=${encodeURIComponent(diagramPath)}`);
+      const data = await fetchJson(`./api/artifact?${artifactQuery(localTab(diagramPath))}`);
       for (const diagram of data.diagrams ?? []) {
         const section = diagramCard(diagram);
         target.appendChild(section);
@@ -1633,8 +1742,13 @@ function paletteEntries() {
   const known = new Set(indexed.map((entry) => entry.ref));
   const titles = titleIndex();
   // Prism's own records are named by title and kind; repository files keep their paths, since code is their subject.
-  const files = [...availableArtifacts].filter((file) => !known.has(file)).map((file) => {
+  const files = [...availableArtifacts].filter((file) => !known.has(file) && (!isStoreRef(file) || scopeShown(refScopes.get(file)))).map((file) => {
     if (describe(file).code) return { ref: file, label: fileName(file), kind: "file", detail: file };
+    // A store artifact names its scope and its place in it, so files of one name in several scopes read apart.
+    if (isStoreRef(file)) {
+      const named = recordLabel(file, titles);
+      return { ref: file, label: named.owner ? named.kind : named.label, kind: "record", kindLabel: named.kind, detail: `${refScopes.get(file) ?? "workspace"} · ${belowScope(file)}` };
+    }
     // A record that belongs to a slice or initiative reads as its kind, so its owner's title stays the owner's own result; the preview names the owner.
     const named = recordLabel(file, titles);
     if (named.owner) return { ref: file, label: named.kind, kind: "record", kindLabel: "Record", detail: named.owner, preview: { kind: named.kind, title: named.owner } };
@@ -1722,7 +1836,7 @@ async function initialize() {
     dialog: document.getElementById("store-dialog"),
     fetchJson,
     openRecord: (path) => openRef(path),
-    hasArtifact: (path) => availableArtifacts.has(path),
+    hasArtifact: (path) => availableArtifacts.has(localTab(path)),
     describe
   });
   renderStoreSync(data);
@@ -1805,7 +1919,7 @@ async function initialize() {
     // A page's Side panel button follows the panel, however it opens or closes.
     onChange: (open) => document.dispatchEvent(new CustomEvent("prism:side-panel", { detail: { open } })),
     fetchJson,
-    renderMarkdown: (path, content) => renderText(path, content, markdownOptions(path)),
+    renderMarkdown: (path, content, links) => renderText(path, content, markdownOptions(path, links)),
     // The panel draws a diagram as the same card its page shows, without the name its header already gives, and fitted to the panel's width.
     mountDiagram: async (target, diagram) => {
       const section = diagramCard(diagram, { compact: true });
@@ -1824,7 +1938,7 @@ async function initialize() {
   linkPreview = createLinkPreview({
     root: workspace,
     fetchJson,
-    renderMarkdown: (path, content) => renderText(path, content, markdownOptions(path)),
+    renderMarkdown: (path, content, links) => renderText(path, content, markdownOptions(path, links)),
     kindLabel: (kind) => KIND_LABELS[kind] ?? "Structured record",
     drawDiagram: drawPlantUml,
     describe,
@@ -1835,7 +1949,7 @@ async function initialize() {
   panelPreview = createLinkPreview({
     root: sidePanel.body,
     fetchJson,
-    renderMarkdown: (path, content) => renderText(path, content, markdownOptions(path)),
+    renderMarkdown: (path, content, links) => renderText(path, content, markdownOptions(path, links)),
     kindLabel: (kind) => KIND_LABELS[kind] ?? "Structured record",
     drawDiagram: drawPlantUml,
     describe,
@@ -1858,6 +1972,13 @@ async function initialize() {
   });
   navRoot.addEventListener("prism-select", (event) => {
     const ref = event.detail?.value;
+    // A scope of the store tree opens and closes its list of artifacts rather than opening a page.
+    if (ref?.startsWith(SCOPE_ITEM)) {
+      const item = [...navRoot.querySelectorAll("prism-tree-item")].find((node) => node.getAttribute("value") === ref);
+      treeToggles.set(ref, !(item?.hasAttribute("expanded") ?? false));
+      renderNavigation();
+      return;
+    }
     if (ref) openRef(ref);
   });
   navRoot.addEventListener("prism-toggle", (event) => {
@@ -1951,6 +2072,7 @@ async function initialize() {
       reportRefresh(Boolean(refreshed?.ok));
       if (refreshed?.ok) {
         const answered = await refreshed.json();
+        const storeBefore = storeSignature;
         useStoreRefs(answered);
         const snapshot = localSession(answered);
         renderStoreSync(snapshot);
@@ -1961,7 +2083,7 @@ async function initialize() {
           navigation = snapshot.navigation;
           renderNavigation();
           void claimIndex.refresh().catch(() => {});
-        }
+        } else if (storeSignature !== storeBefore) renderNavigation();
         if (!sessionConnected) {
           synchronizeSession(snapshot);
         }

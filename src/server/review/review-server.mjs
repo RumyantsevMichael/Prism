@@ -7,9 +7,11 @@ import { fileURLToPath } from "node:url";
 import { PLUGIN_ROOT } from "../plugin-root.mjs";
 import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
-import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { RECORD_DIRECTORY, artifactPathTest, artifactsInCheckout, describeRecordStore, inArtifactStore, isStoreWithoutCheckout, outsideToolCall, keyOfPath, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
-import { artifactStoreLocation, readStoreArtifact, reviewStoreArtifact, storeArtifactLocation } from "../workflow/store-artifacts.mjs";
+import { artifactKinds, parseWorkflowConfig, readWorkflowConfig } from "../workflow/workflow-config.mjs";
+import { RECORD_DIRECTORY, artifactPathTest, artifactsInCheckout, describeRecordStore, inArtifactStore, isStoreWithoutCheckout, outsideToolCall, keyOfPath, recordStoreOf, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
+import { artifactStoreLocation, readStoreArtifact, readStoreArtifactAt, reviewStoreArtifact, reviewStoreArtifactAt, storeArtifactLocation, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
+import { resolveLinks } from "./artifact-links.mjs";
+import { registeredRepositories } from "./workspaces.mjs";
 import { withoutCredentials } from "../workflow/remote-url.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
 import { readReviewRunTotals } from "../session/run-totals.mjs";
@@ -213,6 +215,64 @@ export async function listArtifacts(projectRoot) {
   const roadmap = recordPath({ kind: "roadmap" });
   if (await resolveRecordFile(projectRoot, roadmap).then(({ target }) => stat(target)).then((info) => info.isFile(), () => false)) results.add(roadmap);
   return [...results].sort();
+}
+
+// A workspace's page names each store artifact by its store location, store:<location>, never by a checkout's path, and lists the artifacts of every scope the store holds.
+const STORE_REF = "store:";
+const storeRefOf = (location) => `${STORE_REF}${location}`;
+
+// Every scope's artifacts in the store that a workspace's page reads through, or null when the page reads no store or its store cannot serve them.
+async function workspaceStoreArtifacts(projectRoot) {
+  return workspaceArtifacts(projectRoot).catch((error) => {
+    if (recordsUnavailable(error) || error?.name === "ArtifactError") return null;
+    throw error;
+  });
+}
+
+// Scopes listed workspace first and then by label.
+// The folder of a scope below artifacts/ with its trailing slash, or "" for the workspace scope.
+const scopePrefix = (scope) => scope.kind === "workspace" ? "" : scope.kind === "repository" ? `repositories/${scope.repository}/` : `repositories/${scope.repository}/components/${scope.component}/`;
+
+const byScope = (left, right) => left.kind === "workspace" ? -1 : right.kind === "workspace" ? 1 : left.label < right.label ? -1 : left.label > right.label ? 1 : 0;
+
+/**
+ * The store part of a workspace page's index: refs, the store:<location> of each artifact the page shows, artifactScopes, each ref's scope label, scopes, the scopes that hold an artifact with their counts,
+ * and, when filter names scope labels, scopeFilter, the labels it applied in the order given, and unknownScopes, the labels no scope of the store has, with refs narrowed to the applied scopes;
+ * notes says when the store holds no artifacts/ folder yet, naming the repositories that keep their artifacts in their checkouts.
+ */
+async function workspaceIndex(projectRoot, stored, filter, repositories) {
+  const listed = stored.entries.filter((entry) => TEXT_EXTENSIONS.has(path.posix.extname(entry.location).toLowerCase()));
+  const counts = new Map();
+  for (const entry of listed) counts.set(entry.scope.label, (counts.get(entry.scope.label) ?? 0) + 1);
+  const scopes = stored.scopes.filter((scope) => counts.has(scope.label)).sort(byScope)
+    .map((scope) => ({ kind: scope.kind, label: scope.label, repository: scope.repository ?? null, component: scope.component ?? null, artifacts: counts.get(scope.label) }));
+  const result = { scopes, notes: [] };
+  let shown = listed;
+  if (filter !== null) {
+    const known = new Set(stored.scopes.map((scope) => scope.label));
+    const given = [...new Set(filter)];
+    result.scopeFilter = given.filter((label) => known.has(label));
+    result.unknownScopes = given.filter((label) => !known.has(label));
+    const applied = new Set(result.scopeFilter);
+    shown = listed.filter((entry) => applied.has(entry.scope.label));
+  }
+  result.every = listed.map((entry) => storeRefOf(entry.location));
+  result.refs = shown.map((entry) => storeRefOf(entry.location));
+  result.artifactScopes = Object.fromEntries(shown.map((entry) => [storeRefOf(entry.location), entry.scope.label]));
+  if (!stored.held) {
+    const names = await repositories();
+    const named = names.length ? names.join(", ") : "Each repository";
+    const one = names.length === 1;
+    result.notes.push({ code: "store_without_artifacts", message: `The store holds no artifacts yet: ${named} ${one ? "keeps its" : "keep their"} artifacts in ${one ? "its" : "their"} checkouts until a Prism session there moves them into the store.` });
+  }
+  return result;
+}
+
+// The scope labels that an index request's scopes parameter names, or null when it names none.
+function scopeFilterOf(url) {
+  if (!url.searchParams.has("scopes")) return null;
+  const labels = url.searchParams.get("scopes").split(",").map((label) => label.trim()).filter(Boolean);
+  return labels.length ? labels : null;
 }
 
 const SEARCH_FILE_LIMIT = 30;
@@ -633,8 +693,9 @@ export async function servePageRoute(request, response, route) {
 // onAction(event, { shared, comment }) receives each applied action's event, the history entry with its initiative, instead of this page's viewer streams;
 // shared is false for an index target, whose history belongs to this checkout alone, and comment is the id of a stored comment, which names its file, or null.
 // Without it, the event reaches this page's viewer streams.
-// workspace, for a review of the review app's workspace, is { id, describe(), sync?(), viewers?(count) }, describe answering { id, name, kind, url } for the index,
-// sync the workspace's sync state that the index holds, or null when nothing syncs it, and viewers receiving the number of connected pages whenever it changes:
+// workspace, for a review of the review app's workspace, is { id, describe(), sync?(), viewers?(count), checkouts?() }, describe answering { id, name, kind, url } for the index,
+// sync the workspace's sync state that the index holds, or null when nothing syncs it, viewers receiving the number of connected pages whenever it changes,
+// and checkouts listing its registered checkouts as { root, repository }, whose configured paths resolve the links of their repository's store artifacts:
 // its open tabs then name each store artifact by its store location, store:<location>, never by a checkout path, and projectRoot is the checkout it reads through, which useCheckout(root) changes.
 export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, onAction = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null, writeSessions = null, workspace = null,
   rebuildIndex = (root, component, options = {}) => backgroundPreparation().then((module) => module.startIndexRebuild(root, { ...(component ? { component: { identity: component.identity, folder: component.folder } } : {}), ...options })), autoRebuild = (root) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }) {
@@ -760,8 +821,69 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   async function reviewableFiles() {
-    const refs = workspace ? Object.values(await storeArtifactRefs(projectRoot)) : [];
+    const stored = workspace ? await workspaceStoreArtifacts(projectRoot) : null;
+    const refs = stored ? stored.entries.map((entry) => storeRefOf(entry.location)) : [];
     return new Set([...await listArtifacts(projectRoot), ...await listReviewSources(projectRoot), ...refs]);
+  }
+
+  // The repositories a workspace's store registers, with those its registered checkouts name, by name.
+  async function storeRepositories() {
+    const store = await recordStoreOf(projectRoot).catch(() => null);
+    const names = new Set(store?.external ? await registeredRepositories(store.base) : []);
+    for (const member of await workspace?.checkouts?.() ?? []) if (member.repository) names.add(member.repository);
+    if (store?.repository) names.add(store.repository);
+    return [...names].sort();
+  }
+
+  // The configured artifact kinds of a checkout of a scope's repository that the workspace registers, of the checkout the page reads through for the workspace scope, or else Prism's default paths.
+  async function kindsFor(scope) {
+    const members = await workspace?.checkouts?.() ?? [];
+    const root = scope.repository ? members.find((member) => member.repository === scope.repository)?.root ?? null : projectRoot;
+    const config = root ? await readWorkflowConfig(root).catch(() => null) : null;
+    return artifactKinds(config ?? parseWorkflowConfig(""));
+  }
+
+  // A workspace page's read of a store artifact by its ref, answered as a checkout's artifact read is, with its location, scope, links, and the count of links that resolve to nothing.
+  async function serveStoreArtifact(response, ref, commentOffset) {
+    const location = ref.startsWith(STORE_REF) ? ref.slice(STORE_REF.length) : null;
+    let read = null;
+    try {
+      read = location ? await reviewStoreArtifactAt(projectRoot, location, { commentOffset }) : null;
+    } catch (error) {
+      if (recordsUnavailable(error) || error?.code === "store_unavailable") {
+        send(response, 503, await artifactStoreRefusal(projectRoot) ?? withoutCredentials(error.message));
+        return;
+      }
+      if (error?.name !== "ArtifactError") throw error;
+    }
+    if (!read) {
+      send(response, 404, "The record store holds no artifact at that location.");
+      return;
+    }
+    const stored = await workspaceStoreArtifacts(projectRoot);
+    const held = new Set((stored?.entries ?? []).map((entry) => entry.location));
+    const content = read.bytes.toString("utf8");
+    const links = resolveLinks({ content, location, kinds: await kindsFor(read.scope), has: (candidate) => held.has(candidate) });
+    const { scope, version, accepted, changed, comments, totalComments, nextCommentOffset } = read;
+    const below = location.slice(scopePrefix(scope).length);
+    const artifact = { scope, version, accepted, changed, comments, totalComments, nextCommentOffset, target: `artifact:${scope.label}:${below}` };
+    const answer = { ref, path: ref, location, scope, content, modifiedAt: read.modifiedAt, artifact, links, unresolvedLinks: links.filter((link) => !link.resolved).length };
+    if (path.posix.extname(location).toLowerCase() === ".json") Object.assign(answer, { diagrams: [] }, await loadJsonArtifact(projectRoot, location, content));
+    else answer.diagrams = await storeDiagrams(location, content, links, held);
+    send(response, 200, JSON.stringify(answer), "application/json; charset=utf-8");
+  }
+
+  // The PlantUML diagrams a store artifact shows: the files its links name, and the diagram beside it of the same name, or itself when it is one.
+  async function storeDiagrams(location, content, links, held) {
+    const wanted = new Set(links.filter((link) => link.resolved && link.target.toLowerCase().endsWith(".puml")).map((link) => link.target.slice(STORE_REF.length)));
+    if (location.toLowerCase().endsWith(".puml")) wanted.add(location);
+    else if (held.has(location.replace(/\.[^./]+$/, ".puml"))) wanted.add(location.replace(/\.[^./]+$/, ".puml"));
+    const diagrams = [];
+    for (const at of wanted) {
+      const found = at === location ? { bytes: Buffer.from(content, "utf8") } : await readStoreArtifactAt(projectRoot, at).catch(() => null);
+      if (found) diagrams.push({ path: storeRefOf(at), source: found.bytes.toString("utf8") });
+    }
+    return diagrams;
   }
 
   // A workspace's tabs name store artifacts by their store location, so a tab stays the same artifact from every checkout of the workspace.
@@ -905,14 +1027,24 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     } else if (route === "/api/events" && request.method === "GET") {
       openViewerStream(response, canWrite(url.searchParams.get("write")));
     } else if (route === "/api/index") {
-      const artifacts = await listArtifacts(projectRoot), sources = await listReviewSources(projectRoot);
-      const available = new Set([...artifacts, ...sources]);
+      let artifacts = await listArtifacts(projectRoot);
+      const sources = await listReviewSources(projectRoot);
+      // A workspace's page lists every scope's store artifacts by store location in place of the checkout's paths of its own.
+      const stored = workspace ? await workspaceStoreArtifacts(projectRoot) : null;
+      let storeIndex = null;
+      if (stored) {
+        const isArtifact = await artifactPathTest(projectRoot);
+        storeIndex = await workspaceIndex(projectRoot, stored, scopeFilterOf(url), storeRepositories);
+        artifacts = [...artifacts.filter((file) => !isArtifact(file)), ...storeIndex.refs];
+      }
+      const available = new Set([...artifacts, ...sources, ...(storeIndex?.every ?? [])]);
       const snapshot = await followMovedRecords(available);
       const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref) => entityExists(projectRoot, ref));
       // A workspace read through its store's clone alone has no checkout to name.
       const checkout = workspace && await isStoreWithoutCheckout(projectRoot) ? null : await readWorkspaceIdentity(projectRoot);
       const named = workspace ? { workspace: await workspace.describe(), checkout, storeRefs: await storeArtifactRefs(projectRoot), sync: await workspace.sync?.() ?? null } : { workspace: checkout };
-      send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, artifactScopes: await listArtifactScopes(projectRoot), sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
+      const scoped = storeIndex ? { artifactScopes: storeIndex.artifactScopes, scopes: storeIndex.scopes, ...(storeIndex.scopeFilter ? { scopeFilter: storeIndex.scopeFilter, unknownScopes: storeIndex.unknownScopes } : {}), notes: storeIndex.notes } : { artifactScopes: await listArtifactScopes(projectRoot) };
+      send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, ...scoped, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
     } else if (route === "/api/store/conflicts" && request.method === "GET") {
       // Saved local record versions are read-only here; a person redoes a lost change through an agent.
       send(response, 200, JSON.stringify({ conflicts: await listRecordStoreConflicts(projectRoot).catch(() => []) }), "application/json; charset=utf-8");
@@ -989,6 +1121,13 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const commentOffset = url.searchParams.has("commentOffset") ? url.searchParams.get("commentOffset") : "1";
       if (!/^[0-9]+$/.test(commentOffset) || Number(commentOffset) < 1) {
         send(response, 400, "commentOffset names the 1-based position of the first comment to read, a whole number of at least 1 in ASCII digits.");
+        return;
+      }
+      // A workspace's page reads a store artifact by its ref, store:<location>, which it also passes as the path of the page that shows it.
+      const ref = url.searchParams.get("ref") ?? (artifactPath?.startsWith(STORE_REF) ? artifactPath : null);
+      if (ref !== null) {
+        if (workspace) await serveStoreArtifact(response, ref, Number(commentOffset));
+        else send(response, 404, "Only a workspace's page reads a store artifact by its store location.");
         return;
       }
       // Only listed documents and filtered source files are served, never an arbitrary project path such as .env.

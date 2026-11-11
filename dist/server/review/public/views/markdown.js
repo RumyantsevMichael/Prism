@@ -48,10 +48,28 @@ function decode(value) {
   return value.replaceAll("&quot;", '"').replaceAll("&gt;", ">").replaceAll("&lt;", "<").replaceAll("&amp;", "&");
 }
 
+// A store artifact's links come resolved from the server as { href, target }, by the href as written, with target store:<location> or null for a link that names nothing.
+function storeLink(label, href, options) {
+  const found = options.links?.get(decode(href));
+  if (found === undefined) return null;
+  const anchor = decode(href).split("#")[1] ?? "";
+  if (found === null) {
+    return `<span class="doc-link-unresolved" data-link="unresolved">${label}<prism-chip tone="warning" tip="${escapeHtml(decode(href))} names no artifact in the record store">link not found</prism-chip></span>`;
+  }
+  return `<a href="./review?artifact=${encodeURIComponent(found)}" data-doc-link="${escapeHtml(found)}"${anchor ? ` data-doc-anchor="${escapeHtml(anchor)}"` : ""}>${label}</a>`;
+}
+
+/** Markdown options' links from a store artifact's read: a map from each link's href to its target, or null without links. */
+export function linkTargets(links) {
+  return Array.isArray(links) ? new Map(links.map((item) => [item.href, item.target])) : null;
+}
+
 // External links open in a new tab; in-document anchors scroll; repository paths open as review tabs when the review knows them.
 function link(label, href, options) {
   if (/^https?:/i.test(href)) return `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`;
   if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//")) return label;
+  const stored = storeLink(label, href, options);
+  if (stored !== null) return stored;
   const [target, anchor = ""] = decode(href).split("#");
   if (!target) return `<a href="#${escapeHtml(anchor)}" data-doc-anchor="${escapeHtml(anchor)}">${label}</a>`;
   const base = options.basePath ? options.basePath.split("/").slice(0, -1).join("/") : "";

@@ -320,6 +320,14 @@ The next sync on that machine moves the versions of the files the stopped sync r
 Each saved version stays pending in `.prism-sync/notices/` until a tool result has named it, so a sync that stops after it saved a version and before its status was written still has the version named by the next server's tool result.
 Only a result that the server writes to its host counts, so any call that the host cancels before its result is written, such as a `wait_for_user_gate` or a slow `update_coordination_state` you stop with Esc, gets no response and leaves the version pending for the next result, and so does a call that the session's end aborts.
 
+## Read every scope
+
+An agent lists and reads the artifacts of every scope the store holds through `get_artifact`: the workspace, each repository, and each repository's components.
+Each listing entry carries the artifact's `location` in the store, its `scope`, and its `path` in the agent's checkout, which is null when that checkout configures no folder for its kind, and `location` also reads such an artifact.
+`label`, a scope label as listings report it, such as `web` or `api/billing`, reads one scope's file at a path that several scopes hold; a read of such a path without it is refused with `artifact_ambiguous`, which lists the holding scopes, and an unknown label is refused with `scope_unknown`.
+An agent changes only its own checkout's scopes, the workspace, its repository, and its components.
+A change to a file that only another repository's scopes hold is refused with `scope_not_writable`, which names the scope, so make that change from a checkout of that repository.
+
 ## When two people change the same artifact
 
 With store sync on, each `update_artifact` that changes a file, and each plan file or view that Prism writes into the store, is committed and pushed by the next sync without a further call.

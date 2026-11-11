@@ -40,7 +40,7 @@ export async function storeFolder(identity, env = process.env) {
 }
 
 // The repository names that the store registers, in name order, or none while it cannot be read.
-async function registeredRepositories(folder) {
+export async function registeredRepositories(folder) {
   const names = await readdir(path.join(folder, REPOSITORIES)).catch(() => []);
   return names.filter((name) => name.endsWith(".json")).map((name) => name.slice(0, -".json".length)).filter((name) => REPOSITORY_NAME.test(name));
 }

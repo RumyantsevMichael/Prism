@@ -6,7 +6,7 @@ import { addComment, aheadOfClock, appliedComment, appliedComments, commentFolde
 import { artifactIndex, markArtifactIndexStale } from "./artifact-index.mjs";
 import { writeAtomically } from "./artifact-store.mjs";
 import { assertInput } from "./artifact-schema.mjs";
-import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_NAME_FORM, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, IDENTITY_FILE_MAX, identityContent, identityOf, kindInScope, letterCaseKey, locationArtifact, locationIdentity, malformedArtifactName, newIdentity, normalizeArtifactPath, repositoryScope, uniqueIdentities, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
+import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_NAME_FORM, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, IDENTITY_FILE_MAX, identityContent, identityOf, kindInScope, letterCaseKey, locationArtifact, locationIdentity, malformedArtifactName, newIdentity, normalizeArtifactPath, repositoryScope, scopeFolder, uniqueIdentities, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
 import { acceptedLocation, answerApproval, askApproval, hasStatus, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion } from "./artifact-status.mjs";
 import { ComponentError, readComponents } from "./components.mjs";
 import { checkArtifactFolders, noteToolCallWrite, recordStoreOf, resolveArtifactFile, resolveStatusFile, seenScopes, statusFileResolver, withArtifactStoreLock } from "./record-store.mjs";
@@ -1062,12 +1062,87 @@ export async function reviewStoreArtifact(projectRoot, file, { commentOffset = 1
 const labeledScope = (seen, label) => seen.scopes.find((scope) => scope.label === label) ?? null;
 
 /**
+ * Every scope's artifacts in the store of a checkout, or of a folder that stands for a store without one, from the store's artifact index:
+ * { indexedAt, held, scopes, entries }, where held says whether the store holds an artifacts/ folder, scopes lists every scope the store holds by label,
+ * and entries lists { location, scope, kind, rest, path } by location, path being the checkout's path of the artifact or null when its configuration gives the kind none.
+ */
+export async function workspaceArtifacts(projectRoot) {
+  return refusing(async () => {
+    const seen = await seenScopes(projectRoot);
+    const index = await artifactIndex(seen, seen.all);
+    const held = (await lstat(seen.base).catch(() => null))?.isDirectory() === true;
+    const entries = index.entries.map((entry) => ({ location: entry.location, scope: entry.scope, kind: entry.kind, rest: entry.rest, path: checkoutPath(seen.kinds, entry) }))
+      .sort((left, right) => left.location < right.location ? -1 : left.location > right.location ? 1 : 0);
+    return { indexedAt: index.indexedAt, held, scopes: seen.all, entries };
+  });
+}
+
+// The artifact at a location below artifacts/ of a scope the store holds, as { scope, address, target, record }, or null when the location names no stored artifact.
+async function atLocation(seen, location) {
+  const found = typeof location === "string" ? locationArtifact(location) : null;
+  if (!found || location.split("/").some((name) => !wellFormedName(name))) return null;
+  const scope = seen.all.find((candidate) => candidate.label === found.scope.label);
+  if (!scope) return null;
+  const address = { kind: found.kind, rest: found.rest };
+  const target = await resolveArtifactFile(seen, location);
+  const record = await readStored(target, seen.base);
+  return record === null ? null : { scope, address, target, record };
+}
+
+/**
+ * What the review browser shows of the stored artifact at a location below artifacts/ of any scope the store holds, or null when none is there:
+ * { location, path, scope, kind, bytes, version, modifiedAt, accepted, changed, comments, totalComments, nextCommentOffset } as reviewStoreArtifact gives it,
+ * with path the checkout's path of the artifact or null.
+ */
+export async function reviewStoreArtifactAt(projectRoot, location, { commentOffset = 1 } = {}) {
+  return refusing(async () => {
+    const seen = await seenScopes(projectRoot);
+    const held = await atLocation(seen, location);
+    if (!held) return null;
+    const { scope, address, target, record } = held;
+    const file = checkoutPath(seen.kinds, address);
+    const modifiedAt = (await lstat(target).catch(() => null))?.mtimeMs ?? null;
+    const { acceptedVersion } = await statusRecordOf(seen, scope, address);
+    const acceptedText = acceptedVersion === null ? null : await acceptedBytes(seen, file ?? location, acceptedVersion).then((bytes) => artifactText(bytes), () => null);
+    return {
+      location, path: file, scope, kind: address.kind, bytes: contentOf(file ?? location, record), version: record.version, modifiedAt,
+      accepted: acceptedVersion === null ? null : { version: acceptedVersion, content: acceptedText },
+      changed: acceptedVersion !== record.version,
+      ...(await listComments(seen, scope, address, commentOffset))
+    };
+  });
+}
+
+/** The bytes and scope of the stored artifact at a location below artifacts/ of any scope the store holds, as { location, scope, bytes }, or null when none is there. */
+export async function readStoreArtifactAt(projectRoot, location) {
+  return refusing(async () => {
+    const held = await atLocation(await seenScopes(projectRoot), location);
+    return held ? { location, scope: held.scope, bytes: contentOf(location, held.record) } : null;
+  });
+}
+
+// The location below artifacts/ that a scope label and a location below that scope's folder name, or null when no scope the store holds has the label.
+const belowScope = (seen, label, rest) => {
+  const scope = seen.all.find((candidate) => candidate.label === label);
+  if (!scope) return null;
+  const folder = scopeFolder(scope);
+  return folder === "" ? rest : `${folder}/${rest}`;
+};
+
+/**
  * The store artifact that a scope label and a project-relative path name, as the review app's comment target names it: { path, scope, kind, version },
  * or null when the project names no store, the path is no artifact path, or the labeled scope is not seen or holds no file there.
  * An unavailable store or a refused repository name is refused with the store's own refusal, as a read is.
  */
 export async function storeArtifactTarget(projectRoot, label, file) {
   return refusing(async () => {
+    // A workspace's page names an artifact of any scope the store holds by its location below that scope's folder, such as requirements/billing.md.
+    if (typeof file === "string" && normalizeArtifactPath(file) === file) {
+      const seen = await seenScopes(projectRoot).catch((error) => { if (error?.code === "store_not_configured") return null; throw error; });
+      const location = seen && belowScope(seen, label, file);
+      const held = location && await atLocation(seen, location);
+      if (held) return { path: checkoutPath(seen.kinds, held.address), location, scope: held.scope, kind: held.address.kind, version: held.record.version };
+    }
     let checked;
     try { checked = await ownArtifact(projectRoot, file); }
     catch (error) { if (["store_not_configured", "not_an_artifact", "artifact_name_invalid"].includes(error?.code)) return null; throw error; }
@@ -1076,7 +1151,7 @@ export async function storeArtifactTarget(projectRoot, label, file) {
     const scope = labeledScope(seen, label);
     if (!scope || !kindInScope(checked.address.kind, scope)) return null;
     const [held] = await holders(seen, checked.address, [scope]);
-    return held ? { path: checked.file, scope, kind: checked.address.kind, version: held.record.version } : null;
+    return held ? { path: checked.file, location: artifactLocation(scope, checked.address), scope, kind: checked.address.kind, version: held.record.version } : null;
   });
 }
 
@@ -1086,8 +1161,18 @@ export async function storeArtifactTarget(projectRoot, label, file) {
  * It is refused with artifact_not_found when no seen scope with that label holds the artifact, and with version_conflict and data.version when its bytes are another version now.
  * Returns the comment as a reader gets it.
  */
-export async function commentOnArtifact(projectRoot, { path: file, label, version: expected, line, text, author, entry }) {
+export async function commentOnArtifact(projectRoot, { path: file, location = null, label, version: expected, line, text, author, entry }) {
   return refusing(async () => {
+    // An artifact named by its location below artifacts/ takes comments in whichever scope the store holds it, as a person may comment on any scope's artifact.
+    if (location !== null) {
+      const seen = await seenScopes(projectRoot);
+      return withArtifactStoreLock(seen, async () => {
+        const held = await atLocation(seen, location);
+        if (!held || held.scope.label !== label) throw fail("artifact_not_found", `No scope of the record store holds the artifact at ${location}.`);
+        if (held.record.version !== expected) throw fail("version_conflict", `${location} changed since the page read it.`, { version: held.record.version });
+        return addComment(seen, held.scope, held.address, { version: expected, line, text, author, entry });
+      });
+    }
     const { file: normalized, address } = await ownArtifact(projectRoot, file);
     const seen = await seenScopes(projectRoot);
     return withArtifactStoreLock(seen, async () => {

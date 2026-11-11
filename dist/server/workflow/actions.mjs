@@ -4,7 +4,7 @@ import { listComponents } from "./components.mjs";
 import { appendIndexHistory } from "./index-history.mjs";
 import { readInitiativeWithClaims } from "./initiative.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { isStoreWithoutCheckout } from "./record-store.mjs";
+import { isStoreWithoutCheckout, recordStoreOf } from "./record-store.mjs";
 import { runGit } from "./record-store-sync.mjs";
 import { REPOSITORY_NAME } from "./repository-names.mjs";
 import { readRoadmap } from "./roadmap.mjs";
@@ -459,15 +459,18 @@ function sameValue(left, right) {
 }
 
 // The author is what the applying checkout's Git configuration claims, with the checkout's label on this host; nothing checks it.
-async function authorOf(projectRoot) {
-  const read = async (key) => {
-    const result = await runGit(projectRoot, ["config", key]);
+// A comment on a store artifact is the store's change, so its author is what the Git configuration of the store's clone claims, or the checkout's where the clone names no user.
+async function authorOf(projectRoot, { store = false } = {}) {
+  const clone = store ? await recordStoreOf(projectRoot).then((found) => found.external ? found.base : null, () => null) : null;
+  const read = async (where, key) => {
+    const result = await runGit(where, ["config", key]);
     const value = result.ok ? result.text.replace(/\s+/g, " ").trim().slice(0, 200) : "";
     return value || null;
   };
+  const where = clone && await read(clone, "user.name") ? clone : projectRoot;
   // A workspace's page without a registered checkout applies its actions in the store's clone, which is the review app's, not a checkout's.
   const checkoutless = await isStoreWithoutCheckout(projectRoot);
-  const [name, email, identity] = await Promise.all([read("user.name"), read("user.email"), checkoutless ? { repository: "review app", worktree: null, branch: null, detached: false } : readWorkspaceIdentity(projectRoot)]);
+  const [name, email, identity] = await Promise.all([read(where, "user.name"), read(where, "user.email"), checkoutless ? { repository: "review app", worktree: null, branch: null, detached: false } : readWorkspaceIdentity(projectRoot)]);
   return { name, email, checkout: checkoutLabel(identity).slice(0, 400) };
 }
 
@@ -504,7 +507,7 @@ export async function applyAction({ projectRoot, target, action, input, revision
     before: checked.current.value,
     after: checked.after,
     at: new Date().toISOString(),
-    by: await authorOf(projectRoot),
+    by: await authorOf(projectRoot, { store: parsed.kind === "artifact" }),
     via: typeof via === "string" && via ? via : "review-app"
   });
   let applied = null;
@@ -533,7 +536,7 @@ export async function applyAction({ projectRoot, target, action, input, revision
     if (!applied.by.name) throw fail("author_unknown", "Git names no user.name for this checkout, so the comment cannot record who wrote it; set one with git config user.name and comment again.");
     // The store write repeats the artifact and version checks under the artifact lock, so a change that lands after the read above is refused as stale.
     const { artifact } = read;
-    stored = await commentOnArtifact(projectRoot, { path: artifact.path, label: artifact.scope.label, version: checked.after.version, line: checked.after.line, text: checked.after.text, author: { name: applied.by.name, host: os.hostname().slice(0, 255) }, entry: applied }).catch((error) => {
+    stored = await commentOnArtifact(projectRoot, { path: artifact.path, location: artifact.location ?? null, label: artifact.scope.label, version: checked.after.version, line: checked.after.line, text: checked.after.text, author: { name: applied.by.name, host: os.hostname().slice(0, 255) }, entry: applied }).catch((error) => {
       if (error?.code === "artifact_not_found") throw unknownTarget(target);
       if (error?.code === "comment_limit") throw fail("comment_limit", error.message);
       if (error?.code === "version_conflict") throw fail("stale_revision", "The file changed since the page read it.", { current: view(definition, { ...read, artifact: { ...artifact, version: error.version ?? null } }) });
@@ -560,6 +563,6 @@ export async function applyAction({ projectRoot, target, action, input, revision
   // An answered approval gate leaves its artifact's pending gates, so its target has no actions left, and the result names the artifact the answer applied to.
   if (parsed.kind === "approval") return { applied, actions: [], artifact: { path: read.gateRecord.artifact.path, scope: read.gateRecord.artifact.scope } };
   // A comment leaves its artifact unchanged, so the target lists its action again, and the result names the artifact it commented on.
-  if (parsed.kind === "artifact") return { applied, actions: [view(definition, read)], artifact: { path: read.artifact.path, scope: read.artifact.scope }, comment: stored.id };
+  if (parsed.kind === "artifact") return { applied, actions: [view(definition, read)], artifact: { path: read.artifact.path, ...(read.artifact.path === null ? { location: read.artifact.location } : {}), scope: read.artifact.scope }, comment: stored.id };
   return { applied, actions: (await listActions({ projectRoot, target, indexer })).actions };
 }

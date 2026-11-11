@@ -43,6 +43,13 @@
   --tone-edge: transparent;
 }
 
+/* A pressed toggle chip takes the accent fill, so the chosen filters read apart from the rest. */
+:host([interactive][pressed="true"]) {
+  --tone: var(--prism-color-accent-text);
+  --tone-fill: var(--prism-color-accent-soft);
+  --tone-edge: var(--prism-color-accent);
+}
+
 .chip {
   display: inline-flex;
   align-items: center;

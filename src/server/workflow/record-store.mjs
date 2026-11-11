@@ -1122,7 +1122,8 @@ export async function sameRecord(projectRootPath, left, right) {
 export async function seenScopes(projectRootPath) {
   const root = await projectRoot(projectRootPath);
   const config = await readWorkflowConfig(root);
-  if ((config.workspace?.store ?? null) === null) throw fail("store_not_configured", "This project's .prism/workflow.md names no record store under ## Workspace, so its descriptive artifacts stay in the checkout: read and edit them there with your own file tools.");
+  // A folder that stands for a store without a checkout names no store in a configuration of its own, and reads the store's artifacts with Prism's default paths.
+  if ((config.workspace?.store ?? null) === null && !checkoutlessRoots.has(root)) throw fail("store_not_configured", "This project's .prism/workflow.md names no record store under ## Workspace, so its descriptive artifacts stay in the checkout: read and edit them there with your own file tools.");
   const store = await recordStoreOf(root);
   await ensureRecords(store.root);
   await synced(store);
@@ -1132,10 +1133,14 @@ export async function seenScopes(projectRootPath) {
 // The scopes a checkout sees in its store, read without moving records or artifacts, so the move of a checkout's artifacts can read them itself.
 async function scopesOf(root, config, store) {
   const base = path.join(store.base, ARTIFACTS);
-  const own = repositoryScope(store.repository);
-  const components = path.join(base, scopeFolder(own), "components");
-  await assertUnlinked(store.base, path.join(components, "x"));
-  const scopes = [WORKSPACE_SCOPE, own, ...(await folderNames(components, COMPONENT_NAME)).map((name) => componentScope(store.repository, name))];
+  // A store without a checkout belongs to no repository, so its own scope is the workspace scope alone.
+  let scopes = [WORKSPACE_SCOPE];
+  if (store.repository !== null) {
+    const own = repositoryScope(store.repository);
+    const components = path.join(base, scopeFolder(own), "components");
+    await assertUnlinked(store.base, path.join(components, "x"));
+    scopes = [WORKSPACE_SCOPE, own, ...(await folderNames(components, COMPONENT_NAME)).map((name) => componentScope(store.repository, name))];
+  }
   // Agents read every scope the store holds, so the scopes of other repositories and their components are listed beside the checkout's own, which alone it writes.
   const others = [];
   for (const name of await folderNames(path.join(base, REPOSITORIES), portableRepositoryName)) {

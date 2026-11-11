@@ -104,7 +104,7 @@ async function fileSummary(data, anchor, { renderMarkdown, kindLabel, drawDiagra
   if (data.kind) return `${head}<h3>${escapeHtml(kindLabel(data.kind))}</h3>`;
   if (data.path.toLowerCase().endsWith(".puml")) return diagramSummary(head, data.content, drawDiagram);
   const scratch = document.createElement("div");
-  scratch.innerHTML = renderMarkdown(data.path, data.content);
+  scratch.innerHTML = renderMarkdown(data.path, data.content, data.links);
   const section = sectionOf(scratch, anchor);
   return `${head}<prism-doc class="document-content">${section || '<p class="muted">The document is empty.</p>'}</prism-doc>`;
 }
