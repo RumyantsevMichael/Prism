@@ -528,6 +528,7 @@ function applyGateOperations(pending, operations, standing = null) {
   const next = [...pending];
   const opened = [];
   const closed = [];
+  const superseded = [];
   operations.forEach((operation, index) => {
     if (!isRecord(operation)) {
       throw error("invalid_changes", `gateOperations[${index}] must be an object.`);
@@ -558,6 +559,16 @@ function applyGateOperations(pending, operations, standing = null) {
       }
       if (errors.length) {
         throw error("invalid_changes", `The user gate is invalid: ${errors.join("; ")}.`, { errors });
+      }
+      // A new correctness gate asks the person to confirm the initiative as it stands now, so it supersedes each earlier one the person already answered,
+      // which closes with a reason naming the new gate, and a ship never meets an answered question that no one acts on; an unanswered one stays the person's question.
+      if (gate.kind === "correctness") {
+        const answered = next.filter((earlier) => isRecord(earlier) && earlier.kind === "correctness" && earlier.answer);
+        for (const earlier of answered) {
+          closed.push(closedGate(earlier, `The newer correctness gate ${gate.id} supersedes this answered one.`));
+          superseded.push(earlier.id);
+          next.splice(next.indexOf(earlier), 1);
+        }
       }
       next.push(gate);
       opened.push({ id: gate.id, kind: gate.kind, slice: gate.slice ?? null });
@@ -591,7 +602,7 @@ function applyGateOperations(pending, operations, standing = null) {
       throw error("invalid_changes", `gateOperations[${index}].op must be ask or resolve.`);
     }
   });
-  return { pending: next, opened, closed };
+  return { pending: next, opened, closed, superseded: superseded.sort() };
 }
 
 // Only the review browser records answers, so agent updates may keep an answer but never add or change one,
@@ -1083,6 +1094,7 @@ async function applyStateChange(resolved, expectedRevision, changes, standing = 
       previousRevision: current.revision
       ,completions: activeResult.completions,
       openedGates: gateResult.opened,
+      ...(gateResult.superseded.length ? { supersededGates: gateResult.superseded } : {}),
       ...(requested?.kept.length ? { keptSettings: requested.kept } : {})
     };
     });

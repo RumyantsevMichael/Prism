@@ -4,7 +4,7 @@ import path from "node:path";
 import { writeAtomically } from "./artifact-store.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { inArtifactStore, readArtifactText, readRecord, listClaimRecords, withRecordLock, writeArtifactText, writeRecord } from "./record-store.mjs";
+import { artifactPathTest, inArtifactStore, readArtifactText, readRecord, listClaimRecords, withRecordLock, writeArtifactText, writeRecord } from "./record-store.mjs";
 import { isLive, parseClaim } from "./slice-claims.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
@@ -382,5 +382,16 @@ export const shippedHistoryLabel = (initiative, decision) => `Shipped history: $
 /** The reason that the review browser gives for every action on a shipped initiative, its slices, and its gates. */
 export const shippedActionReason = (decision) => `The initiative shipped on ${shipDate(decision)}, so its state is history.`;
 
-/** The text line of an MCP read that marked slice documents, asking to commit them apart from the task's changes. */
-export const historyMarksText = (initiative, marked) => `Prism marked these slice documents of shipped initiative ${initiative} as history: ${marked.join(", ")}. Commit them in a commit of their own, apart from this task's changes.`;
+/**
+ * The text line of an MCP read that marked slice documents: a document marked in the checkout is to be committed apart from the task's changes,
+ * while one marked in the record store is a store artifact that its sync shares, so nothing asks to commit it.
+ */
+export async function historyMarksText(projectRoot, initiative, marked) {
+  const inStore = await artifactPathTest(projectRoot).catch(() => () => false);
+  const shared = marked.filter((file) => inStore(file));
+  const local = marked.filter((file) => !inStore(file));
+  return [
+    ...(local.length ? [`Prism marked these slice documents of shipped initiative ${initiative} as history: ${local.join(", ")}. Commit them in a commit of their own, apart from this task's changes.`] : []),
+    ...(shared.length ? [`Prism marked these slice documents of shipped initiative ${initiative} as history in the record store, which shares them with every checkout, so there is nothing to commit: ${shared.join(", ")}.`] : [])
+  ].join(" ");
+}

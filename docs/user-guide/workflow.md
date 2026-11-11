@@ -253,6 +253,8 @@ When every slice of an initiative is done, the orchestrator ships it with the `s
 In a project with a record store, a ship also needs your confirmation: the orchestrator asks you a correctness review of the finished initiative, and only Approve in the review browser confirms it, while an answer in the conversation does not.
 The review confirms the initiative as you saw it, so the orchestrator asks it after the latest passing verification run of every slice and once the initiative's `slice.md` files and the ADRs they link no longer change.
 When a slice passed verification again, a `slice.md` or such an ADR changed, or the repositories that a slice's links resolve in changed after the question was asked, `ship` refuses with `ship_unconfirmed`, naming what changed, and the orchestrator asks you again.
+Asking you a new correctness review closes each earlier one you already answered, and the review browser shows it as closed with a reason that names the new one, so it no longer waits in Attention or stops the ship.
+An earlier correctness review you have not answered stays open until the orchestrator withdraws it.
 A ship then sets to `Accepted` each ADR whose recorded status is `Proposed` and that a Markdown link in a `slice.md` of the initiative names, and records with it the review you approved and the slice, repository, and commit of each slice's latest passing verification run.
 A link counts only as Markdown reads it, so a path in a code span, a code block, an HTML comment, or after an escaped bracket names nothing.
 A link in a slice's `slice.md` names an ADR of the workspace scope or of that slice's own repository and its components, whichever repository's checkout ships.
@@ -268,6 +270,8 @@ In a project without a record store, `ship` needs no review, and the orchestrato
 `update_roadmap` refuses to `ship` an initiative that already has a decision with `validation_failed`, and then refuses with `open_work` while any of its work is still open.
 Open work is a pending question in the initiative's coordination state, answered or not, a slice with a live claim, or a pending design proposal.
 An answered question counts because no agent can resolve it once the initiative is history.
+The correctness review that a ship names in `afterGate` is the one exception, with or without a record store, and the ship closes it.
+For `readyToShip`, a project with a record store takes the newest pending correctness review as the one the ship will name, so an older pending one is open work.
 The refusal lists `gates` as `{ id, slice, question, answered }`, `claims` as `{ slice, label, activity, expiresAt }`, and `proposals` as scope names, and its message names each one.
 This check runs before the leaf and [dependents](#dependents) checks, so `gate_blocked` and `dependents_blocked` come after it.
 `get_roadmap` reports such an initiative with `readyToShip` `false` and an `open_work` diagnostic with the same `gates`, `claims`, and `proposals`.
@@ -291,10 +295,11 @@ Ship writes this history mark into every slice document of the initiative, under
 A document that already holds a mark is not marked again.
 Ship also records each document's path and the SHA-256 of its content without the mark in the roadmap decision, as `documents`, with `documentsRecordedAt` and `documentsFrom` `ship`.
 The `ship` result lists the marked paths under `historyMarks`, and a document it cannot read or write under `historyMarkProblems` as `{ path, reason }`, and ship still succeeds.
-Commit the marked documents.
+In a project without a record store, commit the marked documents.
+In a project with one, the marked documents live in the record store, which shares them with every checkout, so there is nothing to commit.
 
 An initiative that shipped before Prism recorded documents is handled at its first read: the first `get_initiative`, `get_coordination_state`, `get_review`, or `get_roadmap` that reaches it records its slice documents with `documentsFrom` `first-read` and marks each one.
-That read lists the marked paths under `marked`, or under `markedHistory` for `get_roadmap`, and adds a text line asking you to commit them in a commit of their own, apart from the task's changes.
+That read lists the marked paths under `marked`, or under `markedHistory` for `get_roadmap`, and adds a text line that asks you to commit them in a commit of their own, apart from the task's changes, or, for documents in the record store, says that they are already shared and need no commit.
 An initiative with no slice document in the checkout records nothing until a read finds one.
 
 `get_initiative`, `get_coordination_state`, and `get_review` of a shipped initiative, also one without an initiative record, return `shippedHistory` with `initiative`, `shippedAt`, a `message` that says the state is history, `documents`, and `changedAfterShip`.

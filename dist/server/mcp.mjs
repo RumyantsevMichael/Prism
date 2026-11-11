@@ -193,20 +193,20 @@ function reviewContent(url, review) {
 function stateContent(result) {
   const validity = result.valid ? "valid" : "invalid";
   const revision = result.revision ?? "none";
-  const opened = result.openedGates?.length ? `\nOpened user gates: ${result.openedGates.map((gate) => gate.id).join(", ")}` : "";
+  const opened = `${result.openedGates?.length ? `\nOpened user gates: ${result.openedGates.map((gate) => gate.id).join(", ")}` : ""}${result.supersededGates?.length ? `\nAnswered correctness gates superseded and closed: ${result.supersededGates.join(", ")}` : ""}`;
   const answered = (result.state?.pending ?? []).filter((gate) => gate?.answer);
   const gates = `${opened}${answered.length ? `\nUser gates answered in the review browser: ${answered.map((gate) => gate.id).join(", ")}` : ""}`;
   return `Coordination state ${validity}: ${result.initiative}\nRevision: ${revision}${gates}`;
 }
 
-// A read of a shipped initiative that marked its slice documents asks to commit them apart from the task's changes.
-function historyMarksContent(history) {
-  return history?.marked?.length ? [{ type: "text", text: historyMarksText(history.initiative, history.marked) }] : [];
+// A read of a shipped initiative that marked its slice documents asks to commit those in the checkout apart from the task's changes, and says that the record store shares its own.
+async function historyMarksContent(projectRoot, history) {
+  return history?.marked?.length ? [{ type: "text", text: await historyMarksText(projectRoot, history.initiative, history.marked) }] : [];
 }
 
 // The coordination state text of a shipped initiative carries the history message as a line of its own.
-function shippedHistoryContent(history) {
-  return history ? [{ type: "text", text: history.message }, ...historyMarksContent(history)] : [];
+async function shippedHistoryContent(projectRoot, history) {
+  return history ? [{ type: "text", text: history.message }, ...await historyMarksContent(projectRoot, history)] : [];
 }
 
 function contextPlanContent(plan) {
@@ -712,7 +712,7 @@ const tools = [
   },
   {
     name: "get_coordination_state",
-    description: "Read an initiative's coordination state record with its revision. Reads never create the record. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked, to commit apart from the task's changes. The text carries its message as a line.",
+    description: "Read an initiative's coordination state record with its revision. Reads never create the record. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked; a document in the checkout is to be committed apart from the task's changes, while one in the record store is shared by its sync and needs no commit. The text carries its message as a line.",
     inputSchema: {
       type: "object",
       properties: {
@@ -818,7 +818,7 @@ const tools = [
             },
             gateOperations: {
               type: "array",
-              description: "Record a user gate with ask before asking the user, and remove it with resolve after acting on the user's answer, giving a reason when the gate has no browser answer and, for a decision gate answered in the conversation, the chosen option's id as choice. The user may answer in the conversation or in the review browser, which records the answer on the gate in state.pending. The result lists the ids of opened gates.",
+              description: "Record a user gate with ask before asking the user, and remove it with resolve after acting on the user's answer, giving a reason when the gate has no browser answer and, for a decision gate answered in the conversation, the chosen option's id as choice. The user may answer in the conversation or in the review browser, which records the answer on the gate in state.pending. Asking a correctness gate supersedes each earlier correctness gate of the initiative that the person already answered: it closes with a reason naming the new gate, which the review browser shows with the closed question, while an unanswered one stays pending. The result lists the ids of opened gates, and of superseded gates under supersededGates.",
               items: {
                 oneOf: [
                   {
@@ -1030,7 +1030,7 @@ async function callStateTool(name, argumentsValue) {
     const { closed, ...state } = resultValue.state;
     resultValue = { ...resultValue, state };
   }
-  const content = [{ type: "text", text: stateContent(resultValue) }, ...shippedHistoryContent(resultValue?.shippedHistory)];
+  const content = [{ type: "text", text: stateContent(resultValue) }, ...await shippedHistoryContent(projectRoot, resultValue?.shippedHistory)];
   if (Array.isArray(resultValue?.keptSettings) && resultValue.keptSettings.length) content.push({ type: "text", text: keptSettingsText(resultValue.keptSettings) });
   return { content, structuredContent: resultValue };
 }
@@ -1491,7 +1491,7 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
     if (name === "get_review") value = { ...value, runTotals: await readReviewRunTotals(projectRoot, argumentsValue) };
     const history = name === "get_review" && typeof argumentsValue.initiative === "string" ? await shippedHistory(projectRoot, argumentsValue.initiative) : null;
     if (history) value = { ...value, shippedHistory: history };
-    return { content: [{ type: "text", text: JSON.stringify(value) }, ...historyMarksContent(history)], structuredContent: value };
+    return { content: [{ type: "text", text: JSON.stringify(value) }, ...await historyMarksContent(projectRoot, history)], structuredContent: value };
   }
   if (name === "update_design_view") {
     const value = await updateDesignView({ ...argumentsValue, projectRoot: await requestedProjectRoot(argumentsValue) });
@@ -1514,8 +1514,8 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
       : name === "get_initiative" ? await getInitiative(input)
       : initiativeAcknowledgement(await updateInitiative(input), input.operations);
     if (name === "get_initiative") value = { ...value, runTotals: await readInitiativeRecordRunTotals(projectRoot, value.initiative, value) };
-    const marks = name === "get_initiative" ? historyMarksContent(value.shippedHistory)
-      : name === "get_roadmap" ? (value.markedHistory ?? []).map((item) => ({ type: "text", text: historyMarksText(item.initiative, item.marked) }))
+    const marks = name === "get_initiative" ? await historyMarksContent(projectRoot, value.shippedHistory)
+      : name === "get_roadmap" ? await Promise.all((value.markedHistory ?? []).map(async (item) => ({ type: "text", text: await historyMarksText(projectRoot, item.initiative, item.marked) })))
       : [];
     return { content: [{ type: "text", text: JSON.stringify(value) }, ...marks], structuredContent: value };
   }
