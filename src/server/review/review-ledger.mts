@@ -205,10 +205,18 @@ async function returnToDesign(input: SliceInput, review: ReviewRecord, gateId: s
   if (defects.length > DEFECT_LIMIT) defects.splice(DEFECT_LIMIT - 1, Infinity, { clause: "Review findings", reason: `${unresolved.length - (DEFECT_LIMIT - 1)} more unresolved findings; read them with get_review.` });
   return { design, defects };
 }
+// Overlapping returns are serialized per slice, and one that finds the slice already out of progress reports nothing again, while a return whose block failed leaves it in progress for a retry.
+// The lock is held by no other path, so it adds no lock-order dependency.
 async function blockForDesign(input: SliceInput, planned: DesignReturn) {
-  const { reportContractDefects } = await import("../workflow/verification.mjs");
-  await reportContractDefects(await realpath(input.projectRoot), input.initiative, input.slice, planned.design, planned.defects);
-  return { sliceStatus: "blocked", defects: planned.defects.length };
+  const root = await realpath(input.projectRoot);
+  const located = await locateRecord(root, { kind: "initiative", initiative: input.initiative });
+  return withArtifactLock(`${located.target}#return-to-design/${input.slice}`, async () => {
+    const status = await sliceStatus(input);
+    if (status !== "in-progress") return { sliceStatus: status ?? "blocked", defects: planned.defects.length };
+    const { reportContractDefects } = await import("../workflow/verification.mjs");
+    await reportContractDefects(root, input.initiative, input.slice, planned.design, planned.defects);
+    return { sliceStatus: "blocked", defects: planned.defects.length };
+  });
 }
 
 // Accepting a wave with deferrals needs the user's current gate that chose accept-deferred and a follow-up for every unresolved finding, each of them low.

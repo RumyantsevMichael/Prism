@@ -177,9 +177,15 @@ async function returnToDesign(input, review, gateId) {
   return { design, defects };
 }
 async function blockForDesign(input, planned) {
-  const { reportContractDefects } = await import("../workflow/verification.mjs");
-  await reportContractDefects(await realpath(input.projectRoot), input.initiative, input.slice, planned.design, planned.defects);
-  return { sliceStatus: "blocked", defects: planned.defects.length };
+  const root = await realpath(input.projectRoot);
+  const located = await locateRecord(root, { kind: "initiative", initiative: input.initiative });
+  return withArtifactLock(`${located.target}#return-to-design/${input.slice}`, async () => {
+    const status = await sliceStatus(input);
+    if (status !== "in-progress") return { sliceStatus: status ?? "blocked", defects: planned.defects.length };
+    const { reportContractDefects } = await import("../workflow/verification.mjs");
+    await reportContractDefects(root, input.initiative, input.slice, planned.design, planned.defects);
+    return { sliceStatus: "blocked", defects: planned.defects.length };
+  });
 }
 const FOLLOW_UP_LIMIT = 500;
 async function deferFindings(input, review, wave, gateId, deferrals, actor, at) {

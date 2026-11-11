@@ -149,3 +149,28 @@ test("return_to_design is refused once the slice returned, and a failed block le
   assert.equal(await runEntries(), 1, "a repeated return appends no further defect report");
   assert.deepEqual((await getInitiative({ projectRoot: root, initiative: INITIATIVE })).record.slices[INITIATIVE].contractDefects, blocked.contractDefects);
 });
+
+test("two overlapping return_to_design calls citing one gate append one defect report", async (context) => {
+  const { root, slice, review, wave } = await verified(context);
+  await wave("w1", { open: [H1], fix: ["H1"] });
+  await wave("w2", { verify: ["H1"], open: [M1] });
+  const gate = await limitGate(review);
+  await answer(root, gate, "return-to-design");
+  const before = (await getReview(slice)).revision;
+  const returnAt = (expectedRevision) => updateReview({ ...slice, expectedRevision, actor: coordinator, operations: [{ op: "return_to_design", gate }] });
+  const first = returnAt(before);
+  // The second call reads the review as soon as the first one's write shows, before the first one blocks the slice.
+  let second;
+  for (let tries = 0; tries < 400 && !second; tries += 1) {
+    const now = (await getReview(slice)).revision;
+    if (now !== before) second = returnAt(now);
+    else await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.ok(second, "the first return's review write was observed");
+  const settled = await Promise.allSettled([first, second]);
+  assert.deepEqual(settled[0].value?.returnedToDesign, { sliceStatus: "blocked", defects: 1 });
+  if (settled[1].status === "fulfilled") assert.equal(settled[1].value.returnedToDesign.sliceStatus, "blocked");
+  const runs = (await locateRecord(root, { kind: "runs", initiative: INITIATIVE, slice: INITIATIVE })).target;
+  assert.equal((await readdir(runs)).filter((name) => name.includes("contract-defect")).length, 1);
+  assert.equal((await getInitiative({ projectRoot: root, initiative: INITIATIVE })).record.slices[INITIATIVE].status, "blocked");
+});
