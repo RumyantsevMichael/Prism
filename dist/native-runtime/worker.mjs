@@ -141,6 +141,7 @@ async function build(args, progress) {
     units,
     edges,
     unresolvedReferences: graph.references,
+    unresolvedByFile: graph.unresolvedByFile,
     chunks,
     fileCoverage,
     diagnostics,

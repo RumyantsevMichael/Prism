@@ -106,6 +106,9 @@ Native code structure covers JavaScript, TypeScript, Python, Go, Rust, Java, C#,
 Markdown sections and rules, JSON keys, and YAML keys have source locations and typed containment or reference relationships.
 Unsupported constructs, missing dependencies, malformed files, unresolved links, and denied configuration reads are disclosed as incomplete structure.
 Relevant incomplete structure prevents a numeric fit estimate.
+A call into a library, the platform, or another component no longer makes a code file uncovered, while the diagnostics still list every reference that did not resolve.
+A code file stays uncovered when it did not parse, when another diagnostic names it, or when a reference it could not resolve could point inside the indexed source.
+Such a reference is a relative import, one whose module name starts with `.` or `/`, or any other reference whose name after its last `.`, `::`, or `#` matches a unit of a code file in the same index.
 
 If preparation exceeds ten seconds, search and planning return `preparing` with a stable preparation ID.
 Call `get_repository_intelligence_status` with `projectRoot` and optional `waitMs` up to 30000, then repeat the original request.

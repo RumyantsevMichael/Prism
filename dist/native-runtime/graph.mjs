@@ -10,8 +10,9 @@ let sdk;
 async function extractGraph(mirror, files, runtimeDirectory, progress = () => {
 }) {
   const codeFiles = files.filter((file) => CODE_EXTENSIONS.has(path.extname(file.file).toLowerCase()));
-  if (!codeFiles.length) return { nodes: [], edges: [], references: [], diagnostics: [], files: [], parsedFiles: [] };
+  if (!codeFiles.length) return { nodes: [], edges: [], references: [], unresolvedByFile: {}, diagnostics: [], files: [], parsedFiles: [] };
   const diagnostics = [], nodes = [], edges = [], references = [];
+  const unresolvedByFile = {};
   const failedFiles = /* @__PURE__ */ new Set();
   let graph = null, connection, indexedFiles = [];
   boundary.begin({ readRoots: [mirror, runtimeDirectory], writeRoots: [path.join(mirror, ".codegraph")] });
@@ -78,9 +79,18 @@ async function extractGraph(mirror, files, runtimeDirectory, progress = () => {
       });
     }
     const unresolved = /* @__PURE__ */ new Map();
+    const imports = /* @__PURE__ */ new Map();
+    for (const node of nodes) if (node.kind === "import") for (let line = node.range.startLine; line <= node.range.endLine; line++) {
+      const key = `${node.file}:${line}`;
+      if (!imports.has(key)) imports.set(key, node.name);
+    }
     for (const ref of queries.getUnresolvedReferences()) {
       const file = ref.filePath || nodes.find((node) => node.id === ref.fromNodeId)?.file;
-      if (file && source.has(file)) unresolved.set(file, (unresolved.get(file) || 0) + 1);
+      if (file && source.has(file)) {
+        unresolved.set(file, (unresolved.get(file) || 0) + 1);
+        const name = ref.referenceKind === "imports" && imports.get(`${file}:${ref.line}`) || ref.referenceName;
+        (unresolvedByFile[file] ||= []).push({ name, kind: ref.referenceKind });
+      }
       if (ids.has(ref.fromNodeId) && ["calls", "instantiates"].includes(ref.referenceKind) && ref.referenceName)
         references.push({ source: ref.fromNodeId, name: ref.referenceName, kind: ref.referenceKind });
     }
@@ -102,7 +112,7 @@ async function extractGraph(mirror, files, runtimeDirectory, progress = () => {
       message: "The graph requested files outside its snapshot, including suppressed access failures."
     });
   }
-  return { nodes, edges, references, diagnostics, files: indexedFiles.map((file) => file.path), parsedFiles: indexedFiles.filter((file) => !file.errors?.length && !failedFiles.has(file.path)).map((file) => file.path) };
+  return { nodes, edges, references, unresolvedByFile, diagnostics, files: indexedFiles.map((file) => file.path), parsedFiles: indexedFiles.filter((file) => !file.errors?.length && !failedFiles.has(file.path)).map((file) => file.path) };
 }
 export {
   extractGraph

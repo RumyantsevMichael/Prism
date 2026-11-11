@@ -3,6 +3,7 @@ import { errorFields, log } from "../log.mjs";
 import { semanticError } from "./native-files.mjs";
 import { indexMetadata, readIndex, storedEmbeddings, writeIndex } from "./index-files.mjs";
 import { appendEmbeddings, readEmbeddings, replaceEmbeddings } from "./embedding-store.mjs";
+import { structuralCoverage } from "./structural-coverage.mjs";
 import type { HelperOptions } from "./native-helper.mjs";
 import type { BuildArguments, IndexMetadata, Progress, UnitIndex } from "./repository-unit-types.mjs";
 
@@ -65,6 +66,8 @@ export class LocalIndexStore implements IndexStore {
     if (!index) throw semanticError("preparation_failed", "The built index is no longer held.");
     this.built.delete(token);
     index.assetIdentity = assetIdentity;
+    // Prism decides which unresolved references leave a file uncovered, so the stored coverage and every count read from it agree.
+    index.fileCoverage = structuralCoverage(index);
     if (incomplete) { index.structureComplete = false; index.diagnostics.push({ code: "resource_limit", message: "The native source snapshot is incomplete." }); }
     const stored = await writeIndex(directory, index);
     await replaceEmbeddings(directory, index.chunks).catch(error => log.warn("embedding_store_unwritable", { directory, ...errorFields(error) }));

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { CODE_EXTENSIONS } from "./units.mjs";
 import { installFileBoundary } from "./fs-boundary.mjs";
-import type { SourceUnit, Diagnostic, Progress, Relationship, SourceFile, UnresolvedReference } from "../server/repository-intelligence/repository-unit-types.mjs";
+import type { SourceUnit, Diagnostic, Progress, Relationship, SourceFile, UnresolvedReference, FileReference } from "../server/repository-intelligence/repository-unit-types.mjs";
 import type { CodeGraph, DatabaseConnection, FileRecord } from "@colbymchenry/codegraph";
 
 const boundary = installFileBoundary();
@@ -12,8 +12,10 @@ let sdk: typeof import("@colbymchenry/codegraph") | undefined;
 
 export async function extractGraph(mirror: string, files: Pick<SourceFile, "file" | "content" | "hash">[], runtimeDirectory: string, progress: (value: Progress) => void = () => {}) {
   const codeFiles = files.filter(file => CODE_EXTENSIONS.has(path.extname(file.file).toLowerCase()));
-  if (!codeFiles.length) return { nodes: [], edges: [], references: [], diagnostics: [], files: [], parsedFiles: [] };
+  if (!codeFiles.length) return { nodes: [], edges: [], references: [], unresolvedByFile: {}, diagnostics: [], files: [], parsedFiles: [] };
   const diagnostics: Diagnostic[] = [], nodes: SourceUnit[] = [], edges: Relationship[] = [], references: UnresolvedReference[] = [];
+  // Every reference the graph could not resolve, by the file that makes it, so that Prism can tell a call into a library from a missing link.
+  const unresolvedByFile: Record<string, FileReference[]> = {};
   const failedFiles = new Set<string>();
   let graph: CodeGraph | null = null, connection: DatabaseConnection | undefined, indexedFiles: FileRecord[] = [];
   boundary.begin({ readRoots: [mirror, runtimeDirectory], writeRoots: [path.join(mirror, ".codegraph")] });
@@ -57,9 +59,20 @@ export async function extractGraph(mirror: string, files: Pick<SourceFile, "file
         line: edge.line, column: edge.column, metadata: edge.metadata });
     }
     const unresolved = new Map();
+    // The graph names an unresolved import by the binding it imports, so the import is named by its declaration's module specifier,
+    // which tells a package from a file of the source.
+    const imports = new Map<string, string>();
+    for (const node of nodes) if (node.kind === "import") for (let line = node.range.startLine; line <= node.range.endLine; line++) {
+      const key = `${node.file}:${line}`;
+      if (!imports.has(key)) imports.set(key, node.name);
+    }
     for (const ref of queries.getUnresolvedReferences()) {
       const file = ref.filePath || nodes.find(node => node.id === ref.fromNodeId)?.file;
-      if (file && source.has(file)) unresolved.set(file, (unresolved.get(file) || 0) + 1);
+      if (file && source.has(file)) {
+        unresolved.set(file, (unresolved.get(file) || 0) + 1);
+        const name = ref.referenceKind === "imports" && imports.get(`${file}:${ref.line}`) || ref.referenceName;
+        (unresolvedByFile[file] ||= []).push({ name, kind: ref.referenceKind });
+      }
       // Calls into libraries and unresolved helpers name the work that a unit depends on, even without a target unit.
       if (ids.has(ref.fromNodeId) && ["calls", "instantiates"].includes(ref.referenceKind) && ref.referenceName)
         references.push({ source: ref.fromNodeId, name: ref.referenceName, kind: ref.referenceKind });
@@ -75,5 +88,5 @@ export async function extractGraph(mirror: string, files: Pick<SourceFile, "file
       denied: denied.map(item => ({ path: path.relative(mirror, item.path), write: item.write })),
       message: "The graph requested files outside its snapshot, including suppressed access failures." });
   }
-  return { nodes, edges, references, diagnostics, files: indexedFiles.map(file => file.path), parsedFiles: indexedFiles.filter(file => !file.errors?.length && !failedFiles.has(file.path)).map(file => file.path) };
+  return { nodes, edges, references, unresolvedByFile, diagnostics, files: indexedFiles.map(file => file.path), parsedFiles: indexedFiles.filter(file => !file.errors?.length && !failedFiles.has(file.path)).map(file => file.path) };
 }

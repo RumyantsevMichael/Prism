@@ -4,6 +4,7 @@ import { errorFields, log } from "../log.mjs";
 import { semanticError } from "./native-files.mjs";
 import { indexMetadata, readIndex, storedEmbeddings, writeIndex } from "./index-files.mjs";
 import { appendEmbeddings, readEmbeddings, replaceEmbeddings } from "./embedding-store.mjs";
+import { structuralCoverage } from "./structural-coverage.mjs";
 class LocalIndexStore {
   constructor(request, stopHelper = () => {
   }) {
@@ -45,6 +46,7 @@ class LocalIndexStore {
     if (!index) throw semanticError("preparation_failed", "The built index is no longer held.");
     this.built.delete(token);
     index.assetIdentity = assetIdentity;
+    index.fileCoverage = structuralCoverage(index);
     if (incomplete) {
       index.structureComplete = false;
       index.diagnostics.push({ code: "resource_limit", message: "The native source snapshot is incomplete." });
