@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §8, §12.
@@ -48,10 +48,10 @@ test("clause 83: the validate job installs Playwright and Chromium before the te
 
 test("clause 83: with PRISM_REQUIRE_BROWSER set, a browser test without Playwright fails instead of skipping", async () => {
   // A copy of Node that finds no Playwright: no global modules and no local install named playwright.
-  const probe = `process.env.PRISM_REQUIRE_BROWSER = "1"; const loaded = await import(${JSON.stringify(path.join(ROOT, "test/server/fixtures/kit-browser.mjs"))}).then(() => "loaded", (error) => "refused: " + error.message); console.log(loaded);`;
+  const probe = `process.env.PRISM_REQUIRE_BROWSER = "1"; const loaded = await import(${JSON.stringify(pathToFileURL(path.join(ROOT, "test/server/fixtures/kit-browser.mjs")).href)}).then(() => "loaded", (error) => "refused: " + error.message); console.log(loaded);`;
   const environment = { ...process.env, PRISM_REQUIRE_BROWSER: "1", NODE_PATH: "", npm_config_prefix: path.join(ROOT, "test", "no-such-global-prefix") };
   const { stdout } = await run(process.execPath, ["--input-type=module", "-e", probe], { env: environment, cwd: ROOT });
-  const found = await run(process.execPath, ["--input-type=module", "-e", `import { playwright } from ${JSON.stringify(path.join(ROOT, "test/server/fixtures/kit-browser.mjs"))}; console.log(playwright ? "found" : "missing");`], { env: { ...environment, PRISM_REQUIRE_BROWSER: "" }, cwd: ROOT });
+  const found = await run(process.execPath, ["--input-type=module", "-e", `import { playwright } from ${JSON.stringify(pathToFileURL(path.join(ROOT, "test/server/fixtures/kit-browser.mjs")).href)}; console.log(playwright ? "found" : "missing");`], { env: { ...environment, PRISM_REQUIRE_BROWSER: "" }, cwd: ROOT });
   if (found.stdout.trim() === "found") assert.equal(stdout.trim(), "loaded", "with Playwright present the fixture loads");
   else assert.match(stdout.trim(), /^refused: .*PRISM_REQUIRE_BROWSER/, "without Playwright the fixture refuses to load, so every browser test fails");
 });

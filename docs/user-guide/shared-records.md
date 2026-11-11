@@ -434,6 +434,10 @@ Starting a slice, or starting the design of a scope, claims it for the agent ses
 A claim covers the parts inside its slice, so a design claim on a scope also blocks a start of any slice inside it, and the reverse.
 Two agents can still work on two independent slices of one initiative at once.
 Another agent's start of a claimed slice is refused with `slice_claimed`, which names who holds it, for design or implementation, and until when, and that agent moves on to another slice.
+Another agent's change to a claimed slice, such as a review, a verification, or a design proposal, is refused with `slice_claimed` too.
+Work on a slice needs the claim of the session doing it: proposing or accepting a design, restoring frozen tests, reporting contract defects, finishing or blocking a slice, verifying it, and writing its review, change map, or design view are refused with `claim_required` unless the session's own live claim is on the slice or the scope that contains it.
+The refusal says whether the session's claim expired or it never had one, and the agent claims the slice with `update_initiative` `claim`, which takes an implementation claim on a slice in progress and a design claim on any other slice, then carries on.
+A dependents' run of a finished scope needs no claim.
 A claim names its holder by the store's Git `user.name` and the host name, such as `Michael Rumyantsev on MacBookPro`, or by the host name alone when the store has no `user.name`.
 `get_initiative` lists each live claim under `claims`.
 The review browser shows each claim's holder, activity, and time left on the slice board, the slice list, and the slice page, and marks the slices inside a scope that a design claim covers.
@@ -452,6 +456,7 @@ Claims are kept apart from the initiative record, so renewals never collide with
 A claim ends when its slice is done, blocked, or back to not started, or when the design proposal of its scope is accepted.
 In Claude Code and Codex a claim belongs to the session, so a server that the host restarts in the same session keeps its claims and renews them again after its first initiative read or update.
 Claude Code names the session in the server's environment, and Codex names it in each tool call, so sub-agents in Codex share their session's claims as subagents in Claude Code do.
+Older Codex releases, such as 0.155, name the session only in the call's turn metadata, which Prism reads too.
 On a host that gives the server no session identifier, a claim belongs to the server process, and a restarted server gets a new holder.
 To free a slice sooner, for example after such a restart, ask your agent to send `update_initiative` with a `release_claim` operation for the slice.
 Anyone may release any claim, and the initiative's history records who released whose claim.

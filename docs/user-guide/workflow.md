@@ -8,7 +8,7 @@ Each slice is designed when it is next, implemented in fresh agent sessions agai
 | Stage | Skill | Result |
 |---|---|---|
 | Shape | `prism:ideate` | Approved EARS requirement files and a roadmap entry, or a decision to stop |
-| Triage a bug | `prism:triage` | A reproduction and the Approved requirements it breaks, with a roadmap entry, or a hand-off to ideate |
+| Triage a bug | `prism:triage` | A reproduction and the Approved requirements it breaks, with a defect on the done slice of an unshipped initiative or a roadmap entry, or a hand-off to ideate |
 | Run an initiative | `prism:orchestrate` | One root slice, then each slice in turn |
 | Design | `prism:design` | A frozen contract, probed assumptions, and failing acceptance tests, or a split into child slices |
 | Implement | `prism:implement` | Working code for one step of a designed slice, committed |
@@ -116,13 +116,24 @@ A started slice whose start content Git has removed fails its next run with `sta
 A done slice's refs are still needed while another slice of its initiative is started and not done, because Prism leaves the done slice's verified changes out of that slice's boundary check only while Git can read the done slice's start content and its latest passing run.
 Deleting a done slice's start or passed ref before then can therefore make that other slice fail with reason `component_boundary` for the done slice's changes.
 That other slice can be in another checkout, because checkouts that share a `Store` share records, while only the refs of the checkout that ran the done slice keep its content.
-Delete an initiative's refs only after the initiative is shipped or superseded and `remove_records` has removed its records in every checkout that shares this Git repository, because until then any slice of it may still read them, a deferred slice included.
+Delete an initiative's refs only after the initiative is shipped, or after it is superseded and `remove_records` has removed its records in every checkout that shares this Git repository, because until then any slice of it may still run and read them, a deferred slice included.
 Delete a single slice's refs only when you will set that slice back to `not-started`.
 A removed checkout's refs are harmless to keep, so leave them until you can delete their initiative's refs.
 A passing run counts only while the project's source, tests, and configuration stay as they were when it ran, so a later edit needs a new run.
 When the design requires review, an independent reviewer also reviews the verified result, and a later change needs a new run and a new review.
 A finding that a contract clause itself causes sends the slice back to design instead of into another fix.
-After two review waves for one accepted design, Prism asks you whether to continue the review, return the slice to design, or narrow it before each further wave.
+After two review waves for one accepted design, Prism asks you the review loop decision before each further wave, and the agent waits for your answer instead of asking its own question.
+The question shows the unresolved findings by severity, a table of the findings each wave raised and closed, and the files that findings named in more than one wave.
+It offers these options:
+
+- **Continue the review**: the implementer fixes the open findings, and one more review wave runs with fresh reviewers.
+- **Return the slice to design**: the slice is blocked, and design revises its contract with every unresolved finding as a contract defect.
+- **Accept with deferred low findings**: offered only while every unresolved finding is low severity; the review wave is accepted, and each low finding stays on record as deferred with a follow-up.
+
+Prism recommends accepting with deferred low findings whenever it offers that option.
+Otherwise it recommends returning the slice to design when the latest wave raised at least as many findings above low severity as the wave before it, and continuing the review when it raised fewer.
+When you accept with deferred low findings, the agent files one follow-up per finding in the tracker that `## Tracker` in `.prism/workflow.md` names, or adds it to the roadmap's open questions when no tracker is named.
+A deferred finding has status `DEFERRED`, keeps the decision and its follow-up reference, counts as resolved, and no longer changes; `get_review` lists the deferred findings, and the slice page shows them apart from the unresolved ones.
 The slice page in the review browser shows the latest run with its command, exit code, and output tail, and a failed run also names the failing tests that Prism found anywhere in the output.
 Verification runs need a git work tree, and `PRISM_VERIFY_TIMEOUT_MINUTES` changes the 30-minute default timeout.
 
@@ -230,6 +241,7 @@ A run whose commands change project files fails with reason `tracked_files_chang
 
 `update_roadmap` refuses to `ship` the initiative with `dependents_blocked` while a scope has dependents, by the current declaration, whose latest dependents' run did not pass or did not run each of them.
 Its `scopes` lists each such scope as `{ scope, blocked, reason }`, where `reason` is `failed` when that run failed or declined one of them and `not_run` when none ran or a dependent was declared after it.
+When that latest run started before a leaf of the scope last passed `verify_slice`, as after a fix slice changed the scope, `reason` is `stale` for every dependent and `run` names the stale run's record path, so run the dependents again.
 A later passing run of those dependents lets it ship, and an initiative of a repository that declares no components ships as before.
 A leaf that is not done still refuses `ship` with `gate_blocked` first, and an invalid declaration refuses it with its own code.
 `get_roadmap` reports such an initiative with `readyToShip` `false` and a `diagnostics` entry, `dependents_blocked` with the same `scopes`, or the code and message of the invalid declaration, so the review browser shows an initiative as ready to ship only once no slice, declaration, or dependent stops it.
@@ -250,6 +262,51 @@ A `slice.md` that Prism cannot read for its links, because it holds more than 1 
 The result lists the accepted ADRs under `acceptedAdrs` with their path, scope, and the verified commits, an ADR with another recorded status stays as it is, and `get_artifact` returns an accepted ADR's acceptance.
 So a ready-to-ship initiative of a project with a record store still waits for your correctness review, and its ship can still be refused for the reasons above.
 In a project without a record store, `ship` needs no review, and the orchestrator accepts the Proposed ADRs of each slice as it lands.
+
+## Shipping
+
+`update_roadmap` refuses to `ship` an initiative that already has a decision with `validation_failed`, and then refuses with `open_work` while any of its work is still open.
+Open work is a pending question in the initiative's coordination state, answered or not, a slice with a live claim, or a pending design proposal.
+An answered question counts because no agent can resolve it once the initiative is history.
+The refusal lists `gates` as `{ id, slice, question, answered }`, `claims` as `{ slice, label, activity, expiresAt }`, and `proposals` as scope names, and its message names each one.
+This check runs before the leaf and [dependents](#dependents) checks, so `gate_blocked` and `dependents_blocked` come after it.
+`get_roadmap` reports such an initiative with `readyToShip` `false` and an `open_work` diagnostic with the same `gates`, `claims`, and `proposals`.
+
+A shipped initiative's roadmap entry keeps its title, intent, requirements, and required initiatives.
+`update_initiative` and `set_requires` naming it refuse with `initiative_shipped`, with its `initiative` and its ship time in `shippedAt`, and change nothing.
+`place` still refuses because a shipped initiative keeps its place in history, and another initiative may still require it.
+A request that would change an initiative's state while the roadmap record exists but cannot be read or parsed is refused with `invalid_roadmap`, because Prism cannot tell whether the initiative shipped.
+Start new work on a shipped initiative as a new initiative that references it.
+
+### Shipped history
+
+A shipped initiative's state is history: its contracts, slice documents, frozen tests, and reviews record finished work, and current intent lives only in Approved requirements, Accepted ADRs, the glossary, and feature files.
+Ship writes this history mark into every slice document of the initiative, under its first-line title, or at the top of a document without one:
+
+```markdown
+> Shipped history: initiative `reports` shipped on 2026-11-03, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+```
+
+A document that already holds a mark is not marked again.
+Ship also records each document's path and the SHA-256 of its content without the mark in the roadmap decision, as `documents`, with `documentsRecordedAt` and `documentsFrom` `ship`.
+The `ship` result lists the marked paths under `historyMarks`, and a document it cannot read or write under `historyMarkProblems` as `{ path, reason }`, and ship still succeeds.
+Commit the marked documents.
+
+An initiative that shipped before Prism recorded documents is handled at its first read: the first `get_initiative`, `get_coordination_state`, `get_review`, or `get_roadmap` that reaches it records its slice documents with `documentsFrom` `first-read` and marks each one.
+That read lists the marked paths under `marked`, or under `markedHistory` for `get_roadmap`, and adds a text line asking you to commit them in a commit of their own, apart from the task's changes.
+An initiative with no slice document in the checkout records nothing until a read finds one.
+
+`get_initiative`, `get_coordination_state`, and `get_review` of a shipped initiative, also one without an initiative record, return `shippedHistory` with `initiative`, `shippedAt`, a `message` that says the state is history, `documents`, and `changedAfterShip`.
+`get_coordination_state` also shows the message as a line of its text.
+`documents` lists the recorded slice documents in path order.
+`changedAfterShip` lists `{ path, change }` for each recorded document whose content differs, ignoring the mark, as `changed`, for each one that no longer exists as `removed`, and for a slice document in a folder that had none recorded as `added`.
+A copy of a document without the mark, as on a branch from before the ship commit, is not a change.
+
+A shipped initiative's records stay, and every request to change its state is refused with `initiative_shipped` before every check except argument validation, naming the initiative and its ship time in `shippedAt`.
+The refusal covers every `update_initiative` operation, `remove_records` included, as well as `update_coordination_state`, `checkpoint_pause`, `update_review`, `verify_slice` with `contractDefects` or `dependents` too, `update_design_view`, and `update_change_map`, and it changes no record and no project file.
+Start new work on a shipped initiative as a new initiative that references it.
+`remove_records` still removes the records of a superseded initiative.
 
 ## Questions and answers
 
@@ -281,8 +338,29 @@ The review setting decides review marks when a design is accepted: `all` marks e
 
 ## Defects
 
-Defect repair stays outside this workflow.
-Reproduce and diagnose a defect against the existing specification, and change the specification only when the required behavior must change too.
+`prism:triage` reproduces a reported defect, finds the Approved requirements it breaks, and routes the fix by where the broken work lies.
+A defect in done work of an initiative that has not shipped joins that initiative: triage reports it on the done slice with `report_defect` and returns the initiative, the slice, and the defect id, and orchestration designs and runs the fix slice before the initiative ships.
+A defect in a shipped initiative's work becomes a new initiative whose `corrects` names the shipped initiative and each slice whose work the fix corrects.
+Any other defect becomes a new initiative with the broken requirements, and a report that no Approved requirement covers goes to `prism:ideate`.
+Triage, design, implementation, and review sessions take current intent only from Approved requirements, Accepted ADRs, the glossary, and feature files, and cite a shipped initiative's contracts, slice documents, frozen tests, and reviews only as history.
+
+A defect in a done slice of an initiative that has not shipped is fixed inside that initiative as new work.
+Report it with `update_initiative` `report_defect` `{ slug, requirements, summary }` on the done slice, which records it as `d1`, `d2`, and so on, and refuses a slice that is not done with `validation_failed`.
+The done slice stays done, and its status, accepted design, frozen tests, verification runs, and review are unchanged.
+`set_status` refuses to set a done slice to another status with `slice_done`.
+Design claims the done slice with `claim` and proposes one fix slice with `propose_design`: one `add_fix` `{ slug, defects, fix: { slug, title, outcome, requirements } }` naming the done slice, optional `set_dependencies` and `update_slice` on the fix slug, and one `accept_design` of the fix slug.
+Prism refuses any other operation on a done scope, a defect the slice does not hold or that another fix slice already fixes, and a slug already in use, all with `validation_failed`.
+Accepting the proposal adds the fix as a new `not-started` slice below the done slice, with `fixes: { slice, defects }`, and its `slice.md` sits in its own folder under the initiative's plans folder.
+A fix slice is a leaf of the initiative: it counts toward progress, it cannot split, it starts only when the done slice's dependencies and those of its ancestors are done, and slices that depend on the done slice wait for it.
+`get_initiative` lists each fix slice under the done slice in `derived.children` and in `derived.fixes`, and lists each defect whose fix is missing or not done under `derived.unfinishedFixes` as `{ slice, defect, fix, status }`.
+While any is listed, `readyToShip` is `false`, `get_roadmap` reports a `fixes_unfinished` diagnostic, and ship refuses with `fixes_unfinished`, naming each one.
+
+A fix to the work of a shipped initiative is a new initiative, because a shipped initiative's state is history.
+Add it with `update_roadmap` `add_initiative`, or later with `update_initiative`, and give it `corrects: { initiative, slices }` with the shipped initiative and each of its slices whose work the fix corrects.
+The roadmap Markdown shows it on the new entry as ``Corrects `reports`: `download`, `audit`.``
+Prism refuses `corrects` with `validation_failed` for an initiative that has not shipped, an unknown initiative, the entry's own id, an empty `slices` list, and a slice that the shipped initiative's record does not hold, which is every slice when that record is missing.
+Fix done work of an initiative that has not shipped inside that initiative instead, by reporting the defect on the done slice with `report_defect`, as described above.
+Every read of the shipped initiative that carries `shippedHistory` lists the initiatives that correct it under `laterFixes`, each as `{ initiative, title, state, slices }` with its current lifecycle state, in roadmap order.
 
 ## Project files
 

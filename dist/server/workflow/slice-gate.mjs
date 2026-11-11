@@ -9,7 +9,9 @@ import { RECORD_DIRECTORY } from "./record-store.mjs";
 import { acceptedDesign, checkFrozenTests, latestVerification, SliceDesignError, unfinishedFrozenTestsOfOthers } from "./slice-design.mjs";
 import { readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 
-const run = promisify(execFile);
+const execFileAsync = promisify(execFile);
+// Every Git call hides its console window, which Windows would otherwise open for a console program started by a process without one.
+const run = (command, args, options = {}) => execFileAsync(command, args, { ...options, windowsHide: true });
 
 async function git(root, args, env, timeout = 0) {
   const { stdout } = await run("git", args, { cwd: root, env, maxBuffer: 16 * 1024 * 1024, timeout });
@@ -58,15 +60,16 @@ export const treeId = (value) => typeof value === "string" && TREE_ID.test(value
  * The project-relative paths that differ between two content trees, in Git's order, or null when Git cannot compare them, such as when it no longer has one of the trees or a tree is not a Git object identifier.
  * A content tree holds the whole checkout, so in a project below its Git top folder only the paths inside the project count, relative to the project root.
  * A moved file is a removal and an addition, so a rename lists both of its paths.
+ * `timeoutMs`, when given, stops a Git that does not answer in time, which also counts as Git that cannot compare.
  */
-export async function changedPaths(projectRoot, from, to) {
+export async function changedPaths(projectRoot, from, to, { timeoutMs = 0 } = {}) {
   if (!treeId(from) || !treeId(to)) return null;
   if (from === to) return [];
   try {
     const root = await realpath(projectRoot);
     const env = { ...process.env, GIT_OPTIONAL_LOCKS: "0" };
-    const prefix = (await run("git", ["rev-parse", "--show-prefix"], { cwd: root, env })).stdout.trim();
-    const { stdout } = await run("git", ["diff-tree", "-r", "-z", "--no-renames", "--name-only", ...(prefix ? [`--relative=${prefix}`] : []), "--end-of-options", from, to], { cwd: root, env, maxBuffer: 256 * 1024 * 1024 });
+    const prefix = (await run("git", ["rev-parse", "--show-prefix"], { cwd: root, env, timeout: timeoutMs })).stdout.trim();
+    const { stdout } = await run("git", ["diff-tree", "-r", "-z", "--no-renames", "--name-only", ...(prefix ? [`--relative=${prefix}`] : []), "--end-of-options", from, to], { cwd: root, env, maxBuffer: 256 * 1024 * 1024, timeout: timeoutMs });
     return stdout.split("\0").filter(Boolean);
   } catch {
     return null;

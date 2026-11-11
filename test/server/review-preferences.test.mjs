@@ -52,9 +52,16 @@ async function serve(context, root) {
   return { base, port: new URL(base).port, close };
 }
 
-const read = async (base) => {
+// The appearance tests read only the theme and density; every other preference keeps its default there.
+const APPEARANCE = ["theme", "density"];
+const appearanceOf = (body) => body && typeof body === "object" ? Object.fromEntries(APPEARANCE.map((key) => [key, body[key]])) : body;
+const readAll = async (base) => {
   const response = await fetch(`${base}/api/preferences`);
   return { status: response.status, body: await response.json() };
+};
+const read = async (base) => {
+  const answer = await readAll(base);
+  return { ...answer, body: appearanceOf(answer.body) };
 };
 const put = async (base, body, headers = { "Content-Type": "application/json" }) => {
   const response = await fetch(`${base}/api/preferences`, { method: "PUT", headers, body: typeof body === "string" ? body : JSON.stringify(body) });
@@ -64,7 +71,7 @@ const put = async (base, body, headers = { "Content-Type": "application/json" })
     json = JSON.parse(text);
   } catch {
   }
-  return { status: response.status, body: json };
+  return Object.defineProperty({ status: response.status, body: response.ok ? appearanceOf(json) : json }, "all", { value: json });
 };
 
 test("clause 13: without a stored choice the preferences are the system theme and compact density", async (context) => {
@@ -130,4 +137,23 @@ test("clause 16: the choice survives a restart on another port and is shared by 
   const third = await serve(context, await project(context));
   await put(third.base, { theme: "light" });
   assert.deepEqual((await read(second.base)).body, { theme: "light", density: "comfortable" });
+});
+
+// Requirement: docs/requirements/review-app-ui-kit.md §17.
+test("every registered preference starts at its default, is stored by a PUT, survives another port, and refuses a value that does not fit", async (context) => {
+  await appDirectory(context);
+  const { DEFAULT_PREFERENCES } = await import("../../dist/server/review/public/kit/preference-registry.js");
+  const first = await serve(context, await project(context));
+  assert.deepEqual((await readAll(first.base)).body, DEFAULT_PREFERENCES);
+  const change = { "roadmap.view": "graph", "roadmap.showArchived": true, "roadmap.collapsedLanes": ["Later", "Next"], "sidebar.collapsed": true, "sidePanel.width": 480, "initiative.view": "list", "changeMap.view": "graph", "changeMap.groupBy": "file" };
+  assert.deepEqual((await put(first.base, change)).all, { ...DEFAULT_PREFERENCES, ...change });
+  const second = await serve(context, await project(context));
+  await first.close();
+  assert.deepEqual((await readAll(second.base)).body, { ...DEFAULT_PREFERENCES, ...change });
+  for (const body of [{ "roadmap.view": "table" }, { "sidebar.collapsed": "yes" }, { "sidePanel.width": 100 }, { "sidePanel.width": 480.5 }, { "roadmap.collapsedLanes": "Later" }, { "roadmap.collapsedLanes": ["Later", "Later"] }, { "roadmap.collapsedLanes": [""] }, { "roadmap.layout": "board" }]) {
+    const answer = await put(second.base, body);
+    assert.equal(answer.status, 400, `${JSON.stringify(body)} answers 400`);
+    assert.equal(answer.body?.code, "invalid_preference");
+  }
+  assert.deepEqual((await put(second.base, { "sidePanel.width": null })).all["sidePanel.width"], null, "a width goes back to its default");
 });

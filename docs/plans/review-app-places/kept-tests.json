@@ -1,0 +1,417 @@
+{
+  "baseline": {
+    "test/server/review-action-controls.test.mjs": {
+      "a control is ready only for a changed, complete input of an available action, and names its confirmation": 4,
+      "a required field follows the field it depends on, and the hint names the first empty one": 9,
+      "every connected tab of the project receives an applied action as it happens": 2,
+      "Attention lists the newest applied actions across initiatives and the checkout's index, with their authors": 6,
+      "an applied action reaches the tabs of every checkout of the workspace, and an index rebuild only its own checkout's": 10,
+      "the page loads the generic action view": 1
+    },
+    "test/server/review-action-equal-models.test.mjs": {
+      "applying the stored models assignment records nothing whatever key order the state holds it in": 3
+    },
+    "test/server/review-action-refusals.test.mjs": {
+      "models mode host defaults stores host defaults whatever the text fields hold": 3,
+      "a refused apply on an initiative without coordination state leaves the record store unchanged": 5,
+      "the apply route accepts only the application/json media type": 3
+    },
+    "test/server/review-actions.test.mjs": {
+      "an initiative lists its six settings in order with their fields, defaults, effects, and confirmations": 22,
+      "a slice lists its initiative's settings, a roadmap-only initiative lists them without a revision, and unknown targets are refused": 8,
+      "a checkout lists one index target per component, root first, and no other kind of target list": 6,
+      "every setting stays available once work starts, and a setting that coordination state retired has no action": 4,
+      "a risky setting applies only after confirmation and is recorded in the initiative's history as the person's": 20,
+      "a change against a stale revision is refused with the current value and changes nothing": 7,
+      "an input the action does not accept is refused with the accepted values": 10,
+      "models store host defaults or an assignment, and an unchanged value records nothing": 8,
+      "a setting on an initiative without coordination state creates the state": 5,
+      "gate answers are actions whose fields follow the gate kind, and the old answer route is gone": 20,
+      "each component's index rebuild is an action recorded in the checkout's own index history, and the old rebuild route is gone": 12,
+      "an index rebuild is unavailable only while its own component's index is preparing": 5,
+      "a write must come from the page as JSON": 4,
+      "agents cannot write the history or the person's settings through coordination state": 1,
+      "the registry works without HTTP and keeps the newest 200 history entries": 9,
+      "a new entry takes its place by time and id among entries another machine wrote": 1
+    },
+    "test/server/review-app.test.mjs": {
+      "two sessions in different projects share one review app on one port": 10,
+      "concurrent starts leave one review app": 3,
+      "concurrent starts from a lock whose owner is dead leave one discoverable app": 3,
+      "a session never sends the control credential to a listener that cannot prove it": 4,
+      "control routes refuse requests without the control credential or from a browser origin": 9,
+      "the presenting session opens the browser once and the app never does": 6,
+      "presenting a project that no tab shows notifies the open tab instead of opening a browser": 9,
+      "the review page lists live and recent projects with their open gates": 10,
+      "the project list keeps at most 20 recent projects": 4,
+      "a restarted app restores the recent projects in recency order": 2,
+      "a presentation refused while the first tab is still loading reaches that tab when it connects": 8,
+      "a review shown in its own project's tab is not kept for a later tab of another project": 3,
+      "a granted browser open leaves no pending notice": 2,
+      "the recent limit never drops a project that a tab watches": 1,
+      "a project whose folder is gone is listed with an unknown gate count": 1,
+      "a project whose records cannot be read is listed with an unknown gate count": 1,
+      "a notice that reached a tab is not kept for a later tab": 3,
+      "a tab that connects to the presenting project drops its pending notice instead of receiving it": 4,
+      "a pending notice expires": 3,
+      "the served review page carries the project switcher and the notice banner": 5,
+      "reading the review URL without tabs leaves the session unchanged": 2,
+      "an MCP server lists its project in the app from start until it exits": 1,
+      "an MCP server in a host that names no project starts the app at once and lists the project from its first Prism tool call": 1,
+      "a session whose shared app cannot start stops launching it": 3,
+      "a session that falls back after the app goes away stops renewing its lease": 3,
+      "a listener that trickles bytes on the discovered port cannot hold a session past the start deadline": 2,
+      "the review URL follows the app after it is replaced on a new port": 3,
+      "a successor ignores a handoff that is older than the lock lifetime": 2,
+      "a cold restart serves the last port with a new viewer credential, and takes another port when that one is busy": 4,
+      "a newer session replaces an older review app and keeps its port and viewer credential": 7,
+      "a session of a newer plugin release replaces an app of an older release with the same protocol": 3,
+      "a session of an older plugin release keeps a newer app": 1,
+      "a tab learns the plugin release of the app that serves it": 1,
+      "a session start opens one browser while no review tab is connected and sends no notice": 3,
+      "a client that does not declare grant support is held back by a read-only tab while a current client opens with a grant": 5,
+      "a session serves its own review server when the shared app cannot start": 5,
+      "a fallback records why the shared app could not be reached": 5,
+      "a session on the shared app is not marked private": 3,
+      "prism review presents through the shared app, opens the browser, and holds no server": 6,
+      "prism review opens no browser while a review tab is connected": 4,
+      "prism review reports an artifact the app refuses without starting its own server": 3,
+      "prism review serves the review itself when the app is off or cannot start": 4,
+      "the prism review command exits after presenting through a running app": 3,
+      "the app serves each project's evidence from the store its sessions report, also to a later command and after a restart": 4,
+      "the app shows a build that a session reports from its own index storage, also after a restart": 4,
+      "the app reads a project's evidence from every store that sessions of different hosts report": 3,
+      "a gate answer from the app writes the state record without touching any evidence store": 4,
+      "a session falls back within the start deadline when a started app never answers": 3,
+      "a session does not trust a state directory that others can read": 2,
+      "the project list keeps a gate count until a session registers the project again": 3
+    },
+    "test/server/review-appearance-browser.test.mjs": {
+      "clause 25: the status bar ends with an Appearance button whose menu offers the theme, the density, and the catalog": 8,
+      "clause 26: choosing Dark from the keyboard applies it at once, stores it, and keeps it after a reload": 6,
+      "clause 26: choosing System again follows the operating system, and Comfortable raises the density": 4,
+      "clause 26: Component catalog opens the catalog in a new tab": 2
+    },
+    "test/server/review-artifact-views.test.mjs": {
+      "lists JSON artifacts and identifies Prism artifact kinds": 15,
+      "reads retained evidence for the review project with bounded lists": 10,
+      "does not read evidence that belongs to another project": 1,
+      "serves view modules by name only": 8
+    },
+    "test/server/review-attention-signal.test.mjs": {
+      "the tab title counts waiting questions and drops the count when none wait": 2,
+      "the tab icon gains a dot inside its own drawing": 1,
+      "a notification is only for a new question while the page is in the background and notifications are on": 6,
+      "the Attention page offers notifications only while the browser can still ask": 4
+    },
+    "test/server/review-attention.test.mjs": {
+      "a review answer waits for an explicit choice and never guesses one from the note": 4,
+      "request changes makes the note required and stays disabled until it has text": 4,
+      "a decision accepts an option or a note alone, and a choice the gate does not list counts as none": 6,
+      "an assistance gate answers done with an optional note": 2
+    },
+    "test/server/review-cached-value.test.mjs": {
+      "the first read waits for the value and reads within the time to live answer it without computing again": 4,
+      "an old value is answered at once while one computation renews it behind the answer": 4,
+      "invalidating makes the next read wait for a new value and discards a computation started before it": 3,
+      "a failed first computation is not kept, so the next read tries again": 2
+    },
+    "test/server/review-ci-browser.test.mjs": {
+      "clause 83: the validate job installs Playwright and Chromium before the tests and requires the browser while they run": 5,
+      "clause 83: with PRISM_REQUIRE_BROWSER set, a browser test without Playwright fails instead of skipping": 2
+    },
+    "test/server/review-connection.test.mjs": {
+      "one failed probe stays live, a second shows retrying, and the grace period ends in stopped": 5,
+      "an answer from the app clears the stopped state": 2,
+      "a handoff that answers within the grace period never reads as stopped": 1,
+      "an open event stream keeps a failing probe from reading as stopped": 2,
+      "failures after a long pause, as after a laptop sleeps, still wait out the grace period": 1
+    },
+    "test/server/review-demo.test.mjs": {
+      "the review demo seed builds its project through the current MCP tools": 1,
+      "the edge-case seed builds its project through the current MCP tools": 1,
+      "the review command prints usage for help and rejects unknown arguments without a stack trace": 4
+    },
+    "test/server/review-diagram-theme-browser.test.mjs": {
+      "clause 63: the PlantUML default color table names the vendored runtime and maps each default to a diagram role or keeps it": 5,
+      "clause 63: the vendored runtime paints exactly the colors of the default table for the reference diagrams": 2,
+      "clause 64: themeDiagram maps default colors to the diagram tokens, keeps authored colors, and lifts authored text and lines to AA": 9,
+      "clause 65: a diagram the review page shows sits on the paper and follows a theme change": 6
+    },
+    "test/server/review-entities.test.mjs": {
+      "parses entity references without colliding with artifact paths": 4,
+      "serves navigation and entity views built from Prism records": 19,
+      "accepts entity tabs that resolve and rejects those that do not": 4,
+      "lists what waits on the user apart from agent-side state": 9,
+      "gives every tab a breadcrumb trail and sidebar scope": 10,
+      "keeps the preview and the human's tabs when an agent presents artifacts": 7,
+      "records a browser answer and lists it apart from open questions": 12,
+      "accepts a decision answered by a note alone and an assistance gate marked done": 5,
+      "lists the newest open question and the newest answer first": 4,
+      "treats the initiative directory as the root slice folder": 6,
+      "flags an open question whose every attached file is gone": 1,
+      "lists closed questions with their answer or the reason they were withdrawn": 2,
+      "shows a not-started slice whose design waits at its gate as in design review": 4,
+      "a slice page places planned changes through the published code index without building one": 5
+    },
+    "test/server/review-highlight.test.mjs": {
+      "a path or fence info names its language, and an unknown one names none": 7,
+      "tokens are escaped and marked by kind": 5,
+      "an unknown language stays escaped plain text": 1,
+      "a token across lines is split so each line stays balanced": 2,
+      "data formats mark keys and literals but not types or calls": 2,
+      "Markdown fences are highlighted by their info string and keep their text": 2
+    },
+    "test/server/review-kit-assets.test.mjs": {
+      "clause 1: the kit's stylesheets, scripts, and catalog page are served with their types and the page's security headers": 5,
+      "clauses 1, 11: the fonts and their licenses are served from the kit": 7,
+      "clause 3: the catalog page is served at kit/catalog": 3,
+      "clause 2: a kit or styles path that is missing, leaves its folder, or has another extension answers 404": 1,
+      "clause 4: the review page loads the boot script, the design values, the kit, and the area stylesheets in order before its own script": 7
+    },
+    "test/server/review-kit-claims-browser.test.mjs": {
+      "clause 52: an agent avatar is a rounded square with the agent glyph and a person avatar a circle with initials, each named and sized from the design values": 10,
+      "clause 52: a live avatar shows the live dot, a breathing one pulses unless motion is reduced, and an expired one is hollow and dashed": 7,
+      "clause 53: a claim names its agent holder, the activity in words with its phase facet, and the time left, and holds no control": 10,
+      "clause 53: an avatar claim shows its text as a tooltip, a strip adds since and a lease meter, and the time left updates every minute": 8,
+      "clause 57: the catalog has entries with live specimens for avatars and claims, including an expired claim": 3
+    },
+    "test/server/review-kit-containers-browser.test.mjs": {
+      "clause 57: the kit registry and the catalog hold every container with live specimens": 4,
+      "clauses 21, 22: text and field and choice boundaries in the container entries reach WCAG AA in both themes and densities, and they stay inside a phone width": 4,
+      "clause 41: a panel renders its heading, tools, body, and footer, toggles maximized, and an island takes the island values": 10,
+      "clauses 42, 43: a tree moves, expands, collapses, and selects from the keyboard with one Tab stop": 20,
+      "clauses 38, 42: a tree with long, unbroken, and many labels stays inside a narrow container and shows full labels": 3,
+      "clause 44: a listbox driven from a field keeps focus in the field and moves its active option": 7,
+      "clause 45: a dialog opens modally over a blurred scrim, keeps focus inside, closes with Escape, its button, or the scrim, and returns focus": 15,
+      "clause 46: a popover opens from its button as a named non-modal dialog, closes with Escape or a click outside, and stays inside the window": 12,
+      "clause 54: a stepper lists the six phases with the current one marked and each state written out": 7,
+      "clauses 38, 55: breadcrumbs are a named navigation list whose last crumb is the current page, and long crumbs shorten": 6,
+      "clause 56: menus, popovers, tooltips, dialogs, and the toast are frosted glass, and a field on glass draws its boundary in the glass control color": 3,
+      "clause 47: a disclosure toggles from the keyboard and reports it": 6,
+      "clauses 48, 49: empty states, banners, and toasts carry their roles and messages, and a toast stays at least four seconds": 10,
+      "clause 50: stats, meters, and spinners expose their values and stand still under reduced motion": 6,
+      "clause 51: rendered Markdown and code take the kit's content styles and syntax colors": 8
+    },
+    "test/server/review-kit-controls-browser.test.mjs": {
+      "clauses 27, 28: the kit registry holds every element of the contract and describes each one": 9,
+      "clause 28: the self-contained elements render in shadow DOM and the others in light DOM": 2,
+      "clause 57: the catalog shows every kit element with its documentation and live specimens": 11,
+      "clause 58: the catalog lists every semantic token with its value in each shipped theme": 3,
+      "clause 59: the catalog's toolbar and query choose its theme, density, and width without storing them": 5,
+      "clauses 21, 22: text and field and choice boundaries in the control entries reach WCAG AA in both themes and densities": 5,
+      "clause 23: every keyboard focus stop on the catalog shows a 2px focus outline that reaches 3:1": 5,
+      "clauses 24, 29: a button takes its height from the density and its size, and sends clicks only while enabled": 7,
+      "clause 30: icons are hidden from assistive technology unless labelled": 3,
+      "clauses 31, 32: chips are static text, links, or buttons, and badges are static text": 7,
+      "clauses 33, 34: tabs are a named tablist with one selected tab, move focus with arrow keys, and select with Enter": 15,
+      "clause 34: tabs that do not fit scroll inside their strip": 3,
+      "clauses 35, 36: a menu opens from its button, moves with arrow keys, chooses with Enter, and closes with Escape": 22,
+      "clause 36: a menu near the bottom of the window opens above its button and stays inside the window": 2,
+      "clauses 37, 38: shortened text shows its full text in a tooltip on hover and on keyboard focus": 17,
+      "clause 39: a field creates a labelled native control whose value and events reach the page": 13,
+      "clause 40: a choice is a radio group that arrow keys move and that reports its value": 6,
+      "clause 38: controls that receive many items or long names stay inside their containers at a narrow width": 1
+    },
+    "test/server/review-kit-everywhere-browser.test.mjs": {
+      "clause 62: the layout check passes every page, overlay, and the catalog at a phone and a laptop width in both themes": 2,
+      "clauses 7, 8: a further theme given the dark theme's values renders every page exactly as the dark theme does, shadow controls included": 1,
+      "clause 7: a theme that flattens the islands gives every island no gap, no radius, and no shadow": 4,
+      "clauses 9, 21, 24: comfortable density makes every kit control of the page taller, and reduced motion stills the page": 7,
+      "clause 69: no page or overlay of the review app names Prism's own files": 1
+    },
+    "test/server/review-kit-everywhere.test.mjs": {
+      "clauses 8, 82: no browser file of the review app has a guard finding": 2,
+      "clause 82: the old stylesheet is gone and the page loads only the kit and area stylesheets": 4
+    },
+    "test/server/review-kit-guard-script.test.mjs": {
+      "native-control names control roles and title tooltips set from script code": 7
+    },
+    "test/server/review-kit-guard.test.mjs": {
+      "clause 71: raw colors in stylesheets, scripts, and pages are named with their file and line": 9,
+      "clause 71: raw sizes, radii, blurs, shadows, layers, and times are named, while tokens, zero, keywords, and layout sizes pass": 5,
+      "clause 71: the design values file and the PlantUML default colors may hold raw values": 4,
+      "clause 72: selectors that style a control outside the kit are named": 3,
+      "clause 73: native controls, control roles, and native tooltips written outside the kit are named": 9,
+      "clause 70: findings are sorted by file and line": 2,
+      "clause 70: the command checks the review app's browser files, prints each finding, and fails when there is one": 6
+    },
+    "test/server/review-kit-tokens.test.mjs": {
+      "clause 6: tokens.css declares every design value of the mockup with the same value under the same selector": 4,
+      "clauses 7, 24: compact sizes sit on the root and the themes and comfortable density sit on attribute selectors": 14,
+      "clause 10: every text, boundary, phase, claim, glass, and diagram pair reaches the WCAG AA contrast in both themes": 5,
+      "clause 7: each shipped theme is one complete value set for the same semantic tokens, declared nowhere else": 5,
+      "clause 9: reduced motion sets every motion duration to zero": 3,
+      "clauses 11, 12: the interface and code fonts ship beside the design values": 8,
+      "clause 5: the build copies the kit and the area stylesheets to dist unchanged": 3
+    },
+    "test/server/review-layout-check.test.mjs": {
+      "clause 60: a catalog entry that escapes its container, cuts off a control, or scrolls the page is named with its width and theme": 10,
+      "clause 60: the shipped catalog passes the layout check at a phone and a wide width in both themes": 1,
+      "clause 61: the layout check command prints each catalog problem with its entry, viewport, width, and theme, and fails": 8
+    },
+    "test/server/review-markdown.test.mjs": {
+      "headings get prefixed GitHub-style ids, deduplicated in document order": 5,
+      "relative links resolve against the document and open known files in the review": 8,
+      "an explicit anchor line names the section below it instead of rendering as text": 3,
+      "a source anchor names one line or a line range": 3,
+      "ordered lists keep counting across blank lines and start at their first number": 4,
+      "indented list items nest inside the item above them": 1
+    },
+    "test/server/review-open-at-start.test.mjs": {
+      "a desktop session opens the review browser at start by default": 3,
+      "a project or user that turned it off, or chose the internal browser, opens nothing at start": 3,
+      "sessions where nobody can see a window open nothing at start": 5,
+      "only a readable older release counts as older": 6
+    },
+    "test/server/review-poller.test.mjs": {
+      "a poll is scheduled only after the previous answer, so at most one is ever in flight": 7,
+      "asking for a poll while one is in flight runs one more after it, never a second at once": 5,
+      "a hidden tab polls nothing, and showing it polls once at once and resumes the schedule": 7,
+      "a poller that starts in a hidden tab waits until the tab is shown": 2,
+      "a failed poll keeps the schedule and passes no result to the interval": 2,
+      "a coalesced call made while one runs shares one follow-up run": 1,
+      "a deadline aborts a request that is not answered in time": 2
+    },
+    "test/server/review-preferences-edges.test.mjs": {
+      "a key inherited from Object.prototype answers invalid_preference as JSON and stores nothing": 4,
+      "the JSON content type matches in any case and with parameters, and nothing else passes": 4
+    },
+    "test/server/review-preferences.test.mjs": {
+      "clause 13: without a stored choice the preferences are the system theme and compact density": 1,
+      "clause 14: a PUT stores the given choice, keeps the other one, and answers with both": 6,
+      "clause 15: an invalid PUT answers invalid_preference and stores nothing": 4,
+      "clause 15: a PUT without a JSON content type or from another origin answers 403": 3,
+      "clause 13: an unreadable or invalid stored value reads as its default": 3,
+      "clause 16: the choice survives a restart on another port and is shared by every project": 3
+    },
+    "test/server/review-record-store.test.mjs": {
+      "a line diff keeps shared lines and marks removed and added ones in order": 4,
+      "a diff table folds long unchanged runs and escapes record text": 5,
+      "the status bar names where records live and the sync state": 9
+    },
+    "test/server/review-record-views-browser.test.mjs": {
+      "clauses 20, 21, 22: text and fields of every record, document, and source view reach WCAG AA, and their surfaces follow the theme": 2,
+      "clause 45: the evidence drawer opens from the keyboard as a dialog, closes with Escape, and returns focus": 4,
+      "clause 69: record, document, and source views name Prism's records by title and kind, and keep repository paths only where code is the subject": 2,
+      "clause 38: record and document views with long names stay inside a phone window": 1
+    },
+    "test/server/review-record-views-kit.test.mjs": {
+      "clause 82: the record views neither hold raw design values nor style or write controls around the kit": 1,
+      "clauses 1, 4: the area stylesheet styles/record-views.css is served and loaded by the review page after the kit": 3
+    },
+    "test/server/review-server-pool.test.mjs": {
+      "starts lazily and shares pending startup across tasks for one root": 6,
+      "keeps different roots separate and rejects a bound task's root change": 2,
+      "refreshes the idle deadline when a task requests the server": 2,
+      "keeps a server with viewers alive until an idle interval has no viewers": 3,
+      "idle expiry releases every task binding and permits a fresh server": 2,
+      "failed startup releases the initiating task and permits retry": 2,
+      "preserves a joining task's binding after shared startup fails": 3,
+      "shutdown waits for pending startup and cancels its idle timer": 3,
+      "shutdown closes other servers despite startup and close failures": 4
+    },
+    "test/server/review-server.test.mjs": {
+      "lists source artifacts and returns diagram source": 4,
+      "refuses requests that name an untrusted host": 2,
+      "rejects paths outside the project": 1,
+      "requires the unguessable session path": 1,
+      "serves the browser runtime without an image endpoint": 24,
+      "searches the text of listed artifacts only": 4,
+      "uses an injected browser opener when it presents a review": 4,
+      "stores agent-selected tabs and exposes them to the viewer": 6,
+      "a shared viewer stream carries the session of each page a tab joined it for, and counts each joined tab": 18,
+      "broadcasts session changes to every connected viewer page": 6
+    },
+    "test/server/review-shared-stream-browser.test.mjs": {
+      "eight tabs of two projects share one event stream, and the last tab still navigates within seconds": 8,
+      "a tab that holds a write session counts as a connected tab although another tab holds the stream": 5
+    },
+    "test/server/review-shell-browser.test.mjs": {
+      "clause 74: the artifact area reports busy while a view loads and not busy once it has rendered": 2,
+      "clause 75: the shell is a top bar, one sidebar of trees, the main island with its strip of open documents above its page bar, and a status bar on a canvas": 14,
+      "clause 76: the page bar moves back and forward through visited pages, from its buttons, Alt+arrows, and the browser, and shows a breadcrumb trail": 13,
+      "clause 77: above 1100px the sidebar sits beside the page, and at 1100px and below it opens as a drawer from Navigation": 7,
+      "clause 78: the command palette opens on Ctrl+K and Meta+K, drives kinded results from its field, previews the active result, and returns focus on Escape": 12,
+      "clauses 66, 67, 68: the sidebar and Who's working show every claim read-only, live ones breathing in the top bar": 11,
+      "clauses 20, 21, 22: the shell's text and fields reach WCAG AA, glass overlays included, and its surfaces follow the theme": 6,
+      "clause 69: the shell names Prism's records by title and kind, never by file name or path": 2,
+      "clauses 36, 77, 78: with long names the shell stays inside a phone and a laptop window, and its menus, popovers, and dialogs stay inside the window": 4
+    },
+    "test/server/review-shell-history-leave-browser.test.mjs": {
+      "Alt+ArrowRight does not leave the review app after the tab left it from a middle page and came back": 2
+    },
+    "test/server/review-shell-kit.test.mjs": {
+      "clause 82: the shell's files neither hold raw design values nor style or write controls around the kit": 1,
+      "clauses 1, 4: the area stylesheet styles/shell.css is served and loaded by the review page after the kit": 3
+    },
+    "test/server/review-shell-navigation-browser.test.mjs": {
+      "Enter right after typing in the palette opens the first result, which the preview shows": 3,
+      "the palette shows its preview above 720px and hides it at 720px and below": 3,
+      "Alt+ArrowLeft and Alt+ArrowRight do nothing at the ends of the visited pages": 3,
+      "widening the window past 1100px closes the Navigation drawer and gives the sidebar its trees back": 2,
+      "a repository file's page heading is marked as the code subject, and no Prism file name shows": 3
+    },
+    "test/server/review-sources.test.mjs": {
+      "serves tracked and unignored source files read-only without secrets or binaries": 8,
+      "lists no source files outside a git repository": 2
+    },
+    "test/server/review-stale-tabs.test.mjs": {
+      "a missing tab is named for its file or its entity": 4,
+      "the missing set changes only when the snapshot reports other tabs": 4,
+      "missing tabs are files the review no longer lists and entities that no longer resolve": 1,
+      "only a tab whose legacy record moved maps to the record's current path": 3,
+      "a tab follows a record that Prism moved out of its legacy location": 9,
+      "a deleted file's tab stays open as missing and recovers when the file returns": 8,
+      "an entity tab whose records are removed is reported missing": 4
+    },
+    "test/server/review-stylesheet.test.mjs": {
+      "every review app stylesheet's braces balance": 4
+    },
+    "test/server/review-tabs-browser.test.mjs": {
+      "a link opens in the one italic preview tab that the next link replaces, and Ctrl-click, a double click, and Keep keep a tab": 11,
+      "Ctrl+Enter in the palette, a double or middle click on a content link, a Ctrl-click on a crumb, and Open as tab open kept tabs": 6,
+      "a tab closes from its close button or a middle click, and closing the last one shows that nothing is open": 9,
+      "a tab whose file is gone is dimmed and struck through, says so, and its page offers Close tab": 5,
+      "an agent presentation of several artifacts opens each as a marked tab, focuses the first, and every window shows the same tabs after a reload": 10,
+      "Back and Forward move through the pages the tabs showed, and the address names the selected tab": 3,
+      "the strip moves focus with arrow keys, Home, and End, opens with Enter, reaches the focused tab's buttons with Tab, and keeps the focus when a tab closes": 10,
+      "at 390px the strip scrolls inside itself, keeps the selected tab in view, and ends long titles with an ellipsis whose full title shows on focus": 5
+    },
+    "test/server/review-theme-browser.test.mjs": {
+      "clauses 17, 18, 19: by default the page follows the operating system's theme and switches with it without a reload": 5,
+      "clauses 16, 17, 18, 19: a stored theme overrides the operating system and survives a reload and a restart on another port": 5,
+      "clause 17: the page applies the last choice it saw before the server answers, and keeps it when the server cannot be reached": 4,
+      "clause 24: comfortable density raises the control and row heights, the text size, and the island gap": 7,
+      "clause 20: every painted surface of every page changes with the theme, the diagram sheet included": 2,
+      "clause 12: the interface and code fonts load from the review app with every other host unreachable": 5,
+      "clause 9: under reduced motion nothing on the page animates or transitions": 2
+    },
+    "test/server/review-workflow-views-browser.test.mjs": {
+      "clauses 21, 22: text and fields of every workflow view reach WCAG AA in both themes and both densities": 1,
+      "clauses 38, 77: every workflow view with long names stays inside a phone window": 1,
+      "clause 81: a gate is answered from the keyboard alone": 3,
+      "clauses 66, 67: the roadmap, the slice page, the gate, and Attention show the slice's claims read-only": 9,
+      "clauses 77, 79: the slice page shows its lifecycle, claim, and sub-tabs, and its side panel opens beside the page or as a bottom sheet": 15,
+      "clauses 69, 80: every workflow view names Prism's records by title and kind, and the gate's list of what to inspect does too": 6
+    },
+    "test/server/review-workflow-views-kit.test.mjs": {
+      "clause 82: the workflow views neither hold raw design values nor style or write controls around the kit": 1,
+      "clauses 1, 4: the area stylesheet styles/workflow-views.css is served and loaded by the review page after the kit": 3
+    },
+    "test/server/review-write-credential.test.mjs": {
+      "the session server refuses changes without a write session and grants one only through the URL Prism opens": 16,
+      "a write session belongs to the server that issued it": 2,
+      "a presentation opens a writable tab while every connected tab is read-only": 3,
+      "the shared app grants a write session through the presenting process and reveals it in no file or answer": 9,
+      "a write session of the shared app works on the page of every checkout it serves": 4,
+      "a write session survives a handoff of the shared app and ends with a cold restart": 5,
+      "MCP review tools return URLs without a grant while the browser they open receives one": 4
+    }
+  },
+  "replaced": {
+    "test/server/review-shell-browser.test.mjs": {
+      "clause 75: the shell is a top bar, one sidebar of trees, the main island with its strip of open documents above its page bar, and a status bar on a canvas": "test/server/review-places-shell-browser.test.mjs"
+    }
+  }
+}

@@ -24,7 +24,7 @@ export function claimOf(slices, slug, now = Date.now()) {
 
 /** The attributes of a prism-claim for a claim, which the element turns into the holder, the activity, and the time left. */
 export function claimAttributes(claim) {
-  return Object.entries({ label: claim.label, activity: ACTIVITIES[claim.activity] ?? "implementation", "claimed-at": claim.claimedAt, "renewed-at": claim.renewedAt, "expires-at": claim.expiresAt })
+  return Object.entries({ label: claim.label, host: claim.host, activity: ACTIVITIES[claim.activity] ?? "implementation", "claimed-at": claim.claimedAt, "renewed-at": claim.renewedAt, "expires-at": claim.expiresAt })
     .filter(([, value]) => typeof value === "string" && value)
     .map(([name, value]) => ` ${name}="${escapeHtml(value)}"`).join("");
 }

@@ -11,6 +11,8 @@ const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-p
 process.env.PLUGIN_DATA = privateData;
 delete process.env.CLAUDE_PLUGIN_DATA;
 const { startReviewServer } = await import("../../dist/server/review/review-server.mjs");
+// Every registered preference is stored, so a check of two of them compares against the defaults of the rest.
+const { DEFAULT_PREFERENCES } = await import("../../dist/server/review/public/kit/preference-registry.js");
 test.after(() => rm(privateData, { recursive: true, force: true }));
 
 async function temporary(context, prefix) {
@@ -48,7 +50,7 @@ test("a key inherited from Object.prototype answers invalid_preference as JSON a
     assert.match(answer.type, /^application\/json/, `${key} answers JSON`);
     assert.equal(JSON.parse(answer.text).code, "invalid_preference", `${key} names invalid_preference`);
   }
-  assert.deepEqual(await stored(base), { theme: "system", density: "compact" });
+  assert.deepEqual(await stored(base), { ...DEFAULT_PREFERENCES, theme: "system", density: "compact" });
 });
 
 test("the JSON content type matches in any case and with parameters, and nothing else passes", async (context) => {
@@ -56,5 +58,5 @@ test("the JSON content type matches in any case and with parameters, and nothing
   assert.equal((await put(base, "{\"density\":\"comfortable\"}", "Application/JSON")).status, 200);
   assert.equal((await put(base, "{\"theme\":\"dark\"}", "APPLICATION/JSON; Charset=UTF-8")).status, 200);
   for (const type of ["text/plain", "application/jsonx", "application/json-patch+json"]) assert.equal((await put(base, "{\"theme\":\"light\"}", type)).status, 403, `${type} answers 403`);
-  assert.deepEqual(await stored(base), { theme: "dark", density: "comfortable" });
+  assert.deepEqual(await stored(base), { ...DEFAULT_PREFERENCES, theme: "dark", density: "comfortable" });
 });

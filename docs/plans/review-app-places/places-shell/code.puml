@@ -1,0 +1,20 @@
+@startuml
+title places-shell - units
+package "kit" {
+  component "prism-rail.js" as RailEl
+  component "prism-rail-item.js" as RailItem
+  component "prism-place-head.js" as Head
+  component "kit.js KIT_ELEMENTS\ncatalog.js SPECIMENS" as Kit
+}
+component "review.js\nrenderNavigation, choosePlace" as Review
+component "views/places.js\nPLACES, placeOf" as Places
+component "views/page-bar.js" as Bar
+component "workspace-model.mjs\nentityContext, computeNavigation" as Model
+Review --> RailEl : draws the rail
+RailEl --> RailItem : one per place
+Review --> Head : current place's head
+Review --> Places : place of each page
+Bar --> Model : trail with the place crumb
+Review --> Model : navigation.places
+Kit ..> RailEl : listed and shown
+@enduml

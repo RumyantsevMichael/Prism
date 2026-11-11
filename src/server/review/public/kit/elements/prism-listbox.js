@@ -4,14 +4,15 @@ import { Base, emit, setAttribute, toggleAttribute, uniqueId } from "./base.js";
 
 export class PrismListbox extends Base {
   static tag = "prism-listbox";
-  static observedAttributes = ["label", "for"];
+  static observedAttributes = ["label", "for", "first-current"];
   static catalog = {
     purpose: "A list of options to choose one from, driven by its own focus or by a kit field, such as the command palette's results.",
     options: [
       { name: "label", values: ["text"], default: "", description: "The listbox's accessible name." },
-      { name: "for", values: ["id"], default: "", description: "The id of a kit field whose control keeps focus and drives the active option; without it the listbox takes focus." }
+      { name: "for", values: ["id"], default: "", description: "The id of a kit field whose control keeps focus and drives the active option; without it the listbox takes focus." },
+      { name: "first-current", values: ["boolean"], default: "false", description: "While no option is active, the first option shows as current, the one Enter in the field stands for, so the first ArrowDown moves on to the second option." }
     ],
-    states: ["default", "active", "selected", "with-field"],
+    states: ["default", "active", "selected", "with-field", "first-current"],
     keyboard: [
       "ArrowDown and ArrowUp move the active option, from the field named by for or from the focused listbox; Home and End move to the first and last option in a focused listbox.",
       "Enter, or a click, chooses the active option and sends prism-select with detail.value."
@@ -36,6 +37,7 @@ export class PrismListbox extends Base {
     // An active option that leaves the list, as results change, is no longer active.
     this.watch = new MutationObserver(() => {
       if (this.active && !this.options.includes(this.active)) this.activate(null);
+      else this.markCurrent();
     });
   }
 
@@ -54,6 +56,13 @@ export class PrismListbox extends Base {
   attributeChangedCallback() {
     setAttribute(this, "aria-label", this.getAttribute("label") || null);
     if (this.isConnected) this.bind();
+    this.markCurrent();
+  }
+
+  // Only the first option of a first-current listbox with no active option shows as current.
+  markCurrent() {
+    const first = this.hasAttribute("first-current") && !this.active ? this.options[0] ?? null : null;
+    for (const item of this.querySelectorAll("prism-list-item")) toggleAttribute(item, "current", item === first);
   }
 
   /** The visible options in order. */
@@ -94,6 +103,7 @@ export class PrismListbox extends Base {
     for (const item of this.querySelectorAll("prism-list-item")) toggleAttribute(item, "active", item === this.active);
     const owner = this.field ? this.control : this;
     setAttribute(owner, "aria-activedescendant", this.active?.id ?? null);
+    this.markCurrent();
     this.active?.scrollIntoView?.({ block: "nearest" });
   }
 
@@ -107,7 +117,9 @@ export class PrismListbox extends Base {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     const options = this.options;
     if (!options.length) return;
-    const index = options.indexOf(this.active);
+    // A first option shown as current is where the arrow keys start, so ArrowDown moves past it rather than onto it.
+    const active = options.indexOf(this.active);
+    const index = active < 0 && this.hasAttribute("first-current") ? 0 : active;
     let next = null;
     switch (event.key) {
       case "ArrowDown":

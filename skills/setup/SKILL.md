@@ -67,7 +67,7 @@ A missing BDD harness uses `none`, making feature files specification-only.
 ## Paths
 - Requirements: docs/requirements/
 - ADRs: docs/ADRs/
-- Plans (coordination scratch): docs/plans/
+- Plans: docs/plans/
 - Feature files: docs/Features/
 - Roadmap: docs/roadmap.md
 - Glossary: docs/Glossary.md

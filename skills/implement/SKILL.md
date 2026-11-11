@@ -15,7 +15,7 @@ It works from files and the project's own tools, and its only Prism calls are `v
 1. Read `.prism/workflow.md` and the project instructions.
 2. Read the contract's `slice.md`: its **Contract** wins wherever it differs from the requirements wording, and its **Assumptions** record what was verified about the system.
 3. Read the slice's own `slice.md` and its frozen tests.
-4. Read the assigned Approved requirements and the ADRs that the contract links.
+4. Read the assigned Approved requirements and the ADRs that the contract links, and cite a shipped initiative's contracts, slice documents, frozen tests, and reviews only as history, because current intent lives only in Approved requirements, Accepted ADRs, the glossary, and feature files.
 5. When orchestration supplies failing test names, a verification log, or review findings, read them before you change code.
 
 ## 2. Implement
@@ -25,14 +25,11 @@ It works from files and the project's own tools, and its only Prism calls are `v
 3. Make the slice's frozen tests pass without breaking tests that already pass.
 4. When features have a BDD harness, use `write-step-definitions` to bind their steps.
 5. When user-visible behavior changes, use `write-user-docs`.
-6. Run the slice's focused tests while you work.
+6. Run the slice's focused tests while you work, and add your own tests in other files when they help, giving each file that no design named a [portable name](../workflow/SKILL.md#common-terms).
 7. Commit after each coherent step with a message that names the slice, unless orchestration said commits are off.
 
-- Do
-  - Add your own tests in other files when they help.
-  - Give each file that no design named a [portable name](../workflow/SKILL.md#common-terms).
 - Don't
-  - Modify, rename, or delete a frozen test.
+  - Modify, rename, or delete a frozen test, unless your slice is a fix of the slice that owns it and its **Changes** names the file.
   - Change requirements or Accepted ADRs.
 
 ## 3. Verify

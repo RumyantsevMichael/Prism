@@ -1,0 +1,45 @@
+/* prism-phase-bar: a row of rounded segments, one per slice, in the fill of each slice's phase, then a quiet label. */
+
+:host {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.bar {
+  display: flex;
+  flex: 1 1 auto;
+  gap: var(--prism-space-1);
+  min-width: 0;
+}
+
+i {
+  flex: 1 1 0;
+  min-width: 0;
+  height: var(--prism-meter-height);
+  border-radius: var(--prism-radius-round);
+  background: var(--prism-color-line-strong);
+}
+
+i[data-phase="requirements"] { background: var(--prism-color-phase-requirements-fill); }
+i[data-phase="design"] { background: var(--prism-color-phase-design-fill); }
+i[data-phase="frozen"] { background: var(--prism-color-phase-frozen-fill); }
+i[data-phase="build"] { background: var(--prism-color-phase-build-fill); }
+i[data-phase="review"] { background: var(--prism-color-phase-review-fill); }
+i[data-phase="shipped"] { background: var(--prism-color-phase-shipped-fill); }
+
+.label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.label:empty {
+  display: none;
+}

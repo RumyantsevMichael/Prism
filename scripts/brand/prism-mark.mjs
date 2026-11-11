@@ -1,8 +1,10 @@
 // Generates the Prism mark: three congruent triangles around a triangular hole turned by theta.
 // A line leaves each outer corner at theta to its edge, so each piece has angles theta, 60 - theta, and 120.
 // theta and 60 - theta are mirror images, and theta = 30 closes the hole.
-// Run `node scripts/brand/prism-mark.mjs` to rewrite the SVG files in the review app.
+// Run `node scripts/brand/prism-mark.mjs` to rewrite the SVG files in the review app and the plugin icon.
+// Rendering the icon needs a global Playwright with Chromium, the same one the browser tests use.
 import { writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 export const MARK = {
@@ -57,6 +59,30 @@ export function faviconSvg() {
 `;
 }
 
+// The plugin icon is the tab icon at the size both hosts list plugins at.
+// Claude Code wants a square PNG of 512 to 2048 pixels, and Codex reads the same file for its composer icon and logo.
+export const ICON_SIDE = 1024;
+
+export function iconSvg(side = ICON_SIDE) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${side} ${side}" width="${side}" height="${side}">
+  <rect width="${side}" height="${side}" rx="${side * 7 / 32}" fill="#ffffff"/>
+  <path fill="#111318" d="${markPath(side)}"/>
+</svg>
+`;
+}
+
+async function renderPng(svg, side) {
+  const { chromium } = createRequire(import.meta.url)("playwright");
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: side, height: side } });
+    await page.setContent(`<style>html,body{margin:0;background:transparent}svg{display:block}</style>${svg}`);
+    return await page.screenshot({ omitBackground: true });
+  } finally {
+    await browser.close();
+  }
+}
+
 // The color mark spreads a spectrum across the pieces, cool on the side the light enters and warm where it leaves.
 export const SPECTRUM = [[0, "#7fe3ff"], [0.22, "#4f8bff"], [0.45, "#7a5cff"], [0.66, "#f062d6"], [0.84, "#ff9a6e"], [1, "#ffd37a"]];
 
@@ -76,4 +102,5 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const publicDirectory = new URL("../../src/server/review/public/", import.meta.url);
   await writeFile(new URL("favicon.svg", publicDirectory), faviconSvg());
   await writeFile(new URL("prism-mark.svg", publicDirectory), gradientMarkSvg());
+  await writeFile(new URL("../../assets/icon.png", import.meta.url), await renderPng(iconSvg(), ICON_SIDE));
 }

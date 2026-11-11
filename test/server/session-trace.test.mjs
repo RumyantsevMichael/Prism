@@ -114,8 +114,10 @@ test("stores events with private permissions and adds one first_edit marker", as
   const storedNames = await readdir(traceDirectory);
   const traceName = storedNames.find((name) => name.endsWith(".json"));
   const target = path.join(traceDirectory, traceName);
-  assert.equal((await stat(traceDirectory)).mode & 0o777, 0o700);
-  assert.equal((await stat(target)).mode & 0o777, 0o600);
+  // Windows has no POSIX permission bits; its per-user folders keep these files private there.
+  if (process.platform !== "win32") assert.equal((await stat(traceDirectory)).mode & 0o777, 0o700);
+  // Windows has no POSIX permission bits; its per-user folders keep these files private there.
+  if (process.platform !== "win32") assert.equal((await stat(target)).mode & 0o777, 0o600);
   const stored = await readFile(target, "utf8");
   assert.equal(stored.includes(sessionId), false);
   assert.equal(stored.includes(projectRoot), false);
@@ -421,7 +423,8 @@ test("rejects a symbolic-link trace directory without changing its target", asyn
   const result = await appendSessionTraceEvent(traceEvent("session_start"), { dataDirectory });
   assert.equal(result.reasonCode, SESSION_TRACE_REASON.TRACE_UNAVAILABLE);
   assert.equal(await readFile(marker, "utf8"), "outside\n");
-  assert.equal((await stat(outsideDirectory)).mode & 0o777, 0o700);
+  // Windows has no POSIX permission bits; its per-user folders keep these files private there.
+  if (process.platform !== "win32") assert.equal((await stat(outsideDirectory)).mode & 0o777, 0o700);
 });
 
 test("removes stale trace temporary files before enforcing the aggregate quota", async (context) => {

@@ -4,8 +4,4 @@ node_modules/
 /dist/native/
 .claude/settings.local.json
 
-# Backfill backups (bench.py backfill --write)
-*.results.jsonl.bak
-results.jsonl.bak
-
 skills/**/*.png

@@ -3,12 +3,13 @@ import path from "node:path";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
 import { reviewAppDirectory } from "./review-app-discovery.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
+import { checkPreferenceChange, DEFAULT_PREFERENCES, normalizePreferences, PREFERENCES } from "./public/kit/preference-registry.js";
 
-// The theme and density a user chose in the review browser, kept in the review app folder so that every project, port,
+// The preferences a user chose in the review browser, kept in the review app folder so that every project, port,
 // and private session server of that user reads the same choice; browser storage is separate for every port.
+// The page and this module read one registry of preferences, so the app stores exactly the keys and values the page offers.
 export const PREFERENCES_FILE = "review-preferences.json";
-export const PREFERENCE_VALUES = Object.freeze({ theme: Object.freeze(["system", "light", "dark"]), density: Object.freeze(["compact", "comfortable"]) });
-export const DEFAULT_PREFERENCES = Object.freeze({ theme: "system", density: "compact" });
+export { DEFAULT_PREFERENCES, PREFERENCES };
 
 export function preferencesPath(env = process.env) {
   return path.join(reviewAppDirectory(env), PREFERENCES_FILE);
@@ -18,35 +19,29 @@ function invalid(message) {
   return Object.assign(new Error(message), { code: "invalid_preference" });
 }
 
-function normalize(value) {
-  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  return Object.fromEntries(Object.entries(PREFERENCE_VALUES).map(([key, allowed]) => [key, allowed.includes(source[key]) ? source[key] : DEFAULT_PREFERENCES[key]]));
-}
-
 /** The stored preferences, with the default for each value that is missing, unreadable, or invalid. */
 export async function readPreferences(env = process.env) {
   try {
-    return normalize(parseStoreJson(await readFile(preferencesPath(env), "utf8")));
+    return normalizePreferences(parseStoreJson(await readFile(preferencesPath(env), "utf8")));
   } catch {
     return { ...DEFAULT_PREFERENCES };
   }
 }
 
-/** Throws invalid_preference unless the change is an object that gives a valid theme, density, or both, and nothing else. */
+/** Throws invalid_preference unless the change is an object that gives one or more preferences, each with a value that fits it. */
 export function validatePreferenceChange(change) {
-  if (!change || typeof change !== "object" || Array.isArray(change)) throw invalid("The preferences must be a JSON object with theme, density, or both.");
-  const keys = Object.keys(change);
-  if (!keys.length) throw invalid("Give theme, density, or both.");
-  for (const key of keys) {
-    const allowed = Object.hasOwn(PREFERENCE_VALUES, key) ? PREFERENCE_VALUES[key] : null;
-    if (!allowed) throw invalid(`${key} is not a preference; give theme, density, or both.`);
-    if (!allowed.includes(change[key])) throw invalid(`${key} must be one of ${allowed.join(", ")}.`);
-  }
-  return Object.fromEntries(keys.map((key) => [key, change[key]]));
+  const checked = checkPreferenceChange(change);
+  if (checked.error) throw invalid(checked.error);
+  return checked.change;
 }
 
 // Writes of one process run one after another, so two quick choices never lose either value.
 let queue = Promise.resolve();
+
+/** The stored preferences once every write this process started has finished, so a page that reloads right after a choice reads it. */
+export function readStoredPreferences(env = process.env) {
+  return queue.then(() => readPreferences(env));
+}
 
 /** Stores the given values, keeps the stored value of a key the change leaves out, and returns the full stored preferences. */
 export function writePreferences(change, env = process.env) {

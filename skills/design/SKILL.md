@@ -15,8 +15,8 @@ Every slug, folder, test, probe, and diagram that design creates has a [portable
 ## 1. Prepare
 
 1. Read `.prism/workflow.md`, the project instructions, and the glossary.
-2. Read the scope's title, outcome, and requirement assignment through `get_initiative`.
-3. Read the assigned Approved requirements, relevant ADRs, and the parent's `slice.md` when the scope has a parent.
+2. Read the scope's title, outcome, and requirement assignment, and for a done scope its reported defects, through `get_initiative`.
+3. Read the assigned Approved requirements, relevant ADRs, and the parent's `slice.md` when the scope has a parent, and cite a shipped initiative's contracts, slice documents, frozen tests, and reviews only as history, because current intent lives only in Approved requirements, Accepted ADRs, the glossary, and feature files.
 4. Explore the code where the required behavior enters the system and every part it must change, until a fit decision is supported.
 5. When existing concepts overlap the required behavior, use `refactor` in analysis mode before deciding to add a new one.
 
@@ -53,8 +53,10 @@ Every slug, folder, test, probe, and diagram that design creates has a [portable
   - Implement production behavior.
   - Write tests that assert private helpers or internal structure.
   - Write in **Changes** the code to insert; it names where the code changes, not how.
+  - Render a diagram or look at a rendered image.
 
 When the plan has one slice, the scope itself is that slice: put **Changes** in the scope's `slice.md` and write no slice folder.
+A done scope, which holds reported defects, is designed as one fix slice whose own folder's `slice.md` holds its **Contract** and **Changes**, and when the fix must alter a done slice's frozen test, **Changes** names that file.
 
 ### Contract example
 
@@ -99,9 +101,6 @@ Write PlantUML source only: Prism parses each `.puml` file when the design is ac
 3. When a view exceeds 30 elements, split it into views a person can read.
 4. When `update_design_view` or acceptance reports a diagram problem, fix the source.
 
-- Don't
-  - Render a diagram or look at a rendered image.
-
 ## 5. Write a split
 
 1. Group the required behavior into parts that each deliver observable behavior through a starting surface and can take one contract.
@@ -118,6 +117,7 @@ Write PlantUML source only: Prism parses each `.puml` file when the design is ac
 1. Read the initiative's revision with `get_initiative`, and call `update_initiative` with one `propose_design` operation for the scope:
    - `FIT`: a `split` of the scope into its planned slices, their `set_dependencies` operations, and an `accept_design` operation per slice with its frozen tests, review recommendation, and `component`, which a repository without declared components leaves out; for a one-slice plan, only `accept_design` on the scope.
    - `SPLIT`: a `split` into the parts with the evidence, and their `set_dependencies` operations.
+   - A done scope: one `add_fix` naming the scope with the defect ids it fixes and the fix slice's slug, title, outcome, and requirements, the fix slug's `set_dependencies` and `update_slice` when needed, and one `accept_design` of the fix slug.
 2. When Prism refuses the proposal, fix the design and propose again; on `revision_conflict`, read the revision again, and on a refusal of the components declaration, such as `component_invalid`, return `BLOCKED` with its message.
 3. Return `PROPOSED` with the scope's `slice.md` path, the failing test result from step 7 of section 3, and open questions, or `BLOCKED`, each question written as a [blocker](../workflow/SKILL.md#common-terms).
 
@@ -125,8 +125,7 @@ Write PlantUML source only: Prism parses each `.puml` file when the design is ac
 
 - When orchestration returns a design question, a failed design gate, an implementer's contract defect, or changed dependencies:
   1. Read the feedback, the current contract, and the frozen tests that orchestration put back in the work tree.
-  2. Repeat the affected parts of sections 3 and 4 for the slices that have not finished, keeping the planned slices and their slugs.
-  3. When the revision needs other slices, return `BLOCKED` with the slices it needs.
-  4. Propose the result through section 6 with every unfinished slice of the scope.
+  2. Repeat the affected parts of sections 3 and 4 for the slices that have not finished, keeping the planned slices and their slugs, and when the revision needs other slices, return `BLOCKED` with the slices it needs.
+  3. Propose the result through section 6 with every unfinished slice of the scope.
 
-A frozen test changes only through a revised design that orchestration accepts again.
+A frozen test changes only through a revised design that orchestration accepts again, or through a fix slice whose **Changes** names it.

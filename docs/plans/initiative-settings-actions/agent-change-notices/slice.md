@@ -1,5 +1,8 @@
 # Agents act on the person's changes
 
+> Shipped history: initiative `initiative-settings-actions` shipped on 2026-11-08, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 Running agents learn of the person's changes and who made them once per session, from this machine or through store sync, in Prism's tool results and gate waits, keep the person's settings over their own, and apply the review policy at design acceptance.

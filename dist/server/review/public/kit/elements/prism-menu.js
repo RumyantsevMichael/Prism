@@ -11,15 +11,19 @@ function pixels(element, name) {
 
 export class PrismMenu extends Base {
   static tag = "prism-menu";
-  static observedAttributes = ["for", "open"];
+  static observedAttributes = ["for", "open", "heading", "keys"];
   static catalog = {
     purpose: "A menu of actions and choices that opens from a kit button, floats on glass, and stays inside the window.",
     options: [
       { name: "for", values: ["id"], default: "", description: "The id of the kit button that opens the menu; the menu sets aria-haspopup and aria-expanded on it. Without it the menu shows in place." },
-      { name: "open", values: ["boolean"], default: "false", description: "Whether the menu is open." }
+      { name: "open", values: ["boolean"], default: "false", description: "Whether the menu is open." },
+      { name: "heading", values: ["text"], default: "", description: "A title row at the top of the menu, which also names it." },
+      { name: "keys", values: ["text"], default: "", description: "The shortcut that opens the menu, shown as a keycap at the end of its title row." },
+      { name: "size", values: ["default", "wide"], default: "default", description: "wide takes --prism-menu-width, for a menu of tiles and switches." },
+      { name: "sheet", values: ["boolean"], default: "false", description: "At --prism-sheet-width and below, the menu spans the window's width inside its margins, as a sheet over its button." }
     ],
-    states: ["closed", "actions", "groups"],
-    keyboard: ["Enter, Space, or ArrowDown on the button opens the menu on its first item, and ArrowUp on its last item.", "ArrowUp, ArrowDown, Home, and End move between items.", "Enter, Space, or a click chooses an item, sends prism-select, closes the menu, and returns focus to the button.", "Escape closes the menu and returns focus; Tab or a click outside closes it."]
+    states: ["closed", "actions", "groups", "titled", "sheet"],
+    keyboard: ["Enter, Space, or ArrowDown on the button opens the menu on its first item, and ArrowUp on its last item.", "ArrowUp, ArrowDown, Home, and End move between items; in a group of tiles or segments ArrowLeft and ArrowRight move between its items.", "Enter, Space, or a click chooses an item, sends prism-select, closes the menu, and returns focus to the button.", "Escape closes the menu and returns focus; Tab or a click outside closes it."]
   };
 
   constructor() {
@@ -46,6 +50,7 @@ export class PrismMenu extends Base {
 
   connectedCallback() {
     setAttribute(this, "role", "menu");
+    this.syncTitle();
     this.bind();
     if (!this.trigger && this.hasAttribute("for")) requestAnimationFrame(() => this.bind());
   }
@@ -58,11 +63,34 @@ export class PrismMenu extends Base {
 
   attributeChangedCallback(name) {
     if (!this.isConnected) return;
-    if (name === "for") this.bind();
+    if (name === "heading" || name === "keys") this.syncTitle();
+    else if (name === "for") this.bind();
     else if (name === "open" && !this.changing) {
       if (this.hasAttribute("open")) this.show();
       else this.close();
     }
+  }
+
+  // The title row: the heading, which also names the menu, and the keycap of its shortcut.
+  syncTitle() {
+    const heading = this.getAttribute("heading") ?? "";
+    const keys = this.getAttribute("keys") ?? "";
+    if (!heading && !this.title$) return;
+    if (!this.title$) {
+      const document = this.ownerDocument;
+      this.title$ = document.createElement("div");
+      this.title$.className = "prism-menu-title";
+      this.title$.setAttribute("aria-hidden", "true");
+      this.titleText$ = document.createElement("span");
+      this.titleKeys$ = document.createElement("prism-kbd");
+      this.title$.append(this.titleText$, this.titleKeys$);
+    }
+    if (this.firstElementChild !== this.title$) this.prepend(this.title$);
+    this.titleText$.textContent = heading;
+    this.titleKeys$.textContent = keys;
+    this.titleKeys$.hidden = !keys;
+    this.title$.hidden = !heading;
+    setAttribute(this, "aria-label", heading || null);
   }
 
   get floating() {
@@ -178,6 +206,10 @@ export class PrismMenu extends Base {
     this.style.removeProperty("max-height");
     const width = globalThis.innerWidth;
     const height = globalThis.innerHeight;
+    // A sheet spans the window inside its margins at the sheet width and below.
+    const sheet = this.hasAttribute("sheet") && width <= pixels(this, "--prism-sheet-width");
+    if (sheet) this.style.setProperty("width", `${Math.max(0, width - 2 * margin)}px`);
+    else this.style.removeProperty("width");
     const below = height - anchor.bottom - gap - margin;
     const above = anchor.top - gap - margin;
     let box = this.getBoundingClientRect();
@@ -227,6 +259,16 @@ export class PrismMenu extends Base {
       case "ArrowUp":
         next = items[(index - 1 + items.length) % items.length];
         break;
+      case "ArrowRight":
+      case "ArrowLeft": {
+        // Tiles and segments sit side by side, so the side arrows move inside their group and wrap at its ends.
+        const group = current?.closest("prism-menu-group[layout]");
+        if (!group || !["tiles", "segmented"].includes(group.getAttribute("layout"))) return;
+        const row = items.filter((item) => item.closest("prism-menu-group") === group);
+        const at = row.indexOf(current);
+        next = row[(at + (event.key === "ArrowRight" ? 1 : -1) + row.length) % row.length];
+        break;
+      }
       case "Home":
         next = items[0];
         break;

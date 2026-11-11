@@ -86,7 +86,8 @@ export function createCodeGraphCommandRunner(options = {}) {
           cwd: invocation.cwd,
           env: environment,
           shell: false,
-          stdio: ["ignore", "pipe", "pipe"]
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true
         });
       } catch (error) {
         reject(new CodeGraphRuntimeError("process-start-failed", "CodeGraph could not start.", { cause: error }));

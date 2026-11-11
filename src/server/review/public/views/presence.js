@@ -17,7 +17,8 @@ function claimRow(claim, onOpen) {
   const row = document.createElement("li");
   row.className = `presence-row${claim.expired ? " is-expired" : ""}`;
   const holder = text("span", "presence-holder", "");
-  holder.append(text("span", "presence-name", claim.label), " ", text("span", "presence-kind", "Agent"));
+  // The kind names the harness the agent runs in when its claim records one.
+  holder.append(text("span", "presence-name", claim.label), " ", text("span", "presence-kind", claim.host || "Agent"));
   const what = text("span", "presence-what", "");
   const link = text("a", "presence-slice", claim.sliceTitle);
   link.href = `./review?artifact=${encodeURIComponent(claim.ref)}`;

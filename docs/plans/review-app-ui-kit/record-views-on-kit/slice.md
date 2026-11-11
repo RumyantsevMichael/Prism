@@ -1,5 +1,8 @@
 # Record, document, source, and diagram views on the kit
 
+> Shipped history: initiative `review-app-ui-kit` shipped on 2026-11-09, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Changes
 - change `src/server/review/public/views/change-map.js`, `src/server/review/public/views/review-ledger.js`, `src/server/review/public/views/coordination-state.js`: cards, filters, badges, and disclosures are kit elements, and each record is titled by its kind and slice rather than its file (clauses 69, 81, 82).
 - change `src/server/review/public/views/evidence.js`, `src/server/review/public/views/graph.js`: the drawer is a kit dialog, meters and zoom tools are kit elements, and graph colors read tokens (clauses 8, 45, 81, 82).

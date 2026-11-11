@@ -1,7 +1,9 @@
 import { createServer } from "node:http";
+import { arrangeGroups, GROUP_LIMIT, groupNameOf, joinGroup } from "./public/views/tab-groups.js";
 import { randomBytes } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PLUGIN_ROOT } from "../plugin-root.mjs";
@@ -16,12 +18,14 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { entityContext, entityExists, forgetWorkspace, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
+import { entityContext, entityExists, forgetWorkspace, loadClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords } from "./workspace-model.mjs";
+import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
-import { readPreferences, writePreferences } from "./review-preferences.mjs";
+import { readStoredPreferences, writePreferences } from "./review-preferences.mjs";
 import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
+import { createViewerHub, openEventStream, writeEvent } from "./viewer-hub.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -35,7 +39,6 @@ const TEXT_EXTENSIONS = new Set([".md", ".feature", ".puml", ".json"]);
 const EVIDENCE_ARRAY_LIMIT = 200;
 // Requests naming any other host are refused, so a DNS-rebinding page cannot reach the server.
 const TRUSTED_HOSTS = new Set(["127.0.0.1", "localhost"]);
-const VIEWER_HEARTBEAT_MS = 15 * 1000;
 const VIEWER_OPEN_RETRY_MS = 10 * 1000;
 // The stale hint runs Git in the project, so its answer is reused for this long however often the page asks.
 const FRESHNESS_CHECK_MS = 30 * 1000;
@@ -116,7 +119,7 @@ const sourceCache = new Map();
 
 function gitListFiles(projectRoot) {
   return new Promise((resolve) => {
-    execFile("git", ["-C", projectRoot, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { maxBuffer: 64 * 1024 * 1024 }, (error, stdout) => {
+    execFile("git", ["-C", projectRoot, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (error, stdout) => {
       resolve(error ? [] : stdout.split("\0").filter(Boolean));
     });
   });
@@ -421,6 +424,41 @@ async function serveFile(response, filePath, contentType) {
   }
 }
 
+/** Whether a request is a browser loading a page, as opposed to a script, a stylesheet, or a call from the page. */
+export function wantsPage(request) {
+  if (request.method !== "GET" && request.method !== "HEAD") return false;
+  const destination = request.headers["sec-fetch-dest"];
+  if (destination) return destination === "document";
+  return /\btext\/html\b/.test(request.headers.accept ?? "");
+}
+
+const UNAVAILABLE_REASONS = new Set(["expired", "empty"]);
+
+/** The page for a link the review app cannot open: one without the current viewer credential ("expired") or an app with no project yet ("empty"). */
+export async function sendUnavailable(response, reason) {
+  const page = await readFile(path.join(PUBLIC_DIR, "unavailable.html"), "utf8");
+  send(response, 404, page.replace("{{reason}}", UNAVAILABLE_REASONS.has(reason) ? reason : "expired"), "text/html; charset=utf-8");
+}
+
+/**
+ * Answers a request that carries no current viewer credential. Only the kit's files and the marks, which hold no project data, are served,
+ * and a page load gets the page that says the link no longer works, so a stale tab or a bare address shows the app's own page rather than a line of text.
+ */
+export async function serveOutsideSession(request, response, pathname) {
+  if (pathname === "/favicon.svg" || pathname === "/prism-mark.svg") {
+    await serveFile(response, path.join(PUBLIC_DIR, pathname.slice(1)), "image/svg+xml");
+    return;
+  }
+  if (pathname === "/unavailable.js") {
+    await serveFile(response, path.join(PUBLIC_DIR, "unavailable.js"), "text/javascript; charset=utf-8");
+    return;
+  }
+  const asset = request.method === "GET" || request.method === "HEAD" ? publicAsset(pathname) : null;
+  if (asset) await serveFile(response, asset.file, asset.type);
+  else if (wantsPage(request)) await sendUnavailable(response, "expired");
+  else send(response, 404, "Not found");
+}
+
 // The file and type of a route under kit/ or styles/, or null for a path that leaves its folder, is not a known type, or is not a styles/<name>.css.
 export function publicAsset(route) {
   const folder = route.startsWith("/kit/") ? "kit" : route.startsWith("/styles/") ? "styles" : null;
@@ -442,10 +480,12 @@ export function publicAsset(route) {
 
 export function openBrowser(url) {
   const platform = process.platform;
-  const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open";
-  const args = platform === "win32" ? ["/c", "start", "", url] : [url];
+  // cmd.exe's start would read an & in the URL's query as a second command, so Windows opens the URL through the shell's URL handler.
+  const command = platform === "darwin" ? "open" : platform === "win32" ? "rundll32" : "xdg-open";
+  const args = platform === "win32" ? ["url.dll,FileProtocolHandler", url] : [url];
   try {
-    const child = spawn(command, args, { detached: true, stdio: "ignore" });
+    // A browser that the opener starts inherits its working folder, so it starts in the home folder and never keeps a project folder busy, which Windows would refuse to remove or rename.
+    const child = spawn(command, args, { cwd: homedir(), detached: true, stdio: "ignore", windowsHide: true });
     child.on("error", () => {});
     child.unref();
     return true;
@@ -485,6 +525,34 @@ export function normalizeTabs(value) {
     throw new Error("The open tabs must be an array of project-relative artifact paths.");
   }
   return [...new Set(tabs)];
+}
+
+function copyGroups(groups) {
+  return groups.map((group) => ({ name: group.name, tabs: [...group.tabs], collapsed: group.collapsed }));
+}
+
+// A page's groups name open tabs, each tab in one group at most, with names that differ.
+function checkGroups(value, openTabs, follow = (tab) => tab) {
+  if (!Array.isArray(value) || value.length > GROUP_LIMIT) {
+    throw new Error(`The tab groups must be an array of at most ${GROUP_LIMIT} groups.`);
+  }
+  const names = new Set();
+  const grouped = new Set();
+  return value.map((group) => {
+    if (!group || typeof group !== "object" || Array.isArray(group)) throw new Error("Each tab group must be an object with a name and its tabs.");
+    const name = groupNameOf(group.name);
+    if (names.has(name)) throw new Error(`Two tab groups are named ${name}.`);
+    names.add(name);
+    const tabs = normalizeTabs(group.tabs).map(follow);
+    if (!tabs.length) throw new Error(`The tab group ${name} has no tabs.`);
+    for (const tab of tabs) {
+      if (!openTabs.includes(tab)) throw new Error("Grouped tabs must be open tabs.");
+      if (grouped.has(tab)) throw new Error("A tab can be in one tab group only.");
+      grouped.add(tab);
+    }
+    if (Object.hasOwn(group, "collapsed") && typeof group.collapsed !== "boolean") throw new Error("A tab group's collapsed must be true or false.");
+    return { name, tabs, collapsed: group.collapsed === true };
+  });
 }
 
 // Reads a request body of at most 64 KiB as text; the review app needs the exact text because control requests sign it.
@@ -550,7 +618,8 @@ async function readJson(request) {
 // onAction(event, { shared, comment }) receives each applied action's event, the history entry with its initiative, instead of this page's viewer streams;
 // shared is false for an index target, whose history belongs to this checkout alone, and comment is the id of a stored comment, which names its file, or null.
 // Without it, the event reaches this page's viewer streams.
-export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, onAction = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null, writeSessions = null,
+// hub holds the shared viewer streams of the origin that serves this page; the review app passes one hub to every project, and a session server keeps its own.
+export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, onAction = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null, writeSessions = null, hub = createViewerHub(),
   rebuildIndex = (root, component, options = {}) => backgroundPreparation().then((module) => module.startIndexRebuild(root, { ...(component ? { component: { identity: component.identity, folder: component.folder } } : {}), ...options })), autoRebuild = (root) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }) {
   let fingerprint = null;
   function currentFingerprint() {
@@ -585,15 +654,21 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       Promise.resolve(rebuildIndex(root, component)).catch(() => {});
     }
   };
-  let session = { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], revision: 0 };
+  // activeSource says who chose the active tab last: "agent" for a presentation, or the id of the review window that chose it, so each window
+  // follows what an agent presents and its own choices, never another window's.
+  // groups name sets of open tabs, such as the tabs an agent presented for one piece of work: each group's tabs stay side by side in openTabs,
+  // in the order openTabs gives them, and a collapsed group shows only its name and its selected tab.
+  let session = { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], groups: [], activeSource: null, revision: 0 };
   // Each viewer stream maps to its heartbeat and whether it carries a live write session; only writable streams count as connected tabs.
+  // The review page joins the origin's shared stream instead, as a member of the hub under this page's path, and counts the same way.
   const viewers = new Map();
+  const hubKey = `${new URL(baseUrl).pathname}/`;
   let viewerOpenLease = null;
   const canWrite = (token) => Boolean(writeSessions?.valid(token));
   const writableRequest = (request) => canWrite(request.headers["x-prism-write"]);
 
   function sessionSnapshot() {
-    const snapshot = { openTabs: [...session.openTabs], activeTab: session.activeTab, previewTab: session.previewTab, agentTabs: [...session.agentTabs], revision: session.revision };
+    const snapshot = { openTabs: [...session.openTabs], activeTab: session.activeTab, previewTab: session.previewTab, agentTabs: [...session.agentTabs], groups: copyGroups(session.groups), activeSource: session.activeSource, revision: session.revision };
     return instance ? { ...snapshot, instance, ...(appVersion ? { appVersion } : {}) } : snapshot;
   }
 
@@ -612,10 +687,6 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     viewerOpenLease.unref();
   }
 
-  function writeEvent(response, event, data) {
-    response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  }
-
   function removeViewer(response) {
     const viewer = viewers.get(response);
     if (!viewer) {
@@ -626,6 +697,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   function notify(event, data) {
+    hub.notify(hubKey, event, data);
     for (const response of viewers.keys()) {
       try {
         writeEvent(response, event, data);
@@ -637,33 +709,25 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   function openViewerStream(response, writable) {
-    response.writeHead(200, {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-store",
-      Connection: "keep-alive",
-      "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
-      "X-Content-Type-Options": "nosniff",
-      "Referrer-Policy": "no-referrer"
-    });
-    response.flushHeaders();
-    const heartbeat = setInterval(() => {
-      try {
-        response.write(": keep-alive\n\n");
-      } catch {
-        removeViewer(response);
-        response.destroy();
-      }
-    }, VIEWER_HEARTBEAT_MS);
-    heartbeat.unref();
+    const heartbeat = openEventStream(response, () => removeViewer(response));
     viewers.set(response, { heartbeat, writable });
-    response.once("close", () => removeViewer(response));
     if (writable) clearViewerOpenLease();
     writeEvent(response, "session", sessionSnapshot());
     onViewer?.((event, data) => writeEvent(response, event, data));
   }
 
+  // A tab joins the shared stream with its own write session, which decides whether it counts as a writable tab, exactly as its own stream would.
+  // It starts from the session snapshot and the pending notices, sent on the shared stream for this page only.
+  function joinHub(stream, tab, writable) {
+    if (!hub.join(stream, tab, hubKey, writable)) return false;
+    if (writable) clearViewerOpenLease();
+    hub.send(stream, hubKey, "session", sessionSnapshot());
+    onViewer?.((event, data) => hub.send(stream, hubKey, event, data));
+    return true;
+  }
+
   function writableViewerCount() {
-    let count = 0;
+    let count = hub.count(hubKey, { writable: true });
     for (const viewer of viewers.values()) if (viewer.writable) count += 1;
     return count;
   }
@@ -687,17 +751,33 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     const follow = (tab) => moves.get(tab) ?? tab;
     const agentTabs = [...new Set(session.agentTabs.map(follow))];
     const previewTab = session.previewTab && follow(session.previewTab);
-    return commitSession({ openTabs: [...new Set(session.openTabs.map(follow))], activeTab: session.activeTab && follow(session.activeTab), previewTab: agentTabs.includes(previewTab) ? null : previewTab, agentTabs });
+    const groups = session.groups.map((group) => ({ ...group, tabs: group.tabs.map(follow) }));
+    return commitSession({ openTabs: [...new Set(session.openTabs.map(follow))], activeTab: session.activeTab && follow(session.activeTab), previewTab, agentTabs, groups, activeSource: session.activeSource });
   }
 
   // Reading the session first lets moved records' tabs follow them, so every reader sees the records where they now live.
+  // Reads and changes of the session run in the order they arrive, so a page that reloads right after a change reads that change,
+  // however long the file listing that each of them waits on takes, as it does on a slow disk.
+  let sessionWork = Promise.resolve();
+  function inSessionOrder(task) {
+    const run = sessionWork.then(task);
+    sessionWork = run.catch(() => {});
+    return run;
+  }
+
   async function currentSession() {
     return followMovedRecords(await reviewableFiles());
   }
 
-  function commitSession(next) {
+  // Every change goes through here, so grouped tabs always sit side by side and neither an agent tab nor a grouped tab is ever the preview.
+  function commitSession(proposed) {
+    const arranged = arrangeGroups(proposed.openTabs, proposed.groups ?? session.groups);
+    const grouped = new Set(arranged.groups.flatMap((group) => group.tabs));
+    const previewTab = proposed.previewTab && !proposed.agentTabs.includes(proposed.previewTab) && !grouped.has(proposed.previewTab) ? proposed.previewTab : null;
+    const next = { ...proposed, ...arranged, previewTab };
     const changed = ["openTabs", "agentTabs"].some((key) => next[key].length !== session[key].length || next[key].some((tab, index) => tab !== session[key][index]))
-      || next.activeTab !== session.activeTab || next.previewTab !== session.previewTab;
+      || JSON.stringify(next.groups) !== JSON.stringify(session.groups)
+      || next.activeTab !== session.activeTab || next.previewTab !== session.previewTab || next.activeSource !== session.activeSource;
     if (changed) {
       session = { ...next, revision: session.revision + 1 };
       notify("session", sessionSnapshot());
@@ -742,39 +822,48 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       }
       agentTabs = requestedAgentTabs;
     }
+    const groups = Object.hasOwn(body, "groups") ? checkGroups(body.groups, requestedTabs, follow) : session.groups;
     if (requestedTabs.length === 0) {
       nextActiveTab = null;
     }
-    return commitSession({ openTabs: requestedTabs, activeTab: nextActiveTab, previewTab: agentTabs.includes(previewTab) ? null : previewTab, agentTabs });
+    // A window names itself with a short id; an active tab it did not choose keeps its source.
+    const source = typeof body.source === "string" && /^[\w-]{1,64}$/.test(body.source) ? body.source : "page";
+    const activeSource = nextActiveTab === session.activeTab ? session.activeSource : source;
+    return commitSession({ openTabs: requestedTabs, activeTab: nextActiveTab, previewTab, agentTabs, groups, activeSource });
   }
 
   // get_review_url adds tabs the same way present_review does, so neither tool closes the human's tabs.
-  async function setOpenTabs(tabs) {
-    return (await presentTabs(tabs)).openTabs;
+  async function setOpenTabs(tabs, options) {
+    return (await presentTabs(tabs, options)).openTabs;
   }
 
   // present_review adds agent tabs beside the human's tabs and focuses the first one without replacing the preview.
-  async function presentTabs(tabs) {
+  // A group name gathers the presented tabs into that group, made when no group has the name yet, and shows the group expanded;
+  // a tab already in another group moves into it, and tabs presented without a name keep the groups they are in.
+  async function presentTabs(tabs, { group } = {}) {
     const requestedTabs = normalizeTabs(tabs);
+    const groupName = group === undefined || group === null ? null : groupNameOf(group);
     const available = await reviewableFiles();
     await assertAvailable(requestedTabs, available);
     await followMovedRecords(available);
     if (requestedTabs.length === 0) {
       if (session.openTabs.includes("attention")) {
-        return commitSession({ ...session, activeTab: "attention" });
+        return commitSession({ ...session, activeTab: "attention", activeSource: "agent" });
       }
       // Attention opens in the preview tab, replacing whatever the preview showed.
       const openTabs = [...session.openTabs.filter((tab) => tab !== session.previewTab), "attention"];
-      return commitSession({ openTabs, activeTab: "attention", previewTab: "attention", agentTabs: session.agentTabs });
+      return commitSession({ openTabs, activeTab: "attention", previewTab: "attention", agentTabs: session.agentTabs, activeSource: "agent" });
     }
     const openTabs = [...session.openTabs, ...requestedTabs.filter((tab) => !session.openTabs.includes(tab))];
     const agentTabs = [...session.agentTabs, ...requestedTabs.filter((tab) => !session.agentTabs.includes(tab))];
     const previewTab = requestedTabs.includes(session.previewTab) ? null : session.previewTab;
-    return commitSession({ openTabs, activeTab: requestedTabs[0], previewTab, agentTabs });
+    const groups = groupName ? joinGroup(session.groups, groupName, requestedTabs) : session.groups;
+    return commitSession({ openTabs, activeTab: requestedTabs[0], previewTab, agentTabs, groups, activeSource: "agent" });
   }
 
   function closeViewerStreams() {
     clearViewerOpenLease();
+    hub.close();
     for (const response of viewers.keys()) {
       removeViewer(response);
       response.end();
@@ -801,7 +890,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       if (asset) await serveFile(response, asset.file, asset.type);
       else send(response, 404, "Not found");
     } else if (route === "/api/preferences" && request.method === "GET") {
-      send(response, 200, JSON.stringify(await readPreferences()), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify(await readStoredPreferences()), "application/json; charset=utf-8");
     } else if (route === "/api/preferences" && request.method === "PUT") {
       if (!fromPage(request)) {
         send(response, 403, "Preferences must come from the review page as JSON.");
@@ -812,7 +901,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         try {
           change = parseStoreJson(await readBody(request));
         } catch {
-          throw Object.assign(new Error("The preferences must be a JSON object with theme, density, or both."), { code: "invalid_preference" });
+          throw Object.assign(new Error("The preferences must be a JSON object that gives one or more preferences."), { code: "invalid_preference" });
         }
         send(response, 200, JSON.stringify(await writePreferences(change)), "application/json; charset=utf-8");
       } catch (error) {
@@ -823,6 +912,22 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       await serveFile(response, path.join(VIEWS_DIR, route.slice("/views/".length)), "text/javascript; charset=utf-8");
     } else if (route === "/api/events" && request.method === "GET") {
       openViewerStream(response, canWrite(url.searchParams.get("write")));
+    } else if (route === "/api/events/shared" && request.method === "GET") {
+      hub.open(response);
+    } else if ((route === "/api/events/join" || route === "/api/events/leave") && request.method === "POST") {
+      if (!fromPage(request)) {
+        sendJson(response, 403, { code: "origin_refused", message: "A tab joins the event stream from the review page as JSON." });
+        return;
+      }
+      const body = await readJson(request);
+      if (route === "/api/events/leave") {
+        hub.leave(body?.stream, body?.tab);
+        sendJson(response, 200, {});
+      } else if (joinHub(body?.stream, body?.tab, writableRequest(request))) {
+        sendJson(response, 200, { project: hubKey });
+      } else {
+        sendJson(response, 404, { code: "stream_gone", message: "The event stream closed; join the stream that replaced it." });
+      }
     } else if (route === "/api/index") {
       const artifacts = await listArtifacts(projectRoot), sources = await listReviewSources(projectRoot);
       const available = new Set([...artifacts, ...sources]);
@@ -837,10 +942,10 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       if (conflict) send(response, 200, JSON.stringify(conflict), "application/json; charset=utf-8");
       else send(response, 404, "No saved conflict has that name.");
     } else if (route === "/api/session" && request.method === "GET") {
-      send(response, 200, JSON.stringify(await currentSession()), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify(await inSessionOrder(currentSession)), "application/json; charset=utf-8");
     } else if (route === "/api/session" && request.method === "PUT") {
       const body = await readJson(request);
-      send(response, 200, JSON.stringify(await updateSession(body)), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify(await inSessionOrder(() => updateSession(body))), "application/json; charset=utf-8");
     } else if (route === "/api/actions" && request.method === "GET") {
       try {
         const listed = await listActions({ projectRoot, target: url.searchParams.get("target"), indexer });
@@ -904,10 +1009,26 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         return;
       }
       send(response, 200, JSON.stringify(await loadEntity(projectRoot, ref, { intelligenceDirectories: intelligenceDirectories() })), "application/json; charset=utf-8");
+    } else if (route === "/api/claims" && request.method === "GET") {
+      send(response, 200, JSON.stringify(await loadClaims(projectRoot)), "application/json; charset=utf-8");
     } else if (route === "/api/evidence") {
       send(response, 200, JSON.stringify(await loadEvidence(projectRoot, url.searchParams.get("id"), evidenceStore())), "application/json; charset=utf-8");
     } else if (route === "/api/indexing" && request.method === "GET") {
       send(response, 200, JSON.stringify(await indexingStatus()), "application/json; charset=utf-8");
+    } else if (route === "/api/records/search" && request.method === "GET") {
+      // The Knowledge search: requirements, decisions, glossary terms, and diagrams whose title or text holds every word.
+      send(response, 200, JSON.stringify(await searchRecords(projectRoot, url.searchParams.get("q"))), "application/json; charset=utf-8");
+    } else if (route === "/api/touched" && request.method === "GET") {
+      // Touched by my work: the records behind one slice, what its contract cites and what its work changes.
+      try {
+        send(response, 200, JSON.stringify(await touchedRecords(projectRoot, url.searchParams.get("slice"))), "application/json; charset=utf-8");
+      } catch (error) {
+        if (!(error instanceof TouchedError)) throw error;
+        send(response, error.status, JSON.stringify({ code: error.code, error: error.message }), "application/json; charset=utf-8");
+      }
+    } else if (route === "/api/changed" && request.method === "GET") {
+      // Changed this week: the record files changed in the last 7 days, read from Git on each request.
+      send(response, 200, JSON.stringify(await loadRecordChanges(projectRoot)), "application/json; charset=utf-8");
     } else if (route === "/api/search") {
       send(response, 200, JSON.stringify(await searchArtifacts(projectRoot, url.searchParams.get("q"))), "application/json; charset=utf-8");
     } else if (route === "/api/artifact") {
@@ -947,6 +1068,10 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         return;
       }
       send(response, 200, JSON.stringify(loaded), "application/json; charset=utf-8");
+    } else if (wantsPage(request) && !/^\/(api|kit|styles|views|vendor)\//.test(route)) {
+      // A page address the app no longer has, such as one from an earlier release, opens the project's start page instead of a line of text.
+      response.writeHead(302, { Location: `${baseUrl}/`, "Cache-Control": "no-store" });
+      response.end();
     } else {
       send(response, 404, "Not found");
     }
@@ -964,7 +1089,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     },
     currentSession,
     viewerCount() {
-      return viewers.size;
+      return viewers.size + hub.count(hubKey);
     },
     writableViewerCount,
     notify,
@@ -1004,7 +1129,7 @@ export async function startReviewServer(options = {}) {
       }
       const url = new URL(request.url, "http://127.0.0.1");
       if (!url.pathname.startsWith(prefix)) {
-        send(response, 404, "Not found");
+        await serveOutsideSession(request, response, url.pathname);
         return;
       }
       await review.handle(request, response, url.pathname.slice(prefix.length) || "/", url);
@@ -1032,9 +1157,9 @@ export async function startReviewServer(options = {}) {
     viewerCount: review.viewerCount,
     setOpenTabs: review.setOpenTabs,
     reviewUrl: review.reviewUrl,
-    async open(artifactPaths) {
+    async open(artifactPaths, options) {
       const tabs = normalizeTabs(artifactPaths);
-      await review.presentTabs(tabs);
+      await review.presentTabs(tabs, options);
       const url = review.reviewUrl(tabs);
       if (!review.claimBrowserOpen()) {
         return { url, opened: false, ...review.getSession() };

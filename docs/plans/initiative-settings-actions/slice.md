@@ -1,5 +1,8 @@
 # Initiative settings from the review app
 
+> Shipped history: initiative `initiative-settings-actions` shipped on 2026-11-08, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 The person changes an initiative's orchestration settings from the review app through a generic, revision-checked action registry that only the person's page can write, and running agents act on the change at its next effect point.

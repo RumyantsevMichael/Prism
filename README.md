@@ -109,5 +109,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-[MIT](LICENSE).
+[Apache License 2.0](LICENSE); see [NOTICE](NOTICE).
+Releases up to and including 0.21.0 were published under the MIT License, and those releases remain available under it.
 Prism bundles the MIT build of PlantUML, described in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

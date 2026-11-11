@@ -16,7 +16,7 @@ Start a review from a Prism checkout when no agent session is active:
 ./bin/prism review docs/requirements/reports.md
 ```
 
-The browser opens on Attention, or on the artifact you name, and later visits return to the page you left open.
+The browser opens on Attention, or on the artifact you name, and later visits restore the tabs you left open.
 
 `Review browser: auto` in `.prism/workflow.md` uses the internal browser in desktop sessions and the system browser in CLI sessions.
 Set `internal` or `external` to override this choice.
@@ -36,29 +36,82 @@ A choice applies at once, and System follows the operating system again.
 The catalog's own toolbar changes its theme, density, and width for that tab only, and stores nothing.
 
 The top bar holds the Prism mark, the project switcher, the search button that opens the Jump palette, and **Who's working**.
-The status bar at the bottom shows where the project's records live, their sync state, and the repository index.
-The sidebar is the only navigation.
-It lists Attention and Roadmap, every initiative with its state, the open initiative's slices or the open library section's documents, and the Library, with Requirements, Decisions, and the Glossary.
-A slice that has subslices expands when you expand it or when one of its subslices is open.
-At a window width of 1100 pixels or less the sidebar is hidden, and the Navigation button at the left of the top bar opens it as a drawer that closes when you choose a page.
-If you narrow the window past that width while the sidebar has the focus, the focus moves to the Navigation button.
+The status bar at the bottom shows where the project's records live, naming a shared store, their sync state, and the repository index.
+The rail at the left edge switches between five places, and the sidebar beside it shows only the current place, under its title and a line that says what it holds.
+**Attention** shows what waits on you, and the rail's Attention button carries the number of recorded questions that wait for an answer.
+Its sidebar lists **Everything**, then under **By kind** **Questions**, **Review findings**, **Failed verifications**, **Blocked work**, **Ready to ship**, and **Problems**, each with its count, also at 0, then under **By work** the three initiatives with the most items and a row such as `2 more` that shows the rest below it, and under **Answered** **Answered in the last 7 days**.
+**Work** lists each initiative that has an initiative record and is neither shipped nor superseded, with its slices, under the groups **In progress**, **Blocked**, **Designed, not started**, and **Not on the roadmap**, each with its count, and leaves out an empty group.
+An initiative is **Blocked** when one of its slices is blocked and none is in progress or claimed, and it keeps the roadmap's order inside its group; initiatives that are not on the roadmap go by title.
+**Roadmap** switches the Roadmap page between **Board**, **List**, and **Graph** under **View**, marking the view the page shows, and lists **Now**, **Next**, **Later**, and **Parked** under **Lanes**, each with its count of open initiatives; choosing it on the rail also opens the Roadmap page.
+A lane opens the board with that lane's heading scrolled into view, also again while the board is open, and its address, such as `review?artifact=roadmap&lane=parked`, does the same in a new window.
+**Knowledge** starts with a search field, such as `Search 11 records`, that counts the requirements files, decisions, glossary terms, and diagrams.
+Below it, **Start from** holds **Touched by my work** and **Changed this week**, and **Browse by kind** holds **Requirements**, **Decisions**, **Glossary**, and **Diagrams**, each with its count.
+**Touched by my work** lists the records behind the slice in the selected tab, or else the slice you selected last since the page loaded, and its count is the number of those records.
+Its page groups them under **The contract cites**, read from the slice's design: the requirements sections the slice is assigned, the decisions, requirements files, and diagrams its `slice.md` links to, and the glossary terms its contract clauses name as whole words.
+**This work changes** lists the requirements files, decisions, glossary, and diagrams that a line of the slice's `Changes` names, and those that differ between the content the slice started from and the content its latest passing verification tested.
+Each record shows its kind, its status from its `Status:` line, and why it is listed, such as `Section 1`, `Clauses 1, 2`, `Linked from the design`, `Planned by the design`, or `Changed by the verified result`.
+Without a slice the page says so and lists every slice in progress, so you can open one.
+The page and its count follow edits to the slice's design and new passing verifications while they are shown, without a reload.
+**Changed this week** lists the requirements files, decisions, glossary, and diagrams changed in the last 7 days, read from the repository's Git history: files Git reports modified, added, or untracked come first as `Not committed`, then those a commit changed, newest first, with the commit's time and author, a renamed file counting as changed.
+A merge commit counts the files it changed against its first parent, so a branch merged this week counts at the merge's time and author even when its own commits are older.
+When the project is not a Git repository, has no commit yet, or Git cannot be run, the page says `Change history is unavailable:` with the reason, lists the records it could not date, and the sidebar shows no count for **Changed this week**.
+**Diagrams** lists every PlantUML file of the plans and decisions folders by the name after `@startuml`, or by its file name, with what it belongs to: the initiative and slice whose folder holds it, the initiative, or the decision beside it.
+Typing two or more characters in the search replaces the groups with the matching requirements, decisions, glossary terms, and diagrams, grouped by kind and at most 20 of each, titles that hold the text first.
+A record matches when every word you type occurs in its title or its text, ignoring case, and a glossary term opens the Glossary.
+Clearing the field or pressing Esc in it brings the groups back.
+**History** lists the shipped and superseded initiatives, newest decision first, each with the decision's date, such as `9 Nov`, or `14 Jun 2025` in another year, and a muted `Superseded` mark on superseded ones; hover or focus a row to see when it shipped, or when it was superseded and by which initiative.
+It says `Nothing has shipped yet.` while there is none.
+Choosing any other place leaves the open page as it is, and the place stays while you change tabs, follow links, use the palette, or go back.
+The browser remembers the current place, so a reload or a new window shows it again, and an address with `place=work`, or another place's name, chooses that place.
+The page bar's trail starts with the place of the open page, and choosing that crumb makes the place current without leaving the page.
+An initiative's row shows its state as a round glyph and its shipped leaf slices out of all, such as `0/4`.
+Expanded, it lists at most five of its unfinished slices, each with a triangle in the color of its phase, its holder, and `Blocked` when it is blocked: the slice you have open first, then those in progress or claimed, then blocked ones, then the rest.
+A last row, such as `3 more unfinished` with `2 done`, or `All slices` when every unfinished slice is listed, opens the initiative's page with all its slices.
+Hover or focus a row to see its full title with its status, its phase, and its claim; the Roadmap lists every initiative, including shipped and envisioned ones.
+An initiative expands when you expand it, when its page or one of its slices' pages is open, or when one of its slices is in progress or claimed, and you can collapse it.
+Type in **Filter work** to keep only the initiatives and slices whose titles hold the text, ignoring case, each matching slice under its initiative; clear the field, or press Escape in it, to see every group again.
+Below the groups, a note says that shipped work moves to History and that emerging and unplanned items stay on the Roadmap.
+Every row is a link, so a middle-click or a Shift click opens the page in a new browser tab or window, and the browser's context menu can copy its address; a crumb of the page bar works the same way.
+Above 1100 pixels, press `[` or use the sidebar button at the top of the rail to hide the sidebar and keep the rail, and again to show it; the review app keeps the choice for every project and later session, and choosing a place shows the sidebar again.
+At a window width of 1100 pixels or less the rail and the sidebar are hidden, and the Navigation button at the left of the top bar opens a drawer that holds the rail and the current place's sidebar; choosing a place in it switches the sidebar, and choosing a page opens it and closes the drawer.
+The bell at the right of the top bar then keeps the Attention count and opens the Attention page.
+If you widen the window past that width while the drawer is open, the drawer closes and the rail and the sidebar return; if you narrow it while the sidebar has the focus, the focus moves to the Navigation button.
 
-The page bar at the top of the page holds Back and Forward and the trail of the page's place, initiative, and slice by title.
-Back and Forward, Alt+Left and Alt+Right, and the browser's own buttons move through the pages you visited in that browser tab.
+The top of the main area holds a tab for each open page.
+A link opens in the preview tab, whose title is italic, and the next link replaces it.
+Ctrl-click or Cmd-click a link, double-click or middle-click a link in a page, press Ctrl+Enter or Cmd+Enter in the Jump palette, or choose Open as tab in the side panel to open a tab that stays open.
+Double-click the preview tab or choose its Keep button to keep it open.
+A new tab opens right after the selected tab.
+Close a tab with its close button or a middle click, and when you close the last tab the page says that nothing is open.
+Tabs that an agent presents carry the agent mark and stay open until you close them, and a presentation of several artifacts opens a tab for each of them and shows the first.
+The open tabs belong to the session, so every browser window of the session shows the same tabs, and a reload or a later visit restores them.
+When tabs do not fit, the strip scrolls sideways and keeps the selected tab in view, and a long title ends with an ellipsis whose full text shows on hover or focus.
+With the focus on a tab, the arrow keys, Home, and End move between tabs, Enter opens one, and Tab reaches that tab's Keep and close buttons.
+
+The page bar below the tabs holds Back and Forward and the trail of the page's place, initiative, and slice by title.
+Back and Forward, Alt+Left and Alt+Right, and the browser's own buttons move through the pages you visited in that browser tab, and the address names the selected tab.
 A page that an agent presents opens as the next page.
 Prism's records and documents appear by title and kind, such as Design, Diagram, or Change map, and only repository files are named by their path.
-A page whose file was moved or deleted, or whose initiative or slice no longer exists, says so and offers to close it, and it shows the page again on its own when the target comes back, for example after a checkout.
-When Prism moves a record from its legacy location into `.prism/`, a page on that record follows it to the new path.
+A tab whose file was moved or deleted, or whose initiative or slice no longer exists, is dimmed and struck through, and its page says so and offers Close tab.
+The tab and its page return to normal on their own when the target comes back, for example after a checkout.
+When Prism moves a record from its legacy location into `.prism/`, a tab on that record follows it to the new path.
 
 **Who's working** shows up to three avatars of the agents that hold a live claim on a slice, and how many are working.
-Its popover lists every live claim and then every claim that expired, with the holder, the activity, the slice, and the time left.
+Its popover lists every live claim and then every claim that expired, with the holder, the harness the agent runs in when its claim records one (otherwise Agent), the activity, the slice, and the time left.
 The sidebar shows a claimed slice's holder at the end of its row.
 Claims are read-only in the browser.
 
 A banner appears when the review server stops responding, and it clears when the connection returns.
 When the server stays silent for about 15 seconds, the banner says that the review app stopped and the page is no longer live, and actions that need the server say so instead of failing silently.
 A restarted app uses a new link, so ask the agent to open the review browser to get one, or run `./bin/prism review` from a Prism checkout.
+Opening an old link after a restart, or the app's port without a link, shows a page that says the link no longer works; it cannot list your projects, because the link is what keeps other users of the computer from reading them.
+The app's own address opens the project an agent used last, and a link to a project the app no longer lists opens that project too, with a notice to choose another from the project menu.
 The page keeps checking and recovers on its own when the same app or its upgraded successor answers.
+A check that gets no answer within 8 seconds counts as no answer, so a server that is too busy to answer shows the banner instead of a page that silently stops changing.
+
+You can keep as many review tabs open as you like, of one project or of several, in one browser.
+A browser opens at most six connections to the review app for all its tabs together, so the tabs share one live connection: one tab holds it, passes what it hears to the others, and hands it to another tab when you close it.
+A tab in the background checks nothing until you show it again, and then it catches up at once.
 
 ## Attention
 
@@ -85,7 +138,12 @@ Codex runs that hook only after you trust Prism's current hook definition throug
 Elsewhere, or after the 55 minutes, the agent receives the answer with your next message, even a short one such as "go".
 An answer to the approval of a requirement or ADR reaches, once and in the same ways, only an agent working in the checkout that asked for the approval, however long you take to answer.
 Agents in other checkouts or on other machines are not told, but any agent that reads that file also reads your latest answer and its note, so requested changes are not lost when nothing waits.
-Attention also lists blocked slices, open findings, and active work.
+Attention also lists blocked slices, open findings, failed verifications, and active work.
+A slice that is not done is a failed verification while its latest verification run failed, with the reason in words, such as `The tests failed, 2 tests failed`, until a later run passes or the slice is done.
+Choosing a kind or an initiative in the sidebar opens Attention filtered to it, at an address such as `attention:failed` or `attention:work/<initiative>`, which shows only those items, says above them the filter and its count, such as `Failed verifications · 1 of 13 items`, and offers **Show everything**.
+Each filtered item opens where it is handled: a question opens Attention with that question picked so you can answer it, and a failed verification opens its slice.
+Questions are the recorded questions that wait for an answer and the notes left for you; problems are unreadable or invalid records, a missing or invalid roadmap, initiatives with a record that the roadmap does not list, the roadmap's open questions, and workflow settings warnings.
+**Answered in the last 7 days** lists the questions answered or closed in the last 7 days, newest first, each with its initiative and slice and your answer or the reason the agent closed it.
 Under Earlier questions it shows the 20 most recently closed questions with your answer, or with the reason the agent gave when it closed a question you had not answered in the browser.
 Under Recent changes it shows the 20 newest actions applied from the review app, newest first: setting changes and answers of every initiative in the project's records, answers to the approvals of the requirements and ADRs this checkout sees, each with the file and its scope, comments on the files this checkout sees, each with the file, its scope, the line, and the start of the comment, and index rebuilds of this checkout.
 Each change shows the value before and after it, the author's Git name, or email when no name is set, and the checkout label and host the change came from.
@@ -138,10 +196,12 @@ An initiative has these settings, each with its default and the moment an agent 
 Turning autonomy to `full`, commit on, or push on asks you to confirm first, because it lets agents act further without you.
 
 Every setting can change at any time, including after work on the initiative started.
+Once an initiative ships, its state is history, so every action on the initiative, its slices, and its questions shows as unavailable with the reason `The initiative shipped on <date>, so its state is history.`, and Prism refuses one sent anyway and changes nothing.
+Index actions are not part of an initiative, so shipping one leaves them available.
 
 ### Initiative settings card
 
-The initiative page, and every slice page of the initiative, ends with an **Initiative settings** card.
+The initiative page ends with an **Initiative settings** card, and on every slice page of the initiative the card opens from **Details and settings** at the end of the page bar, below the slice's details.
 An initiative whose record cannot be read and that the roadmap does not list has no settings, so its page shows no card.
 On a slice page the card names the initiative above its title, because the settings belong to the whole initiative and a change there applies to every slice.
 Each setting shows its options as a button group, the sentence on when a change takes effect, and for an on or off setting what the picked option does.
@@ -161,10 +221,12 @@ In a repository without components, the root component's rebuild prepares the ch
 
 ## Roadmap, initiatives, and slices
 
-The roadmap shows initiatives as a board, a list, or a dependency graph.
-The board has one lane per band and one column per state, and each card shows its priority rank within its band.
-Click a lane to collapse it.
+The roadmap shows initiatives as a board, a list, or a dependency graph, chosen under **View** in the Roadmap place's sidebar, which is the only place to switch them.
+The review app keeps the chosen view, the archive toggle, and the collapsed lanes, so every later roadmap opens the way you left it.
+The board stacks one full-width lane per band in priority order, an empty band on one line, and each card shows its priority rank within its band and its state.
+Click a lane's arrow to collapse it.
 Shipped and superseded initiatives appear only with "Show shipped and superseded".
+A superseded initiative's page says below its title when it was superseded and by which initiative, linked, and the decision's reason.
 
 An initiative page shows its slices as a board, a list, or a graph.
 The board has one column per slice status, and the card of an active slice also shows its activity, workers, and review lanes.
@@ -174,6 +236,12 @@ A slice that records a [component](workflow.md#components) carries a small label
 Below them, the page lists the unstarted leaves that can be designed next, leaving out those in design review.
 A slice page shows the slice's diagrams, its design from `slice.md`, the verification run, the review ledger, and every file in the slice folder.
 It is the page to read at a design gate.
+Under its title a tag names the slice's phase with its gate or status, such as `Design · design gate open`, beside its requirements, and below the lifecycle a strip shows who holds the slice, since when, when the holder last renewed the claim, and the time left, with the exact times on hover or focus.
+The Review ledger tab counts the open findings and the Files tab the slice folder's files.
+The review ledger's findings board has a `DEFERRED` column after `VERIFIED` for findings that you accepted with a follow-up at the review loop decision, and a deferred finding's details name its decision gate, its follow-up, and the wave that deferred it.
+The review summary counts deferred findings apart from unresolved ones, and the slice's review card lists each deferred finding with its severity, title, decision gate, and follow-up.
+On Attention, the review loop decision shows its summary with the findings of each wave as a table.
+**Details and settings** at the end of the page bar shows the slice's outcome, slug, parent, children, dependencies, and active work, and the initiative's settings.
 
 Every PlantUML file directly in the slice folder gets a tab above the design, with `code.puml` first when it exists.
 A diagram sits on a sheet that follows the light or dark theme.
@@ -204,6 +272,7 @@ An agent-planned change map, from slices designed before verification runs, star
 Each change has one card with its reason, its before and after references, its own problems, and its reuse evidence.
 A reference opens the file, at the heading when the reference names one.
 Group changes by action or by file, and blocked changes come first.
+An evidence link, such as a receipt or a baseline snapshot, opens the evidence drawer at the right of the page, which leaves the page usable and stays open while you open records from it; Esc or **Close** closes it.
 The graph mode shows the same changes as before, change, and after nodes, and a node jumps to its card.
 
 Each review wave card, slice page, and initiative page shows run totals from the recorded runs: runs, wall time, elapsed and summed active time, token categories, and tool calls.
@@ -214,24 +283,39 @@ Active time excludes idle gaps over the stated threshold, and new runs appear wi
 
 JSON records such as the coordination state have a Structured and a Raw view.
 
+### Shipped history
+
+A shipped initiative records finished work, so its page and each of its slice pages show the label `Shipped history: <initiative> shipped on <date>; this page records finished work.` above their content.
+Each slice document of a shipped initiative, its `slice.md`, shows the same label above the document.
+When that document changed after the initiative shipped, ignoring the history mark that Prism writes into it, the label adds `This document changed after the initiative shipped.`
+A link preview of such a document carries the same label.
+An open question of a shipped initiative moves out of Needs you on Attention into a Shipped history group, marked `Cannot be answered` with the reason `The initiative shipped on <date>, so its state is history.`, and it does not count among the questions that wait on you or in the Attention badge.
+For an initiative that shipped before Prism recorded its slice documents, the first page that reaches it records their content then and marks each one as history, so commit those marked files apart from other changes.
+Take current intent from Approved requirements, Accepted ADRs, the glossary, and feature files, and treat a shipped initiative's pages only as a record of what was built.
+
 ## Documents and diagrams
 
 Prism stores diagrams as PlantUML `.puml` source files, and the browser renders them without creating image files.
 Markdown links open the linked file or heading in the review.
 A link to a missing file or a target outside the project is marked as missing, and an external link opens in a new browser tab.
 A document with three or more headings gets a contents list that marks the current section.
+In a wide window the contents stay beside the text while it scrolls, and a list longer than the window scrolls on its own and keeps the current section in view.
+In a window 1100 pixels wide or narrower the contents sit above the text and fold open from their header.
+Consecutive lines of text render as one paragraph, as in CommonMark, so a document written one sentence per line reads as ordinary paragraphs.
 Each heading with text under it has a fold toggle beside it, and a link or contents entry that leads into a folded section opens it.
 Code in source files, Markdown code blocks, previews, and diagram source is highlighted by language.
 
 Hover over or focus any internal link to preview its target.
+An open preview stays while the pointer crosses other links on its way to the preview, and switches to another link only when the pointer rests on it.
 An initiative preview shows its state, band, intent, and progress, and a slice preview shows its status and outcome.
 A link to a document section previews that section.
 A link to a PlantUML file previews the diagram drawn small enough to fit.
 A file's preview has a Show in side panel button, and Alt+click on a link does the same: the whole file opens in a panel beside the current page, at the linked heading or lines.
 The panel draws a PlantUML file, and the diagrams a document links, as its page does, fitted to the panel's width, with the same zoom and source controls.
 The side panel holds one file at a time, so opening another replaces it, and a link inside the panel opens its target in the panel.
-Open as page opens the file as the page, Esc or the close button closes the panel, and dragging its left edge sets its width.
-Graph, diagram, and document cards can be maximized, and Esc restores them.
+Open as tab opens the file in a tab that stays open, Esc or the close button closes the panel, and dragging its left edge sets its width.
+Graph, diagram, and document cards can be maximized with their Maximize button, and Esc restores them.
+A maximized document keeps its Restore button in view while it scrolls, in its contents header when it has contents.
 
 ### Review a file in the record store
 
@@ -289,6 +373,7 @@ Checkouts whose records live in one shared store form one workspace, with the na
 Choose the workspace's name to open its records through the checkout already open, else one an agent session is using, else the one you used last.
 Every checkout of a workspace shows the same roadmap, initiatives, and questions, so choose a checkout only for its own source files and index.
 Every other recent project is listed under its repository, even a repository with one checkout, with its open questions.
+The switcher's counts of open questions follow a question that an agent recorded or answered within about 15 seconds, and one answered in the browser within about 5 seconds.
 The switcher marks the projects an agent session is using now, and lists workspaces first and then repositories, each in name order, so entries never move while you look.
 When an agent presents a review for another project while a tab that can make changes is open, that tab shows a notice with a link instead of a second tab opening.
 
@@ -309,6 +394,17 @@ Each fallback also adds a line with the time, project, and reason to `fallbacks.
 `prism review` opens the project in the shared review app and returns.
 It opens the system browser only when no review tab that can make changes is open, and such a tab shows the project or a notice with a link to it instead.
 When the shared app cannot start or `PRISM_REVIEW_APP=off` is set, `prism review` serves the review itself until you stop it with `Ctrl-C`.
+
+## Logs
+
+Every Prism process writes to one log file, `logs/prism.log` in the state directory above, so the review app, each session's MCP server, and their index builds leave one record.
+Each line is a JSON object with the time, level, event, process name and id, and the event's own fields.
+The log records each process start and stop, index builds with their phases, durations, and failures, review app requests that fail or take more than two seconds, MCP tool calls that fail, and uncaught errors.
+It also records each time a process stops answering for more than a second, with what it was doing at the time, such as the index phase of the component being built.
+Past 5 MiB the file moves to `prism.log.1`, replacing the older one.
+Set `PRISM_LOG_LEVEL` to `debug`, `info` (the default), `warn`, `error`, or `off`, and set `PRISM_LOG_DIR` to write the log to another folder.
+An MCP server also writes its warnings and errors to its error output, which the agent host keeps with its own logs.
+The log holds project paths, component names, and tool names, but no file contents, search queries, or tool arguments.
 
 ## Security
 

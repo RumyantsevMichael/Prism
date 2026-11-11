@@ -357,3 +357,42 @@ Requirement: When a person or agent reads an initiative, Prism shall show each l
 Rationale: People and agents choose other work by seeing who works on what, and an agent whose claim lapsed or was released learns that it no longer holds the slice.
 
 Related: [§19](#19)
+
+<a id="26"></a>
+## 26. Refuse work on a slice without its holder's claim
+
+Pattern: Unwanted behavior
+
+Disposition: Active
+
+Requirement: If an agent proposes or accepts a design, restores frozen tests, reports contract defects, moves a slice out of `in-progress`, verifies a slice, or writes its review, change map, or design view, while no live claim of its own is on the slice or one of its ancestors, then Prism shall refuse the call before changing anything, say whether its own claim expired or no claim covers the slice, and name the claim operation that takes it.
+
+Rationale: A claim that is checked only when work starts lets an agent that never claimed a slice, or whose claim lapsed, keep working on it unseen, so work must stop wherever it lacks a claim, not only at its start.
+
+Related: [§19](#19), [§20](#20), [§27](#27), [slice-claims.md](../ADRs/workflow-records/slice-claims.md)
+
+<a id="27"></a>
+## 27. Refuse a change to a slice that another holder's claim covers
+
+Pattern: Unwanted behavior
+
+Disposition: Active
+
+Requirement: If an agent's call changes a slice while another holder's live claim is on the slice, one of its ancestors, or one of its descendants, then Prism shall refuse the call before changing anything and name that claim's label, activity, and expiry.
+
+Rationale: Editing a slice that someone else is working on collides with their work as surely as starting it twice.
+
+Related: [§20](#20), [§26](#26)
+
+<a id="28"></a>
+## 28. Claim a slice in progress again
+
+Pattern: Event-driven
+
+Disposition: Active
+
+Requirement: When an agent claims a slice that is `in-progress` and that no other holder's live claim covers, Prism shall record an implementation claim for the agent, and when it claims any other slice, a design claim.
+
+Rationale: An agent whose claim lapsed while the slice stayed in progress takes the slice back without restarting it, and the activity tells people what the holder does.
+
+Related: [§19](#19), [§26](#26)

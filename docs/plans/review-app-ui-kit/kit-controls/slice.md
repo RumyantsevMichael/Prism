@@ -1,5 +1,8 @@
 # Kit controls, catalog, and Appearance menu
 
+> Shipped history: initiative `review-app-ui-kit` shipped on 2026-11-09, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Changes
 - add `src/server/review/public/kit/elements/prism-button.js`, `src/server/review/public/kit/elements/prism-button.css`: shadow-DOM button with variants, sizes, pressed, and label (clauses 29, 24).
 - add `src/server/review/public/kit/elements/prism-icon.js`, `src/server/review/public/kit/elements/prism-icon.css`: the icon set in the current text color, with the back, forward, menu, panel, link, and agent glyphs (clause 30).

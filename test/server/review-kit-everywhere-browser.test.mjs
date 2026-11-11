@@ -13,8 +13,11 @@ import { contrastFailures, demoProject, launch, movingElements, openPage, review
 const run = promisify(execFile);
 const choose = (base, body) => fetch(`${base}/api/preferences`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
-test("clause 62: the layout check passes every page, overlay, and the catalog at a phone and a laptop width in both themes", { skip, timeout: 900000 }, async () => {
-  const result = await run(process.execPath, [path.join(ROOT, "scripts/review-demo/layout-check.mjs"), "--viewports", "phone,laptop", "--themes", "light,dark"], { maxBuffer: 16 * 1024 * 1024, timeout: 890000 }).catch((error) => error);
+// The check renders every page in a real browser, which takes about nine minutes on a Linux runner and about twice that on Windows.
+const LAYOUT_CHECK_MS = process.platform === "win32" ? 1790000 : 890000;
+test("clause 62: the layout check passes every page, overlay, and the catalog at a phone and a laptop width in both themes", { skip, timeout: LAYOUT_CHECK_MS + 10000 }, async () => {
+  const result = await run(process.execPath, [path.join(ROOT, "scripts/review-demo/layout-check.mjs"), "--viewports", "phone,laptop", "--themes", "light,dark"], { maxBuffer: 16 * 1024 * 1024, timeout: LAYOUT_CHECK_MS }).catch((error) => error);
+  assert.equal(result.signal ?? null, null, `the layout check finished within ${LAYOUT_CHECK_MS} ms`);
   assert.equal(result.code ?? 0, 0, `the layout check reports:\n${result.stdout}`);
   assert.match(result.stdout, /0 distinct findings/);
 });
@@ -126,7 +129,8 @@ test("clauses 9, 21, 24: comfortable density makes every kit control of the page
       const root = getComputedStyle(document.documentElement);
       const sizes = ["--prism-control-height", "--prism-control-height-sm", "--prism-row-height", "--prism-subtab-height"].map((name) => Math.round(parseFloat(root.getPropertyValue(name))));
       return [...document.querySelectorAll("prism-button, prism-tab, prism-tree-item, prism-menu-item, prism-list-item")].filter((element) => element.getClientRects().length).map((element) => {
-        const own = element.shadowRoot?.firstElementChild ?? element;
+        // An expanded tree item holds its child items, so its own row is the control that is measured.
+        const own = element.shadowRoot?.firstElementChild ?? element.querySelector(":scope > .prism-tree-row") ?? element;
         const height = Math.round(Math.min(element.getBoundingClientRect().height, own.getBoundingClientRect().height || Infinity));
         return { tag: element.tagName.toLowerCase(), height, sized: sizes.includes(height) || sizes.includes(Math.round(element.getBoundingClientRect().height)) };
       });

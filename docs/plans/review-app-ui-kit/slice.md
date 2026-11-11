@@ -1,5 +1,8 @@
 # Review app UI kit
 
+> Shipped history: initiative `review-app-ui-kit` shipped on 2026-11-09, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 The review app moves onto one kit: design values in one file, one `prism-*` custom element per kind of control, theme and density choices stored by the review app, shipped fonts, a served catalog, and checks that refuse styling around the kit.
 [mockup/mockup.html](mockup/mockup.html) shows the chosen look in both themes and both densities at 1440, 820, and 390px, built from [mockup/tokens.css](mockup/tokens.css), which holds the design values, and the fonts in [mockup/fonts/](mockup/fonts/).
 The architecture is recorded in [own-ui-kit.md](../../ADRs/review-ui-kit/own-ui-kit.md).

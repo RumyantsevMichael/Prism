@@ -20,11 +20,13 @@ test("uses host-specific portable MCP launch paths", async () => {
   });
   assert.equal(codexManifest.mcpServers, "./.codex-mcp.json");
   assert.deepEqual(codexMcp.mcpServers["prism-review"], {
-    command: "./bin/prism-mcp",
+    // Windows cannot run a script by its #! line, so Codex starts the launcher through Node on every platform.
+    command: "node",
+    args: ["./bin/prism-mcp"],
     cwd: ".",
     env: { NODE_USE_ENV_PROXY: "1" },
     // Codex passes a plugin's MCP server only basic variables, so the app folder settings must be forwarded by name.
-    env_vars: ["PRISM_REVIEW_APP_DIR", "XDG_STATE_HOME"]
+    env_vars: ["PRISM_REVIEW_APP_DIR", "XDG_STATE_HOME", "LOCALAPPDATA"]
   });
 });
 
@@ -75,6 +77,8 @@ test("packages compatible capacity and trace hooks at the default plugin path", 
     assert.ok(commands(event).includes(roleCommand), event);
   }
   assert.deepEqual(hookManifest.hooks.PreToolUse.filter((group) => group.hooks.some((hook) => hook.command === roleCommand)).map((group) => group.matcher), ["Skill"]);
+  // Codex clamps a SessionEnd hook to 3 seconds and warns about any longer timeout.
+  assert.deepEqual(hookManifest.hooks.SessionEnd.flatMap((group) => group.hooks).map((hook) => hook.timeout), [3, 3]);
   assert.equal(Object.hasOwn(hookManifest.hooks, "PostModelSwitch"), false);
   assert.equal(Object.hasOwn(hookManifest.hooks, "PostCompact"), false);
   assert.deepEqual(traceBehaviorRegistry.profiles.map((profile) => profile.match.harnessVersion), [

@@ -4,6 +4,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isolatedEnv } from "./isolated-env.mjs";
+import { defer } from "./teardown.mjs";
 
 // Git checkouts of separate repositories that share one record store, each driven by a real Prism server over stdio.
 // A test file sets HOME, the Git configuration, and the Git identity in process.env before it uses these helpers, as the M1 tests do.
@@ -145,7 +146,7 @@ export async function prismServer(context, root, { appFolder, hostRoot = true, e
     await groupEnded(child.pid);
   };
   running.add(close);
-  context.after(close);
+  defer(context, close);
   let next = 1;
   const request = (method, params) => new Promise((resolve, reject) => {
     const id = next++;
@@ -165,4 +166,11 @@ export async function prismServer(context, root, { appFolder, hostRoot = true, e
 export const notes = (response) => (response.result?.content ?? []).slice(1).map((item) => item.text).join("\n");
 
 /** Create an initiative through the server, a record write that opens the store. */
-export const createInitiative = (server, slug = "reports") => server.call("update_initiative", { initiative: slug, expectedRevision: null, operations: [{ op: "create", slug, title: "Reports", requirements: ["r.md#1"] }] });
+// The server also claims the root slice for design, since an agent's design proposal needs its holder's live claim, unless claim is false;
+// it returns the create's response, or the refused create or claim.
+export const createInitiative = async (server, slug = "reports", { claim = true } = {}) => {
+  const created = await server.call("update_initiative", { initiative: slug, expectedRevision: null, operations: [{ op: "create", slug, title: "Reports", requirements: ["r.md#1"] }] });
+  if (!claim || created.error || created.result?.isError) return created;
+  const claimed = await server.call("update_initiative", { initiative: slug, expectedRevision: created.result.structuredContent.revision, operations: [{ op: "claim", slug }] });
+  return claimed.error || claimed.result?.isError ? claimed : created;
+};

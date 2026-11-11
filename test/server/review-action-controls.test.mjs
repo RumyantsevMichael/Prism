@@ -125,7 +125,8 @@ test("an applied action reaches the tabs of every checkout of the workspace, and
     const discovery = await readFile(path.join(directory, "review-app.json"), "utf8").then(JSON.parse, () => null);
     if (discovery?.pid && discovery.pid !== process.pid) try { process.kill(discovery.pid); } catch {}
     await new Promise((resolve) => setTimeout(resolve, 200));
-    await rm(parent, { recursive: true, force: true });
+    // The app logs its stop into the folder as it exits, so removal retries a folder that is not yet empty.
+    await rm(parent, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
   await storeFolder(parent);
   const billing = await repository(parent, "billing", { repository: "billing" });

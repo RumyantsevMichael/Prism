@@ -139,9 +139,11 @@ async function verify(prism, review, initiative, slice) {
 
 const roadmapRevision = async (prism) => ok(await prism.call("get_roadmap", {})).revision;
 const ship = async (prism, afterGate) => prism.call("update_roadmap", { expectedRevision: await roadmapRevision(prism), operations: [{ op: "ship", id: "reports", afterGate }] });
+// A new correctness gate replaces the answered ones before it, which would otherwise stay pending and refuse the ship as open work.
 async function ask(prism, gate) {
   const state = ok(await prism.call("get_coordination_state", { initiative: "reports" }));
-  return ok(await prism.call("update_coordination_state", { initiative: "reports", expectedRevision: state.revision, changes: { gateOperations: [{ op: "ask", ...gate }] } })).openedGates[0].id;
+  const replaced = gate.kind === "correctness" ? (state.state?.pending ?? []).filter((item) => item.kind === "correctness" && item.answer).map((item) => ({ op: "resolve", id: item.id, reason: "A newer correctness gate replaces it." })) : [];
+  return ok(await prism.call("update_coordination_state", { initiative: "reports", expectedRevision: state.revision, changes: { gateOperations: [...replaced, { op: "ask", ...gate }] } })).openedGates[0].id;
 }
 async function approved(prism, review, gate = { kind: "correctness", question: "Ship the reports initiative?", context: "Every slice passed verification.", artifacts: [] }) {
   const id = await ask(prism, gate);
@@ -187,8 +189,11 @@ test("clause 43: a correctness gate asked before a slice.md changed, or before a
   assert.equal(await statusOf(prism, OTHER), "Proposed", "a refused ship accepts nothing");
 
   const second = await approved(prism, review);
+  // Verifying the done slice again needs a claim on it, which is released before the ship, since a live claim is open work.
+  ok(await prism.call("update_initiative", { initiative: "reports", expectedRevision: await revision(prism), operations: [{ op: "claim", slug: "reports" }] }));
   const rerun = await verify(prism, review, "reports", "reports");
   assert.equal(rerun.status, "passed");
+  ok(await prism.call("update_initiative", { initiative: "reports", expectedRevision: await revision(prism), operations: [{ op: "release_claim", slug: "reports" }] }));
   const verifiedAgain = refused(await ship(prism, second), "ship_unconfirmed");
   assert.deepEqual(verifiedAgain.data.changed, [{ slice: "reports", run: rerun.runId ?? verifiedAgain.data.changed[0].run }]);
   assert.match(verifiedAgain.message, /reports passed verification again in run/);
@@ -289,7 +294,7 @@ test("clause 44: a ship accepts an ADR of the repository of the slice that links
   const webReview = await reviewBrowser(context, web);
   await writeArtifact(onWeb, "docs/ADRs/web/client.md", adrFile("Client"), { scope: "repository" });
   await writeArtifact(onWeb, "docs/ADRs/web/other.md", adrFile("Other"), { scope: "repository" });
-  ok(await createInitiative(onApi, "reports"));
+  ok(await createInitiative(onApi, "reports", { claim: false }));
   await writeArtifact(onApi, SLICE, "# Reports\n\n## Assumptions\n- Unprobed: the split holds; parts differ.\n");
   await writeArtifact(onApi, "docs/plans/reports/a/slice.md", "# A\n\n[another repository's](../../../ADRs/web/other.md)\n");
   await writeArtifact(onApi, "docs/plans/reports/b/slice.md", "# B\n\n[client](../../../ADRs/web/client.md)\n");
@@ -334,7 +339,7 @@ test("clause 44: a link that could name ADRs in two scopes names the one in its 
   await writeArtifact(onWeb, SHARED, adrFile("Shared"), { scope: "repository" });
   await writeArtifact(onWeb, SPLIT, adrFile("Split on web"), { scope: "repository" });
   await writeArtifact(onApi, SPLIT, adrFile("Split on the workspace"), { scope: "workspace" });
-  ok(await createInitiative(onApi, "reports"));
+  ok(await createInitiative(onApi, "reports", { claim: false }));
   await writeArtifact(onApi, SLICE, "# Reports\n\nCites [shared](../../ADRs/x/shared.md).\n\n## Assumptions\n- Unprobed: the split holds; parts differ.\n");
   await writeArtifact(onApi, "docs/plans/reports/a/slice.md", "# A\n");
   await writeArtifact(onApi, B_SLICE, "# B\n");
@@ -396,7 +401,7 @@ test("clause 44: a sync that meets a ship's acceptance and an approval asked on 
   const onA = await server(context, a, api);
   const reviewA = await reviewBrowser(context, api);
   await writeArtifact(onA, CITED, adrFile(CITED));
-  ok(await createInitiative(onA, "reports"));
+  ok(await createInitiative(onA, "reports", { claim: false }));
   await writeArtifact(onA, SLICE, CONTRACT);
   await designAndVerify(onA, reviewA, "reports", "reports", TEST_FILE);
   ok(await onA.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] }] }));

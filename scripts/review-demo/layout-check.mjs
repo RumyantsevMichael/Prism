@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { ROOT } from "./project.mjs";
 import { auditPage as audit, checkCatalog, checkNames, loadPlaywright as installedPlaywright, VIEWPORTS } from "./layout-audit.mjs";
@@ -68,7 +69,7 @@ try {
   await writeFile(path.join(empty, ".prism/workflow.md"), await readFile(path.join(parent, "demo/.prism/workflow.md")));
   projects.push({ name: "empty", root: empty, data: path.join(parent, "empty-data") });
 
-  const { startStandaloneReview } = await import(path.join(ROOT, "dist/server/review/review-server-pool.mjs"));
+  const { startStandaloneReview } = await import(pathToFileURL(path.join(ROOT, "dist/server/review/review-server-pool.mjs")).href);
   for (const project of projects) {
     const env = { ...process.env, PRISM_REVIEW_APP_DIR: appDirectory, PLUGIN_DATA: project.data };
     delete env.PRISM_REVIEW_APP;
@@ -97,7 +98,8 @@ try {
         const url = new URL("review", project.url);
         url.searchParams.set("artifact", ref);
         await page.goto(url.href);
-        await page.waitForSelector('#artifact[aria-busy="false"]', { timeout: 10000 }).catch(() => record("the page did not render", current));
+        // The bound only tells a page that never renders from a slow one, as the largest stress pages are on a busy Windows runner.
+        await page.waitForSelector('#artifact[aria-busy="false"]', { timeout: 30000 }).catch(() => record("the page did not render", current));
         await page.waitForTimeout(400);
       };
       const check = async (project, label) => {
@@ -161,9 +163,14 @@ try {
   try {
     const discovery = JSON.parse(await readFile(path.join(appDirectory, "review-app.json"), "utf8"));
     process.kill(discovery.pid);
+    // The app logs its stop into the app folder as it exits, so the folder is removed only once the app has gone.
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      try { process.kill(discovery.pid, 0); } catch { break; }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   } catch {
   }
-  await rm(parent, { recursive: true, force: true });
+  await rm(parent, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
 for (const problem of catalogProblems) process.stdout.write(`${catalogLine(problem)}\n`);
