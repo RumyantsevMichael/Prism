@@ -32,4 +32,5 @@ Read it before you start.
    Name the package, the license, whether it ships, which package pulls it in, and an alternative if you found one.
    Do not add it while waiting.
 5. For a shipped dependency, record its license text and copyright notice where Prism already keeps them: `THIRD_PARTY_NOTICES.md` and `vendor/<component>/LICENSE` for vendored files, or the license files the native runtime build collects.
-6. Say in the commit body which new licenses the change brings in, or that it brings in none.
+6. Run `npm run check:licenses`, which CI also runs, and resolve every reported package.
+7. Say in the commit body which new licenses the change brings in, or that it brings in none.
