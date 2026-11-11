@@ -1,7 +1,7 @@
 import path from "node:path";
 import { mkdir, readFile } from "node:fs/promises";
 import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
-import { assertInput } from "../workflow/artifact-schema.mjs";
+import { assertInput, describeErrors } from "../workflow/artifact-schema.mjs";
 import { resolveArtifactPath, readChangeMapDocument } from "../conservation/change-map.mjs";
 import { locateRecord, moveLegacyRecords, sameRecord, sliceDocumentFolder, writeRecord } from "../workflow/record-store.mjs";
 import { regularBytes } from "../repository-intelligence/native-semantic-runtime.mjs";
@@ -54,7 +54,7 @@ export const UPDATE_REVIEW_SCHEMA = obj({ ...common, delivery: str, actor: obj({
   obj({ op: { const: "submit_lane" }, lane: str, status: { enum: ["CLEAN", "FINDINGS"] } }),
   obj({ op: { const: "carry_lane" }, lane: str, fromWave: str }),
   obj({ op: { const: "carry_assessments" }, lane: str, fromWave: str, ids: arr(str) }, ["op", "lane", "fromWave"]),
-  obj({ op: { const: "accept_wave" }, gate: str, deferrals: { ...arr(obj({ finding: str, followUp: { type: "string", maxLength: 8192 } }), 100), minItems: 1 } }, ["op"]),
+  obj({ op: { const: "accept_wave" }, gate: str, deferrals: { ...arr(obj({ finding: str, followUp: { type: "string" } }), 100), minItems: 1 } }, ["op"]),
   obj({ op: { const: "import_legacy" }, path: str }),
   obj({ op: { const: "regenerate_markdown" } })
 ] }) }, ["projectRoot", "initiative", "slice", "expectedRevision", "actor", "operations"]);
@@ -75,8 +75,9 @@ export const unresolvedFindings = (review: ReviewRecord) => review.findings.filt
 const closedFinding = (finding: Finding) => finding.status === "VERIFIED" || finding.status === "DEFERRED";
 // The implementation-review waves since the design was accepted, in start order; a wave without a start time started when the design was accepted.
 export const reviewWaves = (review: ReviewRecord, acceptedAt: string) => review.waves.filter(item => item.mode === "implementation-review" && (item.startedAt ?? acceptedAt) >= acceptedAt);
-// A decision gate chose an option through its browser answer or through the choice that resolve recorded when the user answered in conversation.
-export const gateChose = (gate: GateRecord, option: string) => gate.answer?.choice === option || gate.choice === option;
+// A decision gate chose an option through its browser answer or through the choice that resolve recorded when the user answered in conversation;
+// resolve may only repeat a browser answer's option, so a stored choice that contradicts one never outweighs the user's own answer.
+export const gateChose = (gate: GateRecord, option: string) => typeof gate.answer?.choice === "string" ? gate.answer.choice === option : gate.choice === option;
 async function sliceGates(input: SliceInput) {
   const state = (await readCoordinationState({ projectRoot: input.projectRoot, initiative: input.initiative })).state as { pending?: GateRecord[]; closed?: GateRecord[] } | null;
   return [...(state?.pending ?? []), ...(state?.closed ?? [])];
@@ -186,11 +187,33 @@ const recordSchema = obj({
   exchangeWorkers: arr(str, 10000), legacy: arr(obj({ path: str, hash: hashField, content: { type: "string", maxLength: 1024 * 1024 } })),
   history: arr(obj({ actor: str, operation: str, at: str }), 10000)
 }, ["schemaVersion", "deltaPath", "coordinator", "delivery", "deliveryWorkers", "waves", "findings", "assessments", "conflicts", "exchangeWorkers", "legacy", "history"]);
+// Only accept_wave defers a finding, and a lane digest reads a deferred finding as its reviewer saw it, so a record whose deferral
+// that operation could not have written is refused rather than read as a closed finding.
+function assertDeferrals(review: ReviewRecord) {
+  const errors: string[] = [];
+  review.findings.forEach((finding, index) => {
+    const field = `review.findings[${index}]`, deferredAt = finding.history.findIndex(entry => entry.status === "DEFERRED"), last = finding.history.at(-1);
+    if (finding.status !== "DEFERRED") {
+      if (finding.deferral) errors.push(`${field}.deferral: is allowed only on a DEFERRED finding`);
+      if (deferredAt !== -1) errors.push(`${field}.history: has a DEFERRED entry on a finding that is not DEFERRED`);
+      return;
+    }
+    if (finding.mode !== "implementation-review") errors.push(`${field}.status: DEFERRED is allowed only on an implementation-review finding`);
+    if (finding.severity !== "low") errors.push(`${field}.status: DEFERRED is allowed only on a low finding`);
+    const followUp = finding.deferral?.followUp ?? "";
+    if (!finding.deferral) errors.push(`${field}.deferral: is required on a DEFERRED finding`);
+    else if (!followUp.trim() || followUp !== followUp.trim() || followUp.length > FOLLOW_UP_LIMIT) errors.push(`${field}.deferral.followUp: must be a trimmed reference of 1 to ${FOLLOW_UP_LIMIT} characters`);
+    if (deferredAt !== finding.history.length - 1 || last?.wave !== finding.deferral?.wave || last?.evidence !== followUp || last?.actor !== finding.deferral?.actor || last?.at !== finding.deferral?.at) errors.push(`${field}.history: must end with the one DEFERRED entry of its deferral`);
+    if (!review.waves.some(wave => wave.id === finding.deferral?.wave && wave.mode === "implementation-review")) errors.push(`${field}.deferral.wave: must name an implementation-review wave of the review`);
+  });
+  if (errors.length) throw conservationError("validation_failed", `The review record holds deferrals that accept_wave did not write: ${describeErrors(errors)}`, { errors });
+}
 export async function loadReview(projectRoot: string, initiative: string, slice: string) {
   const resolved = await locateRecord(projectRoot, { kind: "review", initiative, slice });
   try {
     const bytes = await regularBytes(resolved.target, 4 * 1024 * 1024), document = JSON.parse(bytes.toString()) as ReviewRecord;
     assertInput(recordSchema, document);
+    assertDeferrals(document);
     return { resolved, exists: true, revision: digest(bytes), document };
   } catch (error) { if (error.code === "ENOENT") return { resolved, exists: false, revision: null, document: null }; throw error; }
 }
@@ -677,6 +700,7 @@ export async function updateReview(input: UpdateInput) {
     }
     await conservationStore.registerSlice(input.projectRoot, input.initiative, input.slice);
     assertInput(recordSchema, review);
+    assertDeferrals(review);
     const contents = canonical(review) + "\n";
     if (Buffer.byteLength(contents) > 4 * 1024 * 1024) throw conservationError("resource_limit", "The review record exceeds 4 MiB.");
     const changed = canonical(review) !== canonical(loaded.document);

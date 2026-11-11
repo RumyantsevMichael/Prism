@@ -2,7 +2,7 @@
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
 import { withArtifactLock, withFileLock } from "../workflow/artifact-store.mjs";
-import { assertInput } from "../workflow/artifact-schema.mjs";
+import { assertInput, describeErrors } from "../workflow/artifact-schema.mjs";
 import { resolveArtifactPath, readChangeMapDocument } from "../conservation/change-map.mjs";
 import { locateRecord, moveLegacyRecords, sameRecord, sliceDocumentFolder, writeRecord } from "../workflow/record-store.mjs";
 import { regularBytes } from "../repository-intelligence/native-semantic-runtime.mjs";
@@ -39,7 +39,7 @@ const UPDATE_REVIEW_SCHEMA = obj({ ...common, delivery: str, actor: obj({ id: st
   obj({ op: { const: "submit_lane" }, lane: str, status: { enum: ["CLEAN", "FINDINGS"] } }),
   obj({ op: { const: "carry_lane" }, lane: str, fromWave: str }),
   obj({ op: { const: "carry_assessments" }, lane: str, fromWave: str, ids: arr(str) }, ["op", "lane", "fromWave"]),
-  obj({ op: { const: "accept_wave" }, gate: str, deferrals: { ...arr(obj({ finding: str, followUp: { type: "string", maxLength: 8192 } }), 100), minItems: 1 } }, ["op"]),
+  obj({ op: { const: "accept_wave" }, gate: str, deferrals: { ...arr(obj({ finding: str, followUp: { type: "string" } }), 100), minItems: 1 } }, ["op"]),
   obj({ op: { const: "import_legacy" }, path: str }),
   obj({ op: { const: "regenerate_markdown" } })
 ] }) }, ["projectRoot", "initiative", "slice", "expectedRevision", "actor", "operations"]);
@@ -50,7 +50,7 @@ const UNRESOLVED = ["OPEN", "IN PROGRESS", "FIXED", "REOPENED"];
 const unresolvedFindings = (review) => review.findings.filter((item) => item.mode === "implementation-review" && UNRESOLVED.includes(item.status));
 const closedFinding = (finding) => finding.status === "VERIFIED" || finding.status === "DEFERRED";
 const reviewWaves = (review, acceptedAt) => review.waves.filter((item) => item.mode === "implementation-review" && (item.startedAt ?? acceptedAt) >= acceptedAt);
-const gateChose = (gate, option) => gate.answer?.choice === option || gate.choice === option;
+const gateChose = (gate, option) => typeof gate.answer?.choice === "string" ? gate.answer.choice === option : gate.choice === option;
 async function sliceGates(input) {
   const state = (await readCoordinationState({ projectRoot: input.projectRoot, initiative: input.initiative })).state;
   return [...state?.pending ?? [], ...state?.closed ?? []];
@@ -178,11 +178,31 @@ const recordSchema = obj({
   legacy: arr(obj({ path: str, hash: hashField, content: { type: "string", maxLength: 1024 * 1024 } })),
   history: arr(obj({ actor: str, operation: str, at: str }), 1e4)
 }, ["schemaVersion", "deltaPath", "coordinator", "delivery", "deliveryWorkers", "waves", "findings", "assessments", "conflicts", "exchangeWorkers", "legacy", "history"]);
+function assertDeferrals(review) {
+  const errors = [];
+  review.findings.forEach((finding, index) => {
+    const field = `review.findings[${index}]`, deferredAt = finding.history.findIndex((entry) => entry.status === "DEFERRED"), last = finding.history.at(-1);
+    if (finding.status !== "DEFERRED") {
+      if (finding.deferral) errors.push(`${field}.deferral: is allowed only on a DEFERRED finding`);
+      if (deferredAt !== -1) errors.push(`${field}.history: has a DEFERRED entry on a finding that is not DEFERRED`);
+      return;
+    }
+    if (finding.mode !== "implementation-review") errors.push(`${field}.status: DEFERRED is allowed only on an implementation-review finding`);
+    if (finding.severity !== "low") errors.push(`${field}.status: DEFERRED is allowed only on a low finding`);
+    const followUp = finding.deferral?.followUp ?? "";
+    if (!finding.deferral) errors.push(`${field}.deferral: is required on a DEFERRED finding`);
+    else if (!followUp.trim() || followUp !== followUp.trim() || followUp.length > FOLLOW_UP_LIMIT) errors.push(`${field}.deferral.followUp: must be a trimmed reference of 1 to ${FOLLOW_UP_LIMIT} characters`);
+    if (deferredAt !== finding.history.length - 1 || last?.wave !== finding.deferral?.wave || last?.evidence !== followUp || last?.actor !== finding.deferral?.actor || last?.at !== finding.deferral?.at) errors.push(`${field}.history: must end with the one DEFERRED entry of its deferral`);
+    if (!review.waves.some((wave) => wave.id === finding.deferral?.wave && wave.mode === "implementation-review")) errors.push(`${field}.deferral.wave: must name an implementation-review wave of the review`);
+  });
+  if (errors.length) throw conservationError("validation_failed", `The review record holds deferrals that accept_wave did not write: ${describeErrors(errors)}`, { errors });
+}
 async function loadReview(projectRoot, initiative, slice) {
   const resolved = await locateRecord(projectRoot, { kind: "review", initiative, slice });
   try {
     const bytes = await regularBytes(resolved.target, 4 * 1024 * 1024), document = JSON.parse(bytes.toString());
     assertInput(recordSchema, document);
+    assertDeferrals(document);
     return { resolved, exists: true, revision: digest(bytes), document };
   } catch (error) {
     if (error.code === "ENOENT") return { resolved, exists: false, revision: null, document: null };
@@ -753,6 +773,7 @@ async function updateReview(input) {
       }
       await conservationStore.registerSlice(input.projectRoot, input.initiative, input.slice);
       assertInput(recordSchema, review);
+      assertDeferrals(review);
       const contents = canonical(review) + "\n";
       if (Buffer.byteLength(contents) > 4 * 1024 * 1024) throw conservationError("resource_limit", "The review record exceeds 4 MiB.");
       const changed = canonical(review) !== canonical(loaded.document);

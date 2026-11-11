@@ -478,10 +478,14 @@ function validateClosed(value, errors) {
     const { closedAt, reason, choice, ...gate } = entry;
     validateGate(gate, entryPath, errors);
     if (choice !== undefined && (gate.kind !== "decision" || !(gate.options ?? []).some((option) => option?.id === choice))) addError(errors, `${entryPath}.choice`, "must be the id of one of the decision gate's options");
+    else if (choice !== undefined && conflictingChoice(gate.answer, choice)) addError(errors, `${entryPath}.choice`, "must match the option of the gate's browser answer");
     if (typeof closedAt !== "string" || Number.isNaN(Date.parse(closedAt))) addError(errors, `${entryPath}.closedAt`, "must be an ISO timestamp");
     if (reason !== undefined && (typeof reason !== "string" || !reason.trim() || reason.length > REASON_LIMIT)) addError(errors, `${entryPath}.reason`, `must be a non-empty reason of at most ${REASON_LIMIT} characters`);
   });
 }
+
+// A browser answer that chose an option leaves no room for a different choice on the closed gate.
+const conflictingChoice = (answer, choice) => isRecord(answer) && typeof answer.choice === "string" && answer.choice !== choice;
 
 function closedGate(gate, reason, choice) {
   return { ...gate, closedAt: new Date().toISOString(), ...(reason ? { reason } : {}), ...(choice === undefined ? {} : { choice }) };
@@ -553,6 +557,10 @@ function applyGateOperations(pending, operations) {
       // A choice the user gave in the conversation stays on the closed gate, so a later operation can act on it.
       if (operation.choice !== undefined && (next[position].kind !== "decision" || !(next[position].options ?? []).some((option) => option?.id === operation.choice))) {
         throw error("invalid_changes", `gateOperations[${index}].choice must be the id of one of the options of the decision gate ${operation.id}.`);
+      }
+      // The user's browser answer is their decision, so a choice from the conversation may repeat it but never replace it.
+      if (operation.choice !== undefined && conflictingChoice(next[position].answer, operation.choice)) {
+        throw error("invalid_changes", `gateOperations[${index}].choice ${operation.choice} differs from the option ${next[position].answer.choice} that the user chose for the gate ${operation.id} in the review browser.`);
       }
       closed.push(closedGate(next[position], reason, operation.choice));
       next.splice(position, 1);
