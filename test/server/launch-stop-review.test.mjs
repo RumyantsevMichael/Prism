@@ -142,3 +142,13 @@ test("a Codex turn that completes after the interrupt closes the input before th
   say({ jsonrpc: "2.0", method: "turn/completed", params: { threadId: CODEX_THREAD, turn: { id: "turn-1", status: "interrupted", items: [], error: null } } });
   assert.equal(closes(), 1);
 });
+
+test("the forced end goes through the held child process handle on every platform, never by a looked-up process id", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../../dist/server/session/launch-supervisor.mjs", import.meta.url), "utf8");
+  const forceEnd = /function forceEndHost\(child\) \{([\s\S]*?)\n\}/.exec(source)?.[1];
+  assert.ok(forceEnd, "the supervisor defines forceEndHost");
+  assert.match(forceEnd, /child\.kill\("SIGKILL"\)/);
+  assert.doesNotMatch(forceEnd, /platform|pid/);
+  assert.doesNotMatch(source, /taskkill|execFile|process\.kill\(/);
+});

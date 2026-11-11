@@ -5,11 +5,10 @@
 // launch record, and records the run's end with the host's exit code and signal.
 // It watches its launch folder for a stop request that names its run, and then sends the host the interrupt of the host's own Stop
 // button, closes the host's input once the host answered it, and only when the host still runs after the grace period ends the host
-// process itself. It starts, watches, and signals only the host process, never a process that the host started.
+// process itself through the handle of the child process it started. It starts, watches, and signals only the host process, never
+// a process that the host started.
 // It names its launch folder on its command line, so any process on this machine can find it.
-import { execFile, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import path from "node:path";
+import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
 import { hostArguments, hostConversation, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
@@ -22,21 +21,13 @@ const STOP_POLL_MS = 100;
 // After the grace period, the forced end and the recording of the run's end finish within this long, inside the grace period
 // and 5 seconds that a stop answers within.
 const STOP_FINISH_MS = 2000;
-const TASKKILL_TIMEOUT_MS = 2000;
 
-// Forcibly ends the host process alone: SIGKILL to its process id on POSIX, and `taskkill /PID <pid> /F` without /T on Windows,
-// so no process that the host started is ended.
+// Forcibly ends the host process alone, through the handle of the child process that this supervisor started, on every platform:
+// on POSIX SIGKILL reaches the host while Node has not reaped it, and on Windows the process that the handle holds is terminated,
+// so neither a process that the host started nor one that reused an ended host's id is ever hit. Once Node has seen the host
+// exit, the handle sends nothing; no process is ever ended by a looked-up process id.
 function forceEndHost(child) {
-  if (process.platform !== "win32") {
-    try { child.kill("SIGKILL"); } catch {}
-    return Promise.resolve();
-  }
-  const root = process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows";
-  const system = path.join(root, "System32", "taskkill.exe");
-  const taskkill = existsSync(system) ? system : "taskkill.exe";
-  return new Promise((done) => {
-    execFile(taskkill, ["/PID", String(child.pid), "/F"], { windowsHide: true, timeout: TASKKILL_TIMEOUT_MS }, () => done());
-  });
+  try { child.kill("SIGKILL"); } catch {}
 }
 
 // The time of a stop request, never later than now.
@@ -137,8 +128,8 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
               let timer;
               await Promise.race([hostEnded, new Promise((done) => { timer = setTimeout(done, Math.max(0, requested + graceMs - Date.now())); })]);
               clearTimeout(timer);
-              // The host is this supervisor's own child, so its process id cannot be reused before the exit event, which sets exited.
-              if (!exited) await forceEndHost(child);
+              // The end goes through the held child process handle, which no longer reaches anything once the host has exited.
+              if (!exited) forceEndHost(child);
             }).catch(() => {});
           } finally {
             checking = false;
