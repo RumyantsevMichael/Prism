@@ -40,6 +40,8 @@ const storeConfig = (store, sync) => `## Paths\n- Plans (scratch): docs/plans/\n
 const read = (root) => getInitiative({ projectRoot: root, initiative: "reports" });
 const write = async (root, operations, actor = path.basename(root)) => updateInitiative({ projectRoot: root, initiative: "reports", expectedRevision: (await read(root)).revision, actor, operations });
 const start = (root, slug) => write(root, [{ op: "set_status", slug, status: "in-progress" }]);
+// A lease that ran out: the claim record's expiry moves into the past, as when its holder stopped renewing it, without waiting on a timer.
+const lapse = async (file) => writeFile(file, `${JSON.stringify({ ...JSON.parse(await readFile(file, "utf8")), expiresAt: new Date(Date.now() - 1000).toISOString() }, null, 2)}\n`);
 const refusal = (code, check = () => true) => (error) => { assert.equal(error.code, code, error.message); check(error); return true; };
 
 async function folder(context) {
@@ -265,14 +267,15 @@ test("renews a running holder's claim record without touching the initiative rec
 
 test("never revives an expired claim, even when another holder took the slice", async (context) => {
   const value = await worktrees(context);
-  as({ ...A, leaseMs: 300 });
+  as(A);
   await start(value.a, "s1");
   await start(value.a, "s2");
-  await new Promise((resolve) => setTimeout(resolve, 400));
-  as({ ...B, leaseMs: 30 * 60 * 1000 });
+  // Both leases lapse only after both starts: a short lease could lapse during the second start, whose own read then reports the first loss once, before the final read.
+  for (const slug of ["s1", "s2"]) await lapse(path.join(value.parent, "store", CLAIM_FILE(slug)));
+  as(B);
   await write(value.b, [{ op: "claim", slug: "reports" }]);
   const bytes = await readFile(path.join(value.parent, "store", CLAIM_FILE("reports")), "utf8");
-  as({ ...A, leaseMs: 30 * 60 * 1000 });
+  as(A);
   await renewHeldClaims();
   const kept = JSON.parse(await readFile(path.join(value.parent, "store", CLAIM_FILE("reports")), "utf8"));
   assert.deepEqual([kept.holder, kept.nonce], [JSON.parse(bytes).holder, JSON.parse(bytes).nonce], "the newer overlapping claim stays the other holder's");
