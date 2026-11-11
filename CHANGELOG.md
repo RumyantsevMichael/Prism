@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.22.1](https://github.com/RumyantsevMichael/Prism/compare/v0.22.0...v0.22.1) (2026-11-11)
+
+
+### Fixed
+
+* make Prism work on Windows ([#166](https://github.com/RumyantsevMichael/Prism/issues/166)) ([41decde](https://github.com/RumyantsevMichael/Prism/commit/41decdef06f157b29891a1f743d4d896ab5f008d)), closes [#85](https://github.com/RumyantsevMichael/Prism/issues/85)
+
+
+### Documentation
+
+* add requirements for index preparation, record search, and reference search ([#186](https://github.com/RumyantsevMichael/Prism/issues/186)) ([aa58d44](https://github.com/RumyantsevMichael/Prism/commit/aa58d4422dcd28ae17c18829cb77b2acccb0a1a9)), closes [#14](https://github.com/RumyantsevMichael/Prism/issues/14) [#119](https://github.com/RumyantsevMichael/Prism/issues/119) [#120](https://github.com/RumyantsevMichael/Prism/issues/120)
+
 ## [0.22.0](https://github.com/RumyantsevMichael/Prism/compare/v0.21.0...v0.22.0) (2026-11-11)
 
 
