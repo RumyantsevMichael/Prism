@@ -265,10 +265,11 @@ test("renews a running holder's claim record without touching the initiative rec
 
 test("never revives an expired claim, even when another holder took the slice", async (context) => {
   const value = await worktrees(context);
-  as({ ...A, leaseMs: 300 });
+  // The lease outlasts both starts even on a slow Windows runner, so both claims lapse only during the wait.
+  as({ ...A, leaseMs: 3000 });
   await start(value.a, "s1");
   await start(value.a, "s2");
-  await new Promise((resolve) => setTimeout(resolve, 400));
+  await new Promise((resolve) => setTimeout(resolve, 3200));
   as({ ...B, leaseMs: 30 * 60 * 1000 });
   await write(value.b, [{ op: "claim", slug: "reports" }]);
   const bytes = await readFile(path.join(value.parent, "store", CLAIM_FILE("reports")), "utf8");

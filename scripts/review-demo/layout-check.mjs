@@ -98,7 +98,8 @@ try {
         const url = new URL("review", project.url);
         url.searchParams.set("artifact", ref);
         await page.goto(url.href);
-        await page.waitForSelector('#artifact[aria-busy="false"]', { timeout: 10000 }).catch(() => record("the page did not render", current));
+        // The bound only tells a page that never renders from a slow one, as the largest stress pages are on a busy Windows runner.
+        await page.waitForSelector('#artifact[aria-busy="false"]', { timeout: 30000 }).catch(() => record("the page did not render", current));
         await page.waitForTimeout(400);
       };
       const check = async (project, label) => {
