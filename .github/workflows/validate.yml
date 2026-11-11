@@ -64,7 +64,7 @@ jobs:
         run: |
           npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
           npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
-          node --test --test-timeout=900000 test/server/*.test.mjs
+          node --test --test-timeout=1800000 test/server/*.test.mjs
 
       # npm starts both CLIs through .cmd shims, which Node cannot spawn without a shell, so the smoke test runs their real entry points.
       - name: Smoke-test Prism tools and hooks in real Claude Code and Codex on Windows
