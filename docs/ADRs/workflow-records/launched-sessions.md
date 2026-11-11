@@ -30,6 +30,9 @@ A host MUST run under its own automatic permission handling with the project's o
 A refusal that the host reports MUST be shown with the host's own reason, and a run MUST NOT wait for a permission answer that nobody can give.
 At most one launched session of an initiative MAY run on a machine at a time, counting checkouts that share one record store as one.
 A stop MUST end the host and every process that it started, whatever process group or session that process moved to, and MUST spare the review app and other sessions' supervisors.
+The supervisor MUST use platform process containment where it is available: it MUST become a child subreaper on Linux and MUST run the host in a Windows job object.
+On macOS and whenever Linux subreaper setup or Windows job setup fails, the supervisor MUST use the process tree and scan for processes whose environment has the exact `PRISM_LAUNCH` marker.
+The stopped view MUST give the fixed reason `Stopped, but process containment was unavailable, so a process this session started may still run.` when the supervisor could not use containment.
 The host session identifier MUST stay in the launched session's private folder, and only the page of that machine MAY show it, in the command that continues the session in a terminal.
 Which gate a launched session asked MUST be recorded on that machine only, so shared gate records keep their shape for every release.
 A gate answer MUST resume a session only when it was given on the same machine; an answer that arrives through the record store MUST leave the session as it is and show that it waits.
@@ -61,6 +64,9 @@ Marking a gate on the machine that launched its session needs no new field in th
 - A machine without a graphical display, such as a server reached over SSH, cannot launch.
 - Any process of the same operating-system user can still answer the native dialog, write the launch window, or run the host itself; the dialog closes only the browser-side path, as the review app actions decision already accepts for same-user processes.
 - A supervisor killed from outside leaves its host unsupervised; the page then shows the session failed and says that its host may still run.
+- A service, container engine, scheduler, operating system service, or broker can start work outside the supervisor's containment and process tree, and the stop may not find that work.
+- On macOS, or on Linux when subreaper setup fails, a process that clears its environment and leaves the process tree may keep running after the stop.
+- When Linux subreaper or Windows job setup fails, or on macOS, the stopped view says that process containment was unavailable and that a process may still run.
 - A gate answer that the running host already received may still cause one resume when the run ends while the gate stays open, which spends a short turn.
 - An answer from a teammate's machine waits until the person resumes the session here.
 - Codex resumes do not keep the launch's permission policy by themselves, so every Codex run passes the policy again.
@@ -73,7 +79,11 @@ Applying a launch checks the action as every action is checked, asks the native 
 The supervisor reads the host's events for the host session identifier, refusals, and errors, renews a heartbeat, and records the run's end.
 Prism's server in the launched session reads the session's id from its environment and marks each gate it asks in the session's folder.
 Applying a gate answer on this machine records the answer in the folder of the session that marked the gate and resumes the session when no run of it runs; a supervisor whose run ends while an answer it received stays open resumes once.
-A stop is a request in the session's folder that its supervisor carries out on the host's process tree.
+A stop is a request in the session's folder that its supervisor carries out on the host's processes.
+The supervisor becomes a child subreaper before it starts a host on Linux, so orphaned processes from that run become its children.
+On Windows, the supervisor starts the host inside a job object, so processes that the host starts remain in the job.
+On macOS, and when Linux or Windows containment setup fails, the supervisor scans the process tree and the process environments for the session's exact `PRISM_LAUNCH` marker.
+The supervisor ends the host and every process it finds, then records that the run stopped.
 The page reads every session of its record store and derives each state from the folder, the supervisor's liveness, and the coordination state.
 
 ## Decision Log
