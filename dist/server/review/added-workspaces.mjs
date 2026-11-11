@@ -4,7 +4,7 @@ import path from "node:path";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
 import { cloneAddedStore } from "../workflow/record-store-remote.mjs";
 import { localStoreChanges, moveUnderSyncLock, runGit } from "../workflow/record-store-sync.mjs";
-import { credentialsIn, isRemoteStore, managedStoresDirectory, remoteLabel, storeIdentity, withoutCredentials } from "../workflow/remote-url.mjs";
+import { addressWithoutCredentials, credentialsIn, isRemoteStore, managedStoresDirectory, remoteLabel, storeIdentity, withoutCredentials } from "../workflow/remote-url.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
 import { storeWorkspaceId } from "./workspaces.mjs";
 
@@ -37,7 +37,20 @@ export async function readAddedWorkspaces(directory) {
   try { parsed = parseStoreJson(await readFile(path.join(directory, FILE), "utf8")); } catch { return []; }
   const listed = Array.isArray(parsed?.workspaces) ? parsed.workspaces : [];
   return listed.filter((entry) => typeof entry?.identity === "string" && Array.isArray(entry.urls) && entry.urls.every((url) => typeof url === "string"))
-    .map(({ identity, urls, addedAt }) => ({ identity, urls: [...urls], addedAt: typeof addedAt === "string" ? addedAt : null }));
+    .map(({ identity, urls, addedAt }) => ({ identity, urls: storeAddresses(urls), addedAt: typeof addedAt === "string" ? addedAt : null }));
+}
+
+/**
+ * Store addresses fit to save or show, in their order: each credential is taken out, and an address that is then already listed, or still carries one, is dropped.
+ * A checkout's Store value can carry a token, and the saved list and the workspace list must never repeat it.
+ */
+export function storeAddresses(urls) {
+  const kept = [];
+  for (const url of urls) {
+    const address = addressWithoutCredentials(url);
+    if (address !== null && !kept.includes(address)) kept.push(address);
+  }
+  return kept;
 }
 
 async function writeAddedWorkspaces(directory, entries) {
@@ -85,7 +98,7 @@ export async function createAddedWorkspaces({ directory, storesDirectory = () =>
   async function remember(identity, url, seenUrls) {
     let entry = byIdentity(identity);
     if (!entry) entries.push(entry = { identity, urls: [], addedAt: new Date().toISOString() });
-    for (const known of [...seenUrls(identity), url]) if (!entry.urls.includes(known)) entry.urls.push(known);
+    entry.urls = storeAddresses([...entry.urls, ...seenUrls(identity), url]);
     await save();
     return entry;
   }

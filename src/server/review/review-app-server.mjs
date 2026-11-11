@@ -30,7 +30,7 @@ import { readIndexingStatus } from "../repository-intelligence/index-status.mjs"
 import { createProjectReview, exchangeWriteGrant, fromPage, isTrustedHost, normalizeTabs, READ_ONLY_NOTICE, readBody, readJson, send, sendJson, servePageRoute, storeTabRef } from "./review-server.mjs";
 import { loadAttention } from "./workspace-model.mjs";
 import { readWorkspaceIdentity, workspaceLabel } from "./workspace-identity.mjs";
-import { createAddedWorkspaces } from "./added-workspaces.mjs";
+import { createAddedWorkspaces, storeAddresses } from "./added-workspaces.mjs";
 import { checkoutWorkspace, listWorkspaces, nameOfWorkspace, storeFolder, storeWorkspaceId } from "./workspaces.mjs";
 import { listMachineCheckouts } from "../workflow/machine-checkouts.mjs";
 import { createWriteSessions } from "./write-sessions.mjs";
@@ -284,7 +284,8 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
         workspace: { id: view.id, describe: () => describeWorkspace(view) } });
       workspaces.set(view.id, view);
     }
-    if (found.url !== null && !view.urls.includes(found.url)) view.urls.push(found.url);
+    // A checkout's Store value can carry a token, which the workspace's URLs never list.
+    if (found.url !== null) view.urls = storeAddresses([...view.urls, found.url]);
     if (previous && previous !== found.id) pruneWorkspaces();
     return view;
   }
@@ -296,13 +297,13 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     const views = [...workspaces.values()].map((view) => {
       const members = membersOf(view);
       const entry = addedEntries.find((item) => item.id === view.id);
-      for (const url of entry?.urls ?? []) if (!view.urls.includes(url)) view.urls.push(url);
+      view.urls = storeAddresses([...view.urls, ...(entry?.urls ?? [])]);
       return { id: view.id, kind: view.kind, identity: view.identity, urls: view.urls, root: view.root, members: members.map(({ root, repository }) => ({ root, repository })),
         live: members.some((project) => live(project, now)), lastSeen: Math.max(view.usedAt, ...members.map((project) => project.lastSeen)), added: Boolean(entry) };
     });
     for (const entry of addedEntries) {
       if (workspaces.has(entry.id)) continue;
-      views.push({ id: entry.id, kind: "store", identity: entry.identity, urls: entry.urls, root: null, members: [], live: false, lastSeen: addedUsage.get(entry.id) ?? 0, added: true });
+      views.push({ id: entry.id, kind: "store", identity: entry.identity, urls: storeAddresses(entry.urls), root: null, members: [], live: false, lastSeen: addedUsage.get(entry.id) ?? 0, added: true });
     }
     return views;
   }

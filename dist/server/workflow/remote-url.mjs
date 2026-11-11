@@ -142,6 +142,19 @@ export function withoutCredentials(text) {
 }
 
 /**
+ * A store address with any credential taken out, or null when none can be taken out cleanly: the user information of a URL, a URL's query and fragment,
+ * and the user of an scp-form address with a password. An address without a credential comes back as it is.
+ */
+export function addressWithoutCredentials(value) {
+  if (typeof value !== "string") return null;
+  if (!credentialsIn(value)) return value;
+  let stripped = withoutCredentials(value);
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(stripped)) stripped = stripped.replace(/[?#].*$/s, "");
+  else stripped = stripped.replace(/^[^/\\\s]*@(?=[A-Za-z0-9][A-Za-z0-9.-]+:)/, "");
+  return stripped && !credentialsIn(stripped) ? stripped : null;
+}
+
+/**
  * Whether a store value carries a credential: any user information before the host of an http:// or https:// URL, where it is how tokens are passed,
  * any user information of a git:// URL, which has no login at all, or a password, a ':' in the user information, of an ssh:// or scp-form address.
  * An SSH login name such as the git of git@github.com:acme/store.git only selects the host's account, since SSH authenticates with the machine's keys, so it is no credential.
