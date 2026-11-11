@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { alias, checkout, exists, git, isolateGit, networkStore, ok, place, server, sha16, storeFolderId } from "./fixtures/workspace-view.mjs";
 
-// Contract clauses 1-3 of the workspace-view design: every spelling of one store names one managed clone.
+// Contract clauses 1-3 of the workspace-view design: every encrypted spelling of one store names one managed clone, and each plaintext scheme its own.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
@@ -26,6 +26,26 @@ test("clauses 1 and 2: HTTPS, scp, and ssh spellings of one store share one clon
     assert.equal(read.exists, true, "every spelling reads the record the first one wrote, from the same clone");
   }
   assert.deepEqual(await stores(where), [storeFolderId(store.identity)]);
+});
+
+test("clauses 1 and 2: an http:// or git:// spelling has a clone of its own per scheme, apart from the encrypted spelling's clone", async (context) => {
+  const where = await place(context);
+  const store = await networkStore(where);
+  const plain = { http: [`http://example.invalid/${store.owner}/store.git`, `http://EXAMPLE.invalid:80/${store.owner}/store/`], git: [`git://example.invalid/${store.owner}/store.git`] };
+  for (const url of [...plain.http, ...plain.git]) alias(url, store.bare);
+  const encrypted = await checkout(where, "api", { store: store.url, sync: "on" });
+  const plaintext = [];
+  for (const [index, url] of [...plain.http, ...plain.git].entries()) plaintext.push(await checkout(where, `plain${index}`, { store: url, sync: "on" }));
+  ok(await createInitiative(await server(context, where, encrypted), "reports"));
+  for (const root of plaintext) ok(await (await server(context, where, root)).call("get_roadmap", {}));
+  const encryptedClone = storeFolderId(store.identity);
+  const httpClone = storeFolderId(`http://${store.identity}`);
+  const gitClone = storeFolderId(`git://${store.identity}`);
+  assert.deepEqual((await stores(where)).sort(), [encryptedClone, httpClone, gitClone].sort(), "one clone for the encrypted spelling and one per plaintext scheme");
+  const origin = (id) => git(path.join(where.app, "stores", id), "config", "--get", "remote.origin.url");
+  assert.equal(origin(encryptedClone), store.url, "the encrypted clone keeps its encrypted origin");
+  assert.match(origin(httpClone), /^http:\/\//, "the http clone syncs only through an http spelling");
+  assert.match(origin(gitClone), /^git:\/\//, "the git clone syncs only through a git spelling");
 });
 
 test("clause 1: a folder store keeps its own identity, apart from a network spelling of another store", async (context) => {
