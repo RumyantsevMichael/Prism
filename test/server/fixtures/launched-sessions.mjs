@@ -87,7 +87,7 @@ if (host === "claude") {
       write({ type: "assistant", session_id: id, message: { content: [{ type: "tool_use", id: "toolu_" + index, name: denial.tool, input: {} }] } });
       write({ type: "user", session_id: id, message: { content: [{ type: "tool_result", tool_use_id: "toolu_" + index, is_error: true, content: denial.reason }] } });
     });
-    result({ subtype: plan.isError ? "error_during_execution" : "success", is_error: Boolean(plan.isError), result: plan.isError ? "The API returned an error." : "done",
+    result({ subtype: plan.isError ? "error_during_execution" : "success", is_error: Boolean(plan.isError), ...(plan.isError ? { errors: ["The API returned an error."] } : { result: "done" }),
       permission_denials: denials.map((denial, index) => ({ tool_name: denial.tool, tool_use_id: "toolu_" + index, tool_input: {} })) });
     if (plan.background !== undefined) later(plan.background, () => {
       write({ type: "system", subtype: "task_notification", task_id: "task_bg", status: "completed", session_id: id });
