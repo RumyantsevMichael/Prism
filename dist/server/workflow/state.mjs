@@ -475,15 +475,20 @@ function validateClosed(value, errors) {
       addError(errors, entryPath, "must be a closed user gate");
       return;
     }
-    const { closedAt, reason, ...gate } = entry;
+    const { closedAt, reason, choice, ...gate } = entry;
     validateGate(gate, entryPath, errors);
+    if (choice !== undefined && (gate.kind !== "decision" || !(gate.options ?? []).some((option) => option?.id === choice))) addError(errors, `${entryPath}.choice`, "must be the id of one of the decision gate's options");
+    else if (choice !== undefined && conflictingChoice(gate.answer, choice)) addError(errors, `${entryPath}.choice`, "must match the option of the gate's browser answer");
     if (typeof closedAt !== "string" || Number.isNaN(Date.parse(closedAt))) addError(errors, `${entryPath}.closedAt`, "must be an ISO timestamp");
     if (reason !== undefined && (typeof reason !== "string" || !reason.trim() || reason.length > REASON_LIMIT)) addError(errors, `${entryPath}.reason`, `must be a non-empty reason of at most ${REASON_LIMIT} characters`);
   });
 }
 
-function closedGate(gate, reason) {
-  return { ...gate, closedAt: new Date().toISOString(), ...(reason ? { reason } : {}) };
+// A browser answer that chose an option leaves no room for a different choice on the closed gate.
+const conflictingChoice = (answer, choice) => isRecord(answer) && typeof answer.choice === "string" && answer.choice !== choice;
+
+function closedGate(gate, reason, choice) {
+  return { ...gate, closedAt: new Date().toISOString(), ...(reason ? { reason } : {}), ...(choice === undefined ? {} : { choice }) };
 }
 
 // Replacing the pending list may drop answered gates, but an unanswered question is withdrawn only through resolve with a reason.
@@ -534,7 +539,7 @@ function applyGateOperations(pending, operations) {
       next.push(gate);
       opened.push({ id: gate.id, kind: gate.kind, slice: gate.slice ?? null });
     } else if (operation.op === "resolve") {
-      const unknown = Object.keys(operation).filter((key) => !["op", "id", "reason"].includes(key));
+      const unknown = Object.keys(operation).filter((key) => !["op", "id", "reason", "choice"].includes(key));
       if (unknown.length) {
         throw error("invalid_changes", `gateOperations[${index}] has unsupported fields: ${unknown.join(", ")}.`);
       }
@@ -549,13 +554,33 @@ function applyGateOperations(pending, operations) {
       if (!next[position].answer && !reason) {
         throw error("invalid_changes", `gateOperations[${index}] resolves the unanswered gate ${operation.id}; give a reason, such as the user's answer in the conversation or why the question no longer applies.`);
       }
-      closed.push(closedGate(next[position], reason));
+      // A choice the user gave in the conversation stays on the closed gate, so a later operation can act on it.
+      if (operation.choice !== undefined && (next[position].kind !== "decision" || !(next[position].options ?? []).some((option) => option?.id === operation.choice))) {
+        throw error("invalid_changes", `gateOperations[${index}].choice must be the id of one of the options of the decision gate ${operation.id}.`);
+      }
+      // The user's browser answer is their decision, so a choice from the conversation may repeat it but never replace it.
+      if (operation.choice !== undefined && conflictingChoice(next[position].answer, operation.choice)) {
+        throw error("invalid_changes", `gateOperations[${index}].choice ${operation.choice} differs from the option ${next[position].answer.choice} that the user chose for the gate ${operation.id} in the review browser.`);
+      }
+      closed.push(closedGate(next[position], reason, operation.choice));
       next.splice(position, 1);
     } else {
       throw error("invalid_changes", `gateOperations[${index}].op must be ask or resolve.`);
     }
   });
   return { pending: next, opened, closed };
+}
+
+// The user answered the question as it was asked, so a replacement pending list keeps an answered gate exactly as it stands:
+// moving it to another slice, refreshing when it was asked, or rewording its question or options would reuse the answer for a question the user never saw.
+function assertAnsweredGatesUnchanged(before, replacement) {
+  if (replacement === undefined) return;
+  const answered = new Map(before.filter((gate) => isRecord(gate) && gate.answer !== undefined).map((gate) => [gate.id, canonicalJson(gate)]));
+  for (const gate of replacement.filter(isRecord)) {
+    if (answered.has(gate.id) && answered.get(gate.id) !== canonicalJson(gate)) {
+      throw error("invalid_changes", `The user gate ${gate.id} has an answer, so the pending list must keep it unchanged; drop it or resolve it instead.`);
+    }
+  }
 }
 
 // Only the review browser records answers, so agent updates may keep an answer but never add or change one.
@@ -990,6 +1015,7 @@ async function applyStateChange(resolved, expectedRevision, changes) {
     if (changes.active !== undefined && JSON.stringify(changes.active) !== JSON.stringify(before.active)) throw error("gate_blocked", "Use typed activeOperations to change active work; array replacement cannot bypass review gates.");
     return withReviewGatesLocked(resolved.root, resolved.initiative, before.active, changes.activeOperations ?? [], async () => {
     const activeResult = await applyActiveOperations(resolved.root, resolved.initiative, before.active, changes.activeOperations ?? []);
+    assertAnsweredGatesUnchanged(before.pending, changes.pending);
     const dropped = droppedGates(before.pending, changes.pending);
     const gateResult = applyGateOperations(changes.pending ?? before.pending, changes.gateOperations ?? []);
     assertAnswersUnchanged(before.pending, gateResult.pending);

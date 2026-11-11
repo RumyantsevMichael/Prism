@@ -19,6 +19,7 @@ import { effectiveSettings, readCoordinationState } from "./state.mjs";
 import { checkFolderDiagrams, diagramProblems } from "./diagram-check.mjs";
 import { refuseShipped, shippedHistory } from "./shipped-history.mjs";
 import { contractClauses, plannedChanges } from "./design-view.mjs";
+import { deferredFindings, loadReview } from "../review/review-ledger.mjs";
 
 const RECORD_NAME = "initiative.json";
 const PROJECTION_NAME = "initiative.md";
@@ -307,9 +308,20 @@ export async function getInitiative(input) {
     if (latest) dependents[scope] = { status: latest.entry.passed === true ? "passed" : "blocked", run: latest.path, finishedAt: latest.entry.finishedAt ?? null, blocked: Array.isArray(latest.entry.blocked) ? latest.entry.blocked : [] };
   }
   const view = await claimsView(resolved, loaded);
+  const result = publicResult(resolved, view.loaded);
+  // Each slice whose review deferred findings lists them, so a reader sees them apart from the unresolved ones; an unreadable review is left out.
+  if (result.derived) {
+    const deferred = {};
+    for (const slug of Object.keys(view.loaded.record?.slices ?? {})) {
+      const review = await loadReview(resolved.root, resolved.initiative, slug).catch(() => null);
+      const entries = review?.document ? deferredFindings(review.document) : [];
+      if (entries.length) deferred[slug] = entries;
+    }
+    result.derived.deferredFindings = deferred;
+  }
   // A shipped initiative's read says that its state is history, also when it has no initiative record.
   const history = await shippedHistory(resolved.root, resolved.initiative);
-  return { ...publicResult(resolved, view.loaded), ...(Object.keys(code).length ? { code } : {}), ...(Object.keys(dependents).length ? { dependents } : {}), ...view.fields, ...(history ? { shippedHistory: history } : {}) };
+  return { ...result, ...(Object.keys(code).length ? { code } : {}), ...(Object.keys(dependents).length ? { dependents } : {}), ...view.fields, ...(history ? { shippedHistory: history } : {}) };
 }
 
 /**
@@ -1358,7 +1370,7 @@ export function initiativeAcknowledgement(result, operations) {
 export const INITIATIVE_TOOLS = [
   {
     name: "get_initiative",
-    description: "Read an initiative's MCP-managed slice record with derived leaves, effective dependencies, completion, design candidates, fixes (each slice with fix slices mapped to their slugs), unfinishedFixes ({ slice, defect, fix, status } for each defect whose fix slice is missing, with fix null and status not-designed, or not done), and readiness to ship, which unfinished fixes hold false, plus run totals computed from run records for each slice, each split parent with its descendants, and the initiative, and each live claim: on its slice in the record view and under claims with its label, activity, and expiry, where heldHere marks this server's claims; lostClaims lists, once, claims this server held that expired or were released or taken over. Reads never create files. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked, to commit apart from the task's changes.",
+    description: "Read an initiative's MCP-managed slice record with derived leaves, effective dependencies, completion, design candidates, fixes (each slice with fix slices mapped to their slugs), unfinishedFixes ({ slice, defect, fix, status } for each defect whose fix slice is missing, with fix null and status not-designed, or not done), deferredFindings (each slice whose review deferred findings, mapped to { id, severity, title, gate, followUp, wave } per deferred finding), and readiness to ship, which unfinished fixes hold false, plus run totals computed from run records for each slice, each split parent with its descendants, and the initiative, and each live claim: on its slice in the record view and under claims with its label, activity, and expiry, where heldHere marks this server's claims; lostClaims lists, once, claims this server held that expired or were released or taken over. Reads never create files. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked, to commit apart from the task's changes.",
     inputSchema: GET_INITIATIVE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { shownTooltip, skip } from "./fixtures/kit-browser.mjs";
-import { choosePlace, comparePlaces, editJson, groupHeadings, item, itemNames, open, placesDemo, settledOn, sidebar } from "./fixtures/places-browser.mjs";
+import { choosePlace, comparePlaces, editJson, eventually, groupHeadings, item, itemNames, open, placesDemo, settledOn, sidebar } from "./fixtures/places-browser.mjs";
 
 // History and the Roadmap place over the demo, whose decisions get fixed dates before the server starts:
 // Export activity reports supersedes CSV-only exports a day ago, Audit administrative actions shipped five days ago,
@@ -97,13 +97,12 @@ test("clauses 44, 46: the Roadmap place holds the only board, list, and graph sw
   const [now, next] = [await box("Now"), await box("Next")];
   assert.ok(Math.abs(now.left - next.left) <= 1 && Math.abs(now.width - next.width) <= 1 && now.bottom <= next.top, "the bands are lanes stacked one above the other");
   assert.ok(now.width > 800, "a lane spans the page's width");
+  // The page redraws in the chosen view once the server answers, which a busy runner takes longer than a fixed pause to do.
   await choice("List").click();
-  await page.waitForTimeout(500);
-  assert.equal(await view.getByRole("columnheader", { name: "Band", exact: true }).isVisible(), true, "the page shows its list");
+  assert.equal(await eventually(() => view.getByRole("columnheader", { name: "Band", exact: true }).isVisible(), true), true, "the page shows its list");
   assert.equal(await choice("List").isChecked(), true);
   await choice("Graph").click();
-  await page.waitForTimeout(800);
-  assert.equal(await view.getByRole("columnheader", { name: "Band", exact: true }).count(), 0, "the page left its list for the graph");
+  assert.equal(await eventually(() => view.getByRole("columnheader", { name: "Band", exact: true }).count(), 0), 0, "the page left its list for the graph");
   assert.equal(await choice("Graph").isChecked(), true);
   const lanes = await itemNames(side);
   assert.deepEqual(lanes, ["Now 1", "Next 1", "Later 0", "Parked 1"], "each lane with its open initiatives, and no single initiative");
@@ -125,17 +124,16 @@ test("clause 45: a lane link opens the board with that lane in view, and again w
   assert.equal(address.searchParams.get("artifact"), "roadmap");
   assert.equal(address.searchParams.get("lane"), "parked");
   await parked.click();
-  await page.waitForTimeout(800);
   const inView = () => page.locator("#artifact").getByRole("heading", { name: "Parked", exact: true }).evaluate((heading) => {
     const box = heading.getBoundingClientRect();
     return box.top >= 0 && box.bottom <= innerHeight;
   });
-  assert.equal(await inView(), true, "the Parked lane's heading is in view");
+  // The board opens and scrolls to the lane once the server answers, which a busy runner takes longer than a fixed pause to do.
+  assert.equal(await eventually(inView, true), true, "the Parked lane's heading is in view");
   await page.locator("#artifact").getByRole("heading", { name: "Now", exact: true }).scrollIntoViewIfNeeded();
   await page.locator("header").getByRole("button", { name: "Navigation" }).click();
   await item(page.getByRole("dialog", { name: "Navigation" }), "Parked").click();
-  await page.waitForTimeout(800);
-  assert.equal(await inView(), true, "following it again scrolls again");
+  assert.equal(await eventually(inView, true), true, "following it again scrolls again");
   assert.deepEqual(page.errors, []);
 });
 

@@ -228,6 +228,9 @@ A slice page shows the slice's diagrams, its design from `slice.md`, the verific
 It is the page to read at a design gate.
 Under its title a tag names the slice's phase with its gate or status, such as `Design · design gate open`, beside its requirements, and below the lifecycle a strip shows who holds the slice, since when, when the holder last renewed the claim, and the time left, with the exact times on hover or focus.
 The Review ledger tab counts the open findings and the Files tab the slice folder's files.
+The review ledger's findings board has a `DEFERRED` column after `VERIFIED` for findings that you accepted with a follow-up at the review loop decision, and a deferred finding's details name its decision gate, its follow-up, and the wave that deferred it.
+The review summary counts deferred findings apart from unresolved ones, and the slice's review card lists each deferred finding with its severity, title, decision gate, and follow-up.
+On Attention, the review loop decision shows its summary with the findings of each wave as a table.
 **Details and settings** at the end of the page bar shows the slice's outcome, slug, parent, children, dependencies, and active work, and the initiative's settings.
 
 Every PlantUML file directly in the slice folder gets a tab above the design, with `code.puml` first when it exists.

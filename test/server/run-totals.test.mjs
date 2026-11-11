@@ -177,7 +177,7 @@ test("a review read keeps its content and adds the slice, wave, and design-run t
 
   const review = (await mcp.call("get_review", { projectRoot: root, initiative: "demo", slice: "alpha-one" })).structuredContent;
   const { runTotals, ...content } = review;
-  assert.deepEqual(Object.keys(content).sort(), ["coordinator", "currentWave", "delivery", "deltaPath", "entries", "exists", "nextOffset",
+  assert.deepEqual(Object.keys(content).sort(), ["coordinator", "currentWave", "deferred", "delivery", "deltaPath", "entries", "exists", "nextOffset",
     "projectionStale", "revision", "schemaVersion", "section", "totalCount"], "the existing review fields stay unchanged");
   assert.equal(content.exists, true);
   assert.deepEqual(content.currentWave, WAVE);
