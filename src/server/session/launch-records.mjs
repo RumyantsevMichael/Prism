@@ -211,7 +211,9 @@ function stateOf(record, status, label) {
   const refusals = Array.isArray(run.refusals) ? run.refusals : [];
   if (refusals.length) {
     const [first] = refusals;
-    const more = refusals.length > 1 ? ` (and ${refusals.length - 1} more)` : "";
+    // A run records only its first refusals, with the number of all of them; a record without that number counts those it holds.
+    const count = Number.isSafeInteger(run.refusalCount) && run.refusalCount > refusals.length ? run.refusalCount : refusals.length;
+    const more = count > 1 ? ` (and ${count - 1} more)` : "";
     return { state: "blocked", reason: `${label} refused ${first.tool}: ${first.reason}${more}` };
   }
   return { state: "finished", reason: null };

@@ -77,7 +77,7 @@ test("a Claude Code refusal without its tool result has a fixed reason, a long r
   feed(
     { type: "system", subtype: "task_started", task_id: "a" },
     { type: "result", is_error: true, result: "earlier", permission_denials: [{ tool_name: "Edit", tool_use_id: "z" }] },
-    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "a", content: [{ type: "text", text: "y".repeat(600) }] }] } },
+    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "a", is_error: true, content: [{ type: "text", text: "y".repeat(600) }] }] } },
     { type: "result", is_error: false, permission_denials: [{ tool_name: "Bash", tool_use_id: "a" }, { tool_name: "Write", tool_use_id: "b" }] }
   );
   assert.deepEqual(facts.refusals, [{ tool: "Bash", reason: "y".repeat(500) }, { tool: "Write", reason: "Write was refused." }]);
@@ -88,6 +88,54 @@ test("a Codex declined item without a command names its type", () => {
   const { facts, feed } = codexThrough("t-1");
   feed({ jsonrpc: "2.0", method: "item/completed", params: { item: { type: "fileChange", status: "declined" } } });
   assert.deepEqual(facts.refusals, [{ tool: "fileChange", reason: "Codex declined: fileChange" }]);
+});
+
+test("a Claude Code run keeps only the cut text of its 100 most recent error tool results, never a successful one", () => {
+  const { facts, feed } = talk("claude-code");
+  const results = Array.from({ length: 101 }, (_, index) => ({ type: "tool_result", tool_use_id: `e${index}`, is_error: true, content: `${index}:${"r".repeat(600)}` }));
+  feed(
+    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "ok", content: "allowed output" }] } },
+    { type: "user", message: { content: results } },
+    { type: "result", is_error: false, permission_denials: [{ tool_name: "Bash", tool_use_id: "e0" }, { tool_name: "Edit", tool_use_id: "e1" }, { tool_name: "Read", tool_use_id: "ok" }] }
+  );
+  assert.deepEqual(facts.refusals, [
+    { tool: "Bash", reason: "Bash was refused." },
+    { tool: "Edit", reason: `1:${"r".repeat(498)}` },
+    { tool: "Read", reason: "Read was refused." }
+  ]);
+});
+
+test("a run records its first 20 refusals with the number of all of them, for both hosts", () => {
+  const claude = talk("claude-code");
+  claude.feed({ type: "result", is_error: false, permission_denials: Array.from({ length: 25 }, (_, index) => ({ tool_name: `T${index}`, tool_use_id: `u${index}` })) });
+  assert.equal(claude.facts.refusalCount, 25);
+  assert.deepEqual(claude.facts.refusals.map((refusal) => refusal.tool), Array.from({ length: 20 }, (_, index) => `T${index}`));
+  const codex = codexThrough("t-1");
+  for (let index = 0; index < 22; index += 1) codex.feed({ jsonrpc: "2.0", method: "item/completed", params: { item: { type: "commandExecution", status: "declined", command: `c${index} ${"x".repeat(600)}` } } });
+  assert.equal(codex.facts.refusalCount, 22);
+  assert.equal(codex.facts.refusals.length, 20);
+  assert.equal(codex.facts.refusals[0].reason, `Codex declined: c0 ${"x".repeat(500 - "Codex declined: c0 ".length)}`);
+});
+
+test("a Claude Code error result names its errors without a result text, and a failed turn without a message has a fixed text, cut at 500 characters", () => {
+  const joined = talk("claude-code");
+  joined.feed({ type: "result", subtype: "error_during_execution", is_error: true, errors: ["first", 7, "second"], permission_denials: [] });
+  assert.equal(joined.facts.hostError, "first; second");
+  const preferred = talk("claude-code");
+  preferred.feed({ type: "result", is_error: true, result: "the result", errors: ["ignored"] });
+  assert.equal(preferred.facts.hostError, "the result");
+  const empty = talk("claude-code");
+  empty.feed({ type: "result", is_error: true, result: "", errors: [] });
+  assert.equal(empty.facts.hostError, "The turn failed without a message.");
+  const long = talk("claude-code");
+  long.feed({ type: "result", is_error: true, errors: ["e".repeat(900)] });
+  assert.equal(long.facts.hostError, "e".repeat(500));
+  const codex = codexThrough("t-1");
+  codex.feed(answer(3, { turn: { id: "turn-1" } }), { jsonrpc: "2.0", method: "turn/completed", params: { turn: { id: "turn-1", status: "failed", error: null } } });
+  assert.equal(codex.facts.hostError, "The turn failed without a message.");
+  const answered = talk("codex");
+  answered.feed({ jsonrpc: "2.0", id: 1, error: { code: -32600 } });
+  assert.equal(answered.facts.hostError, "The turn failed without a message.");
 });
 
 test("Codex requests are answered with Prism's error, and only the run's own turn completing closes the input", () => {

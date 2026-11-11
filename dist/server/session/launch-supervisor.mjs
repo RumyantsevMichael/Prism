@@ -110,7 +110,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
         const at = new Date().toISOString();
         update((current) => {
           delete current.startFailure;
-          current.runs.push({ number, cause, token, supervisorPid: process.pid, hostPid: child.pid, startedAt: at, heartbeatAt: at, outputAt: null, endedAt: null, exit: null, refusals: [], hostError: null, stderr: null, stopGraceMs: graceMs, stopRequestedAt: null });
+          current.runs.push({ number, cause, token, supervisorPid: process.pid, hostPid: child.pid, startedAt: at, heartbeatAt: at, outputAt: null, endedAt: null, exit: null, refusals: [], refusalCount: 0, hostError: null, stderr: null, stopGraceMs: graceMs, stopRequestedAt: null });
         }).then(() => markSpawned(true));
         heartbeat = setInterval(() => update((current) => {
           const run = current.runs.find((entry) => entry.token === token);
@@ -190,7 +190,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
           if (!run) return;
           // The id is replaced before the line is cut, so no cut leaves part of it behind.
           const last = redactSessionId(lines.at(-1) ?? null, current.hostSessionId);
-          Object.assign(run, { endedAt, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, hostError: facts.hostError, stderr: last?.slice(0, 300) ?? null });
+          Object.assign(run, { endedAt, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, refusalCount: facts.refusalCount, hostError: facts.hostError, stderr: last?.slice(0, 300) ?? null });
           if (!run.stopRequestedAt && request) run.stopRequestedAt = new Date(requestTime(request)).toISOString();
         });
         resolve();

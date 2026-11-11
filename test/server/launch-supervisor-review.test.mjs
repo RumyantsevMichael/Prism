@@ -80,7 +80,7 @@ test("host error text and refusal reasons have the host session id replaced, in 
   const id = "0f6b2c1e-5d4a-4c3b-9a8f-7e6d5c4b3a21";
   const upper = id.toUpperCase();
   const facts = feed("claude-code", [
-    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "a", content: `${"y".repeat(470)} session ${upper}` }] } },
+    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "a", is_error: true, content: `${"y".repeat(470)} session ${upper}` }] } },
     { type: "result", is_error: true, result: `Error: Session ID ${id} is already in use.`, permission_denials: [{ tool_name: "Bash", tool_use_id: "a" }] }
   ], { hostSessionId: id });
   assert.ok(!JSON.stringify(facts).toLowerCase().includes(id));
@@ -105,6 +105,15 @@ test("host error text and refusal reasons have the host session id replaced, in 
     assert.equal(resumeCommand.command, `claude --resume ${id}`);
     assert.ok(!JSON.stringify(rest).toLowerCase().includes(id), JSON.stringify(rest));
   }
+});
+
+test("a blocked launch counts every refusal of its run, though the record holds only the first ones", () => {
+  const at = "2026-11-01T00:00:00.000Z";
+  const record = (fields) => ({ id: "launch-0123456789abcdef", initiative: INITIATIVE, host: "claude-code", checkout: "/tmp/x", store: "s", createdAt: at, hostSessionId: null,
+    runs: [{ number: 1, cause: "launch", token: "t", supervisorPid: 1, hostPid: 2, startedAt: at, heartbeatAt: at, outputAt: null, endedAt: at, exit: { code: 0, signal: null }, hostError: null, stderr: null, ...fields }] });
+  const refusals = Array.from({ length: 20 }, (_, index) => ({ tool: "Bash", reason: `no ${index}` }));
+  assert.equal(launchView(record({ refusals, refusalCount: 31 })).reason, "Claude Code refused Bash: no 0 (and 30 more)");
+  assert.equal(launchView(record({ refusals: refusals.slice(0, 2) })).reason, "Claude Code refused Bash: no 0 (and 1 more)");
 });
 
 test("listing removes an expired launch folder only under the launch lock", { skip: posixOnly }, async (t) => {

@@ -30,7 +30,13 @@ const CODEX_CLIENT = Object.freeze({ clientInfo: { name: "prism-launch", version
 // The answer to every request that a Codex app-server sends Prism, such as an approval or a question.
 export const HOST_REQUEST_REFUSAL = Object.freeze({ code: -32601, message: "Prism answers no host requests." });
 export const MAX_LINE_BYTES = 1024 * 1024;
+// What a run keeps of host text: each refusal reason and host error is cut to REFUSAL_REASON_MAX characters, a run records its
+// first RECORDED_REFUSALS refusals with the number of all of them, and a Claude Code run holds the cut text of only its
+// KEPT_TOOL_RESULTS most recent error tool results, so a long run's memory and record stay bounded.
 const REFUSAL_REASON_MAX = 500;
+export const RECORDED_REFUSALS = 20;
+const KEPT_TOOL_RESULTS = 100;
+export const HOST_ERROR_FALLBACK = "The turn failed without a message.";
 // A host session id that may reach a command line: letters, digits, `_`, and `-`, never first, so no host reads it as an option and no shell splits it.
 export const HOST_SESSION_ID_PATTERN = /^[0-9A-Za-z_][0-9A-Za-z_-]*$/;
 export const SESSION_ID_PLACEHOLDER = "<host session id>";
@@ -222,20 +228,26 @@ function blockText(content) {
 
 
 const text = (value) => (typeof value === "string" ? value : "");
+// A Claude Code error result's text: its `result` when that is a non-empty string, and otherwise its `errors` strings joined.
+const claudeErrorText = (event) => (text(event.result) || (Array.isArray(event.errors) ? event.errors.filter((entry) => typeof entry === "string").join("; ") : ""));
 
 /**
  * One run's conversation with its host over the host's standard input and output.
  * `send(message)` writes one JSON line to the host's input and `closeInput()` ends that input; the conversation calls neither
  * after it closed the input, and closes it once the host's work is over, so the host exits by itself.
- * `facts` collects { hostSessionId, turnId, refusals, hostError }: host text in them has the host session id, the known one or the
- * one the run names, replaced. onSessionId is called once when a Codex launch names its thread with an id that is safe to keep.
+ * `facts` collects { hostSessionId, turnId, refusals, refusalCount, hostError }: refusals holds the first RECORDED_REFUSALS of
+ * the refusalCount refusals, and host text in them has the host session id, the known one or the one the run names, replaced
+ * before it is cut. onSessionId is called once when a Codex launch names its thread with an id that is safe to keep.
  * `interrupt()` stops the run the way the host's own Stop button does: it sends the host's interrupt while the input is open and
  * closes the input once the host has answered it, or at once for a Codex run that has not sent turn/start yet.
  */
 export function hostConversation(host, { initiative, checkout, hostSessionId = null, resume = false, send, closeInput, onSessionId = () => {} }) {
-  const facts = { hostSessionId: null, turnId: null, refusals: [], hostError: null };
+  const facts = { hostSessionId: null, turnId: null, refusals: [], refusalCount: 0, hostError: null };
   let inputOpen = true;
   const redact = (value) => redactSessionId(redactSessionId(value, hostSessionId), facts.hostSessionId);
+  // The id is replaced before the text is cut, so no cut leaves part of it behind.
+  const cut = (value) => redact(value).slice(0, REFUSAL_REASON_MAX);
+  const hostError = (value) => cut(value || HOST_ERROR_FALLBACK);
   const write = (message) => {
     if (inputOpen) send(message);
   };
@@ -270,20 +282,25 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
           return;
         }
         if (event.type === "user" && Array.isArray(event.message?.content)) {
+          // Only error tool results can be refusal reasons; the oldest kept one goes once more than KEPT_TOOL_RESULTS are held.
           for (const block of event.message.content) {
-            if (block?.type === "tool_result" && typeof block.tool_use_id === "string") toolResults.set(block.tool_use_id, blockText(block.content));
+            if (block?.type !== "tool_result" || block.is_error !== true || typeof block.tool_use_id !== "string") continue;
+            toolResults.delete(block.tool_use_id);
+            toolResults.set(block.tool_use_id, cut(blockText(block.content).trim()));
+            if (toolResults.size > KEPT_TOOL_RESULTS) toolResults.delete(toolResults.keys().next().value);
           }
           return;
         }
         if (event.type !== "result") return;
         // The last result event decides the run's refusals and host error.
-        const denials = Array.isArray(event.permission_denials) ? event.permission_denials : [];
-        facts.refusals = denials.filter((denial) => denial && typeof denial === "object").map((denial) => {
+        const denials = (Array.isArray(event.permission_denials) ? event.permission_denials : []).filter((denial) => denial && typeof denial === "object");
+        facts.refusalCount = denials.length;
+        facts.refusals = denials.slice(0, RECORDED_REFUSALS).map((denial) => {
           const tool = typeof denial.tool_name === "string" && denial.tool_name ? denial.tool_name : "a tool";
           const reason = toolResults.get(denial.tool_use_id)?.trim();
-          return { tool, reason: reason ? redact(reason).slice(0, REFUSAL_REASON_MAX) : `${tool} was refused.` };
+          return { tool, reason: reason || cut(`${tool} was refused.`) };
         });
-        facts.hostError = event.is_error === true ? redact(text(event.result)) : null;
+        facts.hostError = event.is_error === true ? hostError(claudeErrorText(event)) : null;
         if (tasks.size === 0) close();
       }
     };
@@ -308,7 +325,7 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
     };
     const turnEnded = (turn) => {
       turnDone = true;
-      if (turn?.status === "failed") facts.hostError = redact(text(turn.error?.message));
+      if (turn?.status === "failed") facts.hostError = hostError(text(turn.error?.message));
       close();
     };
     // The interrupt goes out once turn/start has named the run's turn and only while that turn has not completed.
@@ -375,7 +392,7 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
             return;
           }
           if (message.error !== undefined && message.error !== null) {
-            facts.hostError = redact(text(message.error?.message));
+            facts.hostError = hostError(text(message.error?.message));
             close();
             return;
           }
@@ -385,8 +402,10 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
         const params = message.params ?? {};
         if (message.method === "item/completed" && params.item?.status === "declined") {
           const tool = typeof params.item.type === "string" && params.item.type ? params.item.type : "an action";
+          facts.refusalCount += 1;
+          if (facts.refusals.length >= RECORDED_REFUSALS) return;
           const command = typeof params.item.command === "string" && params.item.command ? params.item.command : tool;
-          facts.refusals.push({ tool, reason: redact(`Codex declined: ${command}`) });
+          facts.refusals.push({ tool, reason: cut(`Codex declined: ${command}`) });
           return;
         }
         if (message.method === "turn/completed" && typeof params.turn?.id === "string") {
