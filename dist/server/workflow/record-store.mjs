@@ -887,12 +887,20 @@ export function forgetMigrations() {
 
 const storeLabel = (store) => store.external ? "the record store" : "the project root";
 
+// Record reads in a fetchless context, such as every read of the review app, whose timed watcher fetches for the pages it serves, start no fetch.
+const fetchlessReads = new AsyncLocalStorage();
+
+/** Run so that no record read in it, or in work it starts, starts a background fetch of the store, while an agent's Prism server keeps fetching on its own record reads. */
+export function withFetchlessReads(run) {
+  return fetchlessReads.run(true, run);
+}
+
 // A synced store prepares its files for syncing before any record or artifact access, pulls in the background when its last fetch is old, and record access waits while a merge replaces record files.
 // A preparation that fails is tried again by the next access and by every sync, which runs it first.
 async function synced(store) {
   if (!store.sync) return;
   await prepareStoreFiles(store.base).catch(() => {});
-  if (!store.checkoutless) pullRecordStoreIfStale(store.base);
+  if (!store.checkoutless && !fetchlessReads.getStore()) pullRecordStoreIfStale(store.base);
   await waitForStableStore(store.base);
 }
 

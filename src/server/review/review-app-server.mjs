@@ -7,7 +7,7 @@ import { withFileLock } from "../workflow/artifact-store.mjs";
 import { useManagedStores } from "../workflow/record-store-remote.mjs";
 import { markManagedStore } from "../workflow/record-store-sync.mjs";
 import { remoteLabel } from "../workflow/remote-url.mjs";
-import { describeRecordStore, forgetStoreWithoutCheckout, isStoreWithoutCheckout, outsideToolCall, recordStoreOf, useStoreWithoutCheckout } from "../workflow/record-store.mjs";
+import { describeRecordStore, forgetStoreWithoutCheckout, isStoreWithoutCheckout, outsideToolCall, recordStoreOf, useStoreWithoutCheckout, withFetchlessReads } from "../workflow/record-store.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
 import {
   REVIEW_APP_PROTOCOL,
@@ -90,7 +90,12 @@ function holdLock(directory, stopped, onRenew) {
 }
 
 // The review app serves every registered project of one user from one port, behind a lock that keeps it unique.
-export async function startReviewApp({ directory, pluginVersion = null, idleMs = IDLE_MS, noticeMs = NOTICE_MS, workspaceFetchMs = WORKSPACE_FETCH_MS, workspaceFetchMaxMs = WORKSPACE_FETCH_MAX_MS } = {}) {
+// Its record reads start no fetch, because its timed workspace watcher fetches for the pages it serves.
+export function startReviewApp(options) {
+  return withFetchlessReads(() => serveReviewApp(options));
+}
+
+async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_MS, noticeMs = NOTICE_MS, workspaceFetchMs = WORKSPACE_FETCH_MS, workspaceFetchMaxMs = WORKSPACE_FETCH_MAX_MS } = {}) {
   await prepareDirectory(directory);
   let releaseLock;
   const stopped = new Promise((resolve) => { releaseLock = resolve; });
@@ -668,7 +673,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
   }
 
   // A request answers a browser, never a tool call, so no store access in it moves a checkout's artifacts, even on a server that a tool call started.
-  const server = createServer((request, response) => outsideToolCall(async () => {
+  const server = createServer((request, response) => withFetchlessReads(() => outsideToolCall(async () => {
     try {
       if (!isTrustedHost(request.headers.host)) {
         send(response, 403, "Unknown host");
@@ -751,7 +756,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
         send(response, error.status ?? 400, error.message);
       }
     }
-  }));
+  })));
 
   // A successor keeps the port and viewer credential only from a recent handed-off file and only on that same port, so a tab reconnects
   // after a replacement but a credential that a tab may have sent to another listener after a crash or long ago is never served again.
