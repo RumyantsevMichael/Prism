@@ -108,3 +108,29 @@ test("an encrypted address added after a plaintext one stays its own workspace",
   assert.equal(added.json.workspace.id, workspaceId(store.identity));
   assert.equal((await prism.workspaces()).length, 2);
 });
+
+test("a checkout's store URL seen before a merged alias stays first in the workspace's URLs and label across a restart of the app", async (context) => {
+  const where = await place(context);
+  const store = await networkStore(where, "store");
+  const prism = await startApp(context, where);
+  await prism.grant();
+  const api = await storeCheckout(context, where, "api", store.url);
+  await prism.register(api);
+  const ssh = `ssh://work-alias/${store.owner}/store.git`;
+  const scp = `work-alias:${store.owner}/store.git`;
+  alias(ssh, store.bare);
+  alias(scp, store.bare);
+  assert.equal((await add(prism, ssh)).json.merged, true);
+  assert.equal((await add(prism, scp)).json.merged, true);
+  const id = workspaceId(store.identity);
+  const storeOf = async (app) => (await app.get("/api/workspaces")).json.workspaces.find((entry) => entry.id === id).store;
+  const before = await storeOf(prism);
+  assert.deepEqual(before.urls, [store.url, ssh, scp]);
+  await prism.app.close();
+
+  const again = await startApp(context, where);
+  const after = await storeOf(again);
+  assert.deepEqual(after.urls, [store.url, ssh, scp]);
+  assert.equal(after.label, before.label);
+  assert.ok(!after.label.includes("work-alias"), after.label);
+});

@@ -306,7 +306,8 @@ Credentials come from the machine's Git configuration, such as a credential help
 When the clone fails, the dialog shows Git's reason without any user name, password, or token, and Prism keeps no folder and no workspace.
 Prism also refuses, and leaves as it is, a folder at the clone's place in `stores/` that is no clone of that store.
 A store with no commit yet is added only after you confirm it with **Add empty store**.
-When the store turns out to be one this machine already keeps under another address, such as an SSH host alias, the address joins that workspace instead, which Prism tells by the store's first commit; it never joins a workspace whose address is a plain `http://` or `git://` one.
+When the store turns out to be one this machine already keeps under another address, such as an SSH host alias, the address joins that workspace instead, which Prism tells by the store's first commit.
+A plain `http://` or `git://` address always stays a workspace of its own with its own clone: it never joins the workspace of an encrypted address such as HTTPS or SSH, and an encrypted address never joins it.
 An added workspace stays in the switcher across restarts of the app until you remove it.
 Until a checkout of one of its repositories is registered with the app, its page names the workspace and its store, and says that its records open there once a Prism session or `prism review` runs in such a checkout.
 

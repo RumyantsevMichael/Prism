@@ -81,10 +81,11 @@ export async function createAddedWorkspaces({ directory, storesDirectory = () =>
   const byIdentity = (identity) => entries.find((entry) => entry.identity === identity) ?? null;
   const cloneFolder = (identity) => path.join(storesDirectory(), storeFolderName(identity));
 
-  async function remember(identity, url) {
+  // The URLs the app already saw for the workspace, such as a registered checkout's, come before the added one, so the saved list keeps the order first seen across restarts.
+  async function remember(identity, url, seenUrls) {
     let entry = byIdentity(identity);
     if (!entry) entries.push(entry = { identity, urls: [], addedAt: new Date().toISOString() });
-    if (!entry.urls.includes(url)) entry.urls.push(url);
+    for (const known of [...seenUrls(identity), url]) if (!entry.urls.includes(known)) entry.urls.push(known);
     await save();
     return entry;
   }
@@ -92,8 +93,9 @@ export async function createAddedWorkspaces({ directory, storesDirectory = () =>
   /**
    * Add the workspace of the store that url names. keptStores() lists the network store identities this machine already keeps, each as { identity, folder },
    * so a newly cloned store whose root commit one of them shares joins that workspace instead.
+   * seenUrls(identity) lists the URLs the app already saw for that store's workspace, in the order first seen.
    */
-  async function add(url, { confirmEmpty = false, keptStores = async () => [] } = {}) {
+  async function add(url, { confirmEmpty = false, keptStores = async () => [], seenUrls = () => [] } = {}) {
     // The address is checked before any Git command runs or any folder is made, so a credential in it reaches neither Git nor the disk.
     // A control character, such as a line break, belongs in no address and would only reach Git's arguments and the saved list.
     if (typeof url !== "string" || !url.trim() || url.length > URL_MAX || /[\u0000-\u001f\u007f]/.test(url.trim())) throw fail(400, "url_invalid", "Give the store's address: an HTTPS or SSH URL, a host:path address, or the absolute path of a folder.");
@@ -105,7 +107,7 @@ export async function createAddedWorkspaces({ directory, storesDirectory = () =>
       if (!remote || /^file:\/\//i.test(url)) {
         const identity = await folderStore(url);
         if (!identity) throw fail(400, "url_invalid", "That is no store address: give an HTTPS or SSH URL, a host:path address, or the absolute path of a folder.");
-        await remember(identity, url);
+        await remember(identity, url, seenUrls);
         return { identity, merged: false };
       }
       const identity = await storeIdentity(url);
@@ -115,7 +117,7 @@ export async function createAddedWorkspaces({ directory, storesDirectory = () =>
         if (entry.identity === identity || plaintext(entry.identity) !== plaintext(identity)) continue;
         for (const known of entry.urls) {
           if (await storeIdentity(known) === identity) {
-            await remember(entry.identity, url);
+            await remember(entry.identity, url, seenUrls);
             return { identity: entry.identity, merged: true };
           }
         }
@@ -141,12 +143,12 @@ export async function createAddedWorkspaces({ directory, storesDirectory = () =>
             const theirs = await rootCommits(kept.folder);
             if (![...roots].some((root) => theirs.has(root))) continue;
             await rm(cloned.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-            await remember(kept.identity, url);
+            await remember(kept.identity, url, seenUrls);
             return { identity: kept.identity, merged: true };
           }
         }
       }
-      await remember(identity, url);
+      await remember(identity, url, seenUrls);
       return { identity, merged: false };
     });
   }

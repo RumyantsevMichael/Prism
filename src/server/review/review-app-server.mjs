@@ -354,7 +354,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       return;
     }
     try {
-      const { identity, merged } = await added.add(body.url, { confirmEmpty: body.confirmEmpty === true, keptStores });
+      const { identity, merged } = await added.add(body.url, { confirmEmpty: body.confirmEmpty === true, keptStores, seenUrls: (identity) => workspaces.get(storeWorkspaceId(identity))?.urls ?? [] });
       const id = storeWorkspaceId(identity);
       addedUsage.set(id, ++sequence);
       const view = workspaces.get(id);
