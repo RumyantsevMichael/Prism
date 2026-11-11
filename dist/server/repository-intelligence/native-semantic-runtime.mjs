@@ -605,7 +605,7 @@ class NativeSemanticRuntime {
       job.stalled = true;
       job.watchdog = void 0;
       const phase = job.progress?.phase ?? "starting";
-      void this.store.stop().catch((error) => log.warn("index_stop_failed", { directory: job.directory, ...errorFields(error) }));
+      if (job === this.running) void this.store.stop().catch((error) => log.warn("index_stop_failed", { directory: job.directory, ...errorFields(error) }));
       reject(stalledError(phase, period));
     };
     job.stalled = false;
