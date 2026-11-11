@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.0](https://github.com/RumyantsevMichael/Prism/compare/v0.22.1...v0.23.0) (2026-11-11)
+
+
+### Added
+
+* **review:** accept low findings with follow-ups and ask the review loop decision from the findings ([#189](https://github.com/RumyantsevMichael/Prism/issues/189)) ([1ddd03d](https://github.com/RumyantsevMichael/Prism/commit/1ddd03d9ced45a1989208d1915cc913eb8f176f2))
+
 ## [0.22.1](https://github.com/RumyantsevMichael/Prism/compare/v0.22.0...v0.22.1) (2026-11-11)
 
 
