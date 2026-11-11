@@ -82,12 +82,16 @@ function headerFields(source) {
 function reviewSummary(review) {
   const findings = Array.isArray(review?.findings) ? review.findings : [];
   const unresolved = findings.filter((finding) => UNRESOLVED.has(finding.status));
+  const deferred = findings.filter((finding) => finding.status === "DEFERRED");
   const waves = Array.isArray(review?.waves) ? review.waves : [];
   return {
     findings: findings.length,
     unresolved: unresolved.length,
-    blocking: findings.filter((finding) => finding.status !== "VERIFIED" && ["blocker", "high"].includes(finding.severity)).length,
-    byStatus: Object.fromEntries(["OPEN", "IN PROGRESS", "REOPENED", "FIXED", "VERIFIED"].map((status) => [status, findings.filter((finding) => finding.status === status).length])),
+    blocking: findings.filter((finding) => !["VERIFIED", "DEFERRED"].includes(finding.status) && ["blocker", "high"].includes(finding.severity)).length,
+    byStatus: Object.fromEntries(["OPEN", "IN PROGRESS", "REOPENED", "FIXED", "VERIFIED", "DEFERRED"].map((status) => [status, findings.filter((finding) => finding.status === status).length])),
+    // A deferred finding is resolved by the user's decision gate, so it is counted apart and listed with its follow-up.
+    deferred: deferred.length,
+    deferredFindings: deferred.map((finding) => ({ id: finding.id, severity: finding.severity, title: finding.title, gate: finding.deferral?.gate ?? null, followUp: finding.deferral?.followUp ?? null })),
     waves: waves.length,
     currentWave: waves.at(-1) ? { id: waves.at(-1).id, mode: waves.at(-1).mode, accepted: Boolean(waves.at(-1).accepted) } : null
   };

@@ -1464,3 +1464,43 @@ a.inspect-tile:focus-visible {
     margin-left: 0;
   }
 }
+
+/* ---------- Slice review card ---------- */
+
+.deferred-list {
+  display: grid;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  margin: var(--prism-space-2) 0 var(--prism-space-4);
+  padding: 0;
+  list-style: none;
+}
+
+.deferred-list li {
+  display: grid;
+  gap: var(--prism-space-1);
+  min-width: 0;
+  padding: var(--prism-space-2) var(--prism-space-3);
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-sm);
+  background: var(--prism-color-surface);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.deferred-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+.deferred-title {
+  min-width: 0;
+}
+
+.deferred-meta code {
+  font-family: var(--prism-font-code);
+  font-size: var(--prism-font-size-code);
+}
