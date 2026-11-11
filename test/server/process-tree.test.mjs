@@ -52,6 +52,30 @@ test("only a supervisor's exact command line marks a launch supervisor, never a 
   assert.equal(supervisorCommand(`/usr/bin/node /x/launch-supervisor.mjs ${path.join(launches, "launch-1")} person t`, launches), null);
 });
 
+test("a command line is recognized as a supervisor's or not in time linear in its length", () => {
+  for (const unit of ["/node /launch-supervisor.mjs a launch ", "node ", " ", "launch-supervisor.mjs "]) {
+    const args = unit.repeat(Math.ceil(30000 / unit.length)) + "/app/launches/launch-0123456789abcdef launch t";
+    const started = Date.now();
+    supervisorCommand(args);
+    supervisorCommand(`${args}!`);
+    assert.ok(Date.now() - started < 200, `a ${args.length}-character command line took ${Date.now() - started} ms`);
+  }
+  const launches = path.join(path.sep, "app", "launches");
+  const folder = path.join(launches, "launch-0123456789abcdef");
+  assert.deepEqual(supervisorCommand(`"/opt/node js/node" "/x y/launch-supervisor.mjs" "${folder}" gate t1`, launches), { folder, token: "t1" });
+  assert.deepEqual(supervisorCommand(`/opt/my node/bin/node launch-supervisor.mjs ${folder} launch t2`, launches), { folder, token: "t2" });
+  assert.equal(supervisorCommand(`/usr/bin/nodex /x/launch-supervisor.mjs ${folder} person t`, launches), null);
+});
+
+// POSIX lstart is local time without a zone, so in the hour repeated when daylight saving time ends a child can read as older.
+test("on POSIX a child is its parent's descendant whatever their start times read", () => {
+  const table = new Map([
+    [100, { pid: 100, ppid: 1, started: "Sun Nov 1 01:50:00 2026", args: "claude -p" }],
+    [101, { pid: 101, ppid: 100, started: "Sun Nov 1 01:10:00 2026", args: "sleep 600" }]
+  ]);
+  assert.deepEqual(descendantsOf(table, [100]).map((entry) => entry.pid), [101]);
+});
+
 test("a stop spares a launch supervisor that its launch record names and ends a process that only mentions the supervisor", { skip: process.platform === "win32" ? "process trees are checked on POSIX here" : false }, async (t) => {
   const app = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-process-tree-")));
   t.after(() => rm(app, { recursive: true, force: true }));

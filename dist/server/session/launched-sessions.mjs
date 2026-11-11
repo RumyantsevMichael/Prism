@@ -177,6 +177,7 @@ export async function resumeLaunch({ id, env = process.env, cause = "person" }) 
 
 // A run whose host ended on its own after the stop request was written, before its supervisor read it, still ended after a stop request:
 // the request's time is recorded in the run, so every view shows it stopped. The supervisor writes nothing more once it recorded the end.
+// A run whose host ended before the request was written, while its supervisor still drained the output, keeps the state of its own end.
 async function markStopped(env, folder, token) {
   return withLaunchLock(env, async () => {
     const record = await readLaunchRecord(folder);
@@ -185,8 +186,10 @@ async function markStopped(env, folder, token) {
     if (run.stopRequestedAt) return record;
     const request = await readStopRequest(folder);
     if (request?.token !== token) return record;
-    const at = Date.parse(request.requestedAt ?? "");
-    run.stopRequestedAt = new Date(Number.isFinite(at) ? at : Date.now()).toISOString();
+    const parsed = Date.parse(request.requestedAt ?? "");
+    const at = Number.isFinite(parsed) ? parsed : Date.now();
+    if (at > Date.parse(run.endedAt)) return record;
+    run.stopRequestedAt = new Date(at).toISOString();
     await writeLaunchRecord(folder, record);
     return record;
   });

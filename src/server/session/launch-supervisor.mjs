@@ -141,8 +141,10 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
         let drainTimer;
         await Promise.race([drained, new Promise((done) => { drainTimer = setTimeout(done, drainMs); })]);
         clearTimeout(drainTimer);
-        // A stop request for this run that the poll had not read yet when the host ended still makes the end a stopped one.
-        const request = stopping ? null : await readStopRequest(folder);
+        // A stop request for this run that the poll had not read yet when the host ended still makes the end a stopped one,
+        // while a request written after the host ended on its own, during the drain, leaves the end as the host's.
+        const read = stopping ? null : await readStopRequest(folder);
+        const request = read?.token === token && requestTime(read) <= Date.parse(endedAt) ? read : null;
         reader.end();
         clearInterval(heartbeat);
         const { facts } = reader;
@@ -154,7 +156,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
           // The id is replaced before the line is cut, so no cut leaves part of it behind.
           const last = redactSessionId(lines.at(-1) ?? null, current.hostSessionId);
           Object.assign(run, { endedAt, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, hostError: facts.hostError, stderr: last?.slice(0, 300) ?? null });
-          if (!run.stopRequestedAt && request?.token === token) run.stopRequestedAt = new Date(requestTime(request)).toISOString();
+          if (!run.stopRequestedAt && request) run.stopRequestedAt = new Date(requestTime(request)).toISOString();
         });
         resolve();
       });

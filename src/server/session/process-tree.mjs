@@ -8,7 +8,7 @@ import { readLaunchRecord, tokenVoided, LAUNCH_ID_PATTERN } from "./launch-recor
 // The review app that review-app.json names, its descendants, and every launch supervisor with its descendants are spared,
 // so a stop never ends the shared review app or another launched session.
 // A listed process is ended later only while it is still the same process, so a reused process id is never ended.
-// A process counts as a child of the parent it names only when it started no earlier than that parent,
+// On Windows a process counts as a child of the parent it names only when it started no earlier than that parent,
 // since Windows keeps the parent id of a parent that ended and gives that id to new processes.
 // A launch supervisor is recognized by its exact command line, node, the supervisor script, and a launch folder in this machine's launches folder,
 // and, during a stop, by the launch record of that folder, never by a mention of the script's name.
@@ -93,39 +93,111 @@ export async function reviewAppPid(reviewAppFolder) {
   }
 }
 
-// A start time as a number that orders the processes of one listing: a Windows FILETIME, or a POSIX lstart date; null when unknown.
-function startOrder(started) {
-  if (/^\d+$/.test(started)) return BigInt(started);
-  const at = Date.parse(started);
-  return Number.isFinite(at) ? BigInt(at) : null;
-}
-
-// A process is a child of the parent it names only when it did not start before that parent; a stale parent id fails this.
+// A process is a child of the parent it names. Only a Windows listing gives start times as FILETIME numbers,
+// and only Windows keeps the parent id of a parent that ended, so there a process that started before that parent is not its child.
+// POSIX reparents an orphan, and its lstart is local time without a zone that can run backwards, so there the parent id alone decides.
 function childOf(entry, parent) {
-  if (!parent) return true;
-  const child = startOrder(entry.started);
-  const own = startOrder(parent.started);
-  return child === null || own === null || child >= own;
+  if (!parent || !/^\d+$/.test(entry.started) || !/^\d+$/.test(parent.started)) return true;
+  return BigInt(entry.started) >= BigInt(parent.started);
 }
 
-// `<node> <path>/launch-supervisor.mjs <launch folder> <cause> <token>`, each path possibly holding spaces or quoted as Windows quotes it.
-const SUPERVISOR_COMMAND = /^("?)((?:.*[\\/])?node(?:\.exe)?)\1\s+("?)((?:.*[\\/])?launch-supervisor\.mjs)\3\s+("?)(.+?)\5\s+(launch|person|gate)\s+([0-9A-Za-z]+)$/i;
+// A supervisor's command line is `<node> <path>/launch-supervisor.mjs <launch folder> <cause> <token>`,
+// each path possibly holding spaces or quoted as Windows quotes it.
+// It is read in one pass from each end, without a backtracking pattern, so any command line takes time linear in its length,
+// and a line longer than the longest Windows command line is never a supervisor's.
+const SUPERVISOR_SCRIPT = "launch-supervisor.mjs";
+const NODE_NAMES = ["node", "node.exe"];
+const SUPERVISOR_CAUSES = new Set(["launch", "person", "gate"]);
+const MAX_SUPERVISOR_COMMAND = 32767;
+const NODE_BEFORE_SPACE = /(?:^|[\\/])node(?:\.exe)?(?=\s)/i;
+const isSpace = (char) => char !== undefined && /\s/.test(char);
+const isSeparator = (char) => char === "/" || char === "\\";
+const isTokenChar = (char) => char !== undefined && /[0-9A-Za-z]/.test(char);
+const isLetter = (char) => char !== undefined && /[A-Za-z]/.test(char);
+
+// Whether a path is a file of one of these names, in any folder.
+function namesFile(text, names) {
+  const lower = text.toLowerCase();
+  return names.some((name) => lower.endsWith(name) && (lower.length === name.length || isSeparator(lower[lower.length - name.length - 1])));
+}
+
+// Whether a field is the node executable, quoted or not.
+function nodeField(text) {
+  if (!text.startsWith("\"")) return namesFile(text, NODE_NAMES);
+  return text.length > 1 && text.endsWith("\"") && !text.slice(1, -1).includes("\"") && namesFile(text.slice(1, -1), NODE_NAMES);
+}
+
+// The index before the whitespace that ends at index end, or -1 when no whitespace ends there.
+function beforeSpace(text, end) {
+  let index = end;
+  while (index > 0 && isSpace(text[index - 1])) index -= 1;
+  return index < end ? index : -1;
+}
+
+// The launch folder of `<node> <script> <folder>`, or null.
+function supervisorFolder(head) {
+  const lower = head.toLowerCase();
+  let at = lower.indexOf(SUPERVISOR_SCRIPT);
+  const fieldEnd = (index) => {
+    const after = index + SUPERVISOR_SCRIPT.length;
+    return isSpace(head[after]) || (head[after] === "\"" && isSpace(head[after + 1]));
+  };
+  while (at !== -1 && !fieldEnd(at)) at = lower.indexOf(SUPERVISOR_SCRIPT, at + 1);
+  if (at <= 0) return null;
+  const end = at + SUPERVISOR_SCRIPT.length;
+  const quoted = head[end] === "\"";
+  let index = quoted ? end + 1 : end;
+  while (isSpace(head[index])) index += 1;
+  let folder = head.slice(index);
+  if (folder.startsWith("\"")) {
+    if (folder.length < 2 || !folder.endsWith("\"")) return null;
+    folder = folder.slice(1, -1);
+  }
+  if (!folder || folder.includes("\"")) return null;
+  if (quoted) {
+    const open = head.lastIndexOf("\"", at - 1);
+    if (open <= 0 || !namesFile(head.slice(open + 1, end), [SUPERVISOR_SCRIPT])) return null;
+    const nodeEnd = beforeSpace(head, open);
+    return nodeEnd > 0 && nodeField(head.slice(0, nodeEnd)) ? folder : null;
+  }
+  if (isSpace(head[at - 1])) {
+    const nodeEnd = beforeSpace(head, at);
+    return nodeEnd > 0 && nodeField(head.slice(0, nodeEnd)) ? folder : null;
+  }
+  if (!isSeparator(head[at - 1])) return null;
+  // The script's folder may hold spaces, so the node executable is any one that whitespace follows before that folder's last separator.
+  if (head.startsWith("\"")) {
+    const close = head.indexOf("\"", 1);
+    return close > 0 && close < at - 2 && isSpace(head[close + 1]) && nodeField(head.slice(0, close + 1)) ? folder : null;
+  }
+  return NODE_BEFORE_SPACE.test(head.slice(0, at - 1)) ? folder : null;
+}
 
 /**
  * The launch folder and token of a process whose command line is exactly a launch supervisor's, or null.
  * With launchesDir, the launch folder must be the folder of a launch id in it.
  */
 export function supervisorCommand(args, launchesDir = null) {
-  const match = SUPERVISOR_COMMAND.exec(String(args ?? "").trim());
-  if (!match) return null;
-  const folder = match[6];
+  const line = String(args ?? "").trim();
+  if (line.length > MAX_SUPERVISOR_COMMAND) return null;
+  let index = line.length;
+  while (isTokenChar(line[index - 1])) index -= 1;
+  const token = line.slice(index);
+  const causeEnd = beforeSpace(line, index);
+  if (!token || causeEnd <= 0) return null;
+  index = causeEnd;
+  while (isLetter(line[index - 1])) index -= 1;
+  const headEnd = beforeSpace(line, index);
+  if (!SUPERVISOR_CAUSES.has(line.slice(index, causeEnd).toLowerCase()) || headEnd <= 0) return null;
+  const folder = supervisorFolder(line.slice(0, headEnd));
+  if (!folder) return null;
   const name = path.basename(folder);
   if (launchesDir) {
     if (path.dirname(folder) !== path.resolve(launchesDir) || !LAUNCH_ID_PATTERN.test(name)) return null;
   } else if (path.basename(path.dirname(folder)) !== "launches" || !name.startsWith("launch-")) {
     return null;
   }
-  return { folder, token: match[8] };
+  return { folder, token };
 }
 
 const supervisorByCommand = (entry) => supervisorCommand(entry.args) !== null;
