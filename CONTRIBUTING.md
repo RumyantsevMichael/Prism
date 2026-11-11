@@ -232,6 +232,8 @@ The build preserves staged dependencies and the ignored `dist/native` archive di
 Tests and plugin launchers run the generated output.
 The archive builder verifies generated files and copies pinned source dependencies without running installation scripts.
 ONNX Runtime stays pinned to `1.22.0` because the `1.30.0` package omits the Intel macOS binding.
+`sharp` is replaced by the stub in `src/native-runtime/stubs/sharp`, because Hugging Face Transformers requires it at load time but Prism never processes images, and the real package ships an LGPL image library.
+`src/native-runtime/.npmrc` sets `install-links=true`, so npm copies the stub into `node_modules` instead of linking it, and the runtime archive contains a real directory.
 The smoke tests run the packaged Node helper without external executables.
 The MCP smoke test also checks native estimates, offline reuse, responsive discovery, and source changes.
 The release workflow builds and tests all five target platforms for the release pull request.
