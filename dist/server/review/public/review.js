@@ -1477,6 +1477,15 @@ const addressedPlace = new URLSearchParams(location.search).get("place");
 let currentPlace = placeNamed(addressedPlace) ? addressedPlace : readStoredPlace() ?? DEFAULT_PLACE;
 if (placeNamed(addressedPlace)) storePlace(addressedPlace);
 
+// The page names no place until it knows the current one, and names it at once, before the workspace loads, so a person whose place is History never sees Attention first.
+function showPlaceHead() {
+  const place = placeNamed(currentPlace);
+  placeHead.setAttribute("heading", place.label);
+  placeHead.setAttribute("subtitle", place.subtitle);
+  sidebar.setAttribute("aria-label", place.label);
+}
+showPlaceHead();
+
 /**
  * Makes a place current and shows its sidebar, also when the sidebar was hidden; the open page stays.
  * Choosing Roadmap on the rail also opens the Roadmap page, as its sidebar link would; choosing the current place again changes nothing.
@@ -1834,9 +1843,7 @@ function renderNavigation() {
   const focused = document.activeElement?.closest?.("prism-tree-item");
   const refocus = focused && navRoot.contains(focused) ? focused.getAttribute("value") : null;
   const place = placeNamed(currentPlace);
-  placeHead.setAttribute("heading", place.label);
-  placeHead.setAttribute("subtitle", place.subtitle);
-  sidebar.setAttribute("aria-label", place.label);
+  showPlaceHead();
   // A field of the place, such as Work's filter, is the same element after the render, so it keeps the focus and the caret it had.
   const field = document.activeElement?.closest?.("prism-field");
   const typing = field && navRoot.contains(field) ? { field, start: document.activeElement.selectionStart, end: document.activeElement.selectionEnd } : null;
@@ -2426,6 +2433,10 @@ function setSidebarCollapsed(collapsed, { remember = true } = {}) {
   sidebarToggle.setAttribute("tip", `${action} ([)`);
   if (remember) void setPreference("sidebar.collapsed", collapsed).catch(() => showToast("The sidebar changed here, but the review app could not store the choice."));
 }
+// The sidebar shows as this browser last left it as soon as the page runs, and the review app's stored choice applies once the workspace loads.
+setSidebarCollapsed(readSidebarCollapsed(), { remember: false });
+// The rail's sidebar button works from the first moment too, so a click while the workspace loads is not lost.
+sidebarToggle.addEventListener("prism-select", () => setSidebarCollapsed(!shell.classList.contains("sidebar-collapsed")));
 
 // The drawer places its children in its body a microtask after they arrive, so focus moves once the sidebar sits inside the open drawer.
 // How long the drawer keeps showing a place whose choice also opened a page, so the switch is seen before the drawer closes.
@@ -2694,7 +2705,6 @@ async function initialize() {
   onPreferencesChange((keys, preferences) => {
     if (keys.includes("sidebar.collapsed") && preferences["sidebar.collapsed"] !== shell.classList.contains("sidebar-collapsed")) setSidebarCollapsed(preferences["sidebar.collapsed"], { remember: false });
   });
-  sidebarToggle.addEventListener("prism-select", () => setSidebarCollapsed(!shell.classList.contains("sidebar-collapsed")));
   navDrawer.addEventListener("prism-close", closeDrawer);
   watchDrawerWidth();
   document.getElementById("jump").addEventListener("click", () => palette.show());

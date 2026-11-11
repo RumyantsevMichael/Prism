@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { escapes, shownTooltip, skip, stateFileNames } from "./fixtures/kit-browser.mjs";
-import { buttonNames, choosePlace, comparePlaces, drawer, item, open, placeButton, PLACES, placesDemo, placeTitle, rail, reviewUrl, row as rowOf, settledOn, shownRef, sidebar, SLICE, tabs } from "./fixtures/places-browser.mjs";
+import { buttonNames, choosePlace, comparePlaces, drawer, item, open, placeButton, PLACES, placesDemo, placeTitle, rail, reviewUrl, row as rowOf, settledOn, shownPlace, shownRef, sidebar, SLICE, tabs } from "./fixtures/places-browser.mjs";
 
 // The rail of places and the sidebar that shows only the current place, on the real review page over the demo project.
 // The demo records three questions that wait for an answer: two on Harden request retries and one on Export activity reports.
@@ -10,6 +10,19 @@ const pressed = async (page) => {
   const snapshot = await rail(page).ariaSnapshot();
   return [...snapshot.matchAll(/- button "([^"]*)" \[pressed\]/g)].map((match) => match[1]);
 };
+// Headless Chromium under load now and then drops the window a Shift or middle click on a link opens, on a bare page with a bare link too,
+// while the page leaves the click to the browser; so the gesture is repeated until a window opens, and a page that took the click itself fails every time.
+async function openedByClick(page, anchor, click, attempts = 3) {
+  for (let attempt = 1; ; attempt += 1) {
+    const opened = page.context().waitForEvent("page", { timeout: 5000 });
+    await anchor.click(click);
+    try {
+      return await opened;
+    } catch (error) {
+      if (attempt === attempts) throw error;
+    }
+  }
+}
 const bell = (page) => page.locator("header").getByRole("button", { name: /^Attention/ });
 const sidebarButton = (scope) => scope.getByRole("button", { name: /(Collapse|Expand) the sidebar/ });
 
@@ -140,16 +153,13 @@ test("clauses 7, 8, 9: only Roadmap opens a page, and the place stays while tabs
 test("clauses 10, 11: the place survives a reload and a new window, falls back to Attention, and a place= address chooses and stores one", { skip, timeout: 60000 }, async (context) => {
   const { base, browser } = await placesDemo(context);
   const page = await open(browser, base, "roadmap");
-  assert.equal((await placeTitle(sidebar(page)).innerText()).trim(), "Attention", "a browser that stored no place shows Attention");
+  assert.equal(await shownPlace(page), "Attention", "a browser that stored no place shows Attention");
   await choosePlace(page, "Knowledge");
   await page.reload();
-  await page.waitForTimeout(800);
-  assert.equal((await placeTitle(sidebar(page)).innerText()).trim(), "Knowledge", "a reload keeps the place");
+  assert.equal(await shownPlace(page), "Knowledge", "a reload keeps the place");
   const second = await page.context().newPage();
   await second.goto(reviewUrl(base, "attention"));
-  await rail(second).waitFor();
-  await second.waitForTimeout(800);
-  assert.equal((await placeTitle(sidebar(second)).innerText()).trim(), "Knowledge", "another window of the same browser shows the stored place");
+  assert.equal(await shownPlace(second), "Knowledge", "another window of the same browser shows the stored place");
   await second.close();
   await page.evaluate(() => {
     for (let index = 0; index < localStorage.length; index += 1) {
@@ -158,17 +168,13 @@ test("clauses 10, 11: the place survives a reload and a new window, falls back t
     }
   });
   await page.reload();
-  await page.waitForTimeout(800);
-  assert.equal((await placeTitle(sidebar(page)).innerText()).trim(), "Attention", "a stored value that is not a place falls back to Attention");
+  assert.equal(await shownPlace(page), "Attention", "a stored value that is not a place falls back to Attention");
   await page.goto(`${reviewUrl(base, "roadmap")}&place=history`);
-  await page.waitForTimeout(800);
-  assert.equal((await placeTitle(sidebar(page)).innerText()).trim(), "History", "place=history chooses History");
+  assert.equal(await shownPlace(page), "History", "place=history chooses History");
   await page.goto(reviewUrl(base, "roadmap"));
-  await page.waitForTimeout(800);
-  assert.equal((await placeTitle(sidebar(page)).innerText()).trim(), "History", "and stores it");
+  assert.equal(await shownPlace(page), "History", "and stores it");
   await page.goto(`${reviewUrl(base, "roadmap")}&place=lobby`);
-  await page.waitForTimeout(800);
-  assert.equal((await placeTitle(sidebar(page)).innerText()).trim(), "History", "an unknown place= value is ignored");
+  assert.equal(await shownPlace(page), "History", "an unknown place= value is ignored");
   assert.deepEqual(page.errors, []);
 });
 
@@ -215,13 +221,13 @@ test("clauses 14, 15, 16: [ and the rail's sidebar button hide the sidebar and k
   await page.waitForTimeout(700);
   assert.match(await shownTooltip(page) ?? "", /\(\[\)$/, "the tooltip names the key");
   await page.reload();
-  await page.waitForTimeout(800);
+  assert.equal(await shownPlace(page), "Work", "the reload kept the place");
   assert.equal(await sidebar(page).isVisible(), false, "the hidden sidebar stays hidden after a reload");
   await choosePlace(page, "Knowledge");
   assert.equal(await sidebar(page).isVisible(), true, "choosing a place on the collapsed rail shows the sidebar");
   assert.equal((await placeTitle(sidebar(page)).innerText()).trim(), "Knowledge");
   await page.reload();
-  await page.waitForTimeout(800);
+  assert.equal(await shownPlace(page), "Knowledge", "the reload kept the place");
   assert.equal(await sidebar(page).isVisible(), true, "and stores it as shown");
   await sidebarButton(rail(page)).click();
   await page.waitForTimeout(300);
@@ -247,9 +253,7 @@ test("clause 17: a sidebar entry is a link: Shift and middle click open the brow
   const href = await row.evaluate((node) => node.querySelector(":scope > a")?.getAttribute("href"));
   assert.equal(new URL(href, base + "/").searchParams.get("artifact"), "initiative:activity-reports", "the row's anchor carries the page's address");
   for (const [label, click] of [["Shift click", { modifiers: ["Shift"] }], ["middle click", { button: "middle" }]]) {
-    const opened = page.context().waitForEvent("page", { timeout: 5000 });
-    await row.locator(":scope > a").click(click);
-    const other = await opened;
+    const other = await openedByClick(page, row.locator(":scope > a"), click);
     await other.waitForURL(/[?&]artifact=/, { timeout: 15000 });
     assert.equal(new URL(other.url()).searchParams.get("artifact"), "initiative:activity-reports", `a ${label} opened the address in the browser`);
     await other.close();
