@@ -1,3 +1,4 @@
+import { defer } from "./fixtures/teardown.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises";
@@ -30,7 +31,7 @@ const findingId = (local) => `implementation-review/correctness/${local}`;
 // A project whose root slice requires review and has passed verification.
 async function verified(context) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-loop-integrity-")));
-  context.after(() => rm(root, { recursive: true, force: true }));
+  defer(context, () => rm(root, { recursive: true, force: true }));
   await mkdir(path.join(root, ".prism"), { recursive: true });
   await mkdir(path.join(root, "test"), { recursive: true });
   await writeFile(path.join(root, ".prism", "workflow.md"), `## Paths\n- Plans: docs/plans\n\n## Stack\n- Test command: ${process.execPath} check.mjs\n`);

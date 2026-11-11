@@ -1,3 +1,4 @@
+import { defer } from "./fixtures/teardown.mjs";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
@@ -46,7 +47,7 @@ async function initiativeUpdate(root, operations) {
 // A project whose download slice requires review, has passed verification, and whose first review wave raised the given findings.
 async function reviewed(context, findings) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-deferred-")));
-  context.after(() => rm(root, { recursive: true, force: true }));
+  defer(context, () => rm(root, { recursive: true, force: true }));
   await mkdir(path.join(root, ".prism"), { recursive: true });
   await mkdir(path.join(root, "test"), { recursive: true });
   await writeFile(path.join(root, ".prism", "workflow.md"), `## Paths\n- Plans: docs/plans\n\n## Stack\n- Test command: ${process.execPath} check.mjs\n`);
@@ -188,7 +189,7 @@ test("a deferral refused through MCP keeps every problem in its error data", asy
   const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
   const waiting = new Map();
   readline.createInterface({ input: child.stdout }).on("line", (line) => { const message = JSON.parse(line); waiting.get(message.id)?.(message); waiting.delete(message.id); });
-  context.after(() => new Promise((resolve) => { child.once("exit", resolve); child.stdin.end(); }));
+  defer(context, () => new Promise((resolve) => { if (child.exitCode !== null || child.signalCode !== null) return resolve(); child.once("exit", resolve); child.stdin.end(); }));
   let id = 0;
   const send = (method, params) => new Promise((resolve) => { id += 1; waiting.set(id, resolve); child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`); });
   const call = (name, args) => send("tools/call", { name, arguments: { projectRoot: root, initiative: INITIATIVE, ...args }, _meta: { sessionId: process.env.CLAUDE_CODE_SESSION_ID } });

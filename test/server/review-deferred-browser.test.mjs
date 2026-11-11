@@ -1,10 +1,11 @@
+import { defer } from "./fixtures/teardown.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { launch, openPage, reviewUrl, serveProject, skip, useAppDirectory, waitForView } from "./fixtures/kit-browser.mjs";
 
 // Requirements: docs/requirements/review-loop-decisions.md §3, §4.
@@ -30,7 +31,7 @@ const LOWS = [{ localId: "L1", title: "Help text has a typo", severity: "low" },
 // A project whose root slice reached the review wave limit with two low findings, so Prism recorded its review loop gate.
 async function atLimit(context) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-deferred-browser-")));
-  context.after(() => rm(root, { recursive: true, force: true }));
+  defer(context, () => rm(root, { recursive: true, force: true }));
   await mkdir(path.join(root, ".prism"), { recursive: true });
   await mkdir(path.join(root, "test"), { recursive: true });
   await writeFile(path.join(root, ".prism", "workflow.md"), `## Paths\n- Plans: docs/plans\n\n## Stack\n- Test command: ${process.execPath} check.mjs\n`);
@@ -111,7 +112,7 @@ test("clauses 26, 29: the findings board shows deferred findings in their own co
   const detail = view.locator("[data-detail]");
   await detail.getByText("#101").waitFor({ timeout: 5000 });
   assert.match(await detail.innerText(), new RegExp(gate));
-  const { checkKitUsage } = await import(path.join(ROOT, "scripts/review-kit/kit-guard.mjs"));
+  const { checkKitUsage } = await import(pathToFileURL(path.join(ROOT, "scripts/review-kit/kit-guard.mjs")).href);
   const findings = await checkKitUsage({ root: ROOT, files: ["src/server/review/public/views/review-ledger.js", "src/server/review/public/views/slice.js", "src/server/review/public/styles/record-views.css", "src/server/review/public/styles/workflow-views.css"] });
   assert.deepEqual(findings.map((finding) => `${finding.file}:${finding.line}: ${finding.rule} ${finding.value}`), []);
   assert.deepEqual(page.errors, []);
