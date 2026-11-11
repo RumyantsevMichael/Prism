@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { skip } from "./fixtures/kit-browser.mjs";
-import { choosePlace, comparePlaces, groupHeadings, item, itemNames, open, placesDemo, settledOn, sidebar } from "./fixtures/places-browser.mjs";
+import { choosePlace, comparePlaces, eventually, groupHeadings, item, itemNames, open, placesDemo, settledOn, sidebar } from "./fixtures/places-browser.mjs";
 
 // The Knowledge place over the demo, which holds four requirements files, three decisions, three glossary terms, and one diagram, eleven records in all.
 
@@ -47,26 +47,22 @@ test("clause 52: typing in the search shows matching records grouped by kind, a 
   await page.waitForTimeout(400);
   assert.deepEqual(await groupHeadings(side), ["Start from", "Browse by kind"], "one character changes nothing");
   await field(side).fill("Deadline");
-  await page.waitForTimeout(600);
-  assert.deepEqual(await groupHeadings(side), ["Requirements", "Decisions", "Glossary"], "the empty Diagrams group is left out");
+  assert.deepEqual(await eventually(() => groupHeadings(side), ["Requirements", "Decisions", "Glossary"]), ["Requirements", "Decisions", "Glossary"], "the empty Diagrams group is left out");
   assert.deepEqual(await itemNames(side), ["Retry requirements", "Bound retries by a total deadline", "Retry deadline"]);
   await field(side).fill("total attempts");
-  await page.waitForTimeout(600);
-  assert.deepEqual(await itemNames(side), ["Retry requirements", "Retry deadline"], "every word must occur in the title or the text");
+  assert.deepEqual(await eventually(() => itemNames(side), ["Retry requirements", "Retry deadline"]), ["Retry requirements", "Retry deadline"], "every word must occur in the title or the text");
   await item(side, "Retry deadline").click();
   await settledOn(page, "glossary");
   await field(side).fill("deadline");
-  await page.waitForTimeout(600);
   await item(side, "Bound retries by a total deadline").click();
   await settledOn(page, "docs/ADRs/retries/total-retry-deadline.md");
   await field(side).fill("no such words");
-  await page.waitForTimeout(600);
-  assert.equal(await side.getByText('No record matches "no such words".', { exact: true }).isVisible(), true);
+  assert.equal(await eventually(() => side.getByText('No record matches "no such words".', { exact: true }).isVisible(), true), true);
   await field(side).press("Escape");
   await page.waitForTimeout(400);
   assert.deepEqual(await groupHeadings(side), ["Start from", "Browse by kind"], "Escape restores the groups");
   await field(side).fill("deadline");
-  await page.waitForTimeout(600);
+  await eventually(() => groupHeadings(side), ["Requirements", "Decisions", "Glossary"]);
   await field(side).fill("");
   await page.waitForTimeout(400);
   assert.deepEqual(await groupHeadings(side), ["Start from", "Browse by kind"], "clearing the field restores the groups");
