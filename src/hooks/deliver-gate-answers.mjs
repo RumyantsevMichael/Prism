@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { listInitiatives } from "../server/workflow/record-store.mjs";
 import { readCoordinationState } from "../server/workflow/state.mjs";
 import { readWorkflowConfig } from "../server/workflow/workflow-config.mjs";
+import { configureRecordSync } from "../server/workflow/record-store-sync.mjs";
 
 const MAX_HOOK_INPUT_BYTES = 4 * 1024 * 1024;
 const MAX_CONTEXT_CHARACTERS = 3500;
@@ -98,6 +99,8 @@ export async function deliverGateAnswers({ input = process.stdin, environment = 
 }
 
 async function main() {
+  // A hook must answer within its host's time limit, so its record reads never start a store pull; the session's server keeps the store current.
+  configureRecordSync({ pullOnRead: false });
   try {
     const output = await deliverGateAnswers();
     if (output) {

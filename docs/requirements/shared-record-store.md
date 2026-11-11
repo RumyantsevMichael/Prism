@@ -131,9 +131,10 @@ Pattern: Optional feature
 
 Disposition: Active
 
-Requirement: Where store sync is on, when a record is read and the store last fetched its upstream more than 30 seconds earlier, Prism shall fetch and merge the upstream in the background without delaying the read.
+Requirement: Where store sync is on, when a session's server or the review app reads a record and the store last fetched its upstream more than 30 seconds earlier, Prism shall fetch and merge the upstream in the background without delaying the read.
 
 Rationale: Records from other machines arrive while an agent only reads, and a slow network never blocks local work.
+A hook reads the clone as it is, because a hook process ends within its host's few-second limit, and a fetch it started would hold that process open past the limit and be killed partway.
 
 Related: [§7](#7)
 
