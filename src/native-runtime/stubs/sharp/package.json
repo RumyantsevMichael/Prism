@@ -1,0 +1,7 @@
+{
+  "name": "sharp",
+  "version": "0.0.0-prism-stub",
+  "description": "Empty stand-in for sharp. Prism embeds text only, so the image library sharp would bring in is never loaded.",
+  "license": "Apache-2.0",
+  "main": "index.cjs"
+}

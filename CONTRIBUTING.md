@@ -232,6 +232,8 @@ The build preserves staged dependencies and the ignored `dist/native` archive di
 Tests and plugin launchers run the generated output.
 The archive builder verifies generated files and copies pinned source dependencies without running installation scripts.
 ONNX Runtime stays pinned to `1.22.0` because the `1.30.0` package omits the Intel macOS binding.
+`sharp` is replaced by the stub in `src/native-runtime/stubs/sharp`, because Hugging Face Transformers requires it at load time but Prism never processes images, and the real package ships an LGPL image library.
+`src/native-runtime/.npmrc` sets `install-links=true`, so npm copies the stub into `node_modules` instead of linking it, and the runtime archive contains a real directory.
 The smoke tests run the packaged Node helper without external executables.
 The MCP smoke test also checks native estimates, offline reuse, responsive discovery, and source changes.
 The release workflow builds and tests all five target platforms for the release pull request.
@@ -268,6 +270,10 @@ A development-only dependency, used only by tests, build scripts, linters, or CI
 | No license, unknown, or custom terms | Not allowed until the maintainer approves it |
 
 A package with a choice of licenses, such as `(MIT OR GPL-3.0)`, is used under the allowed one.
+`npm run check:licenses` enforces this table on every package in the npm lockfiles, and CI runs it.
+It treats every package that is not development-only as shipped, including optional platform packages.
+[`scripts/dependency-licenses.json`](scripts/dependency-licenses.json) holds the exact lists the check uses, so change it together with this table.
+An exception the maintainer approves goes under `approved` in that file, keyed by package name with the reason as its value.
 Every shipped dependency keeps its license text and copyright notice in `THIRD_PARTY_NOTICES.md`, under `vendor/`, or in the license files the native runtime build collects.
 
 ## Writing skills
