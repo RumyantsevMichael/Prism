@@ -55,6 +55,9 @@ jobs:
       - name: Validate Skill Definition Markdown
         run: npm run validate:sdm
 
+      - name: Check dependency licenses
+        run: npm run check:licenses
+
       # The review app's browser tests run in Chromium through a global Playwright, which is not a repository dependency.
       - name: Install Playwright and Chromium for the browser tests
         run: |
@@ -69,7 +72,7 @@ jobs:
           npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
           npm run check:native
           npm test
-          node --test scripts/native-build/*.test.mjs scripts/release-automation.test.mjs
+          node --test scripts/native-build/*.test.mjs scripts/release-automation.test.mjs scripts/check-dependency-licenses.test.mjs
 
       - name: Check manifest versions
         run: |

@@ -1,0 +1,6 @@
+{
+  "lockfiles": ["src/native-runtime/package-lock.json", "scripts/native-build/package-lock.json"],
+  "allowed": ["MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Apache-2.0", "0BSD", "Unlicense", "CC0-1.0", "Zlib", "BlueOak-1.0.0", "Python-2.0", "OFL-1.1", "CC-BY-4.0"],
+  "notAllowed": ["GPL-*", "AGPL-*", "SSPL-*", "EUPL-*", "CC-BY-SA-*", "CC-BY-NC-*", "BUSL-*", "Elastic-*", "Commons-Clause", "UNKNOWN", "UNLICENSED", "SEE LICENSE IN *"],
+  "approved": {}
+}

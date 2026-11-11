@@ -23,7 +23,8 @@ He also decided that a peer team's Prism store can be a reference entry, read-on
 
 ## Non-goals
 
-- Declare reference repositories, choose their ref policy, or pin and move commits on work items, which the workspace and work item settings own.
+- Declare reference repositories and choose their ref policy, which [reference-repositories.md](reference-repositories.md) owns.
+- Pin and move commits on work items or record citations, which [work-item-pins.md](work-item-pins.md) owns.
 - Plan slices, run tests, or write anything in a reference repository or a library.
 - Store any content of an outside source in the shared store.
 - Index host tools such as Claude Code or Codex, whose facts come from probes recorded in host profiles.
@@ -72,7 +73,7 @@ Requirement: When `search_references` answers for a work item, Prism shall answe
 
 Rationale: A contract must cite the interface at the version the work uses, not whatever the remote holds today.
 
-Related: [reference-search.md§4](#4)
+Related: [reference-search.md§4](#4), [work-item-pins.md§1](work-item-pins.md#1), [work-item-pins.md§2](work-item-pins.md#2)
 
 <a id="4"></a>
 ## 4. Answer without a work item at the default commit
@@ -85,7 +86,7 @@ Requirement: When `search_references` is called without a work item, Prism shall
 
 Rationale: Exploration before a work item exists still needs a known version, and naming it lets the later pin match what was read.
 
-Related: [reference-search.md§3](#3)
+Related: [reference-search.md§3](#3), [reference-repositories.md§5](reference-repositories.md#5)
 
 <a id="5"></a>
 ## 5. Mark every outside result as outside data
@@ -189,7 +190,7 @@ Requirement: When an agent asks what changed for a work item's pin of a referenc
 
 Rationale: Moving a pin is safe only when the person and the agent see which contract assumptions rest on changed files.
 
-Related: [reference-search.md§3](#3)
+Related: [reference-search.md§3](#3), [work-item-pins.md§5](work-item-pins.md#5)
 
 <a id="13"></a>
 ## 13. Report an outside source that this machine cannot read
@@ -202,7 +203,7 @@ Requirement: If this machine cannot fetch a reference repository or find a libra
 
 Rationale: Colleagues share entries but not access, and an empty answer would read as "the interface has no such thing".
 
-Related: [reference-search.md§5](#5)
+Related: [reference-search.md§5](#5), [reference-repositories.md§7](reference-repositories.md#7)
 
 <a id="14"></a>
 ## 14. Report a cited commit that is no longer reachable
@@ -215,7 +216,7 @@ Requirement: If a commit that a work item pins or cites is no longer reachable f
 
 Rationale: A force-push upstream must not erase the evidence a contract rests on.
 
-Related: [reference-search.md§12](#12)
+Related: [reference-search.md§12](#12), [work-item-pins.md§3](work-item-pins.md#3)
 
 <a id="15"></a>
 ## 15. Search a peer workspace's records
@@ -228,7 +229,7 @@ Requirement: When `search_references` answers from a reference entry that is ano
 
 Rationale: A peer team's Approved requirements and decisions are the facts a plan must respect about their system, and a name qualified by workspace keeps them apart from this workspace's records.
 
-Related: [record-search.md§1](record-search.md#1), [reference-search.md§3](#3)
+Related: [record-search.md§1](record-search.md#1), [reference-search.md§3](#3), [reference-repositories.md§18](reference-repositories.md#18)
 
 <a id="16"></a>
 ## 16. Show a peer workspace's Approved records by default
