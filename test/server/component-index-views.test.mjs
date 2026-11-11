@@ -48,7 +48,9 @@ test("clause 27: a rebuild prepares the components with an index or a failure th
   const { root, storage, write } = await project(t);
   const first = await fakeRuntime(storage);
   first.control.fail("packages/app/client.ts", "resource_limit");
+  // The search answers after its wait even while components still prepare, which a busy runner can outlast, so the count is read once they settle.
   await search(root, first.runtime);
+  await settled(first.runtime, root);
   assert.equal(first.control.builds.length, 3);
   await write("packages/net/retry.ts", changed("packages/net/retry.ts"));
   first.control.recover("packages/app/client.ts");
@@ -65,7 +67,9 @@ test("the review browser's automatic rebuild leaves a component that reached a n
   const { root, storage, write } = await project(t);
   const first = await fakeRuntime(storage);
   first.control.fail("packages/app/client.ts", "resource_limit");
+  // The search answers after its wait even while components still prepare, which a busy runner can outlast, so the count is read once they settle.
   await search(root, first.runtime);
+  await settled(first.runtime, root);
   assert.equal(first.control.builds.length, 3);
   await write("packages/net/retry.ts", changed("packages/net/retry.ts"));
   // A later process, such as the review app after a restart, knows the limit only from the recorded failure.
