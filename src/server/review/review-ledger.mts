@@ -99,22 +99,26 @@ const SEVERITIES = ["blocker", "high", "medium", "low"];
 const bySeverity = (a: Finding, b: Finding) => SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const cut = (value: string, limit: number) => value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
 const aboveLow = (finding: Finding) => finding.severity !== "low";
+// Recorded text is placed into the context as one inline run, so a line break cannot start a block, a backtick cannot end a code span, and a bar cannot split a table cell;
+// the review browser's Markdown honors no escapes, so the two marks become look-alike characters.
+const inline = (value: string) => value.replace(/\s+/g, " ").trim();
+const code = (value: string) => `\`${inline(value).replace(/`/g, "\u02CB").replace(/\|/g, "\u2223")}\``;
 // The summary the user decides the review loop from: what is still open, what each wave raised and closed, and the files the reviewers keep returning to.
 function loopSummary(slice: string, review: ReviewRecord, waves: Wave[]) {
   const unresolved = unresolvedFindings(review).sort(bySeverity), reviewed = review.findings.filter(item => item.mode === "implementation-review");
   const count = (severity: string) => unresolved.filter(item => item.severity === severity).length;
-  const blocks = [`Slice \`${slice}\` had ${waves.length} implementation review waves since its design was accepted, so a further wave needs a decision.`,
+  const blocks = [`Slice ${code(slice)} had ${waves.length} implementation review waves since its design was accepted, so a further wave needs a decision.`,
     `**Unresolved findings:** ${count("blocker")} blocker, ${count("high")} high, ${count("medium")} medium, ${count("low")} low.`];
-  const items = unresolved.slice(0, 20).map(item => `- \`${item.id}\` ${item.severity}, ${item.status}: ${cut(item.title, 120)}`);
+  const items = unresolved.slice(0, 20).map(item => `- ${code(item.id)} ${item.severity}, ${item.status}: ${cut(inline(item.title), 120)}`);
   if (unresolved.length > 20) items.push(`- and ${unresolved.length - 20} more`);
   blocks.push(items.length ? items.join("\n") : "No finding is unresolved.", "**Findings by wave:**");
   const shown = waves.slice(-30);
   if (waves.length > shown.length) blocks.push(`${waves.length - shown.length} earlier waves are not shown.`);
-  blocks.push(["| Wave | Raised | Closed |", "| --- | --- | --- |", ...shown.map(wave => `| \`${wave.id}\` | ${reviewed.filter(item => raisedIn(item) === wave.id).length} | ${reviewed.filter(item => item.history.some(entry => entry.wave === wave.id && entry.status === "VERIFIED")).length} |`)].join("\n"));
+  blocks.push(["| Wave | Raised | Closed |", "| --- | --- | --- |", ...shown.map(wave => `| ${code(wave.id)} | ${reviewed.filter(item => raisedIn(item) === wave.id).length} | ${reviewed.filter(item => item.history.some(entry => entry.wave === wave.id && entry.status === "VERIFIED")).length} |`)].join("\n"));
   const named = new Map<string, Set<string>>();
   for (const finding of reviewed) for (const entry of finding.history) if ((entry.status === "OPEN" || entry.status === "REOPENED") && waves.some(wave => wave.id === entry.wave)) named.set(finding.affectedPath, (named.get(finding.affectedPath) ?? new Set()).add(entry.wave));
   const repeated = [...named].filter(([, ids]) => ids.size > 1).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
-    .map(([file, ids]) => `\`${file}\` (${waves.filter(wave => ids.has(wave.id)).map(wave => `\`${wave.id}\``).join(", ")})`);
+    .map(([file, ids]) => `${code(file)} (${waves.filter(wave => ids.has(wave.id)).map(wave => code(wave.id)).join(", ")})`);
   const files = repeated.slice(0, 20).concat(repeated.length > 20 ? [`and ${repeated.length - 20} more`] : []);
   blocks.push(`**Files named in more than one wave:** ${files.length ? files.join(", ") : "none"}.`);
   return cut(blocks.join("\n\n"), 8000);
@@ -130,22 +134,37 @@ function loopRecommendation(review: ReviewRecord, waves: Wave[], offersAccept: b
   return { option: "continue-review", reason: cut(`The latest wave ${latest.id} raised ${a} findings above low severity, fewer than the ${b} that the wave before it, ${previous?.id ?? "none"}, raised, so the review is converging.`, 500) };
 }
 // Prism asks the review loop decision itself, and names a gate it already asked that still allows the next wave, so repeated refusals leave one pending gate.
-async function reviewLoopGate(input: SliceInput, review: ReviewRecord, waves: Wave[], acceptedAt: string) {
-  const start = waves.at(-1)?.startedAt ?? acceptedAt;
+// It runs after the review locks are released, because a gated active-work change holds the coordination state lock while it takes them; each attempt reads the
+// review again, and the state revision check keeps the existing-gate check and the ask one step.
+async function reviewLoopGate(input: SliceInput, refused: ReviewRecord, acceptedAt: string) {
   for (let attempt = 0; ; attempt += 1) {
+    const review = (await loadReview(input.projectRoot, input.initiative, input.slice).catch(() => null))?.document ?? refused;
+    const waves = reviewWaves(review, acceptedAt), start = waves.at(-1)?.startedAt ?? acceptedAt;
     const current = await readCoordinationState({ projectRoot: input.projectRoot, initiative: input.initiative }) as { revision: string | null; state: { pending?: GateRecord[] } | null };
     const existing = (current.state?.pending ?? []).find(gate => gate.kind === "decision" && gate.slice === input.slice && (gate.askedAt ?? "") >= start && (gate.options ?? []).some(option => option.id === "continue-review")
       && (!gate.answer || gateChose(gate, "continue-review")) && !review.waves.some(wave => wave.afterGate === gate.id));
-    if (existing) return existing.id;
+    if (existing) return { gate: existing.id, waves: waves.length };
     const offersAccept = unresolvedFindings(review).every(item => item.severity === "low");
     const ids = ["continue-review", "return-to-design", ...(offersAccept ? ["accept-deferred"] : [])] as (keyof typeof LOOP_OPTIONS)[];
     try {
       const result = await updateCoordinationState({ projectRoot: input.projectRoot, initiative: input.initiative, expectedRevision: current.revision, changes: { gateOperations: [{ op: "ask", kind: "decision", slice: input.slice,
         question: `How should the review of slice ${input.slice} continue after ${waves.length} review waves?`, context: loopSummary(input.slice, review, waves), artifacts: [],
         options: ids.map(id => ({ id, ...LOOP_OPTIONS[id] })), recommended: loopRecommendation(review, waves, offersAccept) }] } }) as { openedGates: { id: string }[] };
-      return result.openedGates[0].id;
+      return { gate: result.openedGates[0].id, waves: waves.length };
     } catch (error) { if ((error as { code?: string }).code !== "revision_conflict" || attempt >= 3) throw error; }
   }
+}
+// The review loop limit is decided under the review locks and its gate recorded after they are released, so the refusal carries what the gate needs.
+class ReviewLoopLimit extends Error { constructor(readonly review: ReviewRecord, readonly acceptedAt: string) { super("review_loop_limit"); } }
+async function refuseAtLoopLimit(input: SliceInput, limit: ReviewLoopLimit): Promise<never> {
+  const { gate, waves } = await reviewLoopGate(input, limit.review, limit.acceptedAt);
+  throw conservationError("gate_blocked", `The slice had ${waves} review waves since its design was accepted, so Prism asked the review loop decision gate ${gate} for slice ${input.slice}. When the user chose continue-review, start the wave with afterGate ${gate}; for return-to-design, call update_review with return_to_design and the gate; for accept-deferred, call accept_wave with the gate and a follow-up for each unresolved finding.`, { problems: [{ code: "review_loop_limit", waves, gate }] });
+}
+
+// A slice is reviewed and returned to design only while it is in progress; a blocked slice waits for design to revise its contract.
+async function sliceStatus(input: SliceInput) {
+  const located = await locateRecord(input.projectRoot, { kind: "initiative", initiative: input.initiative });
+  try { return (JSON.parse(await readFile(located.target, "utf8")) as { slices?: Record<string, { status?: string }> }).slices?.[input.slice]?.status; } catch { return undefined; }
 }
 
 // A finding that a contract clause itself causes is fixed in design, not in another implementation round, and a review that keeps
@@ -156,12 +175,11 @@ async function assertReviewMayContinue(input: SliceInput, review: ReviewRecord, 
     const clauses = [...new Set(fromContract.map(item => item.clause))].join(", ");
     throw conservationError("gate_blocked", `Findings ${fromContract.map(item => item.id).join(", ")} name contract clauses (${clauses}), so the contract needs revision: call verify_slice with contractDefects for those clauses and return the slice to design instead of starting another wave.`, { problems: fromContract.map(item => ({ code: "contract_defect_found", finding: item.id, clause: item.clause })) });
   }
+  const status = await sliceStatus(input);
+  if (status !== "in-progress") throw conservationError("gate_blocked", `The slice ${input.slice} is ${status ?? "not recorded"}, not in progress, so no implementation review wave starts until design revises its contract and the slice is started again.`, { problems: [{ code: "slice_not_in_progress", status: status ?? null }] });
   const waves = reviewWaves(review, acceptedAt);
   if (waves.length < FREE_REVIEW_WAVES) return;
-  if (!next.afterGate || review.waves.some(item => item.afterGate === next.afterGate)) {
-    const gate = await reviewLoopGate(input, review, waves, acceptedAt);
-    throw conservationError("gate_blocked", `The slice had ${waves.length} review waves since its design was accepted, so Prism asked the review loop decision gate ${gate} for slice ${input.slice}. When the user chose continue-review, start the wave with afterGate ${gate}; for return-to-design, call update_review with return_to_design and the gate; for accept-deferred, call accept_wave with the gate and a follow-up for each unresolved finding.`, { problems: [{ code: "review_loop_limit", waves: waves.length, gate }] });
-  }
+  if (!next.afterGate || review.waves.some(item => item.afterGate === next.afterGate)) throw new ReviewLoopLimit(structuredClone(review), acceptedAt);
   const gate = (await sliceGates(input)).find(item => item.id === next.afterGate);
   const stops = gate?.kind === "decision" ? ["return-to-design", "accept-deferred"].find(option => gateChose(gate, option)) : undefined;
   if (stops) throw conservationError("gate_blocked", `The decision gate ${gate!.id} chose ${stops}, so it does not allow another review wave.`);
@@ -170,19 +188,27 @@ async function assertReviewMayContinue(input: SliceInput, review: ReviewRecord, 
 }
 
 // Returning to design blocks the slice exactly as a contract defect report does, with each unresolved finding as a defect the revised contract answers.
+// The defects are decided under the review locks, and the slice is blocked only after the review record holds the return, so a failed review write blocks nothing.
 const DEFECT_LIMIT = 50;
-async function returnToDesign(input: SliceInput, review: ReviewRecord, gateId: string) {
+interface DesignReturn { design: { acceptedAt?: string }; defects: { clause: string; reason: string }[] }
+async function returnToDesign(input: SliceInput, review: ReviewRecord, gateId: string): Promise<DesignReturn> {
   const design = await acceptedDesign(input.projectRoot, input.initiative, input.slice) as { acceptedAt?: string; staged?: unknown } | null;
   if (!design || design.staged) throw conservationError("validation_failed", `The slice ${input.slice} is not started with an accepted design, so it cannot return to design.`);
   const gate = await currentGate(input, review, design.acceptedAt ?? "", gateId);
   if (!gate || !gateChose(gate, "return-to-design")) throw conservationError("gate_blocked", `The gate ${gateId} is not a decision gate of slice ${input.slice}, asked since the latest review wave started, that chose return-to-design.`);
+  // A slice that already returned is blocked, so repeating the return is refused instead of reporting its defects twice.
+  const status = await sliceStatus(input);
+  if (status !== "in-progress") throw conservationError("validation_failed", `The slice ${input.slice} is ${status ?? "not recorded"}, not in progress, so it cannot return to design.`);
   const unresolved = unresolvedFindings(review).sort(bySeverity);
   const defects = unresolved.map(item => ({ clause: cut(item.clause ?? `Review finding ${item.id}`, 2000), reason: cut(`${item.id} (${item.severity}): ${item.title}`, 2000) }));
   if (!defects.length) defects.push({ clause: "Review loop decision", reason: `The user returned the slice to design at ${gateId}.` });
   if (defects.length > DEFECT_LIMIT) defects.splice(DEFECT_LIMIT - 1, Infinity, { clause: "Review findings", reason: `${unresolved.length - (DEFECT_LIMIT - 1)} more unresolved findings; read them with get_review.` });
+  return { design, defects };
+}
+async function blockForDesign(input: SliceInput, planned: DesignReturn) {
   const { reportContractDefects } = await import("../workflow/verification.mjs");
-  await reportContractDefects(await realpath(input.projectRoot), input.initiative, input.slice, design, defects);
-  return { sliceStatus: "blocked", defects: defects.length };
+  await reportContractDefects(await realpath(input.projectRoot), input.initiative, input.slice, planned.design, planned.defects);
+  return { sliceStatus: "blocked", defects: planned.defects.length };
 }
 
 // Accepting a wave with deferrals needs the user's current gate that chose accept-deferred and a follow-up for every unresolved finding, each of them low.
@@ -615,19 +641,24 @@ export async function updateReview(input: UpdateInput) {
   const resolved = await locateRecord(input.projectRoot, { kind: "review", initiative: input.initiative, slice: input.slice });
   const deltaTarget = await locateRecord(input.projectRoot, { kind: "change-map", initiative: input.initiative, slice: input.slice });
   await mkdir(path.dirname(resolved.target), { recursive: true });
-  return withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
+  let planned: DesignReturn | undefined;
+  // The slice's review and change map are locked in path order, the order a gated active-work change takes them in under the coordination state lock,
+  // and nothing that takes another record's lock runs while they are held.
+  const ordered = [resolved.target, deltaTarget.target].sort();
+  const hold = <T,>(offset: number, action: () => Promise<T>): Promise<T> => offset === ordered.length ? action() : withArtifactLock(ordered[offset], () => withFileLock(ordered[offset], () => hold(offset + 1, action), undefined, { renew: true }));
+  let result;
+  try {
+    result = await hold(0, async () => {
     // A ship that landed after the first check refuses the update too, so the review never changes after the initiative shipped.
     await refuseShipped(input.projectRoot, input.initiative);
     const loaded = await loadReview(input.projectRoot, input.initiative, input.slice);
     if (loaded.revision !== input.expectedRevision) throw conservationError("revision_conflict", "The review record changed.", { currentRevision: loaded.revision });
     if (!loaded.document && (!input.delivery || input.actor.role !== "coordinator")) throw conservationError("validation_failed", "The first update of a slice's review creates it, so it needs the coordinator as actor and the implementer's worker id as delivery.");
-    return withArtifactLock(deltaTarget.target, () => withFileLock(deltaTarget.target, async () => {
     const review: ReviewRecord = structuredClone(loaded.document || { schemaVersion: 1, deltaPath: deltaTarget.path, coordinator: input.actor.id, delivery: input.delivery!, deliveryWorkers: [input.delivery!], waves: [], findings: [], assessments: [], conflicts: [], exchangeWorkers: [], legacy: [], history: [] });
     if (!(await sameRecord(input.projectRoot, review.deltaPath, deltaTarget.path))) throw conservationError("invalid_path", "A review and its change map must belong to the same slice.");
     const designAccepted = Boolean(await acceptedDesign(input.projectRoot, input.initiative, input.slice));
     const now = () => new Date().toISOString(), carry = { carried: [] as string[], notCarried: [] as { id: string; reason: string }[] };
     const warnings: { code: string; finding: string; duplicates: string[]; message: string }[] = [];
-    let returnedToDesign: { sliceStatus: string; defects: number } | undefined;
     for (const operation of input.operations) {
       const wave = lastWave(review), op = operation.op;
       if (op === "start_wave") {
@@ -669,7 +700,7 @@ export async function updateReview(input: UpdateInput) {
       } else if (op === "return_to_design") {
         requireRole(review, input.actor, "coordinator");
         if (input.operations.length !== 1) throw conservationError("validation_failed", "return_to_design blocks the slice, so it is the only operation of its update.");
-        returnedToDesign = await returnToDesign(input, review, operation.gate as string);
+        planned = await returnToDesign(input, review, operation.gate as string);
       } else {
         if (!wave) throw conservationError("validation_failed", "Start a review wave before recording review evidence.");
         if (verifiedTreeWave(wave) && ["record_assessment", "accept_assessment", "carry_assessments"].includes(op)) throw conservationError("validation_failed", "Assessments belong to change map reviews; a review of a verified result records findings and lane results only.");
@@ -793,7 +824,11 @@ export async function updateReview(input: UpdateInput) {
     try { const projection = await reviewProjection(input); await mkdir(path.dirname(projection.target), { recursive: true }); await conservationStore.writeManaged(resolved.root, projection.target, markdown(review)); } catch { projectionStale = true; }
     const wave = lastWave(review);
     return { exists: true, revision: changed ? digest(contents) : loaded.revision, previousRevision: loaded.revision, projectionStale, currentWave: wave?.id, accepted: Boolean(wave?.accepted && wave.accepted.evidenceDigest === waveDigest(review, wave)),
-      ...(input.operations.some(item => item.op === "carry_assessments") ? { carry } : {}), ...(warnings.length ? { warnings } : {}), ...(returnedToDesign ? { returnedToDesign } : {}) };
-    }, undefined, { renew: true }));
-  }, undefined, { renew: true }));
+      ...(input.operations.some(item => item.op === "carry_assessments") ? { carry } : {}), ...(warnings.length ? { warnings } : {}) };
+    });
+  } catch (error) {
+    if (error instanceof ReviewLoopLimit) return refuseAtLoopLimit(input, error);
+    throw error;
+  }
+  return planned ? { ...result, returnedToDesign: await blockForDesign(input, planned) } : result;
 }
