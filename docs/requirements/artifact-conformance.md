@@ -1,8 +1,8 @@
 # Artifact conformance
 
-Status: Draft
+Status: Approved
 Created: 2026-11-10
-Approved: n/a
+Approved: 2026-11-11
 
 ## Problem
 
