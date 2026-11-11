@@ -1,17 +1,17 @@
 @startuml
 title launch-supervisor - code
 component "session/launched-sessions.mjs\nhostAvailability, startLaunch,\nlistLaunches, resumeLaunch" as Api
-component "session/launch-hosts.mjs\nhost definitions, arguments,\nenvironment, stream readers" as Hosts
+component "session/launch-hosts.mjs\nhost definitions, arguments, prompt line,\napp-server requests, environment, readers" as Hosts
 component "session/launch-records.mjs\nlaunch folder, record, views,\nstates, retention" as Records
-component "session/launch-supervisor.mjs\ndetached supervisor entry" as Supervisor
+component "session/launch-supervisor.mjs\ndetached supervisor entry,\nholds the host's input" as Supervisor
 component "workflow/record-store.mjs\ndescribeRecordStore" as Store
 component "workflow/state.mjs\nreadCoordinationState" as State
 component "workflow/roadmap.mjs\nreadRoadmap" as Roadmap
 component "review/review-app-discovery.mjs\nreviewAppDirectory" as AppDir
-Api --> Hosts : availability, arguments
+Api --> Hosts : availability
 Api --> Records : create, list, view
 Api ..> Supervisor : spawns detached
-Supervisor --> Hosts : arguments, stream readers
+Supervisor --> Hosts : arguments, prompt, requests, readers
 Supervisor --> Records : runs, heartbeat, end
 Records ..> State : pending gates
 Records ..> Store : store location

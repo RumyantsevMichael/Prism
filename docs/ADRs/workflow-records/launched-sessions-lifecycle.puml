@@ -20,7 +20,7 @@ end
 App -> Folder : create session record
 App -> Sup : start detached
 App -> State : history entry
-Sup -> Host : fixed arguments, launch id
+Sup -> Host : fixed arguments, launch id, prompt on its input
 Host -> Server : start
 Server -> State : ask gate
 Server -> Folder : mark gate
@@ -35,6 +35,7 @@ Sup -> Host : resume arguments
 Person -> Page : stop
 Page -> App : apply stop
 App -> Folder : stop request
-Sup -> Host : end the process tree
+Sup -> Host : interrupt, then close its input
+Host --> Sup : turn ended, exit
 Sup -> Folder : stopped
 @enduml

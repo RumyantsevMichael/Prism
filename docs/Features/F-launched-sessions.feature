@@ -30,9 +30,9 @@ Feature: Launched sessions from the review app
       When the person launches an initiative
       Then the launch is refused with the reason that no confirmation can be shown outside the browser
 
-  Rule: Every launched session shows what it is doing, and a stop ends all of it
+  Rule: Every launched session shows what it is doing, and a stop ends it as the host's own Stop button does
     # Requirement: [Show every launched session](../requirements/launched-sessions.md#10)
-    # Requirement: [Stop a launched session](../requirements/launched-sessions.md#11)
+    # Requirement: [Stop a launched session through the host's own interrupt](../requirements/launched-sessions.md#20)
     # Requirement: [Show the terminal resume command](../requirements/launched-sessions.md#14)
 
     # Contract clauses: 15, 18, 19, 38

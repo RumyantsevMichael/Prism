@@ -3,6 +3,7 @@
 Status: Approved
 Created: 2026-11-09
 Approved: 2026-11-09
+Amended: 2026-11-11, [§20](#20) supersedes [§11](#11), accepted by Michael in chat at 21:00 UTC: "I agree, i feel like we really over-engineered what should have just followed already invented path".
 
 ## Problem
 
@@ -37,7 +38,7 @@ The person cannot start or continue an initiative's orchestration from the revie
 - Which Codex sandbox and approval policy matches Claude Code's automatic permission mode, and how each host reports an action it refuses in a headless session; probe both hosts.
 - How a launch, a stop, and a resume pass through the review app action registry under [review-app-actions.md§15](review-app-actions.md#15).
 - How a launched session's host session identifier is kept on the person's machine while shared records keep at most its digest.
-- How Prism stops a host's whole process tree on each platform, including npm command shims on Windows.
+- How Prism sends each host's own interrupt and ends the host process on each platform, including npm command shims on Windows.
 
 <a id="1"></a>
 ## 1. Launch an initiative's orchestration
@@ -167,20 +168,20 @@ Requirement: While a launched session exists on the person's machine, the review
 
 Rationale: Visibility together with stop is the safeguard in place of turn, cost, or time limits.
 
-Related: [§11](#11), [§17](#17)
+Related: [§17](#17), [§20](#20)
 
 <a id="11"></a>
 ## 11. Stop a launched session
 
 Pattern: Event-driven
 
-Disposition: Active
+Disposition: Superseded by [§20](#20)
 
 Requirement: When the person stops a launched session from the review app, Prism shall end the host process and every process it started, and show the session as stopped.
 
 Rationale: A run nobody needs must not keep spending quota or changing files, and a surviving child process would keep doing both.
 
-Related: [§10](#10)
+Related: [§10](#10), [§20](#20)
 
 <a id="12"></a>
 ## 12. Resume a launched session on a gate answer
@@ -285,3 +286,19 @@ Requirement: Prism shall keep a launched session's host session identifier only 
 Rationale: Shared records hold at most a digest of a session identifier, and a raw identifier would let anyone with store access resume someone else's session.
 
 Related: [shared-record-store.md](shared-record-store.md)
+
+<a id="20"></a>
+## 20. Stop a launched session through the host's own interrupt
+
+Pattern: Event-driven
+
+Disposition: Active
+
+Supersedes: [§11](#11)
+
+Requirement: When the person stops a launched session from the review app, Prism shall send the host the interrupt that the host's own Stop button sends, let the host exit by itself once its turn has ended, end the host process itself only if it still runs after a grace period, and show the session as stopped.
+
+Rationale: A run nobody needs must not keep spending quota or changing files, and the hosts already stop their own turns and the commands they run, so Prism follows their Stop buttons rather than hunting for processes; as after those buttons, a process that the agent deliberately detached may keep running.
+Michael accepted this on 2026-11-11 in place of ending every process the host started: "I agree, i feel like we really over-engineered what should have just followed already invented path".
+
+Related: [§10](#10), [§11](#11), [§15](#15)

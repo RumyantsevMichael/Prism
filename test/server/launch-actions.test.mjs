@@ -149,7 +149,7 @@ test("a launched session's page lists stop and resume, and a stop is recorded an
   const listed = await listing(s.base, `launch:${id}`, s.headers);
   assert.equal(listed.status, 200);
   assert.deepEqual(listed.json.actions.map((action) => action.id), ["launch.stop", "launch.resume"]);
-  assert.deepEqual(actionOf(listed, "launch.stop"), { id: "launch.stop", label: "Stop", group: "Launched session", target: `launch:${id}`, value: null, fields: [], effect: "Ends the host process and every process it started.", context: null, recommended: null, available: true, reason: null, confirm: null, revision: null });
+  assert.deepEqual(actionOf(listed, "launch.stop"), { id: "launch.stop", label: "Stop", group: "Launched session", target: `launch:${id}`, value: null, fields: [], effect: "Interrupts the host's turn as the host's own Stop button does, and ends the host process if it still runs after the grace period.", context: null, recommended: null, available: true, reason: null, confirm: null, revision: null });
   assert.equal(actionOf(listed, "launch.resume").available, false);
   assert.equal(actionOf(listed, "launch.resume").reason, "The session is running.");
   const stopped = await apply(s.base, { action: "launch.stop", target: `launch:${id}`, input: {}, revision: null }, s.headers);
@@ -210,7 +210,8 @@ test("an answer given here to the ended session's gate resumes it headless witho
   assert.deepEqual(answered.json.launch, { id, resumed: true, reason: null });
   await waitFor(() => s.runs("claude").length === 2, { what: "the resumed run" });
   const [first, second] = s.runs("claude");
-  assert.deepEqual(second.argv.slice(0, 4), ["-p", `/prism:orchestrate ${INITIATIVE}`, "--resume", first.argv[3]]);
+  assert.deepEqual(second.argv.slice(0, 4), ["-p", "--verbose", "--resume", first.argv[3]]);
+  assert.deepEqual(s.inputs(second.pid)[0], { type: "user", message: { role: "user", content: `/prism:orchestrate ${INITIATIVE}` } });
   assert.equal(s.dialogs().length, 1, "the gate answer resumes without a confirmation");
 });
 

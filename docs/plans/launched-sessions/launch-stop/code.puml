@@ -2,16 +2,12 @@
 title launch-stop - code
 component "session/launched-sessions.mjs\nstopLaunch" as Api
 component "session/launch-records.mjs\nstop request, stopped state" as Records
-component "session/launch-supervisor.mjs\ncontains each run, watches stop" as Supervisor
-component "session/process-tree.mjs\ntree and marker matching, job membership,\npolite and forced end, exclusions" as Tree
-component "Linux\nchild subreaper" as Subreaper
-component "Windows\njob object" as Job
-component "review/review-app-discovery.mjs\nreview-app.json" as Discovery
+component "session/launch-supervisor.mjs\nwatches the stop request,\ncloses the host's input" as Supervisor
+component "session/launch-hosts.mjs\ninterrupt line, turn/interrupt" as Hosts
+component "Host process\nClaude Code stream-json input\nor Codex app-server" as Host
 Api --> Records : write stop request
 Supervisor --> Records : read request, record end
-Supervisor --> Records : record containment status
-Supervisor --> Tree : find and end run processes
-Supervisor --> Subreaper : adopts orphaned processes
-Supervisor --> Job : contains host and child processes
-Tree ..> Discovery : review app pid
+Supervisor --> Hosts : interrupt message
+Supervisor --> Host : interrupt, close input
+Supervisor ..> Host : forced end after the grace period
 @enduml

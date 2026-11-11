@@ -16,8 +16,12 @@ test.after(() => rm(privateData, { recursive: true, force: true }));
 const posixOnly = process.platform === "win32" ? "process supervision is checked on POSIX here" : false;
 
 const module = () => import("../../dist/server/session/launched-sessions.mjs");
-const CLAUDE_FLAGS = ["--output-format", "stream-json", "--verbose", "--permission-mode", "auto", "--permission-prompts", "none"];
-const CODEX_POLICY = ["-c", "approval_policy=\"on-request\"", "-c", "approvals_reviewer=\"auto_review\"", "-c", "sandbox_mode=\"workspace-write\""];
+const CLAUDE_FLAGS = ["--input-format", "stream-json", "--output-format", "stream-json", "--permission-mode", "auto", "--permission-prompts", "none"];
+const claudeArgs = (flag, id) => ["-p", "--verbose", flag, id, ...CLAUDE_FLAGS];
+const prompt = (initiative) => ({ type: "user", message: { role: "user", content: `/prism:orchestrate ${initiative}` } });
+const CODEX_POLICY = { approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write" };
+const methods = (messages) => messages.filter((message) => message.method).map((message) => message.method);
+const request = (messages, method) => messages.find((message) => message.method === method) ?? null;
 
 async function viewOf(fixture, id, now = undefined) {
   const { listLaunches } = await module();
@@ -53,7 +57,7 @@ test("each host is unavailable with its reason while its executable is not on PA
   assert.deepEqual(listed[1], { host: "codex", label: "Codex", available: true, executable: path.join(bin, "codex"), reason: null });
 });
 
-test("a Claude Code launch runs the orchestrate skill headless with a session id Prism chose, the fixed flags, the checkout as folder, and no foreign session variables", { skip: posixOnly }, async (t) => {
+test("a Claude Code launch sends the orchestrate prompt as a stream-json message, with a session id Prism chose, the fixed flags, the checkout as folder, and no foreign session variables", { skip: posixOnly }, async (t) => {
   const fixture = await launchFixture(t, { plans: { claude: [{ hold: 1500 }] } });
   const { startLaunch } = await module();
   const { launch } = await startLaunch({ projectRoot: fixture.root, initiative: INITIATIVE, host: "claude-code", env: fixture.env });
@@ -67,29 +71,40 @@ test("a Claude Code launch runs the orchestrate skill headless with a session id
   assert.equal(launch.resumeCommand, null);
   assert.ok(Math.abs(Date.parse(launch.launchedAt) - Date.now()) < 10000);
   const [run] = await waitFor(() => fixture.runs("claude").length ? fixture.runs("claude") : null, { what: "the stub to start" });
-  assert.equal(run.argv.length, 4 + CLAUDE_FLAGS.length);
-  assert.deepEqual(run.argv.slice(0, 3), ["-p", `/prism:orchestrate ${INITIATIVE}`, "--session-id"]);
   assert.match(run.argv[3], UUID_V4);
-  assert.deepEqual(run.argv.slice(4), CLAUDE_FLAGS);
+  assert.deepEqual(run.argv, claudeArgs("--session-id", run.argv[3]));
   assert.equal(run.cwd, fixture.root);
-  assert.equal(run.stdin, "empty");
   assert.equal(run.env.PRISM_LAUNCH, launch.id);
   assert.equal(run.env.PRISM_STUB_MARKER, "kept");
   for (const name of STRIPPED) assert.equal(run.env[name], null, `${name} must not reach the launched host`);
   const finished = await settledIn(fixture, launch.id, ["finished"]);
+  assert.deepEqual(fixture.inputs(run.pid), [prompt(INITIATIVE)], "the prompt is the only message, and no interrupt was sent");
+  assert.deepEqual(fixture.closed(run.pid), { results: 1, interrupted: false }, "the input closed once the turn ended");
   assert.deepEqual(finished.resumeCommand, { command: `claude --resume ${run.argv[3]}`, cwd: fixture.root });
   assert.deepEqual(finished.exit, { code: 0, signal: null });
   assert.equal(finished.reason, null);
   assert.ok(finished.runningMs >= 1000, `runningMs ${finished.runningMs} covers the run`);
 });
 
-test("a Codex launch runs exec with the automatic review policy and learns its thread id from the stream", { skip: posixOnly }, async (t) => {
+test("a Codex launch runs app-server, starts a thread with the automatic review policy and one orchestrate turn, and keeps the thread id it answers", { skip: posixOnly }, async (t) => {
   const fixture = await launchFixture(t, { plans: { codex: [{ hold: 200 }] } });
   const { startLaunch } = await module();
   const { launch } = await startLaunch({ projectRoot: fixture.root, initiative: INITIATIVE, host: "codex", env: fixture.env });
   const finished = await settledIn(fixture, launch.id, ["finished"]);
   const [run] = fixture.runs("codex");
-  assert.deepEqual(run.argv, ["exec", "--json", ...CODEX_POLICY, `$prism:orchestrate ${INITIATIVE}`]);
+  assert.deepEqual(run.argv, ["app-server"]);
+  const messages = fixture.inputs(run.pid);
+  assert.deepEqual(methods(messages), ["initialize", "initialized", "thread/start", "turn/start"]);
+  for (const message of messages) assert.equal(message.jsonrpc, "2.0");
+  const ids = messages.filter((message) => message.id !== undefined).map((message) => message.id);
+  assert.equal(ids.length, 3);
+  assert.equal(new Set(ids).size, 3, "each request has its own id");
+  assert.equal(request(messages, "initialized").id, undefined, "initialized is a notification");
+  assert.deepEqual(request(messages, "initialize").params, { clientInfo: { name: "prism-launch", version: "1" }, capabilities: { experimentalApi: true } });
+  assert.deepEqual(request(messages, "thread/start").params, { cwd: fixture.root, ...CODEX_POLICY });
+  assert.deepEqual(request(messages, "turn/start").params, { threadId: CODEX_THREAD, input: [{ type: "text", text: `$prism:orchestrate ${INITIATIVE}` }] });
+  assert.deepEqual(fixture.closed(run.pid), { results: 1, interrupted: false }, "the input closed once the turn completed");
+  assert.deepEqual(finished.exit, { code: 0, signal: null });
   assert.equal(run.cwd, fixture.root);
   assert.equal(run.env.PRISM_LAUNCH, launch.id);
   for (const name of STRIPPED) assert.equal(run.env[name], null, `${name} must not reach the launched host`);
@@ -137,7 +152,7 @@ test("a run that the host refused an action in ends blocked with the host's reas
   assert.ok(blocked.resumeCommand);
   const codex = await startLaunch({ projectRoot: fixture.root, initiative: "search", host: "codex", env: fixture.env });
   const declined = await settledIn(fixture, codex.launch.id, ["blocked"]);
-  assert.equal(declined.reason, "Codex refused command_execution: Codex declined: /bin/bash -lc 'touch /etc/hosts'");
+  assert.equal(declined.reason, "Codex refused commandExecution: Codex declined: /bin/bash -lc 'touch /etc/hosts'");
 });
 
 test("a host that exits with an error or reports one ends failed with its exit status and last error line", { skip: posixOnly }, async (t) => {
@@ -153,12 +168,42 @@ test("a host that exits with an error or reports one ends failed with its exit s
   assert.deepEqual(failedTurn.exit, { code: 0, signal: null });
 });
 
-test("a Claude Code result that reports an error ends the session failed although the process exits 0", { skip: posixOnly }, async (t) => {
-  const fixture = await launchFixture(t, { plans: { claude: [{ isError: true }] } });
-  const { startLaunch } = await module();
+test("a reported host error is the failure's reason whatever the process's exit code", { skip: posixOnly }, async (t) => {
+  const fixture = await launchFixture(t, { plans: { claude: [{ isError: true }, { isError: true, exit: 1 }] } });
+  const { resumeLaunch, startLaunch } = await module();
   const { launch } = await startLaunch({ projectRoot: fixture.root, initiative: INITIATIVE, host: "claude-code", env: fixture.env });
   const failed = await settledIn(fixture, launch.id, ["failed"]);
   assert.equal(failed.reason, "Claude Code reported an error: The API returned an error.");
+  await resumeLaunch({ id: launch.id, env: fixture.env, cause: "person" });
+  const again = await waitFor(async () => {
+    const view = await viewOf(fixture, launch.id);
+    return view?.runs === 2 && view.state === "failed" ? view : null;
+  }, { what: "the second run to fail" });
+  assert.deepEqual(again.exit, { code: 1, signal: null });
+  assert.equal(again.reason, "Claude Code reported an error: The API returned an error.");
+});
+
+test("a Claude Code run keeps its input open while a background task it reported runs, and closes it after the turn that follows", { skip: posixOnly }, async (t) => {
+  const fixture = await launchFixture(t, { plans: { claude: [{ hold: 100, background: 1200 }] } });
+  const { startLaunch } = await module();
+  const { launch } = await startLaunch({ projectRoot: fixture.root, initiative: INITIATIVE, host: "claude-code", env: fixture.env });
+  const [run] = await waitFor(() => fixture.runs("claude").length ? fixture.runs("claude") : null, { what: "the stub to start" });
+  await new Promise((resolve) => setTimeout(resolve, 900));
+  assert.equal(fixture.closed(run.pid), null, "the input stays open while the background task runs");
+  assert.equal((await viewOf(fixture, launch.id)).state, "running");
+  const finished = await settledIn(fixture, launch.id, ["finished"]);
+  assert.deepEqual(fixture.closed(run.pid), { results: 2, interrupted: false });
+  assert.deepEqual(finished.exit, { code: 0, signal: null });
+});
+
+test("a Codex run answers every request the host sends it with an error, so Prism grants nothing", { skip: posixOnly }, async (t) => {
+  const fixture = await launchFixture(t, { plans: { codex: [{ hold: 400, askApproval: true }] } });
+  const { startLaunch } = await module();
+  const { launch } = await startLaunch({ projectRoot: fixture.root, initiative: INITIATIVE, host: "codex", env: fixture.env });
+  await settledIn(fixture, launch.id, ["finished"]);
+  const [run] = fixture.runs("codex");
+  const answers = fixture.inputs(run.pid).filter((message) => message.id === "approval-1");
+  assert.deepEqual(answers, [{ jsonrpc: "2.0", id: "approval-1", error: { code: -32601, message: "Prism answers no host requests." } }]);
 });
 
 test("a session whose supervisor disappears shows failed instead of running", { skip: posixOnly }, async (t) => {
@@ -205,16 +250,22 @@ test("a resume runs the same host session again with the resume form of the same
   const again = await settledIn(fixture, launch.id, ["finished"]);
   assert.ok(again.runningMs >= first.runningMs + 250);
   const [original, second] = fixture.runs("claude");
-  assert.deepEqual(second.argv, ["-p", `/prism:orchestrate ${INITIATIVE}`, "--resume", original.argv[3], ...CLAUDE_FLAGS]);
+  assert.deepEqual(second.argv, claudeArgs("--resume", original.argv[3]));
+  assert.deepEqual(fixture.inputs(second.pid), [prompt(INITIATIVE)]);
   assert.equal(second.env.PRISM_LAUNCH, launch.id);
   const codex = await startLaunch({ projectRoot: fixture.root, initiative: "search", host: "codex", env: fixture.env });
   await settledIn(fixture, codex.launch.id, ["finished"]);
   await resumeLaunch({ id: codex.launch.id, env: fixture.env, cause: "person" });
   await settledIn(fixture, codex.launch.id, ["finished"]);
-  assert.deepEqual(fixture.runs("codex")[1].argv, ["exec", "resume", "--json", ...CODEX_POLICY, CODEX_THREAD, "$prism:orchestrate search"]);
+  const resumedCodex = fixture.runs("codex")[1];
+  assert.deepEqual(resumedCodex.argv, ["app-server"]);
+  const messages = fixture.inputs(resumedCodex.pid);
+  assert.deepEqual(methods(messages), ["initialize", "initialized", "thread/resume", "turn/start"]);
+  assert.deepEqual(request(messages, "thread/resume").params, { threadId: CODEX_THREAD, cwd: fixture.root, ...CODEX_POLICY });
+  assert.deepEqual(request(messages, "turn/start").params, { threadId: CODEX_THREAD, input: [{ type: "text", text: "$prism:orchestrate search" }] });
 });
 
-test("a resume is refused while the session runs, for an unknown launch, and for a Codex session that never named its thread", { skip: posixOnly }, async (t) => {
+test("a resume is refused while the session runs, for an unknown launch, and for a Codex session whose thread never started", { skip: posixOnly }, async (t) => {
   const fixture = await launchFixture(t, { plans: { claude: [{ hold: "forever" }], codex: [{ threadId: null, exit: 1 }] } });
   const { resumeLaunch, startLaunch } = await module();
   const { launch } = await startLaunch({ projectRoot: fixture.root, initiative: INITIATIVE, host: "claude-code", env: fixture.env });
@@ -222,6 +273,8 @@ test("a resume is refused while the session runs, for an unknown launch, and for
   assert.equal((await rejection(resumeLaunch({ id: "launch-0000000000000000", env: fixture.env, cause: "person" }))).code, "unknown_launch");
   const codex = await startLaunch({ projectRoot: fixture.root, initiative: "search", host: "codex", env: fixture.env });
   const failed = await settledIn(fixture, codex.launch.id, ["failed"]);
+  assert.equal(failed.reason, "Codex reported an error: The thread could not start.");
+  assert.deepEqual(failed.exit, { code: 1, signal: null });
   assert.equal(failed.resumeCommand, null);
   assert.equal((await rejection(resumeLaunch({ id: codex.launch.id, env: fixture.env, cause: "person" }))).code, "no_host_session");
   assert.equal(fixture.runs("codex").length, 1);
