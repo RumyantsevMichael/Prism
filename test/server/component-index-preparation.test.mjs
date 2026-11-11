@@ -16,7 +16,8 @@ const { openNativeRepositoryIntelligence } = await import("../../dist/server/rep
 const ROOT_FILES = [".prism/workflow.md", "README.md"];
 const NET_FILES = ["packages/net/retry.ts", "packages/net/timeout.ts"];
 const APP_FILES = ["packages/app/client.ts"];
-const search = (root, runtime, input = {}, waitMs = 2000) => searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...input }, { runtime, waitMs });
+// A call answers as soon as its components are ready, so the default bound only has to outlast preparation on a busy runner, where it can take longer than two seconds; tests of the bound itself pass their own.
+const search = (root, runtime, input = {}, waitMs = 30000) => searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...input }, { runtime, waitMs });
 // Asserts a ready result and otherwise names each component that is missing and why.
 const assertReady = (result) => assert.equal(result.status, "ready", JSON.stringify(result.diagnostics));
 const built = (control) => control.builds.map((build) => build.files);
@@ -137,7 +138,7 @@ test("a stored index pointer whose index is gone hands the component back to the
   const { directory } = await first.runtime.location(root, { name: "app", identity: "root/app", folder: "packages/app" });
   for (const name of await readdir(directory)) if (/^[a-f\d]{64}\.json$/.test(name)) await rm(path.join(directory, name));
   const later = await fakeRuntime(storage);
-  const found = await search(root, later.runtime, {}, 2000);
+  const found = await search(root, later.runtime);
   assertReady(found);
   assert.deepEqual(built(later.control), [APP_FILES]);
   assert.equal((await settled(later.runtime, root)).status, "indexed");
