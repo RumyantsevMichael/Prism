@@ -156,10 +156,14 @@ const UNITS_FILE = /^units-([a-f\d]{64})\.json$/;
 
 // Keep the current index and the most recently used earlier revisions, so a retained before-change snapshot still reuses its index.
 // Each source change writes a complete index, so older revisions, their generation pointers, and abandoned snapshot mirrors are removed.
+// A structure-only index that a complete index replaced is removed with its sidecar and never takes a kept slot.
 // Call only while holding the project directory lock.
-export async function pruneIndexes(directory: string, current: string, keep = KEPT_INDEX_REVISIONS) {
+export async function pruneIndexes(directory: string, current: string, keep = KEPT_INDEX_REVISIONS, replaced: string[] = []) {
   const entries = await readdir(directory);
-  const revisions = await Promise.all(entries.filter(name => /^[a-f\d]{64}\.json$/.test(name)).map(async name => ({ name, used: (await lstat(path.join(directory, name)).catch(() => null))?.mtimeMs ?? 0 })));
+  const removed = new Set(replaced.filter(revision => revision !== current).map(revision => `${revision}.json`));
+  const revisions = await Promise.all(entries.filter(name => /^[a-f\d]{64}\.json$/.test(name) && !removed.has(name))
+    .map(async name => ({ name, used: (await lstat(path.join(directory, name)).catch(() => null))?.mtimeMs ?? 0 })));
+  for (const name of removed) if (entries.includes(name)) await rm(path.join(directory, name), { force: true });
   const kept = new Set([`${current}.json`, ...revisions.sort((a, b) => b.used - a.used).slice(0, keep).map(revision => revision.name)]);
   for (const { name } of revisions) if (!kept.has(name)) await rm(path.join(directory, name), { force: true });
   for (const name of entries) {
@@ -620,6 +624,9 @@ export class NativeSemanticRuntime implements ComponentRuntime {
           this.report(job, { phase: "saving" });
           await structureSaved;
           try { this.alive(job); await source.verifySnapshot(); } catch (error) { await this.store.discard(token).catch(() => {}); throw error; }
+          // The structure-only index that this complete index replaces, which no pointer names once the complete pointers are written.
+          const replacedPointer = await optionalJson(generation).catch(() => null);
+          const replaced = replacedPointer && pointerStage(replacedPointer) === "structure" && /^[a-f\d]{64}$/.test(replacedPointer.revision ?? "") ? [replacedPointer.revision!] : [];
           const { revision, indexPath, bytes, index } = await this.store.save(token, { directory, assetIdentity: assets.assetIdentity, incomplete: !snapshot.complete });
           const coverage = coverageOf(index);
           const builtAt = new Date().toISOString();
@@ -628,7 +635,7 @@ export class NativeSemanticRuntime implements ComponentRuntime {
           await writeAtomically(path.join(directory, "current.json"), pointerContents, { mode: 0o600 });
           job.revision = revision; job.coverage = coverage; job.diagnostics = index.diagnostics; job.builtAt = builtAt;
           await rm(mirror, { recursive: true, force: true });
-          await pruneIndexes(directory, revision).catch(() => {});
+          await pruneIndexes(directory, revision, KEPT_INDEX_REVISIONS, replaced).catch(() => {});
           log.info("index_built", { directory, revision, component: job.component?.identity, files: snapshot.files.length, bytes, counts: index.counts,
             indexMs: Math.round(index.resources?.indexMilliseconds ?? 0), diagnostics: index.diagnostics.length });
           return { ...assets, index, indexPath, revision, stage: "complete" };

@@ -149,9 +149,11 @@ const modelAssetName = (file) => `model-${file.split("/").join("-")}`;
 const STALE_ASSET_MS = 14 * 24 * 60 * 60 * 1e3;
 const KEPT_INDEX_REVISIONS = 4;
 const UNITS_FILE = /^units-([a-f\d]{64})\.json$/;
-async function pruneIndexes(directory, current, keep = KEPT_INDEX_REVISIONS) {
+async function pruneIndexes(directory, current, keep = KEPT_INDEX_REVISIONS, replaced = []) {
   const entries = await readdir(directory);
-  const revisions = await Promise.all(entries.filter((name) => /^[a-f\d]{64}\.json$/.test(name)).map(async (name) => ({ name, used: (await lstat(path.join(directory, name)).catch(() => null))?.mtimeMs ?? 0 })));
+  const removed = new Set(replaced.filter((revision) => revision !== current).map((revision) => `${revision}.json`));
+  const revisions = await Promise.all(entries.filter((name) => /^[a-f\d]{64}\.json$/.test(name) && !removed.has(name)).map(async (name) => ({ name, used: (await lstat(path.join(directory, name)).catch(() => null))?.mtimeMs ?? 0 })));
+  for (const name of removed) if (entries.includes(name)) await rm(path.join(directory, name), { force: true });
   const kept = /* @__PURE__ */ new Set([`${current}.json`, ...revisions.sort((a, b) => b.used - a.used).slice(0, keep).map((revision) => revision.name)]);
   for (const { name } of revisions) if (!kept.has(name)) await rm(path.join(directory, name), { force: true });
   for (const name of entries) {
@@ -748,6 +750,8 @@ class NativeSemanticRuntime {
             });
             throw error;
           }
+          const replacedPointer = await optionalJson(generation).catch(() => null);
+          const replaced = replacedPointer && pointerStage(replacedPointer) === "structure" && /^[a-f\d]{64}$/.test(replacedPointer.revision ?? "") ? [replacedPointer.revision] : [];
           const { revision, indexPath, bytes, index } = await this.store.save(token, { directory, assetIdentity: assets.assetIdentity, incomplete: !snapshot.complete });
           const coverage = coverageOf(index);
           const builtAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -759,7 +763,7 @@ class NativeSemanticRuntime {
           job.diagnostics = index.diagnostics;
           job.builtAt = builtAt;
           await rm(mirror, { recursive: true, force: true });
-          await pruneIndexes(directory, revision).catch(() => {
+          await pruneIndexes(directory, revision, KEPT_INDEX_REVISIONS, replaced).catch(() => {
           });
           log.info("index_built", {
             directory,
