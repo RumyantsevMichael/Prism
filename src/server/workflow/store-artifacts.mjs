@@ -6,9 +6,9 @@ import { addComment, aheadOfClock, appliedComment, appliedComments, commentFolde
 import { writeAtomically } from "./artifact-store.mjs";
 import { assertInput } from "./artifact-schema.mjs";
 import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_NAME_FORM, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, IDENTITY_FILE_MAX, identityContent, identityOf, kindInScope, letterCaseKey, locationArtifact, locationIdentity, malformedArtifactName, newIdentity, normalizeArtifactPath, repositoryScope, uniqueIdentities, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
-import { acceptedLocation, answerApproval, askApproval, hasStatus, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion } from "./artifact-status.mjs";
+import { acceptAtShip, acceptedLocation, answerApproval, askApproval, hasStatus, linkedPaths, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion } from "./artifact-status.mjs";
 import { ComponentError, readComponents } from "./components.mjs";
-import { checkArtifactFolders, noteToolCallWrite, recordStoreOf, resolveArtifactFile, resolveStatusFile, seenScopes, statusFileResolver, withArtifactStoreLock } from "./record-store.mjs";
+import { checkArtifactFolders, noteToolCallWrite, recordStoreOf, repositoryScopes, resolveArtifactFile, resolveStatusFile, seenScopes, statusFileResolver, withArtifactStoreLock } from "./record-store.mjs";
 import { pruneArtifactFolders, scheduleRecordSync } from "./record-store-sync.mjs";
 import { artifactKinds, readWorkflowConfig } from "./workflow-config.mjs";
 import { parseStoreJson } from "./store-json.mjs";
@@ -184,7 +184,8 @@ async function locationKind(target, base = null, memo = null) {
  * The location is checked before it is opened, and opened without blocking, so a pipe never holds a read or the store's lock.
  * With base, the artifacts folder, a location that some name matches only in letter case holds no file; a listing's locations come from folder entries and need no base.
  */
-async function readStored(target, base = null, memo = null) {
+// With max, a file above it is hashed in chunks and never read whole, as one above the bound of every read is.
+async function readStored(target, base = null, memo = null, max = READ_MAX) {
   if ((await locationKind(target, base, memo)) !== "file") return null;
   let handle;
   try { handle = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0)); }
@@ -197,7 +198,7 @@ async function readStored(target, base = null, memo = null) {
     const info = await handle.stat();
     if (info.isDirectory()) return null;
     if (!info.isFile()) throw notRegular();
-    if (info.size <= READ_MAX) return stored(await handle.readFile());
+    if (info.size <= Math.min(max, READ_MAX)) return stored(await handle.readFile());
     const hash = createHash("sha256");
     const chunk = Buffer.alloc(HASH_CHUNK);
     let size = 0;
@@ -700,7 +701,10 @@ async function applyOperations(seen, checked, { held = null, noteWrites = false 
       if (hasStatus(address.kind)) mismatches.push({ entry: artifacts.at(-1), file, scope, address, text: operation.content });
       continue;
     }
-    const source = operation.op === "move_scope" ? await moveSource(item, await holders(seen, address, scopesFor(seen, address.kind, null), read)) : await one(item, scopesFor(seen, address.kind, given));
+    // A ship names the scope of each ADR it accepts, which may be another repository's, so the ADR is found there alone.
+    const source = operation.op === "move_scope" ? await moveSource(item, await holders(seen, address, scopesFor(seen, address.kind, null), read))
+      : operation.op === "accept_at_ship" ? await one(item, [operation.atScope])
+      : await one(item, scopesFor(seen, address.kind, given));
     if (!source) {
       if (operation.expectedVersion !== null && operation.expectedVersion !== undefined) checkVersion(file, operation.expectedVersion, null);
       throw notFound(file);
@@ -742,6 +746,16 @@ async function applyOperations(seen, checked, { held = null, noteWrites = false 
       }
       setStatus(status.target, file, record);
       artifacts.push({ path: file, scope: source.scope, version, gate: answered.gate });
+    } else if (operation.op === "accept_at_ship") {
+      const status = await statusOf(source.scope, address);
+      const accepted = acceptAtShip(status.record, decode(contentOf(file, source.record), file), { ...operation.ship, versionOf: (text) => artifactVersion(Buffer.from(text, "utf8")) });
+      const next = Buffer.from(accepted.text, "utf8");
+      tooLarge(file, next.length);
+      state.set(source.target, stored(next));
+      names.set(source.target, file);
+      await keepAccepted(file, next);
+      setStatus(status.target, file, accepted.record);
+      artifacts.push({ path: file, scope: source.scope, version: accepted.record.acceptedVersion });
     } else if (operation.op === "accept_version") {
       const status = await statusOf(source.scope, address);
       if (status.record.acceptedVersion !== source.record.version) {
@@ -1383,6 +1397,210 @@ export async function artifactApprovalGates(projectRoot, file, scope, component,
     if (held.length > 1) throw ambiguous(file, held);
     if (!held.length) throw notFound(file);
     return waitableGates(await statusRecordOf(seen, held[0].scope, address));
+  });
+}
+
+// The plan of an initiative, as a ship and its correctness gate read it: { folder, slices: [{ folder, repositories }], repositories },
+// with each slice's plan folder and the repositories of its leaves, and every repository of the initiative.
+
+// The seen store widened to the workspace scope and the scopes of every repository of an initiative, so what a ship reads never depends on which checkout ships.
+async function planSeen(seen, plan) {
+  const scopes = [WORKSPACE_SCOPE];
+  for (const repository of [...new Set(plan.repositories)].sort()) scopes.push(...await repositoryScopes(seen, repository));
+  return { ...seen, scopes };
+}
+
+// The slice whose plan folder holds a file: the one with the longest folder that holds it, which is the root slice for the initiative's own folder.
+function planSliceOf(plan, file) {
+  let found = null;
+  for (const slice of plan.slices) if (below(slice.folder, file) && (found === null || slice.folder.length > found.folder.length)) found = slice;
+  return found;
+}
+
+// Every slice.md below an initiative's plan folder in the scopes of its plan, as { path, scope, target, slice }, sorted by path and then scope label.
+async function planSliceFiles(wide, plan) {
+  return (await holdings(wide, plan.folder, null))
+    .filter((entry) => entry.kind === "plans" && path.posix.basename(entry.path) === "slice.md")
+    .map((entry) => ({ ...entry, slice: planSliceOf(plan, entry.path) }))
+    .filter((entry) => entry.slice !== null);
+}
+
+// Each slice.md of a plan that the store holds, read within the bound of an artifact's content, as { entry, held }.
+async function readPlanSlices(wide, plan) {
+  const read = [];
+  for (const entry of await planSliceFiles(wide, plan)) {
+    const held = await readStored(entry.target, null, null, CONTENT_MAX);
+    if (held !== null) read.push({ entry, held });
+  }
+  return read;
+}
+
+const sliceVersions = (read) => read.map(({ entry, held }) => ({ scope: entry.scope.label, path: entry.path, version: held.version }));
+
+// The repositories that the links of each slice of a plan resolve in, as [{ folder, repositories }] sorted by folder.
+const planRepositories = (plan) => plan.slices.map((slice) => ({ folder: slice.folder, repositories: [...slice.repositories].sort() }))
+  .sort((left, right) => left.folder < right.folder ? -1 : left.folder > right.folder ? 1 : 0);
+
+/**
+ * The ADRs that the Markdown links of a plan's slice.md files name: { linked, ambiguous }.
+ * A link in a slice's slice.md names an ADR of the workspace scope or of a repository of that slice or one of its components: the one in the scope of the slice.md when that scope holds one, else the one such scope that holds it.
+ * linked lists { path, scope, target, address, record } once for each ADR so named, sorted by path and then scope label;
+ * ambiguous lists { path, scopes } for each link that could name ADRs at its path in two or more such scopes, none of them the scope of its slice.md, with the scope labels sorted.
+ * strict, as a ship reads, refuses a slice.md whose links Prism cannot read with artifact_too_large; otherwise, as a gate's ask reads, such a file names nothing.
+ */
+async function planLinkedAdrs(seen, wide, kinds, read, { strict, resolve }) {
+  const adrFolder = kinds.kinds.find((entry) => entry.kind === "adrs")?.path ?? null;
+  if (adrFolder === null) return { linked: [], ambiguous: [] };
+  // Every ADR of the plan's scopes, found once, so a slice.md that links many paths costs one lookup for each rather than a read of the store.
+  const adrs = new Map();
+  for (const entry of await holdings(wide, adrFolder, null)) {
+    if (entry.kind !== "adrs") continue;
+    if (!adrs.has(entry.path)) adrs.set(entry.path, []);
+    adrs.get(entry.path).push(entry);
+  }
+  const linked = new Map();
+  const ambiguous = new Map();
+  for (const { entry, held } of read) {
+    if (held.bytes === null) {
+      if (!strict) continue;
+      throw fail("artifact_too_large", `${entry.path} in scope ${entry.scope.label} is ${held.size} bytes, above the ${CONTENT_MAX} bytes that an artifact may hold, so Prism cannot read the ADRs it links and the initiative does not ship; shorten it with update_artifact.`, { path: entry.path, scope: entry.scope });
+    }
+    const text = artifactText(held.bytes);
+    if (text === null) continue;
+    const files = linkedPaths(text, entry.path);
+    if (files === null) {
+      if (!strict) continue;
+      throw fail("artifact_too_large", `${entry.path} in scope ${entry.scope.label} nests its Markdown deeper, or repeats unclosed link syntax more often, than Prism reads, so Prism cannot read the ADRs it links and the initiative does not ship; simplify it with update_artifact.`, { path: entry.path, scope: entry.scope });
+    }
+    const allowed = (scope) => scope.kind === "workspace" || entry.slice.repositories.includes(scope.repository);
+    for (const file of files) {
+      const candidates = (adrs.get(file) ?? []).filter((candidate) => allowed(candidate.scope));
+      const holder = candidates.find((candidate) => candidate.scope.label === entry.scope.label) ?? (candidates.length === 1 ? candidates[0] : null);
+      if (holder === null) {
+        if (candidates.length > 1) {
+          const scopes = candidates.map((candidate) => candidate.scope.label).sort();
+          ambiguous.set(`${file}\0${scopes.join("\0")}`, { path: file, scopes });
+        }
+        continue;
+      }
+      const key = `${holder.scope.label}\0${file}`;
+      if (!linked.has(key)) linked.set(key, { path: file, scope: holder.scope, target: holder.target });
+    }
+  }
+  const named = [];
+  for (const adr of linked.values()) {
+    const address = artifactAddress(kinds, adr.path);
+    named.push({ ...adr, address, record: await statusRecordOf(seen, adr.scope, address, resolve) });
+  }
+  const order = (left, right) => left < right ? -1 : left > right ? 1 : 0;
+  return { linked: sortEntries(named), ambiguous: [...ambiguous.values()].sort((left, right) => order(left.path, right.path) || order(left.scopes.join("\0"), right.scopes.join("\0"))) };
+}
+
+// The ADRs that a ship would accept, as [{ scope, path, version }]: each linked ADR whose recorded status is Proposed, with the version of its bytes as they read now.
+async function proposedVersions(linked) {
+  const versions = [];
+  for (const adr of linked) {
+    if (adr.record.status !== "Proposed") continue;
+    const held = await readStored(adr.target, null, null, CONTENT_MAX);
+    if (held !== null) versions.push({ scope: adr.scope.label, path: adr.path, version: held.version });
+  }
+  return versions;
+}
+
+/**
+ * What a ship of an initiative would read in the store now, as a correctness gate records it: { slices, repositories, adrs }.
+ * slices lists the slice.md files as { scope, path, version }, repositories the repositories that each slice's links resolve in as { folder, repositories },
+ * and adrs every ADR that the ship would accept as { scope, path, version }, each list sorted, so a ship compares them with what it accepts.
+ * A link that could name ADRs in two scopes, and a slice.md whose links Prism cannot read, name nothing here; the ship refuses them.
+ */
+export async function initiativeArtifactStanding(projectRoot, plan) {
+  return refusing(async () => {
+    const { kinds } = await configuration(projectRoot);
+    const seen = await seenScopes(projectRoot);
+    const wide = await planSeen(seen, plan);
+    const read = await readPlanSlices(wide, plan);
+    const { linked } = await planLinkedAdrs(seen, wide, kinds, read, { strict: false, resolve: manyReads(seen) });
+    return { slices: sliceVersions(read), repositories: planRepositories(plan), adrs: await proposedVersions(linked) };
+  });
+}
+
+/** What changed between two lists of file versions: each path and scope label whose file changed, appeared, or went, as { path, scope, change } sorted by path and then scope label. */
+export function versionChanges(before, now) {
+  const key = (entry) => `${entry.scope}\0${entry.path}`;
+  const was = new Map(before.map((entry) => [key(entry), entry]));
+  const is = new Map(now.map((entry) => [key(entry), entry]));
+  const changes = [];
+  for (const [at, entry] of is) {
+    if (!was.has(at)) changes.push({ path: entry.path, scope: entry.scope, change: "added" });
+    else if (was.get(at).version !== entry.version) changes.push({ path: entry.path, scope: entry.scope, change: "changed" });
+  }
+  for (const [at, entry] of was) if (!is.has(at)) changes.push({ path: entry.path, scope: entry.scope, change: "removed" });
+  return changes.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : left.scope < right.scope ? -1 : left.scope > right.scope ? 1 : 0);
+}
+
+// Each slice folder whose links resolve in other repositories than before, as { folder, repositories, before }, sorted by folder.
+function repositoryChanges(before, now) {
+  const was = new Map(before.map((entry) => [entry.folder, entry.repositories]));
+  const is = new Map(now.map((entry) => [entry.folder, entry.repositories]));
+  const changes = [];
+  for (const folder of new Set([...was.keys(), ...is.keys()])) {
+    const then = was.get(folder) ?? [];
+    const current = is.get(folder) ?? [];
+    if (!was.has(folder) || !is.has(folder) || then.join("\0") !== current.join("\0")) changes.push({ folder, repositories: current, before: then });
+  }
+  return changes.sort((left, right) => left.folder < right.folder ? -1 : left.folder > right.folder ? 1 : 0);
+}
+
+/**
+ * At the ship of initiatives, accept each ADR whose recorded status is Proposed and that a Markdown link in a slice.md of an initiative's plan names, all under one hold of the store's artifact lock:
+ * ships lists { plan, standing, ship }, with plan as above, standing what the ship's correctness gate recorded, { slices, repositories, adrs } as initiativeArtifactStanding gives it, and ship { gate, initiative, at, verifiedBy }.
+ * Before anything changes, a ship whose slice.md files, the repositories their links resolve in, or the ADRs it would accept read otherwise than its gate recorded refuses every ship with { refused: "ship_unconfirmed", gate, changed },
+ * naming each slice.md as { path, scope, change }, each slice folder as { folder, repositories, before }, and each ADR as { kind: "adrs", path, scope, change };
+ * a link that could name ADRs in two scopes, none of them its slice.md's, refuses with { refused: "adr_ambiguous", adrs } as [{ path, scopes }],
+ * and a linked Proposed ADR with an open approval with { refused: "adr_pending", adrs } as [{ path, scope, gates }]; a slice.md above an artifact's bound, or whose syntax the link reader stops on, refuses with artifact_too_large.
+ * Each accepted ADR has its Status: line rewritten to Accepted and records the status, the accepted version, and acceptance with ship in one update; a cited ADR with another recorded status stays as it is,
+ * except that one this initiative's ship already accepted with the same gate, as a ship that stopped before its roadmap write did, is listed again with that acceptance's verifiedBy.
+ * Returns { accepted }, the ADRs as { path, scope, verifiedBy } sorted by path and then scope label.
+ */
+export async function acceptLinkedAdrs(projectRoot, ships) {
+  return refusing(async () => {
+    const { kinds } = await configuration(projectRoot);
+    const seen = await seenScopes(projectRoot);
+    return withArtifactStoreLock(seen, async () => {
+      const resolve = manyReads(seen);
+      const chosen = new Map();
+      const pending = [];
+      const ambiguous = new Map();
+      for (const { plan, standing, ship } of ships) {
+        const wide = await planSeen(seen, plan);
+        const read = await readPlanSlices(wide, plan);
+        const changed = [...versionChanges(standing.slices, sliceVersions(read)), ...repositoryChanges(standing.repositories, planRepositories(plan))];
+        if (changed.length) return { refused: "ship_unconfirmed", gate: ship.gate, changed };
+        const { linked, ambiguous: unclear } = await planLinkedAdrs(seen, wide, kinds, read, { strict: true, resolve });
+        const sameShip = (record) => record.acceptance?.initiative === ship.initiative && record.acceptance?.gate === ship.gate;
+        // An ADR that this ship already accepted, as one that stopped before its roadmap write did, was compared when it was accepted.
+        const done = new Set(linked.filter((adr) => adr.record.status !== "Proposed" && sameShip(adr.record)).map((adr) => `${adr.scope.label}\0${adr.path}`));
+        const adrChanges = versionChanges(standing.adrs.filter((adr) => !done.has(`${adr.scope}\0${adr.path}`)), await proposedVersions(linked)).map((item) => ({ kind: "adrs", ...item }));
+        if (adrChanges.length) return { refused: "ship_unconfirmed", gate: ship.gate, changed: adrChanges };
+        for (const item of unclear) ambiguous.set(`${item.path}\0${item.scopes.join("\0")}`, item);
+        for (const adr of linked) {
+          const key = `${adr.scope.label}\0${adr.path}`;
+          if (chosen.has(key) || pending.some((item) => item.key === key)) continue;
+          if (adr.record.status === "Proposed") {
+            if (adr.record.pending.length) pending.push({ key, path: adr.path, scope: adr.scope, gates: adr.record.pending.map((gate) => gate.id) });
+            else chosen.set(key, { path: adr.path, scope: adr.scope, address: adr.address, ship, verifiedBy: ship.verifiedBy, accept: true });
+          } else if (sameShip(adr.record)) {
+            chosen.set(key, { path: adr.path, scope: adr.scope, verifiedBy: Array.isArray(adr.record.acceptance.verifiedBy) ? adr.record.acceptance.verifiedBy : ship.verifiedBy, accept: false });
+          }
+        }
+      }
+      if (ambiguous.size) return { refused: "adr_ambiguous", adrs: [...ambiguous.values()].sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0) };
+      if (pending.length) return { refused: "adr_pending", adrs: sortEntries(pending.map(({ key, ...rest }) => rest)) };
+      const accepted = sortEntries([...chosen.values()]);
+      const items = accepted.filter((adr) => adr.accept).map((adr) => ({ operation: { op: "accept_at_ship", path: adr.path, atScope: adr.scope, ship: adr.ship }, file: adr.path, address: adr.address, given: null }));
+      if (items.length) await applyOperations(seen, items);
+      return { accepted: accepted.map((adr) => ({ path: adr.path, scope: adr.scope, verifiedBy: adr.verifiedBy })) };
+    });
   });
 }
 

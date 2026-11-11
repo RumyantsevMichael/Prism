@@ -49,7 +49,7 @@ function keepPersonSettings(before, requested) {
 }
 const ACTIVE_KEYS = new Set(["slice", "activity", "label", "workers", "workspace", "reviewLanes", "findingsPath", "reviewPath"]);
 const GATE_KINDS = new Set(["visual-review", "correctness", "decision", "assistance"]);
-const GATE_KEYS = new Set(["id", "kind", "slice", "question", "context", "artifacts", "options", "recommended", "askedAt", "answer"]);
+const GATE_KEYS = new Set(["id", "kind", "slice", "question", "context", "artifacts", "options", "recommended", "askedAt", "standing", "answer"]);
 const ASK_KEYS = ["op", "kind", "slice", "question", "context", "artifacts", "options", "recommended"];
 const OPTION_KEYS = new Set(["id", "label", "consequence"]);
 const RECOMMENDED_KEYS = new Set(["option", "reason"]);
@@ -132,7 +132,7 @@ async function resolveState(projectRoot, initiative) {
   }
   const located = await locateRecord(projectRoot, { kind: "state", initiative });
   const config = await readWorkflowConfig(located.root);
-  return { root: located.root, initiative, path: located.target, displayPath: located.path, directory: initiativeDirectory(config, initiative) };
+  return { root: located.root, initiative, path: located.target, displayPath: located.path, directory: initiativeDirectory(config, initiative), store: (config.workspace?.store ?? null) !== null };
 }
 
 function revisionOf(contents) {
@@ -403,6 +403,10 @@ function validateGate(entry, entryPath, errors) {
   if (typeof entry.askedAt !== "string" || Number.isNaN(Date.parse(entry.askedAt))) {
     addError(errors, `${entryPath}.askedAt`, "must be an ISO timestamp");
   }
+  if (entry.standing !== undefined) {
+    if (entry.kind !== "correctness") addError(errors, `${entryPath}.standing`, "is recorded only on a correctness gate");
+    else if (!wellFormedStanding(entry.standing)) addError(errors, `${entryPath}.standing`, "must be { runs, slices, repositories, adrs } as the ask operation records it");
+  }
   if (entry.answer !== undefined) {
     if (!isRecord(entry.answer) || Object.keys(entry.answer).some((key) => !ANSWER_KEYS.has(key))) {
       addError(errors, `${entryPath}.answer`, "must contain only choice, note, via, answeredAt, by, and entry");
@@ -415,6 +419,22 @@ function validateGate(entry, entryPath, errors) {
       if (entry.answer.entry !== undefined && (typeof entry.answer.entry !== "string" || !ENTRY_ID.test(entry.answer.entry))) addError(errors, `${entryPath}.answer.entry`, "must be a history entry id of 32 lowercase hexadecimal characters");
     }
   }
+}
+
+const STANDING_ITEMS_MAX = 1000;
+const exactly = (value, keys) => isRecord(value) && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+const shortText = (value, max) => typeof value === "string" && value !== "" && value.length <= max;
+
+// What an initiative stood at when a correctness gate was asked: each leaf's latest passing run id, or null, each slice.md's version,
+// the repositories that each slice's links resolve in, and the version of each ADR that its ship would accept.
+function wellFormedStanding(value) {
+  const listed = (key) => Array.isArray(value[key]) && value[key].length <= STANDING_ITEMS_MAX;
+  const version = (item) => exactly(item, ["scope", "path", "version"]) && shortText(item.scope, 200) && shortText(item.path, 1000) && /^sha256:[0-9a-f]{64}$/.test(item.version);
+  if (!exactly(value, ["runs", "slices", "repositories", "adrs"]) || !["runs", "slices", "repositories", "adrs"].every(listed)) return false;
+  return value.runs.every((item) => exactly(item, ["slice", "run"]) && shortText(item.slice, 200) && (item.run === null || shortText(item.run, 200)))
+    && value.slices.every(version)
+    && value.repositories.every((item) => exactly(item, ["folder", "repositories"]) && shortText(item.folder, 1000) && Array.isArray(item.repositories) && item.repositories.length <= STANDING_ITEMS_MAX && item.repositories.every((name) => shortText(name, 200)))
+    && value.adrs.every(version);
 }
 
 // Each gate kind accepts its own choices; a note carries the reason whenever the answer is not a plain acceptance.
@@ -498,7 +518,7 @@ function droppedGates(before, replacement) {
   return dropped.map((gate) => closedGate(gate, null));
 }
 
-function applyGateOperations(pending, operations) {
+function applyGateOperations(pending, operations, standing = null) {
   const next = [...pending];
   const opened = [];
   const closed = [];
@@ -520,7 +540,9 @@ function applyGateOperations(pending, operations) {
         artifacts: operation.artifacts ?? [],
         ...(operation.options === undefined ? {} : { options: operation.options }),
         ...(operation.recommended === undefined ? {} : { recommended: operation.recommended }),
-        askedAt: new Date().toISOString()
+        askedAt: new Date().toISOString(),
+        // With a record store, a correctness gate records what the initiative stands at, which a ship that it confirms compares with the initiative then.
+        ...(operation.kind === "correctness" && standing !== null ? { standing } : {})
       };
       const errors = [];
       validateGate(gate, `gateOperations[${index}]`, errors);
@@ -558,14 +580,34 @@ function applyGateOperations(pending, operations) {
   return { pending: next, opened, closed };
 }
 
-// Only the review browser records answers, so agent updates may keep an answer but never add or change one.
-function assertAnswersUnchanged(before, after) {
-  const previous = new Map(before.filter(isRecord).map((gate) => [gate.id, JSON.stringify(gate.answer ?? null)]));
+// Only the review browser records answers, so agent updates may keep an answer but never add or change one,
+// and a gate that has an answer stays as the person was shown it: an update may drop it, which closes it, but changes nothing else about it.
+// What a correctness gate records the initiative stood at is Prism's own, so only the ask operation that opens the gate records it.
+function assertAnsweredGatesUnchanged(before, after, opened) {
+  const previous = new Map(before.filter(isRecord).map((gate) => [gate.id, gate]));
+  const asked = new Set(opened.map((gate) => gate.id));
   for (const gate of after.filter(isRecord)) {
-    if (gate.answer !== undefined && previous.get(gate.id) !== JSON.stringify(gate.answer)) {
+    if (asked.has(gate.id)) continue;
+    const earlier = previous.get(gate.id);
+    if (gate.answer !== undefined && JSON.stringify(earlier?.answer ?? null) !== JSON.stringify(gate.answer)) {
       throw error("invalid_changes", `The user gate ${gate.id} has an answer that only the review browser can record.`);
     }
+    if (earlier?.answer !== undefined && canonicalJson(earlier) !== canonicalJson(gate)) {
+      throw error("invalid_changes", `The user gate ${gate.id} has an answer, so it stays as the person was shown it: drop it from pending to close it, or ask a new question with a gateOperations ask.`);
+    }
+    if (canonicalJson(gate.standing ?? null) !== canonicalJson(earlier?.standing ?? null)) {
+      throw error("invalid_changes", `The user gate ${gate.id} would record what the initiative stood at, which only Prism records when a gateOperations ask opens a correctness gate.`);
+    }
   }
+}
+
+// A correctness gate asked in a project with a record store records what the initiative stands at, read before the state lock is taken, so the read never waits on a store sync while holding it.
+async function askedStanding(resolved, changes) {
+  if (!resolved.store || !(changes.gateOperations ?? []).some((operation) => isRecord(operation) && operation.op === "ask" && operation.kind === "correctness")) return null;
+  const { initiativeStanding } = await import("./ship-standing.mjs");
+  // A gate whose standing could not be read, as one asked while the store is unreadable, or that is more than a gate records, is still asked, and confirms no ship: the ship then asks for a new one.
+  const standing = await initiativeStanding(resolved.root, resolved.initiative).catch(() => null);
+  return standing !== null && wellFormedStanding(standing) ? standing : null;
 }
 
 const nullableText = (value) => value === null || (typeof value === "string" && value.length <= 200);
@@ -967,7 +1009,8 @@ export async function updateCoordinationState({ projectRoot, initiative, expecte
   await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
   await mkdir(path.dirname(resolved.path), { recursive: true });
-  return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => applyStateChange(resolved, expectedRevision, changes), error, { renew: Boolean(changes.activeOperations?.length) }));
+  const standing = await askedStanding(resolved, changes);
+  return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => applyStateChange(resolved, expectedRevision, changes, standing), error, { renew: Boolean(changes.activeOperations?.length) }));
 }
 
 // Resolving a gate by its id removes only that gate, so it holds after any other change, such as the browser answer that prompted it.
@@ -976,7 +1019,7 @@ function resolvesGatesOnly(changes) {
   return keys.length === 1 && keys[0] === "gateOperations" && changes.gateOperations.length > 0 && changes.gateOperations.every((operation) => operation?.op === "resolve");
 }
 
-async function applyStateChange(resolved, expectedRevision, changes) {
+async function applyStateChange(resolved, expectedRevision, changes, standing = null) {
     const current = await loadState(resolved.path);
     if (current.revision !== expectedRevision && !(current.exists && resolvesGatesOnly(changes))) {
       throw error(expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("coordination state", expectedRevision, current.revision), { current: publicStateResult(resolved, current) });
@@ -989,8 +1032,8 @@ async function applyStateChange(resolved, expectedRevision, changes) {
     return withReviewGatesLocked(resolved.root, resolved.initiative, before.active, changes.activeOperations ?? [], async () => {
     const activeResult = await applyActiveOperations(resolved.root, resolved.initiative, before.active, changes.activeOperations ?? []);
     const dropped = droppedGates(before.pending, changes.pending);
-    const gateResult = applyGateOperations(changes.pending ?? before.pending, changes.gateOperations ?? []);
-    assertAnswersUnchanged(before.pending, gateResult.pending);
+    const gateResult = applyGateOperations(changes.pending ?? before.pending, changes.gateOperations ?? [], standing);
+    assertAnsweredGatesUnchanged(before.pending, gateResult.pending, gateResult.opened);
     const closed = [...(before.closed ?? []), ...dropped, ...gateResult.closed].slice(-CLOSED_LIMIT);
     const requested = changes.settings === undefined ? null : keepPersonSettings(before, changes.settings);
     const candidate = normalizeState({
@@ -1132,6 +1175,7 @@ export async function checkpointPause({ projectRoot, initiative, expectedRevisio
   const inStore = await inArtifactStore(resolved.root, recoveryRelative);
   if (!inStore) await assertNearestExistingPathInside(resolved.root, path.dirname(recovery));
   await mkdir(path.dirname(resolved.path), { recursive: true });
+  const standing = await askedStanding(resolved, changes);
   return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
     const current = await loadState(resolved.path);
     if (current.revision !== expectedRevision) {
@@ -1161,7 +1205,7 @@ export async function checkpointPause({ projectRoot, initiative, expectedRevisio
         active: undefined,
         activeOperations: [{ op: "release", slice: activeSlice }],
         evidence: [...new Set([...current.state.evidence, ...(changes.evidence ?? []), stateRelativeRecovery])]
-      });
+      }, standing);
       return { ...result, recoveryPath: recoveryRelative, recoveryDigest: createHash("sha256").update(recoveryContent.endsWith("\n") ? recoveryContent : `${recoveryContent}\n`).digest("hex"), pausedSlice: activeSlice };
     } catch (caught) {
       if (inStore) await writeArtifactText(resolved.root, recoveryRelative, previous).catch(() => {});

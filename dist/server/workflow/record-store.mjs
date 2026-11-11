@@ -1104,6 +1104,18 @@ async function scopesOf(root, config, store) {
   return { root, config, kinds: artifactKinds(config), store, base, repository: store.repository, scopes: [WORKSPACE_SCOPE, own, ...names.map((name) => componentScope(store.repository, name))] };
 }
 
+/** The scopes of a repository in a seen store, its repository scope and each component scope whose folder the store holds, or none for a name that no repository may have; a ship reads them whichever checkout ships. */
+export async function repositoryScopes(seen, repository) {
+  if (typeof repository !== "string" || !COMPONENT_NAME.test(repository)) return [];
+  const own = repositoryScope(repository);
+  const components = path.join(seen.base, scopeFolder(own), "components");
+  await assertUnlinked(seen.store.base, path.join(components, "x"));
+  let names = [];
+  try { names = (await readdir(components, { withFileTypes: true })).filter((entry) => entry.isDirectory() && COMPONENT_NAME.test(entry.name)).map((entry) => entry.name).sort(); }
+  catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
+  return [own, ...names.map((name) => componentScope(repository, name))];
+}
+
 // No folder between the store and an artifact may be a symbolic link, so a link placed in the store cannot redirect a read or write elsewhere.
 async function assertUnlinked(base, target) {
   const relative = path.relative(base, target);

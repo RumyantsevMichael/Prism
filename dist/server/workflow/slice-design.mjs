@@ -140,10 +140,15 @@ export async function unfinishedFrozenTestsOfOthers(projectRoot, initiative, sli
   return [...paths].sort();
 }
 
+/** The latest passing verification run of a slice as { id, entry }, or null when it has none. */
+export async function latestPassingRun(projectRoot, initiative, slice) {
+  const entries = await listRecordEntries(projectRoot, { kind: "runs", initiative, slice });
+  return entries.filter((item) => item.entry?.kind === "verification" && item.entry.passed === true).at(-1) ?? null;
+}
+
 /** Where the latest passing verification run of a slice ran: its checkout, or null when no passing run recorded one. */
 export async function verifiedCode(projectRoot, initiative, slice) {
-  const entries = await listRecordEntries(projectRoot, { kind: "runs", initiative, slice });
-  return entries.filter((item) => item.entry?.kind === "verification" && item.entry.passed === true).at(-1)?.entry.checkout ?? null;
+  return (await latestPassingRun(projectRoot, initiative, slice))?.entry.checkout ?? null;
 }
 
 /** The latest dependents' run recorded on a scope, as { entry, path } with the run's project-relative record path, or null when none is recorded. */

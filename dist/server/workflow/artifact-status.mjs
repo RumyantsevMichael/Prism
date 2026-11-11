@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
-import { ARTIFACT_ACCEPTED, ARTIFACT_STATUS, artifactLocation, STATUS_RECORD_NAME } from "./artifact-paths.mjs";
+import { ARTIFACT_ACCEPTED, ARTIFACT_STATUS, artifactLocation, locationArtifact, STATUS_RECORD_NAME } from "./artifact-paths.mjs";
+import { canonicalJson } from "./record-merge.mjs";
+import { markdownLinkDestinations } from "./markdown-links.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 
 // A requirement's and an ADR's status is recorded in the store beside the artifact, and only a person's answer at a gate changes it.
@@ -96,6 +98,8 @@ export function parseRecord(kind, bytes) {
     acceptedVersion: typeof value.acceptedVersion === "string" && VERSION.test(value.acceptedVersion) ? value.acceptedVersion : null,
     // The bounded reader refuses a record nested deeper than Prism writes, so the approval and history items it keeps never exhaust the call stack when serialized again.
     approval: isRecord(value.approval) ? value.approval : null,
+    // Only a ship records an acceptance, so a record written before ships accepted ADRs, or without one, keeps no such key.
+    ...(isRecord(value.acceptance) ? { acceptance: value.acceptance } : {}),
     // A gate that ask_approval could not have recorded is dropped, so Attention never offers it and no answer can apply it.
     pending: list(value.pending).filter((gate) => wellFormedGate(kind, gate)),
     closed: list(value.closed).filter((gate) => wellFormedGate(kind, gate)),
@@ -122,6 +126,7 @@ export function statusFields(kind, record, version) {
     acceptedVersion: record.acceptedVersion,
     changedSinceAccepted: record.acceptedVersion !== version,
     ...(record.approval ? { approval: record.approval } : {}),
+    ...(record.acceptance ? { acceptance: record.acceptance } : {}),
     ...(answered ? { latestAnswer: answerFields(answered) } : {})
   };
 }
@@ -239,6 +244,7 @@ export function answerApproval(kind, file, record, { id, choice, note = null, by
   if (!gate) {
     const closed = record.closed.find((item) => item.id === id);
     if (closed?.answer) throw fail("gate_answered", "The question already has an answer.");
+    if (closed?.closed === "shipped") throw fail("unknown_gate", `An initiative whose slice.md links ${file} shipped and accepted it, which ended this question; the agent asks again if another status still applies.`);
     throw fail("unknown_gate", closed ? "The agent asked again since this question, so it no longer applies." : "The question is no longer open; the agent resolved or withdrew it.");
   }
   if (!askableStatus(kind, gate.status) || !VERSION.test(gate.version ?? "")) {
@@ -270,6 +276,89 @@ export function answerApproval(kind, file, record, { id, choice, note = null, by
 /** A record with acceptedVersion set to version, as its accepted bytes at an approval, a design acceptance, or a ship. */
 export function withAcceptedVersion(record, version, event) {
   return { ...record, acceptedVersion: version, history: keep([...record.history, { ...event, acceptedVersion: version }], HISTORY_KEPT) };
+}
+
+/**
+ * The project-relative paths that the Markdown links of a file name, as CommonMark reads them, in the order they first appear: inline and reference links,
+ * each resolved against the file's folder, or against the project root for a target that begins with "/", without its fragment or query.
+ * A link to another site, a fragment of the file itself, and a target that leaves the project name no path, and neither does text that CommonMark shows as code, raw HTML, or escaped characters, or an image.
+ * A text whose syntax would make the read look at its characters many times over gives null.
+ */
+export function linkedPaths(text, file) {
+  const targets = markdownLinkDestinations(text);
+  if (targets === null) return null;
+  const found = new Set();
+  for (const raw of targets) {
+    const target = raw.replace(/[#?].*$/s, "");
+    if (target === "" || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(target) || target.startsWith("//")) continue;
+    let decoded;
+    try { decoded = decodeURI(target); } catch { continue; }
+    const joined = decoded.startsWith("/") ? decoded.slice(1) : path.posix.join(path.posix.dirname(file), decoded);
+    const normalized = path.posix.normalize(joined === "" ? "." : joined).replace(/\/+$/, "");
+    if (normalized === "." || normalized === ".." || normalized.startsWith("../")) continue;
+    found.add(normalized);
+  }
+  return [...found];
+}
+
+export const SHIP_STATUS = "Accepted";
+
+/**
+ * Accept a Proposed ADR when the initiative whose slice.md links it ships: { record, text }, where text has its Status: line set to Accepted.
+ * The record keeps the status, the accepted version of the new bytes, which versionOf gives, and acceptance with the ship's correctness gate, the initiative, the time,
+ * and verifiedBy, the slice, repository, and commit of each leaf slice's latest passing verification run; a pending approval gate closes, since it asked about bytes the ship rewrote.
+ */
+export function acceptAtShip(record, text, { gate, initiative, verifiedBy, at, versionOf }) {
+  const next = rewriteStatusLines(text, SHIP_STATUS, at.slice(0, 10));
+  const version = versionOf(next);
+  const closed = record.pending.map((earlier) => ({ ...earlier, closedAt: at, closed: "shipped" }));
+  return {
+    text: next,
+    record: {
+      ...record,
+      status: SHIP_STATUS,
+      acceptedVersion: version,
+      pending: [],
+      closed: keep([...record.closed, ...closed], CLOSED_KEPT),
+      acceptance: { gate, initiative, at, verifiedBy },
+      history: keep([...record.history, { event: "shipped", gate, initiative, status: SHIP_STATUS, at, acceptedVersion: version }], HISTORY_KEPT)
+    }
+  };
+}
+
+const byText = (left, right) => left < right ? -1 : left > right ? 1 : 0;
+
+/**
+ * The structural merge of a status record that changed on two machines, as store sync takes it: { path, base, local, upstream } as UTF-8 text, base null for a record new on both sides,
+ * answering { contents } or { conflict }, which keeps the upstream record and saves this machine's.
+ * Where one side's ship accepted the ADR and the other side only asked an approval or answered one without approving, the acceptance stays, so the file that the ship rewrote and the recorded status agree,
+ * and each approval that the other side asked and the ship never saw ends as closed "shipped", which an answer then names; both sides' closed gates and history stay.
+ * The merge reads only what the three records say, so every machine merges the same versions to the same bytes.
+ */
+export function mergeStatusRecord({ path: file, base, local, upstream }) {
+  const conflict = { conflict: "The status record changed on both sides." };
+  const location = file.startsWith(`${ARTIFACT_STATUS}/`) && file.endsWith(`/${STATUS_RECORD_NAME}`) ? file.slice(ARTIFACT_STATUS.length + 1, -(STATUS_RECORD_NAME.length + 1)) : null;
+  const kind = location === null ? null : locationArtifact(location)?.kind ?? null;
+  if (!hasStatus(kind)) return conflict;
+  const [was, mine, theirs] = [base, local, upstream].map((text) => parseRecord(kind, text ?? null));
+  const same = (left, right) => canonicalJson(left ?? null) === canonicalJson(right ?? null);
+  const shipped = (record) => isRecord(record.acceptance) && record.status === SHIP_STATUS && !same(record.acceptance, was.acceptance);
+  if (shipped(mine) === shipped(theirs)) return conflict;
+  const [ship, other] = shipped(mine) ? [mine, theirs] : [theirs, mine];
+  if (other.status !== was.status || other.acceptedVersion !== was.acceptedVersion || !same(other.approval, was.approval) || !same(other.acceptance, was.acceptance)) return conflict;
+  const at = typeof ship.acceptance.at === "string" ? ship.acceptance.at : null;
+  const held = new Set([...ship.pending, ...ship.closed].map((gate) => gate.id));
+  const ended = other.pending.filter((gate) => !held.has(gate.id)).map((gate) => ({ ...gate, closedAt: at ?? gate.askedAt ?? null, closed: "shipped" }));
+  const closed = new Map();
+  for (const gate of [...ship.closed, ...other.closed, ...ended]) if (!closed.has(gate.id)) closed.set(gate.id, gate);
+  const history = new Map();
+  for (const entry of [...ship.history, ...other.history]) history.set(canonicalJson(entry), entry);
+  const record = {
+    ...ship,
+    closed: keep([...closed.values()].sort((left, right) => byText(String(left.closedAt ?? ""), String(right.closedAt ?? "")) || byText(left.id, right.id)), CLOSED_KEPT),
+    history: keep([...history].sort(([leftKey, left], [rightKey, right]) => byText(String(left.at ?? ""), String(right.at ?? "")) || byText(leftKey, rightKey)).map(([, entry]) => entry), HISTORY_KEPT)
+  };
+  return { contents: serializeRecord(record) };
 }
 
 /** The gates of a record as a gate wait reads them: pending ones without an answer and answered ones with it; a superseded gate is gone. */
