@@ -154,35 +154,6 @@ function showNoWorkspace() {
 }
 
 // An added workspace that no registered checkout serves: its page names it and says where its records open, and offers to remove it.
-function showStoreOnly(index) {
-  renderedPath = null;
-  thisWorkspace = index.workspace;
-  project.textContent = index.workspace.name;
-  document.title = `${index.workspace.name} · Prism review`;
-  projectButton.removeAttribute("disabled");
-  projectButton.setAttribute("tip", [`Workspace: ${index.workspace.name}`, index.store?.label ? `Store: ${index.store.label}` : ""].filter(Boolean).join("\n"));
-  watchWorkspaceMenu();
-  void refreshProjects();
-  const empty = document.createElement("prism-empty-state");
-  empty.className = "welcome";
-  empty.setAttribute("heading", index.workspace.name);
-  const actions = element("div", "welcome-actions");
-  actions.append(
-    emptyStateButton("Remove workspace", () => void removeCurrentWorkspace(), "danger"),
-    emptyStateButton("Add another workspace", () => workspaceForms().openAdd(), "default")
-  );
-  const store = element("p", "welcome-store", `Store: ${index.store?.label ?? ""}`);
-  store.hidden = !index.store?.label;
-  empty.append(
-    store,
-    element("p", "", "This machine keeps a clone of this workspace's store, and no checkout of it is registered with the review app."),
-    element("p", "", "Its records open here once a Prism session runs in a checkout of one of its repositories, or once prism review runs there."),
-    actions
-  );
-  artifact.replaceChildren(empty);
-  setBusy(false);
-}
-
 // The forms that add and remove the app's workspaces, made once the page first needs them.
 let forms = null;
 function workspaceForms() {
@@ -1676,7 +1647,7 @@ let recordStoreStatus = null;
 
 // The record store and its sync live in the status bar: where records live, and the sync state, which opens details with every saved conflict.
 function renderStoreSync(data) {
-  recordStoreStatus?.update(data.recordStore, data.storeSync);
+  recordStoreStatus?.update(data.recordStore, data.storeSync, data.sync);
 }
 
 startAppearanceMenu();
@@ -1732,10 +1703,6 @@ async function initialize() {
     showNoWorkspace();
     return;
   }
-  if (index.storeOnly === true) {
-    showStoreOnly(index);
-    return;
-  }
   useStoreRefs(index);
   const data = localSession(index);
   startHistory();
@@ -1767,8 +1734,11 @@ async function initialize() {
   appVersion = typeof data.appVersion === "string" ? data.appVersion : null;
   const requestedPath = localTab(selectedPath);
   selectedPath = Object.hasOwn(data, "activeTab") ? data.activeTab : null;
-  thisWorkspace = data.checkout ? data.workspace : null;
-  setProjectLabel(data.checkout ?? workspaceIdentity(data), data.projectRoot, thisWorkspace ? thisWorkspace.kind === "store" ? thisWorkspace.name : null : storeWorkspaceName(data.recordStore));
+  // A workspace that the app reads through its store's clone alone names no checkout, so the label shows the workspace alone.
+  const storeOnly = data.checkout === null && Boolean(data.workspace?.id);
+  thisWorkspace = data.checkout || storeOnly ? data.workspace : null;
+  if (storeOnly) setProjectLabel({ repository: data.workspace.name, worktree: null, branch: null, detached: false }, data.recordStore?.label ? `Store: ${data.recordStore.label}` : "", null);
+  else setProjectLabel(data.checkout ?? workspaceIdentity(data), data.projectRoot, thisWorkspace ? thisWorkspace.kind === "store" ? thisWorkspace.name : null : storeWorkspaceName(data.recordStore));
   thisProject = data;
   showPrivateServer(data.privateServer);
   let sectionFrame = 0;

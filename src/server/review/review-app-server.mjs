@@ -1,12 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
-import { realpath, stat } from "node:fs/promises";
+import { mkdir, realpath, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { ConservationStore, conservationStore } from "../conservation/conservation-store.mjs";
 import { withFileLock } from "../workflow/artifact-store.mjs";
 import { useManagedStores } from "../workflow/record-store-remote.mjs";
+import { markManagedStore } from "../workflow/record-store-sync.mjs";
 import { remoteLabel } from "../workflow/remote-url.mjs";
-import { describeRecordStore, outsideToolCall } from "../workflow/record-store.mjs";
+import { describeRecordStore, forgetStoreWithoutCheckout, isStoreWithoutCheckout, outsideToolCall, recordStoreOf, useStoreWithoutCheckout } from "../workflow/record-store.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
 import {
   REVIEW_APP_PROTOCOL,
@@ -34,6 +35,7 @@ import { createAddedWorkspaces, storeAddresses } from "./added-workspaces.mjs";
 import { checkoutWorkspace, listWorkspaces, nameOfWorkspace, storeFolder, storeWorkspaceId } from "./workspaces.mjs";
 import { listMachineCheckouts } from "../workflow/machine-checkouts.mjs";
 import { createWriteSessions } from "./write-sessions.mjs";
+import { watchWorkspace, WORKSPACE_FETCH_MAX_MS, WORKSPACE_FETCH_MS } from "./workspace-sync.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
 
 const LEASE_MS = 3 * 60 * 1000;
@@ -48,6 +50,8 @@ const STORAGE_DIRECTORY_LIMIT = 4;
 const STORAGE_FIELDS = [["evidenceDirectory", "evidenceDirectories"], ["intelligenceDirectory", "intelligenceDirectories"], ["recordStoreDirectory", "recordStoreDirectories"]];
 const NOTICE_MS = 60 * 1000;
 const RECENT_LIMIT = 20;
+// The empty folders that stand for no checkout, one per added workspace, through which the app reads and writes a store's clone when no checkout of it is registered.
+const STORE_ROOTS = "store-roots";
 
 function statusError(status, message) {
   return Object.assign(new Error(message), { status });
@@ -86,7 +90,7 @@ function holdLock(directory, stopped, onRenew) {
 }
 
 // The review app serves every registered project of one user from one port, behind a lock that keeps it unique.
-export async function startReviewApp({ directory, pluginVersion = null, idleMs = IDLE_MS, noticeMs = NOTICE_MS } = {}) {
+export async function startReviewApp({ directory, pluginVersion = null, idleMs = IDLE_MS, noticeMs = NOTICE_MS, workspaceFetchMs = WORKSPACE_FETCH_MS, workspaceFetchMaxMs = WORKSPACE_FETCH_MAX_MS } = {}) {
   await prepareDirectory(directory);
   let releaseLock;
   const stopped = new Promise((resolve) => { releaseLock = resolve; });
@@ -184,7 +188,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
   // A project's evidence lives in the stores of the sessions that write it, which need not be the store of the process that launched this app.
   // Evidence ids are digests of immutable records, so a read may try every reported store; writes go to the most recently reported one.
   function evidenceStoreOf(project) {
-    if (!project.evidenceDirectories.length) return conservationStore;
+    if (!project?.evidenceDirectories.length) return conservationStore;
     const reported = project.evidenceDirectories.map(storeAt);
     return {
       async get(...request) {
@@ -233,7 +237,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
 
   // The app's own default storage comes last, so a project no session has reported yet still shows an index this host built.
   function intelligenceDirectoriesOf(project) {
-    return [...project.intelligenceDirectories, nativeSemanticRuntime.directory];
+    return [...(project?.intelligenceDirectories ?? []), nativeSemanticRuntime.directory];
   }
 
   async function touch(project) {
@@ -241,15 +245,18 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     await rememberProjects();
   }
 
-  // A workspace keeps its review while a checkout of it is registered or a page of it is open, and reads through its most recent checkout once the one it read through left.
+  // A workspace keeps its review while a checkout of it is registered, a page of it is open, or a person added it, and reads through its most recent checkout once the one it read through left,
+  // or, for an added workspace with no checkout left, through its store's clone alone.
   function pruneWorkspaces() {
     for (const view of workspaces.values()) {
       const members = membersOf(view);
       if (!members.length) {
+        if (view.storeRoot) {
+          view.review.useCheckout(view.storeRoot);
+          continue;
+        }
         if (view.review.viewerCount() > 0) continue;
-        view.review.closeViewers();
-        workspaces.delete(view.id);
-        pendingNotices.delete(view.id);
+        dropView(view);
         continue;
       }
       if (!members.some((project) => project.root === view.root)) useCheckout(view, members.sort((left, right) => right.lastSeen - left.lastSeen)[0]);
@@ -258,6 +265,77 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
 
   function useCheckout(view, project) {
     view.review.useCheckout(project.root);
+  }
+
+  function dropView(view) {
+    view.review.closeViewers();
+    view.watch.stop();
+    workspaces.delete(view.id);
+    pendingNotices.delete(view.id);
+  }
+
+  // The store clone a workspace's page syncs: the managed clone of its network store when the checkout it reads through has Store sync on, or when it reads through no checkout; null otherwise.
+  async function syncedClone(view) {
+    if (view.kind !== "store" || view.identity.startsWith("file:")) return null;
+    if (await isStoreWithoutCheckout(view.root)) return storeFolder(view.identity);
+    const store = await recordStoreOf(view.root).catch(() => null);
+    return store?.external && store.sync ? store.base : null;
+  }
+
+  // The one review of a workspace, read through root, with the fetch timer that its connected pages drive.
+  function makeView({ id, kind, identity, urls, root }) {
+    const view = { id, kind, identity, urls, usedAt: addedUsage.get(id) ?? 0, review: null, watch: null, storeRoot: null, get root() { return this.review.projectRoot; } };
+    view.watch = watchWorkspace({ base: () => syncedClone(view), label: () => remoteLabel(view.urls[0]) ?? view.identity, intervalMs: workspaceFetchMs, maxMs: workspaceFetchMaxMs });
+    view.review = createProjectReview({ projectRoot: root, baseUrl: `http://127.0.0.1:${port}${viewerPrefix()}/w/${view.id}`, instance, appVersion: pluginVersion,
+      onViewer: (sendNotice) => {
+        view.usedAt = ++sequence;
+        deliverPendingNotices(view.id, sendNotice);
+      },
+      // Every checkout of a workspace shows its page through this one review, so an applied action reaches every page of the workspace.
+      onAction: (event) => view.review.notify("action", event),
+      evidenceStore: () => evidenceStoreOf(currentProject(view)), intelligenceDirectories: () => intelligenceDirectoriesOf(currentProject(view)), writeSessions,
+      workspace: { id: view.id, describe: () => describeWorkspace(view), sync: async () => await syncedClone(view) ? view.watch.state() : null, viewers: (count) => view.watch.viewers(count) } });
+    workspaces.set(view.id, view);
+    return view;
+  }
+
+  // The folder that stands for no checkout of an added workspace, which reads and writes its store's clone, with the store's sync on for a network store.
+  async function prepareStoreRoot(view) {
+    if (view.storeRoot) return view.storeRoot;
+    const root = path.join(directory, STORE_ROOTS, view.id);
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const base = await storeFolder(view.identity);
+    const network = !view.identity.startsWith("file:");
+    if (network) markManagedStore(base);
+    await useStoreWithoutCheckout(root, { base, label: remoteLabel(view.urls[0]) ?? view.identity, sync: network });
+    view.storeRoot = await realpath(root);
+    return view.storeRoot;
+  }
+
+  // The review of an added workspace, made on first use, which reads through its store's clone until a checkout of it is registered.
+  async function addedView(entry) {
+    let view = workspaces.get(entry.id);
+    if (!view) {
+      const root = await prepareStoreRoot({ id: entry.id, identity: entry.identity, urls: storeAddresses(entry.urls), storeRoot: null });
+      view = workspaces.get(entry.id) ?? makeView({ id: entry.id, kind: "store", identity: entry.identity, urls: storeAddresses(entry.urls), root });
+      view.storeRoot ??= root;
+    }
+    if (!view.storeRoot) await prepareStoreRoot(view);
+    if (!membersOf(view).length) view.review.useCheckout(view.storeRoot);
+    return view;
+  }
+
+  // An added workspace stops reading through its store's clone once removed, and its page closes when no checkout of it is registered.
+  async function forgetAddedView(id) {
+    const view = workspaces.get(id);
+    if (!view) return;
+    const root = view.storeRoot;
+    view.storeRoot = null;
+    if (!membersOf(view).length) dropView(view);
+    if (root) {
+      await forgetStoreWithoutCheckout(root);
+      await rm(root, { recursive: true, force: true }).catch(() => {});
+    }
   }
 
   const currentProject = (view) => projects.get(projectId(view.root)) ?? membersOf(view)[0] ?? null;
@@ -269,21 +347,10 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     project.workspaceId = found.id;
     project.repository = found.repository;
     let view = workspaces.get(found.id);
-    if (!view) {
-      // A workspace that a person added keeps the URLs it was added by first, in the order first seen.
-      const addedEntry = added.list().find((entry) => entry.id === found.id);
-      view = { id: found.id, kind: found.kind, identity: found.identity, urls: [...(addedEntry?.urls ?? [])], usedAt: addedUsage.get(found.id) ?? 0, review: null, get root() { return this.review.projectRoot; } };
-      view.review = createProjectReview({ projectRoot: project.root, baseUrl: `http://127.0.0.1:${port}${viewerPrefix()}/w/${view.id}`, instance, appVersion: pluginVersion,
-        onViewer: (sendNotice) => {
-          view.usedAt = ++sequence;
-          deliverPendingNotices(view.id, sendNotice);
-        },
-        // Every checkout of a workspace shows its page through this one review, so an applied action reaches every page of the workspace.
-        onAction: (event) => view.review.notify("action", event),
-        evidenceStore: () => evidenceStoreOf(currentProject(view)), intelligenceDirectories: () => intelligenceDirectoriesOf(currentProject(view)), writeSessions,
-        workspace: { id: view.id, describe: () => describeWorkspace(view) } });
-      workspaces.set(view.id, view);
-    }
+    // A workspace that a person added keeps the URLs it was added by first, in the order first seen, and keeps its store's clone to read through once its checkouts leave.
+    const addedEntry = added.list().find((entry) => entry.id === found.id);
+    if (!view) view = makeView({ id: found.id, kind: found.kind, identity: found.identity, urls: [...(addedEntry?.urls ?? [])], root: project.root });
+    if (addedEntry && !view.storeRoot) await prepareStoreRoot(view).catch(() => null);
     // A checkout's Store value can carry a token, which the workspace's URLs never list.
     if (found.url !== null) view.urls = storeAddresses([...view.urls, found.url]);
     if (previous && previous !== found.id) pruneWorkspaces();
@@ -308,8 +375,13 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     return views;
   }
 
-  // An added workspace that no registered checkout serves, as { id, kind, identity, root }, or null.
-  const storeOnlyView = (id) => workspaces.has(id) ? null : workspaceViews().find((view) => view.id === id && view.root === null) ?? null;
+  // The review of a workspace id: a workspace with a review, or an added workspace, whose review is made on first use; null for an unknown id.
+  async function viewOf(id) {
+    const view = workspaces.get(id);
+    if (view) return view;
+    const entry = added.list().find((item) => item.id === id);
+    return entry ? addedView(entry) : null;
+  }
 
   // The checkouts on this machine that name a workspace's store, each as { path, url } with the store URL its configuration names:
   // its registered checkouts, then the machine's checkout list entries of its store folder.
@@ -358,7 +430,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       const { identity, merged } = await added.add(body.url, { confirmEmpty: body.confirmEmpty === true, keptStores, seenUrls: (identity) => workspaces.get(storeWorkspaceId(identity))?.urls ?? [] });
       const id = storeWorkspaceId(identity);
       addedUsage.set(id, ++sequence);
-      const view = workspaces.get(id);
+      const view = await addedView(added.list().find((entry) => entry.id === id)).catch(() => workspaces.get(id) ?? null);
       if (view) view.usedAt = addedUsage.get(id);
       const workspace = (await workspaceList()).find((entry) => entry.id === id);
       sendJson(response, 200, { workspace, merged });
@@ -378,29 +450,11 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
         : { code: "workspace_unknown", message: "No workspace has that id on this machine." });
       return;
     }
+    // The page stops syncing the store's clone before the removal decides whether to delete it.
+    await forgetAddedView(id);
     const removed = await added.remove(id, { checkoutsNaming });
     addedUsage.delete(id);
     sendJson(response, 200, { removed: true, clone: removed.clone, message: removed.message });
-  }
-
-  // The page of an added workspace that no checkout serves names the workspace, and the page's own files are those every page shares.
-  async function serveStoreOnly(request, response, view, rest) {
-    if (rest === "/api/index" && request.method === "GET") {
-      sendJson(response, 200, { workspace: { ...(await describeWorkspace(view)), added: true }, storeOnly: true, store: { label: remoteLabel(view.urls[0]) ?? view.urls[0] ?? view.identity } });
-      return;
-    }
-    if (rest === "/" || rest === "/review") {
-      addedUsage.set(view.id, ++sequence);
-      await servePageRoute(request, response, rest);
-      return;
-    }
-    // The tab that lands here with a write grant exchanges it as on a checkout's page, so it can add and remove workspaces.
-    if (rest === "/api/write-session" && request.method === "POST") {
-      await exchangeWriteGrant(request, response, writeSessions);
-      return;
-    }
-    if (rest !== "/api/workspaces" && await servePageRoute(request, response, rest)) return;
-    send(response, 404, "Not found");
   }
 
   const workspaceList = () => listWorkspaces(workspaceViews(), { urlOf: workspaceUrl });
@@ -637,9 +691,8 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       const route = url.pathname.slice(prefix.length);
       const inWorkspace = /^\/w\/([0-9a-f]{16})(\/.*)?$/.exec(route);
       if (inWorkspace) {
-        const view = workspaces.get(inWorkspace[1]);
-        const storeOnly = view ? null : storeOnlyView(inWorkspace[1]);
-        if (!view && !storeOnly) {
+        const view = await viewOf(inWorkspace[1]);
+        if (!view) {
           send(response, 404, "No workspace has that id on this machine.");
           return;
         }
@@ -647,10 +700,6 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
         if (!inWorkspace[2]) {
           response.writeHead(308, { Location: `${prefix}${route}/${url.search}`, "Cache-Control": "no-store" });
           response.end();
-          return;
-        }
-        if (storeOnly) {
-          await serveStoreOnly(request, response, storeOnly, inWorkspace[2]);
           return;
         }
         if (inWorkspace[2] === "/api/projects" && request.method === "GET") {
@@ -762,6 +811,9 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       await placeProject(project).catch(() => null);
     }
   }
+  // Every added workspace has its page from the start, read through a checkout of it or through its store's clone alone.
+  for (const entry of added.list()) await addedView(entry).catch(() => null);
+  pruneWorkspaces();
   sequence = restored.length;
   const saved = savedProjects();
   persisted = JSON.stringify([saved.roots, saved.directories]);
@@ -787,7 +839,10 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
   close = ({ handoff = false } = {}) => {
     closing ??= (async () => {
       clearInterval(sweep);
-      for (const view of workspaces.values()) view.review.closeViewers();
+      for (const view of workspaces.values()) {
+        view.watch.stop();
+        view.review.closeViewers();
+      }
       server.closeAllConnections?.();
       await new Promise((resolve) => server.close(() => resolve()));
       // Only the lock holder touches the discovery file, so an app that lost its lock never removes the winner's.

@@ -8,7 +8,7 @@ import { PLUGIN_ROOT } from "../plugin-root.mjs";
 import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { RECORD_DIRECTORY, artifactPathTest, artifactsInCheckout, describeRecordStore, inArtifactStore, outsideToolCall, keyOfPath, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
+import { RECORD_DIRECTORY, artifactPathTest, artifactsInCheckout, describeRecordStore, inArtifactStore, isStoreWithoutCheckout, outsideToolCall, keyOfPath, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
 import { artifactStoreLocation, readStoreArtifact, reviewStoreArtifact, storeArtifactLocation } from "../workflow/store-artifacts.mjs";
 import { withoutCredentials } from "../workflow/remote-url.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
@@ -633,7 +633,8 @@ export async function servePageRoute(request, response, route) {
 // onAction(event, { shared, comment }) receives each applied action's event, the history entry with its initiative, instead of this page's viewer streams;
 // shared is false for an index target, whose history belongs to this checkout alone, and comment is the id of a stored comment, which names its file, or null.
 // Without it, the event reaches this page's viewer streams.
-// workspace, for a review of the review app's workspace, is { id, describe() }, describe answering { id, name, kind, url } for the index:
+// workspace, for a review of the review app's workspace, is { id, describe(), sync?(), viewers?(count) }, describe answering { id, name, kind, url } for the index,
+// sync the workspace's sync state that the index holds, or null when nothing syncs it, and viewers receiving the number of connected pages whenever it changes:
 // its open tabs then name each store artifact by its store location, store:<location>, never by a checkout path, and projectRoot is the checkout it reads through, which useCheckout(root) changes.
 export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, onAction = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null, writeSessions = null, workspace = null,
   rebuildIndex = (root, component, options = {}) => backgroundPreparation().then((module) => module.startIndexRebuild(root, { ...(component ? { component: { identity: component.identity, folder: component.folder } } : {}), ...options })), autoRebuild = (root) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }) {
@@ -645,6 +646,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   // The index chip polls while a page is open, so an out-of-date index is rebuilt only while someone looks at the project.
   const rebuild = { key: null, changedAt: Date.now(), startedAt: 0 };
   async function indexingStatus() {
+    // A workspace read through its store's clone alone has no checkout and so no code to index.
+    if (await isStoreWithoutCheckout(projectRoot)) return { state: "unavailable", diagnostics: [], autoRebuild: false };
     const status = await readIndexingStatus(projectRoot, intelligenceDirectories(), { fingerprint: currentFingerprint });
     const auto = await autoRebuild(projectRoot).catch(() => false);
     const print = await currentFingerprint();
@@ -665,7 +668,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   // A person's request rebuilds only its own component, starts at once, and ignores the background opt-out, because it is not in the background.
   const indexer = {
     status: async (_root, component) => componentIndexingStatus(await indexingStatus(), component),
-    rebuild: (root, component) => {
+    rebuild: async (root, component) => {
+      if (await isStoreWithoutCheckout(root)) return;
       rebuild.startedAt = Date.now();
       Promise.resolve(rebuildIndex(root, component)).catch(() => {});
     }
@@ -708,6 +712,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     }
     clearInterval(viewer.heartbeat);
     viewers.delete(response);
+    workspace?.viewers?.(viewers.size);
   }
 
   function notify(event, data) {
@@ -742,6 +747,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     heartbeat.unref();
     viewers.set(response, { heartbeat, writable });
     response.once("close", () => removeViewer(response));
+    workspace?.viewers?.(viewers.size);
     if (writable) clearViewerOpenLease();
     writeEvent(response, "session", sessionSnapshot());
     onViewer?.((event, data) => writeEvent(response, event, data));
@@ -903,8 +909,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const available = new Set([...artifacts, ...sources]);
       const snapshot = await followMovedRecords(available);
       const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref) => entityExists(projectRoot, ref));
-      const checkout = await readWorkspaceIdentity(projectRoot);
-      const named = workspace ? { workspace: await workspace.describe(), checkout, storeRefs: await storeArtifactRefs(projectRoot) } : { workspace: checkout };
+      // A workspace read through its store's clone alone has no checkout to name.
+      const checkout = workspace && await isStoreWithoutCheckout(projectRoot) ? null : await readWorkspaceIdentity(projectRoot);
+      const named = workspace ? { workspace: await workspace.describe(), checkout, storeRefs: await storeArtifactRefs(projectRoot), sync: await workspace.sync?.() ?? null } : { workspace: checkout };
       send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, artifactScopes: await listArtifactScopes(projectRoot), sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
     } else if (route === "/api/store/conflicts" && request.method === "GET") {
       // Saved local record versions are read-only here; a person redoes a lost change through an agent.

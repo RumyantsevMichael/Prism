@@ -38,6 +38,30 @@ const nameChecks = new Map();
 
 export { repositoryId };
 
+// Folders that stand for a store's managed clone where no checkout of it is registered, by their real path: { base, label, sync }.
+// Such a root holds no file of its own, so it has no configuration, sources, or legacy records, and every record it names lives in the clone.
+const checkoutlessRoots = new Map();
+
+/**
+ * Read and write the records of a store through root, an empty folder that stands for no checkout: base is the store's managed clone or folder,
+ * label names the store without credentials, and sync says whether record writes schedule the store's sync, which commits and pushes them.
+ * The store's sync, not a record read, fetches it, so a read never starts a fetch.
+ */
+export async function useStoreWithoutCheckout(root, { base, label, sync = true }) {
+  checkoutlessRoots.set(await realpath(root), { base: await realpath(base), label, sync: sync === true });
+}
+
+/** Stop serving root as a store without a checkout. */
+export async function forgetStoreWithoutCheckout(root) {
+  checkoutlessRoots.delete(await realpath(root).catch(() => path.resolve(root)));
+}
+
+/** Whether root is a folder that useStoreWithoutCheckout made stand for a store without a checkout. */
+export async function isStoreWithoutCheckout(root) {
+  if (typeof root !== "string" || !path.isAbsolute(root)) return false;
+  return checkoutlessRoots.has(await realpath(root).catch(() => path.resolve(root)));
+}
+
 export class RecordStoreError extends Error {
   constructor(code, message, details = {}) {
     super(message);
@@ -205,12 +229,14 @@ const physical = (store, relative) => path.join(store.base, relative.slice(RECOR
  */
 export async function recordStoreOf(projectRootPath) {
   const store = await resolveStore(projectRootPath);
-  if (!store.external) return { ...store, repository: null };
+  if (!store.external || store.checkoutless) return { ...store, repository: null };
   return { ...store, repository: await checkedRepository(store) };
 }
 
 async function resolveStore(projectRootPath) {
   const root = await projectRoot(projectRootPath);
+  const checkoutless = checkoutlessRoots.get(root);
+  if (checkoutless) return { root, base: checkoutless.base, contain: checkoutless.base, external: true, sync: checkoutless.sync, checkoutless: true };
   const config = await readWorkflowConfig(root);
   const { workspace } = config;
   const configured = workspace?.store ?? null;
@@ -294,6 +320,8 @@ export async function recordSyncStatus(projectRootPath) {
  */
 export async function describeRecordStore(projectRootPath) {
   const root = await projectRoot(projectRootPath);
+  const checkoutless = checkoutlessRoots.get(root);
+  if (checkoutless) return { kind: "remote", label: checkoutless.label, location: checkoutless.base, sync: checkoutless.sync };
   const configured = (await readWorkflowConfig(root)).workspace?.store ?? null;
   if (configured === null) return { kind: "project", label: RECORD_DIRECTORY, location: path.join(root, RECORD_DIRECTORY), sync: false };
   const kind = isRemoteStore(configured) ? "remote" : "folder";
@@ -823,6 +851,8 @@ export async function moveLegacyRecords(projectRootPath) {
  * In a tool call whose project root is the checkout, the checkout's existing artifacts then move into its record store, and no other access moves them.
  */
 export async function ensureRecords(root) {
+  // A store without a checkout has no checkout records or artifacts to move in.
+  if (checkoutlessRoots.has(root)) return { moved: [], conflicts: [] };
   const { report, store, config } = await recordsMoved(root);
   if (store.external && inToolCallOf(root)) {
     const artifacts = await migrateArtifactsOnce(root, store, config);
@@ -862,7 +892,7 @@ const storeLabel = (store) => store.external ? "the record store" : "the project
 async function synced(store) {
   if (!store.sync) return;
   await prepareStoreFiles(store.base).catch(() => {});
-  pullRecordStoreIfStale(store.base);
+  if (!store.checkoutless) pullRecordStoreIfStale(store.base);
   await waitForStableStore(store.base);
 }
 

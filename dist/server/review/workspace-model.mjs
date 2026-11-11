@@ -7,14 +7,20 @@ import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
 import { historyOrder, readCoordinationState } from "../workflow/state.mjs";
 import { readIndexHistory } from "../workflow/index-history.mjs";
-import { inArtifactStore, keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, listStoreArtifacts, locateRecord, readArtifactText, recordPath, recordsUnavailable, resolveRecordFile } from "../workflow/record-store.mjs";
-import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-config.mjs";
+import { inArtifactStore, isStoreWithoutCheckout, keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, listStoreArtifacts, locateRecord, readArtifactText, recordPath, recordsUnavailable, resolveRecordFile } from "../workflow/record-store.mjs";
+import { initiativeDirectory, readWorkflowConfig as readCheckoutConfig } from "../workflow/workflow-config.mjs";
 import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
 import { contractClauses, loadDesignView } from "../workflow/design-view.mjs";
 import { appliedArtifactActions, pendingApprovalGates, storeArtifactStatuses } from "../workflow/store-artifacts.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
+
+// A workspace read through its store's clone alone has no checkout and so no configuration of its own: its defaults are no setting to warn about.
+async function readWorkflowConfig(projectRoot) {
+  const config = await readCheckoutConfig(projectRoot);
+  return await isStoreWithoutCheckout(projectRoot) ? { ...config, diagnostics: [] } : config;
+}
 
 const LIBRARY_LIMIT = 500;
 const RECENT_CHANGES_LIMIT = 20;

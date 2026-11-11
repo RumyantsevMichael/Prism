@@ -4,6 +4,7 @@ import { listComponents } from "./components.mjs";
 import { appendIndexHistory } from "./index-history.mjs";
 import { readInitiativeWithClaims } from "./initiative.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
+import { isStoreWithoutCheckout } from "./record-store.mjs";
 import { runGit } from "./record-store-sync.mjs";
 import { REPOSITORY_NAME } from "./repository-names.mjs";
 import { readRoadmap } from "./roadmap.mjs";
@@ -464,7 +465,9 @@ async function authorOf(projectRoot) {
     const value = result.ok ? result.text.replace(/\s+/g, " ").trim().slice(0, 200) : "";
     return value || null;
   };
-  const [name, email, identity] = await Promise.all([read("user.name"), read("user.email"), readWorkspaceIdentity(projectRoot)]);
+  // A workspace's page without a registered checkout applies its actions in the store's clone, which is the review app's, not a checkout's.
+  const checkoutless = await isStoreWithoutCheckout(projectRoot);
+  const [name, email, identity] = await Promise.all([read("user.name"), read("user.email"), checkoutless ? { repository: "review app", worktree: null, branch: null, detached: false } : readWorkspaceIdentity(projectRoot)]);
   return { name, email, checkout: checkoutLabel(identity).slice(0, 400) };
 }
 

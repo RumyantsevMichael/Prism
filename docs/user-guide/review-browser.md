@@ -309,11 +309,23 @@ A store with no commit yet is added only after you confirm it with **Add empty s
 When the store turns out to be one this machine already keeps under another address, such as an SSH host alias, the address joins that workspace instead, which Prism tells by the store's first commit.
 A plain `http://` or `git://` address always stays a workspace of its own with its own clone: it never joins the workspace of an encrypted address such as HTTPS or SSH, and an encrypted address never joins it.
 An added workspace stays in the switcher across restarts of the app until you remove it.
-Until a checkout of one of its repositories is registered with the app, its page names the workspace and its store, and says that its records open there once a Prism session or `prism review` runs in such a checkout.
+Until a checkout of one of its repositories is registered with the app, its page reads the records from the store's clone on this machine, and the switcher's button shows the workspace's name alone.
+An answer, comment, or approval that you give on that page is committed in the store's clone and pushed to the store, as an agent's record write is.
+Those commits carry the clone's Git identity from the machine's Git configuration, or `Prism <prism@localhost>` when Git names none, and each change's history entry names you and this machine's review app.
+
+### Keep a workspace in sync
+
+While a page of a workspace whose store is a Git remote is open, the app fetches the store's upstream when the first page opens and then every 60 seconds, merges it into the store's clone on this machine, and pushes the clone's own record changes.
+When no page of the workspace is open, the app fetches nothing, and reading the page starts no fetch of its own.
+After a fetch fails, the next one waits twice as long as the wait before it, up to 15 minutes, until a fetch succeeds, so a store that cannot be reached costs at most one Git process every 15 minutes.
+A checkout whose `.prism/workflow.md` turns Store sync off is never synced by the app.
+The sync item in the status bar shows when the workspace last synced, such as **Synced 2 min ago**.
+When the store cannot be reached, it shows **Store unreachable** with the time of the last fetch that succeeded, and its tooltip and details name the store and Git's reason, without any user name, password, or token.
+The page keeps showing the copy it last synced meanwhile, and its details list when the next fetch is due.
 
 ### Remove a workspace
 
-Choose **Remove** for the open workspace in the switcher, or **Remove workspace** on its page.
+Choose **Remove** for the open workspace in the switcher.
 Removing never changes the store itself.
 Prism deletes the store's clone on this machine only when no checkout here names the store and the clone holds no commit, changed file, or saved conflict copy that is not pushed; otherwise it keeps the clone and says which checkout names the store or that the clone holds changes that are not pushed.
 A folder store is your own folder, which Prism never deletes.
