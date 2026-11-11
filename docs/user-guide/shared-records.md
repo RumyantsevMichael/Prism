@@ -91,6 +91,7 @@ Store sync is on by default for a remote store, so Prism keeps the clone in step
 
 - A few seconds after a record write, Prism commits the change, merges the remote's branch, and pushes.
 - A record read starts a background fetch when the last one is older than 30 seconds, and it never waits for the network.
+  A hook, such as the one that delivers gate answers with your next message, reads the clone as it is and starts no fetch, so it answers within the host's few-second hook limit; the session's server and the review app keep the clone current.
 - An empty remote starts an empty store, and the first sync pushes its branch.
 - Only one Prism process syncs a store at a time, and Prism never rebases, amends, force-pushes, or edits your Git configuration.
 - Records keep working locally when Git, the network, or the remote is unavailable.

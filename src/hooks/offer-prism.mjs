@@ -3,6 +3,7 @@ import { realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { inspectCodexTranscriptMetadata } from "../server/session/host-adapters/codex-transcript.mjs";
 import { readWorkflowConfig } from "../server/workflow/workflow-config.mjs";
+import { configureRecordSync } from "../server/workflow/record-store-sync.mjs";
 import { openGates } from "./deliver-gate-answers.mjs";
 
 // A new conversation learns once that Prism is available, so the agent can offer it for work that changes the
@@ -69,6 +70,8 @@ export async function offerPrism({ input = process.stdin, environment = process.
 }
 
 async function main() {
+  // A hook must answer within its host's time limit, so its record reads never start a store pull; the session's server keeps the store current.
+  configureRecordSync({ pullOnRead: false });
   try {
     const output = await offerPrism();
     if (output) process.stdout.write(`${JSON.stringify(output)}\n`);

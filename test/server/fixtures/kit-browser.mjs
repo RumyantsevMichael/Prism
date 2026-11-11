@@ -93,6 +93,11 @@ export async function openPage(browser, url, { colorScheme = "light", reducedMot
   const page = await context.newPage();
   page.errors = [];
   page.on("pageerror", (error) => page.errors.push(error.message));
+  // A failed load other than one a navigation cancelled is named in the test's output, with its resource and the browser's reason.
+  page.on("requestfailed", (request) => {
+    const reason = request.failure()?.errorText ?? "";
+    if (reason !== "net::ERR_ABORTED") console.log(`# request failed: ${new URL(request.url()).pathname.replace(/^\/session\/[^/]+/, "")} ${reason}`);
+  });
   await page.goto(url);
   await settle(page);
   return page;

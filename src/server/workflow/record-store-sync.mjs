@@ -17,6 +17,8 @@ import { parseStoreJson } from "./store-json.mjs";
 export const SYNC_DIRECTORY = ".prism-sync";
 // treeFilesMax, when set, stands in for the bound on a store tree's files, and historyBytesMax for the bound on a listing of the history that the remote lacks, so a test can reach either with a small store.
 const SETTINGS = { debounceMs: 5000, pullIntervalMs: 30000, waitMs: 10000, applyLockMs: 2000, gitTimeoutMs: 120000, treeFilesMax: null, historyBytesMax: null };
+// A short-lived process, such as a hook, reads the clone as it is: a pull it starts would outlive its host's time limit and be killed partway.
+let pullOnRead = true;
 const PUSH_ATTEMPTS = 3;
 const COMMIT_LIST = 20;
 const scheduled = new Map();
@@ -34,9 +36,10 @@ const managed = new Set();
 // which the parent process may hold, as when a Git hook starts the server, so no store command inherits them.
 const INHERITED_OUT = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|QUARANTINE_PATH|REPLACE_REF_BASE|GRAFT_FILE|SHALLOW_FILE|LITERAL_PATHSPECS|GLOB_PATHSPECS|NOGLOB_PATHSPECS|ICASE_PATHSPECS|ATTR_SOURCE|REDIRECT_STDIN|REDIRECT_STDOUT|REDIRECT_STDERR)$/;
 
-/** Change the debounce, pull interval, or torn-read wait, or the bound on a store tree's files; tests shorten them. */
+/** Change the debounce, pull interval, or torn-read wait, or the bound on a store tree's files, which tests shorten, or turn off the pull that a record read starts. */
 export function configureRecordSync(settings = {}) {
   for (const key of Object.keys(SETTINGS)) if (Number.isFinite(settings[key])) SETTINGS[key] = settings[key];
+  if (typeof settings.pullOnRead === "boolean") pullOnRead = settings.pullOnRead;
 }
 
 /** Cancel every debounced sync and forget fetch times, so a process or a test can finish. */
@@ -306,7 +309,7 @@ export function scheduleRecordSync(base) {
 /** Start a background sync after a record read when the last fetch is older than the pull interval; the read never waits for it. */
 export function pullRecordStoreIfStale(base) {
   watched.add(base);
-  if (running.has(base) || Date.now() - (lastFetch.get(base) ?? 0) < SETTINGS.pullIntervalMs) return;
+  if (!pullOnRead || running.has(base) || Date.now() - (lastFetch.get(base) ?? 0) < SETTINGS.pullIntervalMs) return;
   lastFetch.set(base, Date.now());
   syncRecordStore(base).catch(() => {});
 }
