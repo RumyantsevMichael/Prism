@@ -38,9 +38,12 @@ export type BuildRequest = (runtime: string, args: BuildArguments, progress: (va
 export class LocalIndexStore implements IndexStore {
   built = new Map<string, UnitIndex>();
   counter = 0;
+  // Counts the calls of `stop`, so a build that a stop reached before it sent its request never sends it.
+  stops = 0;
   constructor(private request: BuildRequest, private stopHelper: () => void = () => {}) {}
   async read(indexPath: string, revision: string) { return indexMetadata(await readIndex(indexPath, revision)); }
   async build({ runtime, directory, args, previous }: StoreBuild, progress: StoreProgress) {
+    const stops = this.stops;
     // Reuse saves embedding time only, so a previous index that can no longer be read leaves the build to embed every fragment.
     const indexed = previous ? await readIndex(previous.indexPath, previous.revision).then(storedEmbeddings, error => {
       log.warn("index_reuse_unreadable", { indexPath: previous.indexPath, ...errorFields(error) });
@@ -49,6 +52,7 @@ export class LocalIndexStore implements IndexStore {
     // The embedding store holds what earlier builds of this location embedded, including builds that never saved an index.
     const saved = await readEmbeddings(directory, { limit: REUSED_EMBEDDINGS - Object.keys(indexed).length, skip: indexed });
     const previousEmbeddings = { ...indexed, ...saved };
+    if (this.stops !== stops) throw semanticError("preparation_failed", "The index build was stopped before it started.");
     let saving = true;
     const forward = ({ vectors, index: _index, ...value }: Progress & { index?: unknown }) => {
       // Each batch is written before the next message is handled; a store that cannot be written costs only reuse, never the build.
@@ -77,7 +81,7 @@ export class LocalIndexStore implements IndexStore {
     await replaceEmbeddings(directory, index.chunks).catch(error => log.warn("embedding_store_unwritable", { directory, ...errorFields(error) }));
     return { ...stored, index: indexMetadata(index) };
   }
-  async stop() { this.stopHelper(); }
+  async stop() { this.stops += 1; this.stopHelper(); }
   async discard(token: string) { this.built.delete(token); }
   async close() { this.built.clear(); }
 }

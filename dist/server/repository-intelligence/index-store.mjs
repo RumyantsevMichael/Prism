@@ -14,16 +14,20 @@ class LocalIndexStore {
   }
   built = /* @__PURE__ */ new Map();
   counter = 0;
+  // Counts the calls of `stop`, so a build that a stop reached before it sent its request never sends it.
+  stops = 0;
   async read(indexPath, revision) {
     return indexMetadata(await readIndex(indexPath, revision));
   }
   async build({ runtime, directory, args, previous }, progress) {
+    const stops = this.stops;
     const indexed = previous ? await readIndex(previous.indexPath, previous.revision).then(storedEmbeddings, (error) => {
       log.warn("index_reuse_unreadable", { indexPath: previous.indexPath, ...errorFields(error) });
       return {};
     }) : {};
     const saved = await readEmbeddings(directory, { limit: REUSED_EMBEDDINGS - Object.keys(indexed).length, skip: indexed });
     const previousEmbeddings = { ...indexed, ...saved };
+    if (this.stops !== stops) throw semanticError("preparation_failed", "The index build was stopped before it started.");
     let saving = true;
     const forward = ({ vectors, index: _index, ...value }) => {
       if (vectors && saving) {
@@ -58,6 +62,7 @@ class LocalIndexStore {
     return { ...stored, index: indexMetadata(index) };
   }
   async stop() {
+    this.stops += 1;
     this.stopHelper();
   }
   async discard(token) {

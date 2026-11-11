@@ -12,7 +12,7 @@ process.env.PLUGIN_DATA ||= mkdtempSync(path.join(os.tmpdir(), "prism-index-stor
 process.env.PRISM_NATIVE_ASSET_MANIFEST ||= manifestPath;
 const { NativeSemanticRuntime } = await import("../../dist/server/repository-intelligence/native-semantic-runtime.mjs");
 const { openNativeRepositoryIntelligence } = await import("../../dist/server/repository-intelligence/native-repository-intelligence.mjs");
-const { REUSED_EMBEDDINGS } = await import("../../dist/server/repository-intelligence/index-store.mjs");
+const { LocalIndexStore, REUSED_EMBEDDINGS } = await import("../../dist/server/repository-intelligence/index-store.mjs");
 const { Helper } = await import("../../dist/server/repository-intelligence/native-helper.mjs");
 
 const RECORD = 32 + 384 * 4;
@@ -89,4 +89,19 @@ test("a request that cannot be serialized fails without staying registered", { s
   t.after(() => helper.close());
   await assert.rejects(helper.request("build", { size: 1n }), (error) => error.code === "preparation_failed" && /could not be serialized/.test(error.message));
   assert.equal(helper.requests.size, 0);
+});
+
+test("a build stopped before it sends its request never sends it, and the next build runs at once", async () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "prism-store-stop-"));
+  let requested = 0, stopped = 0;
+  const index = { units: [], chunks: [], diagnostics: [], resources: {} };
+  const store = new LocalIndexStore(async () => { requested += 1; return structuredClone(index); }, () => { stopped += 1; });
+  const request = { runtime: "fake-runtime", directory, args: { mirror: directory, files: [], snapshot: "x", modelDirectory: "m", modelIdentity: "m" } };
+  const abandoned = store.build(request, () => {});
+  await store.stop();
+  await assert.rejects(abandoned, (error) => error.code === "preparation_failed");
+  assert.deepEqual({ requested, stopped }, { requested: 0, stopped: 1 });
+  const token = await store.build(request, () => {});
+  assert.equal(requested, 1, "the next build sends its request without waiting behind the abandoned one");
+  assert.ok(store.built.has(token));
 });
