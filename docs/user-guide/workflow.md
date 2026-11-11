@@ -121,7 +121,18 @@ A removed checkout's refs are harmless to keep, so leave them until you can dele
 A passing run counts only while the project's source, tests, and configuration stay as they were when it ran, so a later edit needs a new run.
 When the design requires review, an independent reviewer also reviews the verified result, and a later change needs a new run and a new review.
 A finding that a contract clause itself causes sends the slice back to design instead of into another fix.
-After two review waves for one accepted design, Prism asks you whether to continue the review, return the slice to design, or narrow it before each further wave.
+After two review waves for one accepted design, Prism asks you the review loop decision before each further wave, and the agent waits for your answer instead of asking its own question.
+The question shows the unresolved findings by severity, a table of the findings each wave raised and closed, and the files that findings named in more than one wave.
+It offers these options:
+
+- **Continue the review**: the implementer fixes the open findings, and one more review wave runs with fresh reviewers.
+- **Return the slice to design**: the slice is blocked, and design revises its contract with every unresolved finding as a contract defect.
+- **Accept with deferred low findings**: offered only while every unresolved finding is low severity; the review wave is accepted, and each low finding stays on record as deferred with a follow-up.
+
+Prism recommends accepting with deferred low findings whenever it offers that option.
+Otherwise it recommends returning the slice to design when the latest wave raised at least as many findings above low severity as the wave before it, and continuing the review when it raised fewer.
+When you accept with deferred low findings, the agent files one follow-up per finding in the tracker that `## Tracker` in `.prism/workflow.md` names, or adds it to the roadmap's open questions when no tracker is named.
+A deferred finding has status `DEFERRED`, keeps the decision and its follow-up reference, counts as resolved, and no longer changes; `get_review` lists the deferred findings, and the slice page shows them apart from the unresolved ones.
 The slice page in the review browser shows the latest run with its command, exit code, and output tail, and a failed run also names the failing tests that Prism found anywhere in the output.
 Verification runs need a git work tree, and `PRISM_VERIFY_TIMEOUT_MINUTES` changes the 30-minute default timeout.
 

@@ -14,6 +14,14 @@ function sliceChip(data, slug, ctx) {
 }
 
 
+// Each deferred finding stays on record with the decision gate that accepted it and its follow-up in the tracker.
+function deferredList(findings) {
+  return `<p class="label-caps">Deferred findings</p><ul class="deferred-list">${findings.map((finding) => `<li>
+    <span class="deferred-head">${badge(finding.severity)}<span class="deferred-title">${escapeHtml(finding.title)}</span></span>
+    <span class="deferred-meta muted">${finding.gate ? `gate <code>${escapeHtml(finding.gate)}</code>` : "no gate recorded"} · follow-up ${finding.followUp ? escapeHtml(finding.followUp) : "none recorded"}</span>
+  </li>`).join("")}</ul>`;
+}
+
 function reviewCard(review, ctx) {
   // A card names a record by its kind, never by its file name.
   if (!review) return emptyState("No review yet", "No review has started for this slice.");
@@ -24,9 +32,11 @@ function reviewCard(review, ctx) {
       ${stat(review.waves === 1 ? "wave" : "waves", String(review.waves))}
       ${stat("unresolved", String(review.unresolved), { tone: review.unresolved ? "warning" : "success" })}
       ${stat("blocker / high not verified", String(review.blocking), { tone: review.blocking ? "danger" : "" })}
+      ${review.deferred ? stat("deferred", String(review.deferred), { hint: "accepted with a follow-up" }) : ""}
     </div>
     ${review.currentWave ? `<p>Current wave <code>${escapeHtml(review.currentWave.id)}</code> (${escapeHtml(review.currentWave.mode)}) is ${review.currentWave.accepted ? "accepted" : "not accepted"}.</p>` : ""}
     ${statuses ? `<p class="chip-row">${statuses}</p>` : ""}
+    ${review.deferredFindings?.length ? deferredList(review.deferredFindings) : ""}
     <p>${artifactChip(review.path, ctx, "Open the findings board")}</p>`);
 }
 
