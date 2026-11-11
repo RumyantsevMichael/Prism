@@ -134,6 +134,31 @@ A stall is not a native limit, so the next call that needs the index prepares it
 That build, and any later build of the same index or component in any session that shares the storage, reuses every saved embedding of unchanged fragment text and embeds only the rest.
 A build that failed or ended with its process keeps its saved embeddings the same way.
 
+#### Answer from structure while embeddings fill
+
+A build publishes the structure of its files, their units, references, coverage, and fragments, before it embeds any fragment.
+Structure is a small share of a build, so it is ready within seconds or minutes while embedding a large repository can take much longer.
+The structure stays published in the storage that every session on the machine shares, and the complete index of the same files replaces it when the build finishes.
+A structure never replaces a complete index of the same files.
+
+While a structure is published, the six structural reports, conservation analysis of a retained baseline, and the review browser's units answer from it without waiting for embeddings.
+A report that answers from a structure has `status: "ready"` and that structure's revision as `indexRevision`, and its groups, modules, and coverage are the same as the complete index's.
+A later call with the same files still finishes the build, so embeddings keep filling in the background.
+
+`get_repository_intelligence_status` and `discover_repository_intelligence` give `stage`, which is `none` before any index exists, `structure` while only the structure is published, and `complete` once the complete index is stored.
+A build that embeds after it published its structure stays `preparing`.
+
+A concept search waits its usual bound for the complete index, and when only the structure is ready, it searches the structure's fragment text lexically.
+Each of its results has a `cosineSimilarity` of `null`, and `capabilities.semanticSearch` and `capabilities.hybridSearch` are `false` unless another answering index is complete.
+The result names the indexes that answered without embeddings in an `embeddings_pending` diagnostic:
+
+```json
+{"code": "embeddings_pending", "message": "Lexical results answered without embeddings for the index; repeat the search after the build finishes for a hybrid ranking."}
+```
+
+A search receipt from a lexical answer does not prove a semantic search, so an addition in a change map needs a search after the build finishes.
+`plan_repository_context` keeps returning `preparing` until the complete index is ready, because a context plan needs semantic evidence.
+
 #### Index a repository per component
 
 A repository that declares components under `## Components` in `.prism/workflow.md` has one native index per component.
@@ -152,6 +177,8 @@ A component whose storage lock names a running process but has gone unrenewed fo
 Each component's index is reused across sessions and after the repository's name changes.
 
 Each result lists the components it read in `components`, in component order, with each one's identity `<repository>/<component>`, `folder`, `status`, `indexRevision`, and `failure`.
+A component that answered from its published structure is `included` and its entry also carries `"embeddings": "pending"`, which no other entry carries.
+A search names such components in its `embeddings_pending` diagnostic, directly after any `components_missing` diagnostic, with their identities in its message and in `components`.
 A component's `status` is `included` when its up-to-date index answered, `waiting` while it is queued, `preparing` while it is built, and `failed` when its preparation failed.
 The result's `status` is `ready` when every component it read is included, `partial` when only some are, `preparing` when none is included yet, and `degraded` when every one failed.
 A result that leaves out a component starts its diagnostics with `components_missing`, whose `components` lists the components it left out and whose message says why for each one.
@@ -177,7 +204,7 @@ Its `failure` gives a `code` and a `message`, and a component that reached a nat
 The same server does not prepare that component again until its files change, while any other failure is retried by the next call that needs the component.
 
 In a repository with components, `get_repository_intelligence_status` and `discover_repository_intelligence` list each component that holds a file in `components`.
-Each entry gives the component's `status`, `preparationId`, `snapshot`, `indexRevision`, `builtAt`, `progress`, `coverage`, `failure`, and `diagnosticCount`, where `status` is `unprepared`, `waiting`, `preparing`, `ready`, `indexed`, or `degraded`.
+Each entry gives the component's `status`, `preparationId`, `stage`, `snapshot`, `indexRevision`, `builtAt`, `progress`, `coverage`, `failure`, and `diagnosticCount`, where `status` is `unprepared`, `waiting`, `preparing`, `ready`, `indexed`, or `degraded`, and `stage` is `none`, `structure`, or `complete`.
 The top-level `status` is `preparing` while a component waits or prepares, else `degraded` when a component's latest preparation in this server failed, else `indexed` when a component has an index, else `unprepared`.
 The top-level `progress` is the running preparation's progress with its `component`, and each diagnostic names its `component`.
 An invalid `## Components` declaration refuses the native index and status tools before any preparation, with the declaration's error code.
