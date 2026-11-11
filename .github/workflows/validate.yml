@@ -35,7 +35,8 @@ jobs:
   # Windows users install the same plugin, and its hooks, MCP server, and Git calls behave differently there.
   windows:
     runs-on: windows-2025
-    timeout-minutes: 60
+    # The browser tests take about as long again as the rest of the suite on Windows.
+    timeout-minutes: 90
     defaults:
       run:
         shell: bash
