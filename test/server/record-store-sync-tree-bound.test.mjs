@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -71,9 +70,12 @@ async function stateOf(root) {
   return { head: ref("HEAD"), checked: ref("refs/prism-checked/branch"), index: git(root, ["ls-files", "-s"]), disk };
 }
 
-// The message of a sync that stopped at the bound on a store tree's files, with the count, the bound, and the fix.
-const stopAt = (files, max, merged = false) => new RegExp(`^${merged ? "The merge of this machine's changes with the upstream's" : "This machine's changes"} would take the store's tree to ${files} files, more than ${max}, the most files that a store's tree may hold, so the sync committed, merged, and pushed nothing, and every file stays on disk as it is\\. Remove files that the store no longer needs from it until it holds at most ${max}${merged ? " with the upstream's" : ""}, and the next sync shares every change${merged ? ", the upstream's too" : ""}\\.$`);
+// The message of a sync that stopped at the bound on a store tree's files, with the count of the tree it would push, the bound, and the fix.
+const stopAt = (files, max) => new RegExp(`^The tree that the sync would push, this machine's changes merged with the upstream's as fetched, would hold ${files} files, more than ${max}, the most files that a store's tree may hold, so the sync committed, merged, and pushed nothing, and every file stays on disk as it is\\. Remove files that the store no longer needs, on this machine or another, until it holds at most ${max}, and the next sync shares every change\\.$`);
 const remoteFiles = (remote) => git(remote, ["ls-tree", "-r", "--name-only", "main"]).split("\n");
+
+// Whether every commit of a branch's history holds at most max files, as no sync commits a tree past the bound.
+const historyWithin = (cwd, ref, max) => git(cwd, ["rev-list", ref]).split("\n").every((commit) => git(cwd, ["ls-tree", "-r", "--name-only", commit]).split("\n").length <= max);
 
 function remove(root, files) {
   return Promise.all(files.map((file) => rm(path.join(root, ...file.split("/")))));
@@ -202,7 +204,7 @@ test("a merge of this machine's changes with the upstream's that would take the 
     const before = await stateOf(b);
     const status = await syncRecordStoreNow(b);
     assert.equal(status.state, "merge_failed", JSON.stringify(status));
-    assert.match(status.message, stopAt(12, 10, true), status.message);
+    assert.match(status.message, stopAt(12, 10), status.message);
     assert.equal(status.withheld, undefined, "no file is withheld for the bound");
     assert.deepEqual(await stateOf(b), before, "the branch, the checked commit, the index, and every file on disk stay as they were");
     assert.equal(git(remote, ["rev-parse", "main"]), tip, "and nothing is pushed");
@@ -376,7 +378,7 @@ for (const chain of [false, true]) {
 }
 
 for (const kind of ["moves", "removes"]) {
-  test(`a comment that a sync stopped at the bound on a store tree's files kept on disk follows its artifact's identity once files are removed, and never lands on a new artifact at its place, where the other machine ${kind} the artifact`, { timeout: 240000 }, async (context) => {
+  test(`a comment that a sync stopped at the bound on a store tree's files kept on disk follows its artifact's identity once the other machine removes files, and never lands on a new artifact at its place, where the other machine ${kind} the artifact`, { timeout: 240000 }, async (context) => {
     const { remote, a, b } = await stores(context);
     await put(a, { ...artifactOf(W, "1"), ...Object.fromEntries(Array.from({ length: 4 }, (_, n) => [`artifacts/plans/foo/a${n}.md`, "# A\n"])) });
     push(a, "artifact and four");
@@ -391,11 +393,7 @@ for (const kind of ["moves", "removes"]) {
       push(a, kind);
       await put(a, artifactOf(W, "2"));
       push(a, "new artifact at the old place");
-      // This machine's own changes still pass the bound, so it stops again before it fetches, and the comment stays where it is.
-      const again = await syncRecordStoreNow(b);
-      assert.match(again.message, stopAt(10, 9), again.message);
-      assert.ok(existsSync(path.join(b, ...mine.split("/"))));
-      await remove(b, ["artifacts/plans/foo/a0.md"]);
+      // This machine's own commit would still pass the bound, but merged with the upstream's removals the tree fits, so the sync merges the comment as if it were committed.
       const status = await syncRecordStoreNow(b);
       assert.ok(["ok", "conflicts"].includes(status.state), JSON.stringify(status));
       if (kind === "removes") assert.ok(status.conflicts.some((conflict) => conflict.path === mine), `a comment whose artifact is gone is saved and named: ${JSON.stringify(status)}`);
@@ -406,3 +404,51 @@ for (const kind of ["moves", "removes"]) {
     if (kind === "moves") assert.match(await readFile(path.join(b, "artifact-comments", ...W2.split("/"), CNAME), "utf8"), new RegExp(`"location":"${W2}"`), "and names its artifact's new place, as a move writes it");
   });
 }
+
+test("a sync whose own commit would pass the bound on a store tree's files fetches and merges this machine's changes with the upstream's, and commits only the merge, which fits", { timeout: 240000 }, async (context) => {
+  const { remote, a, b } = await stores(context);
+  const theirs = Array.from({ length: 6 }, (_, n) => `artifacts/plans/foo/a${n}.md`);
+  await put(a, Object.fromEntries(theirs.map((file) => [file, "# A\n"])));
+  push(a, "six on a");
+  assert.equal((await syncRecordStoreNow(b)).state, "ok");
+  await withTreeBound(10, async () => {
+    // This machine adds four files, a commit of eleven files, while the other machine removes three and changes the slice.
+    const mine = Array.from({ length: 3 }, (_, n) => `artifacts/plans/foo/b${n}.md`);
+    await put(b, { ...Object.fromEntries(mine.map((file) => [file, "# B\n"])), "README.md": "Prism store, edited on b\n" });
+    await put(a, { [SLICE]: "# Foo\n\nChanged on a.\n" });
+    await remove(a, theirs.slice(0, 3));
+    push(a, "a makes room");
+    const head = git(b, ["rev-parse", "HEAD"]);
+    const status = await syncRecordStoreNow(b);
+    assert.equal(status.state, "ok", JSON.stringify(status));
+    const tree = remoteFiles(remote);
+    assert.equal(tree.length, 8);
+    for (const file of [...mine, ...theirs.slice(3)]) assert.ok(tree.includes(file), `${file} is shared`);
+    assert.equal(git(remote, ["show", "main:README.md"]), "Prism store, edited on b");
+    assert.ok(git(remote, ["show", `main:${SLICE}`]).includes("Changed on a."));
+    assert.deepEqual(git(remote, ["rev-list", "--parents", "-n", "1", "main"]).split(" ").slice(1), [head, git(a, ["rev-parse", "HEAD"])], "the merge's parents are the branch as it was and the upstream");
+    assert.ok(historyWithin(remote, "main", 10), "no commit of the branch's history holds more files than the bound");
+  });
+});
+
+test("a stop at the bound on a store tree's files after an earlier attempt of the sync merged and lost its push says that the merge stays", { timeout: 240000 }, async (context) => {
+  const { remote, a, b } = await stores(context);
+  await withTreeBound(5, async () => {
+    await put(b, { "artifacts/plans/foo/b0.md": "# B\n" });
+    await put(a, { "artifacts/plans/foo/a0.md": "# A\n" });
+    push(a, "one on a");
+    let raced = false;
+    // The other machine pushes again while this machine's first push is under way, so the second attempt's merge would pass the bound.
+    const status = await syncRecordStoreNow(b, { beforePush: async () => {
+      if (raced) return;
+      raced = true;
+      await put(a, { "artifacts/plans/foo/a1.md": "# A\n", "artifacts/plans/foo/a2.md": "# A\n" });
+      push(a, "two more on a");
+    } });
+    assert.equal(status.state, "merge_failed", JSON.stringify(status));
+    assert.match(status.message, /^The tree that the sync would push, this machine's changes merged with the upstream's as fetched, would hold 6 files, more than 5, the most files that a store's tree may hold, so the sync pushed nothing: it keeps the merge of the upstream that it made before another machine pushed first, and this machine's later changes stay on disk as they are, in no commit\./, status.message);
+    assert.ok(git(b, ["log", "--format=%s", "-1"]).startsWith("prism: merge records"), "the first attempt's merge stays on the branch");
+    assert.ok(historyWithin(b, "HEAD", 5));
+    assert.equal(remoteFiles(remote).length, 5);
+  });
+});

@@ -6,10 +6,10 @@ import path from "node:path";
 import test from "node:test";
 import { closeServers, isolateGit, requirementFile } from "./fixtures/workspace-artifacts.mjs";
 
-// A sync never merges while files under the artifact lock are uncommitted on disk because an artifact update held that lock: it does nothing until the next sync.
+// A sync never merges while files under the artifact lock are uncommitted on disk because an artifact update held that lock: it does nothing, ends as skipped rather than failed, and the next sync tries again.
 const environment = await isolateGit();
 const { withFileLock } = await import("../../dist/server/workflow/artifact-store.mjs");
-const { cancelRecordSyncs, configureRecordSync, syncRecordStoreNow } = await import("../../dist/server/workflow/record-store-sync.mjs");
+const { cancelRecordSyncs, configureRecordSync, readSyncStatus, syncRecordStore, syncRecordStoreNow } = await import("../../dist/server/workflow/record-store-sync.mjs");
 configureRecordSync({ debounceMs: 3600000, pullIntervalMs: 1e15 });
 test.after(async () => { cancelRecordSyncs(); await rm(environment, { recursive: true, force: true }); });
 
@@ -64,23 +64,24 @@ async function stores(context, kind) {
   return { remote, b };
 }
 
-// A sync of b that starts while an artifact update holds the artifact lock for ms milliseconds.
-async function syncWhileLocked(b, ms) {
+// A sync of b that starts while an artifact update holds the artifact lock for ms milliseconds, run once or, as a caller that waits for its sync does, until it is not skipped.
+async function syncWhileLocked(b, ms, sync = syncRecordStore) {
   const held = withFileLock(path.join(b, "artifacts"), () => sleep(ms));
   await sleep(50);
-  const status = await syncRecordStoreNow(b);
+  const status = await sync(b);
   await held;
   return status;
 }
 
 for (const kind of ["moves", "removes"]) {
-  test(`a sync that finds an update holding the artifact lock commits, merges, and pushes nothing, so a comment on disk never lands on a new artifact at its place where the other machine ${kind} its artifact`, { timeout: 120000 }, async (context) => {
+  test(`a sync that finds an update holding the artifact lock commits, merges, and pushes nothing and ends as skipped, so a comment on disk never lands on a new artifact at its place where the other machine ${kind} its artifact`, { timeout: 120000 }, async (context) => {
     const { remote, b } = await stores(context, kind);
     const head = git(b, ["rev-parse", "HEAD"]);
     const tip = git(remote, ["rev-parse", "main"]);
+    const shown = await readSyncStatus(b);
     const status = await syncWhileLocked(b, 1500);
-    assert.equal(status.state, "merge_failed", JSON.stringify(status));
-    assert.match(status.message, /^An artifact update held the store's artifact lock, so the sync committed, merged, and pushed nothing, and the next sync tries again\.$/, status.message);
+    assert.deepEqual(status, { state: "skipped" }, "a busy lock is no failure");
+    assert.deepEqual(await readSyncStatus(b), shown, "and the status that the review app shows stays as it was");
     assert.equal(git(b, ["rev-parse", "HEAD"]), head, "the branch stays");
     assert.equal(git(b, ["rev-parse", "refs/remotes/origin/main"]), head, "and the sync did not fetch");
     assert.equal(git(remote, ["rev-parse", "main"]), tip, "nothing is pushed");
@@ -92,3 +93,11 @@ for (const kind of ["moves", "removes"]) {
     assert.deepEqual(comments(remote), kind === "moves" ? [`artifact-comments/${W2}/${CNAME}`] : [], "the comment follows its artifact's identity and never lands on the new artifact");
   });
 }
+
+test("a caller that waits for its sync, as a claim's confirming sync does, retries a sync that found an update holding the artifact lock, and its sync merges once the update is done", { timeout: 120000 }, async (context) => {
+  const { remote, b } = await stores(context, "moves");
+  const status = await syncWhileLocked(b, 400, syncRecordStoreNow);
+  assert.equal(status.state, "ok", JSON.stringify(status));
+  assert.equal(git(remote, ["rev-parse", "main"]), git(b, ["rev-parse", "HEAD"]));
+  assert.deepEqual(comments(remote), [`artifact-comments/${W2}/${CNAME}`]);
+});

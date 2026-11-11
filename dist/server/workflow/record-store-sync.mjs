@@ -906,7 +906,7 @@ const TOO_LONG = `its name holds more than ${STORE_NAME_BYTES_MAX} bytes or its 
  * The commit holds the shared files as the store holds them and every other entry as the branch holds it, so no local commit adds, changes, or removes a file Prism does not write.
  */
 async function commitLocal(base, author, run) {
-  run.pastTree = null;
+  run.pending = null;
   run.lockBusy = false;
   const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
   const previous = head.ok ? head.text : null;
@@ -957,14 +957,7 @@ async function commitLocal(base, author, run) {
     }
     if (shared.has(file)) files.set(file, shared.get(file)); else files.delete(file);
   }
-  // A commit never takes the tree past the files that a store's tree may hold: where this machine's changes would, no file is left out to make room,
-  // and the sync commits, merges, and pushes nothing, so every file stays on disk as it is, and the first sync after enough files are removed shares every change.
   const { treeFilesMax } = await storeLayout();
-  const total = besides(files, other).size;
-  if (total > treeFilesMax()) {
-    run.pastTree = { files: total, merged: false };
-    return false;
-  }
   for (;;) {
     const entries = besides(files, other);
     if (sameFiles(entries, branch)) return false;
@@ -989,6 +982,13 @@ async function commitLocal(base, author, run) {
         }
         continue;
       }
+    }
+    // No commit whose tree holds more files than a store's tree may enters the branch's history, and no file is left out to make room:
+    // where this machine's changes would take the tree past that bound, the commit is left unmade, as a commit object that no ref names and no push sends,
+    // and the merge takes its tree as this machine's side, so its result, which must be within the bound, is the branch's next commit.
+    if (entries.size > treeFilesMax()) {
+      run.pending = { commit, from: previous, files: entries.size, entries };
+      return false;
     }
     await moveBranch(base, commit, previous, "prism: update records");
     // The commits that this sync made of this machine's changes one after another, which a stop at the bound on a store tree's files takes off together.
@@ -1576,20 +1576,28 @@ async function sync(base, options) {
   const run = {};
   const report = (status) => writeStatus(base, withheldIn({ ...status, conflicts: [...conflicts, ...(status.conflicts ?? [])] }, run.withheld));
   const checked = await checkedTip(base);
-  // A sync stopped at the bound on a store tree's files commits, merges, and pushes nothing: it takes off the commits it made of this machine's changes, if any, so the branch, the index,
+  const started = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  // A sync stopped at the bound on a store tree's files takes off the commits it made of this machine's changes, if any, so the branch, the index,
   // and the checked commit are as they were before it, and the disk too, which only a merge's replacement changes. No file is named as withheld, since none is committed.
-  const stopped = async () => {
-    if (run.made) await takeOffCommit(base, run.made, checked);
-    return writeStatus(base, withheldIn({ state: "merge_failed", message: await pastTreeRefusal(run.pastTree), conflicts, ...await counts(base) }, null));
+  // Where an earlier attempt of the sync merged the upstream and lost its push to another push, that merge stays, and the message says so.
+  const stopped = async (pastTree) => {
+    if (run.made) await takeOffCommit(base, run.made);
+    // The checked commit only lets a later check walk less, so going back to the earlier one is always safe.
+    if (await checkedTip(base) !== checked) await git(base, checked ? ["update-ref", CHECKED_REF, checked] : ["update-ref", "-d", CHECKED_REF]);
+    const now = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+    const kept = now.ok && now.text !== (started.ok ? started.text : null);
+    return writeStatus(base, withheldIn({ state: "merge_failed", message: await pastTreeRefusal(pastTree, kept), conflicts, ...await counts(base) }, null));
   };
-  // A sync that found an artifact update holding the artifact lock commits, merges, and pushes nothing, so no merge moves an artifact away from a file on disk that no commit holds yet.
-  const locked = async () => report({ state: "merge_failed", message: "An artifact update held the store's artifact lock, so the sync committed, merged, and pushed nothing, and the next sync tries again.", ...await counts(base) });
+  // A sync that found an artifact update holding the artifact lock commits, merges, and pushes nothing, so no merge moves an artifact away from a file on disk that no commit holds yet;
+  // it is no failure, so it ends as a sync that found another sync running does, writes no status, and the next sync, which the update's write schedules, tries again.
+  const locked = () => ({ state: "skipped" });
   await commitLocal(base, author, run);
   if (run.lockBusy) return locked();
-  if (run.pastTree) return stopped();
   let upstream = await upstreamOf(base);
   // A branch whose tree a commit made by hand took past the files that a store's tree may hold is refused before it is merged or pushed, with the command that takes that commit off.
   if (run.wideBranch) return report({ state: "merge_failed", message: await wideBranchRefusal(base, upstream?.remote ?? "origin", { upstream: false, sent: "merged or pushed", unsafe: run.wideBranch }), ...await counts(base) });
+  // With no upstream to merge, the tree that a push would send is this machine's own, so changes that take it past the bound stop the sync.
+  if (run.pending && !upstream) return stopped({ files: run.pending.files });
   if (!upstream && managed.has(base)) {
     const published = await publishBranch(base, author, options, run, conflicts);
     if (published.status) return report(published.status);
@@ -1603,13 +1611,12 @@ async function sync(base, options) {
     // A merge left unapplied keeps the branch where it was, so files it replaced and local writes are committed and merged again.
     if (attempt > 1) await commitLocal(base, author, run);
     if (run.lockBusy) return locked();
-    if (run.pastTree) return stopped();
     if (run.wideBranch) return report({ state: "merge_failed", message: await wideBranchRefusal(base, upstream.remote, { upstream: false, sent: "merged or pushed", unsafe: run.wideBranch }), ...await counts(base) });
     const fetched = await fetchRemote(base, upstream.remote);
     if (!fetched.ok) return report({ state: "fetch_failed", message: fetched.stderr, ...await counts(base) });
     lastFetch.set(base, Date.now());
     const merged = await merge(base, author, options, run, upstream.remote);
-    if (merged.pastTree) { run.pastTree = merged.pastTree; return stopped(); }
+    if (merged.pastTree) return stopped(merged.pastTree);
     if (merged.failed) return report({ state: "merge_failed", message: merged.failed, ...await counts(base) });
     // A merge that replaced files without moving the branch saved the local versions it replaced, which the next attempt would otherwise commit as the upstream's.
     conflicts.push(...merged.conflicts);
@@ -1696,7 +1703,13 @@ async function publishBranch(base, author, options, run, conflicts) {
 async function merge(base, author, options, run, remote) {
   const upstream = await git(base, ["rev-parse", "--verify", "--quiet", "@{upstream}"]);
   const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  // This machine's changes that its own commit would take past the bound on a store tree's files are this side of the merge, as the commit object that the branch never took,
+  // so the merge holds them as if they were committed, and where nothing of the upstream merges with them, the tree that a push would send is theirs alone, which stops the sync.
+  // Its files are taken as the commit read them, since a listing of its tree would pass the bound that every listing keeps.
+  const pending = run.pending && head.ok && run.pending.from === head.text ? run.pending.entries : null;
+  if (run.pending && !pending) return { pastTree: { files: run.pending.files }, conflicts: [] };
   // An upstream branch that the remote does not hold, as one deleted there, has nothing to merge, and the push that publishes the branch again keeps none of its entries that a store does not share.
+  if (!upstream.ok && pending) return { pastTree: { files: run.pending.files }, conflicts: [] };
   if (!upstream.ok) {
     if (head.ok) await alignWithUpstream(base, author, head.text, null);
     return { applied: true, conflicts: [] };
@@ -1705,13 +1718,14 @@ async function merge(base, author, options, run, remote) {
   // A branch that holds the whole upstream takes nothing from it, and only gives its push the upstream's entries that a store does not share,
   // which are checked first, since a branch that took the upstream by hand can hold one that this machine's Git refuses in an index.
   if (head.ok && (await git(base, ["merge-base", "--is-ancestor", theirs, head.text])).ok) {
+    if (pending) return { pastTree: { files: run.pending.files }, conflicts: [] };
     await refuseUnsafeTree(base, theirs);
     await alignWithUpstream(base, author, head.text, theirs);
     return { applied: true, conflicts: [] };
   }
   // The upstream is another machine's work, so its whole tree is checked before any of it is taken, whether it fast-forwards or merges.
   await refuseUnsafeTree(base, theirs);
-  if (!head.ok || (await git(base, ["merge-base", "--is-ancestor", head.text, theirs])).ok) {
+  if (!head.ok || (!pending && (await git(base, ["merge-base", "--is-ancestor", head.text, theirs])).ok)) {
     const from = head.ok ? head.text : null;
     const kept = run.heldBack?.size ? heldCopies(run, await treeFiles(base, from), await treeFiles(base, theirs)) : [];
     return replaceFiles(base, run, { from, to: theirs, copies: kept }, options);
@@ -1719,7 +1733,7 @@ async function merge(base, author, options, run, remote) {
   const mergeBase = await git(base, ["merge-base", head.text, theirs]);
   if (!mergeBase.ok || !mergeBase.text) return { failed: "The store's branch and its upstream share no commit, so the store was left as it was.", conflicts: [] };
   // Only the entries a store shares merge; every other entry comes from the upstream alone, so no machine's commit changes one and a local one never reaches the remote.
-  const [original, local, upstreamFiles] = await Promise.all([mergeBase.text, head.text, theirs].map(async (commit) => (await partition(await treeFiles(base, commit)))));
+  const [original, local, upstreamFiles] = await Promise.all([mergeBase.text, pending ?? head.text, theirs].map(async (commit) => (await partition(typeof commit === "string" ? await treeFiles(base, commit) : commit))));
   // The upstream's files passed their bounds above, and a file that this machine changed and that holds more than its kind's bound, which only a commit made by hand puts on the branch,
   // is refused before the merge reads any blob, since the push would refuse it anyway and Git's output of a blob that large can outgrow what a sync reads.
   // The upstream's files are not on disk yet, so the command goes back to before that commit rather than to the upstream's tip.
@@ -1760,7 +1774,7 @@ async function merge(base, author, options, run, remote) {
   // and the merge is not made, so the sync commits, merges, and pushes nothing, and every file stays on disk as it is.
   const { treeFilesMax } = await storeLayout();
   const merged = besides(result, upstreamFiles.other);
-  if (merged.size > treeFilesMax()) return { pastTree: { files: merged.size, merged: true }, conflicts: [] };
+  if (merged.size > treeFilesMax()) return { pastTree: { files: merged.size }, conflicts: [] };
   // A file the upstream carries can still meet a local file in another letter case, which no other machine could then take.
   const clash = letterCaseClash(merged.keys());
   if (clash) return { failed: `The merge would hold ${describeUnsafeEntry({ path: clash[1], clash: clash[0] })}, so the store was left as it was. Remove or rename one of them.`, conflicts: [] };
@@ -1789,7 +1803,8 @@ async function merge(base, author, options, run, remote) {
   const surplusSaved = new Set(copies.filter(([file, entry]) => surplus.some(([candidate, left]) => candidate === file && left === entry)).map(([file]) => file));
   // A saved copy of such a file is named as a change that both machines made, unless it holds the version that this machine's sync withheld, which is named as withheld.
   const bothSaved = new Set(copies.filter(([file, entry]) => entry && bothChanged.get(file) === entry).map(([file]) => file));
-  return replaceFiles(base, run, { from: head.text, to: commit, copies, theirs: theirsSaved, tooLong: tooLongSaved, surplus: surplusSaved, bothChanged: bothSaved, undone: [...placed.undone, ...undoneFiles] }, options);
+  // The files on disk hold this machine's side of the merge, which is the commit left unmade where there is one, while the branch moves from where it is.
+  return replaceFiles(base, run, { from: head.text, diskTree: pending ?? head.text, to: commit, copies, theirs: theirsSaved, tooLong: tooLongSaved, surplus: surplusSaved, bothChanged: bothSaved, undone: [...placed.undone, ...undoneFiles] }, options);
 }
 
 /**
@@ -1801,7 +1816,7 @@ async function merge(base, author, options, run, remote) {
  * bothChanged the copied files at the store's root that the upstream changed too, and undone lists the local changes that the target does not keep and no copy names, which the stage carries so that the next tool results name them once the branch moved.
  * A comment on disk that neither commit holds and that the target's comments leave no room for is saved into the stage too, which is made when it is first needed.
  */
-async function replaceFiles(base, run, { from, to, copies, theirs = new Set(), tooLong = new Map(), surplus = new Set(), bothChanged = new Set(), undone = [] }, options) {
+async function replaceFiles(base, run, { from, diskTree = from, to, copies, theirs = new Set(), tooLong = new Map(), surplus = new Set(), bothChanged = new Set(), undone = [] }, options) {
   const held = run.heldBack ?? new Map();
   let stage = copies.length || undone.length ? await stageLocal(base, copies, { from, to, theirs, tooLong, surplus, bothChanged, undone }) : null;
   const progress = {
@@ -1811,7 +1826,7 @@ async function replaceFiles(base, run, { from, to, copies, theirs = new Set(), t
       return bytes === null ? stageSurplusMove(base, stage, file) : stageSurplus(stage, file, bytes);
     }
   };
-  const applied = await apply(base, from, to, options, progress, held);
+  const applied = await apply(base, from, to, options, progress, held, diskTree);
   if (applied) for (const [file, entry] of copies) if (entry && held.get(file) === entry) { held.delete(file); run.withheld?.delete(file); }
   return { applied, conflicts: stage ? await settleStage(base, stage, applied) : [] };
 }
@@ -2792,25 +2807,25 @@ async function wideBranchRefusal(base, remote, { upstream, sent, unsafe }) {
 }
 
 /**
- * The refusal of a sync whose local changes would take the store's tree past the files that it may hold, on their own or merged with the upstream's, with the count, the bound, and the fix:
- * nothing was committed, merged, or pushed, and every file stays on disk as it is, so removing files is all that the next sync needs to share every change.
+ * The refusal of a sync whose tree to push, this machine's changes merged with the upstream's as fetched, would hold more files than a store's tree may, with that count, the bound, and the fix:
+ * nothing was committed, merged, or pushed, and every file stays on disk as it is, so removing files on any machine is all that the next sync needs to share every change.
+ * kept says that an earlier attempt of the sync merged the upstream before another machine pushed first, which stays on the branch and on disk.
  */
-async function pastTreeRefusal({ files, merged }) {
+async function pastTreeRefusal({ files }, kept = false) {
   const { treeFilesMax } = await storeLayout();
   const max = treeFilesMax();
-  return `${merged ? "The merge of this machine's changes with the upstream's" : "This machine's changes"} would take the store's tree to ${files} files, more than ${max}, ${TREE_BOUND}, `
-    + "so the sync committed, merged, and pushed nothing, and every file stays on disk as it is. "
-    + `Remove files that the store no longer needs from it until it holds at most ${max}${merged ? " with the upstream's" : ""}, and the next sync shares every change${merged ? ", the upstream's too" : ""}.`;
+  return `The tree that the sync would push, this machine's changes merged with the upstream's as fetched, would hold ${files} files, more than ${max}, ${TREE_BOUND}, `
+    + (kept ? "so the sync pushed nothing: it keeps the merge of the upstream that it made before another machine pushed first, and this machine's later changes stay on disk as they are, in no commit. "
+      : "so the sync committed, merged, and pushed nothing, and every file stays on disk as it is. ")
+    + `Remove files that the store no longer needs, on this machine or another, until it holds at most ${max}, and the next sync shares every change.`;
 }
 
-// Take the commits that a sync made of this machine's changes off the branch, which still points at the last of them, so the branch, the index, and the checked commit are as they were before the sync.
-async function takeOffCommit(base, { from, to }, checked) {
+// Take the commits that a sync made of this machine's changes off the branch, which still points at the last of them, so the branch and the index are as they were before the sync.
+async function takeOffCommit(base, { from, to }) {
   const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
   if (!head.ok || head.text !== to) return;
   await required(base, from ? ["read-tree", from] : ["read-tree", "--empty"]);
   await required(base, from ? ["update-ref", "-m", "prism: keep the store's tree within its bound", "HEAD", from, to] : ["update-ref", "-d", "HEAD", to]);
-  // The checked commit only lets a later check walk less, so going back to the earlier one is always safe.
-  await git(base, checked ? ["update-ref", CHECKED_REF, checked] : ["update-ref", "-d", CHECKED_REF]);
 }
 
 // What a refusal of a file above its bound asks for where no commit can be taken off the branch without one that other machines share.
@@ -2945,21 +2960,22 @@ async function clearFolder(target) {
 /**
  * Replace the files at shared paths that differ between two commits by atomic renames of their blobs' bytes, then move the branch and index to the target commit.
  * An entry at any other path, such as a .DS_Store the store's history holds, is never written, removed, or compared on disk.
- * The branch moves only when every changed file held the previous commit's bytes and holds the target's bytes afterwards, in the target's spelling.
+ * The branch moves only when every changed file held the previous commit's bytes and holds the target's bytes afterwards, in the target's spelling;
+ * diskTree, when given, is the files, as Map(path, entry), that the disk holds in place of the previous commit's, as this machine's changes that the branch never took because their tree passes the bound on a store tree's files.
  * Otherwise the branch stays, so the next commit records the replaced files and the local writes, and the next merge resolves them; progress.replacing, when given, runs before each file is replaced or removed.
  * progress.leaving, when given, takes each comment on disk that neither commit holds and that the target's comments leave no room for, before it leaves the disk.
  * held maps a file whose local version the sync withheld to that version, which the file may hold in place of the branch's, or, for a file above its kind's bound, to the file on disk that it must still be.
  * On a file system that ignores letter case, as macOS and Windows use by default, a path that differs only in letter case from a file on disk opens that file,
  * so a path counts as holding bytes only when every name of it is stored in that spelling, and two changed paths that such a file system reads as one take one lock.
  */
-async function apply(base, from, to, options, progress = {}, held = new Map()) {
+async function apply(base, from, to, options, progress = {}, held = new Map(), diskTree = from) {
   const marker = syncPath(base, "working-tree");
   await writeAtomically(marker, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
   let files = [];
   try {
     await options.beforeApply?.();
     const { shareable, bound } = await storeLayout();
-    const [before, after] = await Promise.all([treeFiles(base, from), treeFiles(base, to)]);
+    const [before, after] = await Promise.all([diskTree instanceof Map ? diskTree : treeFiles(base, diskTree), treeFiles(base, to)]);
     // A link that the branch held and the target drops was never a file on disk that Prism wrote, so it stays as it is; a submodule link's empty folder goes.
     const onDisk = (file) => [before.get(file), after.get(file)].some((entry) => FILE_MODES.has(entry?.mode)) || before.get(file)?.mode === "160000";
     files = [...new Set([...before.keys(), ...after.keys()])].filter((file) => shareable(file) && !sameEntry(before.get(file), after.get(file)) && onDisk(file)).sort();

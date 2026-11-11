@@ -101,11 +101,11 @@ for (const [how, race] of [
     const held = withFileLock(path.join(b, "artifacts"), () => new Promise((resolve) => { release = resolve; }));
     await new Promise((resolve) => setTimeout(resolve, 50));
     const head = git(b, "rev-parse", "HEAD");
-    // The sync that finds the lock busy commits, merges, and pushes nothing, so the comment stays on disk for the next sync, which merges it.
-    const busy = await syncRecordStoreNow(b);
+    // The sync that finds the lock busy commits, merges, and pushes nothing and ends as skipped, so the comment stays on disk for the next sync, which merges it.
+    const busy = await syncRecordStore(b);
     release();
     await held;
-    assert.equal(busy.state, "merge_failed", JSON.stringify(busy));
+    assert.equal(busy.state, "skipped", JSON.stringify(busy));
     assert.equal(git(b, "rev-parse", "HEAD"), head);
     return syncRecordStoreNow(b);
   }]
