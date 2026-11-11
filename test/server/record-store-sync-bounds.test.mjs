@@ -12,7 +12,8 @@ const { cancelRecordSyncs, configureRecordSync, markManagedStore, readSavedConfl
 configureRecordSync({ debounceMs: 3600000, pullIntervalMs: 1e15 });
 test.after(async () => { cancelRecordSyncs(); await rm(environment, { recursive: true, force: true }); });
 
-const git = (cwd, args) => execFileSync("git", ["-C", cwd, ...args], { stdio: ["pipe", "pipe", "pipe"], maxBuffer: 1 << 26 }).toString().trim();
+// Git for Windows skips a path longer than 260 characters unless core.longpaths is on, as every store command of Prism turns it on, so this machine's Git does too.
+const git = (cwd, args) => execFileSync("git", ["-c", "core.longpaths=true", "-C", cwd, ...args], { stdio: ["pipe", "pipe", "pipe"], maxBuffer: 1 << 26 }).toString().trim();
 const MiB = 1024 * 1024;
 const SLICE = "artifacts/plans/foo/slice.md";
 const rec = (value) => `${JSON.stringify(value)}\n`;
@@ -245,7 +246,9 @@ test("a store with no commits yet that takes the remote's branch moves a local f
 
 // A git that makes GROW_FILE GROW_SIZE bytes long the first time a sync hashes the store's files into Git, which comes right after the sync checked each file's size,
 // as a file written in place while a sync runs grows between the two.
-const realGit = execFileSync("sh", ["-c", "command -v git"]).toString().trim();
+// Node finds only an .exe for "git" on Windows, never this shell script on PATH, so the tests that use it run only on POSIX.
+const GROWING = { skip: process.platform === "win32" && "the growing Git is a shell script on PATH, which Node does not start on Windows" };
+const realGit = GROWING.skip ? "git" : execFileSync("sh", ["-c", "command -v git"]).toString().trim();
 const GROWING_GIT = `#!/bin/sh
 if [ -n "$GROW_FILE" ] && [ ! -e "$GROW_FILE.grown" ]; then
   case " $* " in *" hash-object -w "*) truncate -s "$GROW_SIZE" "$GROW_FILE" && : > "$GROW_FILE.grown" ;; esac
@@ -270,7 +273,7 @@ async function syncWhileGrowing(root, file, size) {
   }
 }
 
-test("a file that grows past its kind's bound after the sync checked its size is withheld by the size of its hashed object, so no commit of the sync holds it and the next sync pushes", { timeout: 240000 }, async (context) => {
+test("a file that grows past its kind's bound after the sync checked its size is withheld by the size of its hashed object, so no commit of the sync holds it and the next sync pushes", { ...GROWING, timeout: 240000 }, async (context) => {
   const { remote, b } = await stores(context);
   await put(b, { "README.md": "Prism store, changed\n", [SLICE]: "# Foo\n\nChanged on b.\n" });
   const status = await syncWhileGrowing(b, "README.md", 2 * MiB);
@@ -288,7 +291,7 @@ test("a file that grows past its kind's bound after the sync checked its size is
   assert.ok(git(remote, ["show", `main:${SLICE}`]).includes("Changed on b again."));
 });
 
-test("a shared comment that grows past a comment's bound after the sync checked its size is withheld for its size, while a full folder keeps every shared comment and the sync ends ok", { timeout: 240000 }, async (context) => {
+test("a shared comment that grows past a comment's bound after the sync checked its size is withheld for its size, while a full folder keeps every shared comment and the sync ends ok", { ...GROWING, timeout: 240000 }, async (context) => {
   const { remote, a, b } = await stores(context);
   const folder = "artifact-comments/plans/foo/slice.md";
   await put(a, Object.fromEntries(Array.from({ length: 1000 }, (_, index) => [`${folder}/${commentName(index)}`, rec({ index })])));

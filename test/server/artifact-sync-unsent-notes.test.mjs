@@ -6,6 +6,7 @@ import readline from "node:readline";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
+import { closeWithServers } from "./fixtures/repository-checkouts.mjs";
 import { checkout, eventually, isolateGit, notes, ok, server, syncedWorkspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
 // A saved version is named by the next tool result that a server writes to its host, so a result that is never written, as for a cancelled call or a wait the session's end aborts,
@@ -27,13 +28,14 @@ function waitingServer(context, machine, root) {
   const messages = [];
   readline.createInterface({ input: child.stdout }).on("line", (line) => messages.push(JSON.parse(line)));
   const exited = new Promise((resolve) => child.once("exit", resolve));
-  const close = async () => {
+  // The folder's removal stops this server first, as it stops the helpers' servers, since Windows refuses to remove the checkout it works in.
+  const close = closeWithServers(async () => {
     if (child.exitCode !== null || child.signalCode !== null) return;
     child.stdin.end();
     const timer = setTimeout(() => child.kill("SIGKILL"), 10000);
     await exited;
     clearTimeout(timer);
-  };
+  });
   context.after(close);
   let next = 1;
   const send = (message) => child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);

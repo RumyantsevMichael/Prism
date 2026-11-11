@@ -139,11 +139,9 @@ async function verify(prism, review, initiative, slice) {
 
 const roadmapRevision = async (prism) => ok(await prism.call("get_roadmap", {})).revision;
 const ship = async (prism, afterGate) => prism.call("update_roadmap", { expectedRevision: await roadmapRevision(prism), operations: [{ op: "ship", id: "reports", afterGate }] });
-// A new correctness gate replaces the answered ones before it, which would otherwise stay pending and refuse the ship as open work.
 async function ask(prism, gate) {
   const state = ok(await prism.call("get_coordination_state", { initiative: "reports" }));
-  const replaced = gate.kind === "correctness" ? (state.state?.pending ?? []).filter((item) => item.kind === "correctness" && item.answer).map((item) => ({ op: "resolve", id: item.id, reason: "A newer correctness gate replaces it." })) : [];
-  return ok(await prism.call("update_coordination_state", { initiative: "reports", expectedRevision: state.revision, changes: { gateOperations: [...replaced, { op: "ask", ...gate }] } })).openedGates[0].id;
+  return ok(await prism.call("update_coordination_state", { initiative: "reports", expectedRevision: state.revision, changes: { gateOperations: [{ op: "ask", ...gate }] } })).openedGates[0].id;
 }
 async function approved(prism, review, gate = { kind: "correctness", question: "Ship the reports initiative?", context: "Every slice passed verification.", artifacts: [] }) {
   const id = await ask(prism, gate);
@@ -432,7 +430,8 @@ test("clause 44: a sync that meets a ship's acceptance and an approval asked on 
     assert.equal(adr.acceptance.gate, gate);
   }
   // Machine B's checkout names its Git user, so what refuses the answer is that the ship ended the approval, from the page open before the ship and from a fresh listing alike.
-  const records = (await readdir(path.join(place.storeB, "artifact-status"), { recursive: true })).filter((file) => file.endsWith("storage.md/status.json"));
+  // readdir names nested entries with the platform separator, which the filter writes as /.
+  const records = (await readdir(path.join(place.storeB, "artifact-status"), { recursive: true })).filter((file) => file.split(path.sep).join("/").endsWith("storage.md/status.json"));
   assert.equal(records.length, 1);
   const record = JSON.parse(await readFile(path.join(place.storeB, "artifact-status", records[0]), "utf8"));
   assert.deepEqual(record.closed.filter((item) => item.id === asked).map((item) => item.closed), ["shipped"]);

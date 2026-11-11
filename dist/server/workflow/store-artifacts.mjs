@@ -8,7 +8,7 @@ import { assertInput } from "./artifact-schema.mjs";
 import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_NAME_FORM, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, IDENTITY_FILE_MAX, identityContent, identityOf, kindInScope, letterCaseKey, locationArtifact, locationIdentity, malformedArtifactName, newIdentity, normalizeArtifactPath, repositoryScope, uniqueIdentities, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
 import { acceptAtShip, acceptedLocation, answerApproval, askApproval, hasStatus, linkedPaths, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion } from "./artifact-status.mjs";
 import { ComponentError, readComponents } from "./components.mjs";
-import { checkArtifactFolders, noteToolCallWrite, recordStoreOf, repositoryScopes, resolveArtifactFile, resolveStatusFile, seenScopes, statusFileResolver, withArtifactStoreLock } from "./record-store.mjs";
+import { checkArtifactFolders, folderChecks, noteToolCallWrite, recordStoreOf, repositoryScopes, resolveArtifactFile, resolveStatusFile, seenScopes, statusFileResolver, withArtifactStoreLock } from "./record-store.mjs";
 import { pruneArtifactFolders, scheduleRecordSync } from "./record-store-sync.mjs";
 import { artifactKinds, readWorkflowConfig } from "./workflow-config.mjs";
 import { parseStoreJson } from "./store-json.mjs";
@@ -179,6 +179,18 @@ async function locationKind(target, base = null, memo = null) {
   return "file";
 }
 
+// Windows answers ENOENT where POSIX answers ENOTDIR for a location below a file, so there the nearest entry above a missing location, up to base, tells the two apart.
+// memo, a Map that one layout check shares, keeps what each folder it looked at holds.
+async function fileAbove(base, target, memo) {
+  if (process.platform !== "win32") return false;
+  for (let folder = path.dirname(target); folder.startsWith(`${base}${path.sep}`); folder = path.dirname(folder)) {
+    if (!memo.has(folder)) memo.set(folder, lstat(folder).then((info) => info.isFile() ? "file" : "other", (error) => { if (["ENOENT", "ENOTDIR"].includes(error.code)) return "missing"; throw error; }));
+    const kind = await memo.get(folder);
+    if (kind !== "missing") return kind === "file";
+  }
+  return false;
+}
+
 /**
  * A stored file as { bytes, size, version }, or null when no file is there; bytes is null for a file above the bound a read takes.
  * The location is checked before it is opened, and opened without blocking, so a pipe never holds a read or the store's lock.
@@ -316,10 +328,10 @@ function baseFor(seen, target) {
   return seen.base;
 }
 
-// A written file's path is checked again just before the write, below the folder it belongs to.
+// A written file's path is checked again just before the write, below the folder it belongs to, looking at every folder above it again.
 const resolveAgain = (seen, target) => baseFor(seen, target) === seen.base
-  ? resolveArtifactFile(seen, path.relative(seen.base, target).split(path.sep).join("/"))
-  : resolveStatusFile(seen, path.relative(seen.store.base, target).split(path.sep).join("/"));
+  ? resolveArtifactFile(seen, path.relative(seen.base, target).split(path.sep).join("/"), { fresh: true })
+  : resolveStatusFile(seen, path.relative(seen.store.base, target).split(path.sep).join("/"), { fresh: true });
 
 /**
  * The status record of an artifact in a scope, or the record of an artifact that no gate changed yet when none is stored.
@@ -456,7 +468,7 @@ async function letterCaseVariant(base, target, entries) {
 
 // Every location an update writes must be able to hold a file, checked before any file changes: it is no folder, lies below no file the store holds, lies below no other file the update writes, and passes through no entry in another letter case.
 async function checkLayout(seen, writes, state, names) {
-  const entries = new Map();
+  const entries = new Map(), above = new Map();
   for (const [target] of writes) {
     const file = names.get(target);
     const base = baseFor(seen, target);
@@ -471,7 +483,7 @@ async function checkLayout(seen, writes, state, names) {
     }
     const kind = await locationKind(target, base);
     if (kind === "folder") throw fail("invalid_path", `${file} is a folder of artifacts in the record store, so no file can be written in its place; nothing changed.`);
-    if (kind === "under_file") throw fail("invalid_path", `${file} lies below a file that the record store holds, so it cannot be written; nothing changed.`);
+    if (kind === "under_file" || (kind === "missing" && await fileAbove(base, target, above))) throw fail("invalid_path", `${file} lies below a file that the record store holds, so it cannot be written; nothing changed.`);
   }
 }
 
@@ -562,7 +574,10 @@ export async function updateArtifact(input) {
  * Apply checked operations while the store's artifact lock is held: every operation is checked against the store before any file changes.
  * Every change to a store artifact, an agent's update and Prism's own plan files and views alike, goes through here.
  */
-async function applyOperations(seen, checked, { held = null, noteWrites = false } = {}) {
+async function applyOperations(seenStore, checked, { held = null, noteWrites = false } = {}) {
+  // The update checks each folder above the files it reads and writes once, and every file again right before it is written; nothing changes the store before the writes, so each folder's names are listed once too.
+  const seen = { ...seenStore, folderChecks: folderChecks() };
+  const listed = new Map();
   // Each file's bytes as the earlier operations of this update leave them, so later operations see their effect.
   const original = new Map();
   const state = new Map();
@@ -570,7 +585,7 @@ async function applyOperations(seen, checked, { held = null, noteWrites = false 
   const names = new Map();
   const read = async (target) => {
     if (!state.has(target)) {
-      const record = await readStored(target, baseFor(seen, target));
+      const record = await readStored(target, baseFor(seen, target), listed);
       original.set(target, record);
       state.set(target, record);
     }
@@ -800,6 +815,8 @@ async function applyOperations(seen, checked, { held = null, noteWrites = false 
   const changed = [...state].filter(([target, record]) => (record?.version ?? null) !== (original.get(target)?.version ?? null));
   const clearing = [...strays].filter(([target]) => names.has(target));
   await checkLayout(seen, changed.filter(([target, record]) => record !== null && !strays.has(target)), state, names);
+  // From here the update changes files, so no folder check of the earlier ones stands for a later look.
+  seen.folderChecks = null;
   // A stray entry where an identity file of this update belongs goes first, as no file of any artifact.
   for (const [, stray] of clearing) {
     if ((await lstat(stray).catch(() => null))?.isSymbolicLink()) throw fail("invalid_path", "An artifact location in the record store passes through a symbolic link, which Prism does not follow.");
@@ -829,13 +846,15 @@ async function applyOperations(seen, checked, { held = null, noteWrites = false 
 async function identityEntry(seen, location) {
   const names = location.split("/");
   let current = seen.store.base;
+  const checked = seen.folderChecks?.folders ?? null;
   for (const [index, name] of [ARTIFACT_IDENTITY, ...names].entries()) {
     current = path.join(current, name);
+    if (index < names.length && checked?.has(current)) continue;
     const info = await lstat(current).catch((error) => { if (["ENOENT", "ENOTDIR"].includes(error.code)) return null; throw error; });
     if (info === null) break;
     if (info.isSymbolicLink()) throw fail("invalid_path", "An artifact location in the record store passes through a symbolic link, which Prism does not follow.");
     if (index < names.length) {
-      if (info.isDirectory()) continue;
+      if (info.isDirectory()) { checked?.add(current); continue; }
       return { record: null, stray: current };
     }
     if (!info.isFile()) return { record: null, stray: current };

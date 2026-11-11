@@ -37,6 +37,20 @@ export async function closeServers() {
   await Promise.all([...running].map((close) => close()));
 }
 
+/**
+ * Stop a server that a test started itself with the servers these helpers started, so closeServers stops it too before a test removes its folders,
+ * which Windows refuses while a process works in them; returns the stop, which runs close once.
+ */
+export function closeWithServers(close) {
+  let stopping = null;
+  const stop = () => {
+    running.delete(stop);
+    return stopping ??= close();
+  };
+  running.add(stop);
+  return stop;
+}
+
 // A store file may hold up to 16 MiB, so Git output is taken up to well past that.
 export const git = (cwd, ...args) => execFileSync("git", args, { cwd, stdio: "pipe", maxBuffer: 256 * 1024 * 1024 }).toString().trim();
 

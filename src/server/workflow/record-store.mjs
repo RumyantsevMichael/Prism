@@ -330,14 +330,19 @@ export async function resolveRecordFile(projectRootPath, relative) {
 }
 
 // Every existing ancestor must resolve inside the project, or inside the record store, so a symlink cannot redirect writes.
-async function assertContained(root, target, label = "the project root") {
+// With checks, from folderChecks, a folder whose real path one check found is not resolved again.
+async function assertContained(root, target, label = "the project root", checks = null) {
   let current = path.dirname(target);
   while (true) {
     try {
-      if (!inside(root, await realpath(current))) throw fail("invalid_path", `The record location resolves outside ${label}.`);
+      if (checks?.missing.has(current)) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      const real = checks?.reals.get(current) ?? await realpath(current);
+      if (!inside(root, real)) throw fail("invalid_path", `The record location resolves outside ${label}.`);
+      checks?.reals.set(current, real);
       return;
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
+      checks?.missing.add(current);
       const parent = path.dirname(current);
       if (parent === current) throw fail("invalid_path", `The record location cannot be resolved inside ${label}.`);
       current = parent;
@@ -1117,36 +1122,58 @@ export async function repositoryScopes(seen, repository) {
 }
 
 // No folder between the store and an artifact may be a symbolic link, so a link placed in the store cannot redirect a read or write elsewhere.
-async function assertUnlinked(base, target) {
+// With checks, from folderChecks, a folder above the target that one check found to be a folder is not looked at again; the target itself always is.
+async function assertUnlinked(base, target, checks = null) {
   const relative = path.relative(base, target);
   if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) throw fail("invalid_path", "The artifact location resolves outside the record store.");
   let current = base;
-  for (const part of relative.split(path.sep)) {
+  const parts = relative.split(path.sep);
+  for (const [index, part] of parts.entries()) {
     current = path.join(current, part);
+    const above = checks !== null && index < parts.length - 1;
+    if (above && checks.folders.has(current)) continue;
+    if (above && checks.missing.has(current)) return;
     let info;
     try { info = await lstat(current); }
-    catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return; throw error; }
+    catch (error) {
+      if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error;
+      if (above) checks.missing.add(current);
+      return;
+    }
     if (info.isSymbolicLink()) throw fail("invalid_path", "An artifact location in the record store passes through a symbolic link, which Prism does not follow.");
+    if (above && info.isDirectory()) checks.folders.add(current);
   }
 }
 
-/** The file of an artifact location below artifacts/ in a seen store, after checking that it stays inside the store and passes through no symbolic link. */
-export async function resolveArtifactFile(seen, location) {
+/**
+ * The checks of the folders above store files that one update shares while it holds the store's artifact lock and before it changes any file,
+ * so a folder above many of its files is looked at once rather than once for each file, which an update of a thousand files, such as the move of a checkout's artifacts, needs on Windows, where each look opens the folder:
+ * folders holds each folder found and no link, missing each folder found missing, and reals each folder's real path. A seen store carries them as seen.folderChecks.
+ */
+export const folderChecks = () => ({ folders: new Set(), missing: new Set(), reals: new Map() });
+
+/**
+ * The file of an artifact location below artifacts/ in a seen store, after checking that it stays inside the store and passes through no symbolic link.
+ * fresh skips the folder checks that the seen store carries, so the check right before a write looks at every folder again.
+ */
+export async function resolveArtifactFile(seen, location, { fresh = false } = {}) {
   const target = path.join(seen.base, ...location.split("/"));
   if (!inside(seen.base, target) || target === seen.base) throw fail("invalid_path", "The artifact location resolves outside the store's artifacts folder.");
-  await assertUnlinked(seen.store.base, target);
-  await assertContained(seen.store.contain, target, "the record store");
+  const checks = fresh ? null : seen.folderChecks ?? null;
+  await assertUnlinked(seen.store.base, target, checks);
+  await assertContained(seen.store.contain, target, "the record store", checks);
   return target;
 }
 
 /** The file of a store-relative path below artifact-status/, artifact-accepted/, artifact-comments/, or artifact-identity/ in a seen store, after the checks that resolveArtifactFile makes. */
-export async function resolveStatusFile(seen, relative) {
+export async function resolveStatusFile(seen, relative, { fresh = false } = {}) {
   const folder = path.join(seen.store.base, relative.split("/")[0]);
   if (![ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY].includes(relative.split("/")[0])) throw fail("invalid_path", "A status file lies outside the store's status folders.");
   const target = path.join(seen.store.base, ...relative.split("/"));
   if (!inside(folder, target) || target === folder) throw fail("invalid_path", "The status location resolves outside the store's status folders.");
-  await assertUnlinked(seen.store.base, target);
-  await assertContained(seen.store.contain, target, "the record store");
+  const checks = fresh ? null : seen.folderChecks ?? null;
+  await assertUnlinked(seen.store.base, target, checks);
+  await assertContained(seen.store.contain, target, "the record store", checks);
   return target;
 }
 

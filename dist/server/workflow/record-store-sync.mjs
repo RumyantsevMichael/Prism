@@ -2547,10 +2547,12 @@ const fileBytes = (target) => readFile(target).catch((error) => { if (["ENOENT",
 
 /**
  * The bytes of a regular file of at most max bytes, null where no file or a folder is there, and { size } for one above max, a link, or any other entry, which is read no further:
- * it is opened without following a link and without blocking, and its type and size come from the opened file before any byte is read, so memory stays bounded whatever the file holds.
+ * it is opened without following a link and without blocking, and its type and size come from the opened file before any byte is read, so memory stays bounded whatever the file holds;
+ * where the platform has no O_NOFOLLOW, as on Windows, a check of the entry before the open stands in for it.
  * max null reads a file of any size; a file that grows past its size while it is read counts as above max.
  */
 async function boundedBytes(target, max) {
+  if (!constants.O_NOFOLLOW && (await lstat(target).catch(() => null))?.isSymbolicLink()) return { size: null };
   let handle;
   try { handle = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0)); }
   catch (error) {

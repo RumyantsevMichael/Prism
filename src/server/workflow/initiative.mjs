@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
@@ -262,6 +262,8 @@ async function loadRecord(resolved) {
     throw error;
   }
   if (contents === null) return { exists: false, revision: null, record: null, valid: true, errors: [], analysis: null };
+  const spelledAs = await recordSpelling(resolved);
+  if (spelledAs !== null) return { exists: false, revision: null, record: null, valid: true, errors: [], analysis: null, spelledAs };
   const revision = revisionOf(contents);
   const text = contents.toString("utf8");
   let raw;
@@ -272,6 +274,18 @@ async function loadRecord(resolved) {
   }
   const { errors, analysis } = validateRecord(raw, resolved.initiative);
   return { exists: true, revision, text, record: raw, valid: errors.length === 0, errors, analysis };
+}
+
+/**
+ * The identifier of another initiative whose record folder a file system that ignores letter case, as macOS and Windows do by default, opens for this one,
+ * or null when the folder carries this identifier's spelling or lies elsewhere, as a legacy location does.
+ */
+async function recordSpelling(resolved) {
+  const folder = path.dirname(resolved.target);
+  if (path.basename(folder) !== resolved.initiative) return null;
+  const names = await readdir(path.dirname(folder)).catch(() => null);
+  if (names === null || names.includes(resolved.initiative)) return null;
+  return names.find((name) => name.toLowerCase() === resolved.initiative.toLowerCase()) ?? null;
 }
 
 function derived(analysis, record) {
@@ -1180,6 +1194,14 @@ async function prepare(input) {
   return { resolved, diagramCache };
 }
 
+// An identifier whose records a file system that ignores letter case finds in another initiative's folder writes nothing there:
+// with a store it is refused as that initiative's plan folder is, and otherwise as the found record's revision is.
+async function checkSpelling(resolved, current) {
+  if (current.spelledAs === undefined) return;
+  await checkPlanFolders(resolved, {}, null);
+  throw fail("revision_conflict", `The initiative ${resolved.initiative} differs only in letter case from the initiative ${current.spelledAs}, whose records this file system, which ignores letter case, finds under the same name; nothing changed. Choose another initiative identifier.`, { initiative: current.spelledAs });
+}
+
 function checkRevision(current, input) {
   if (current.revision !== input.expectedRevision) {
     throw fail(input.expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("initiative record", input.expectedRevision, current.revision), { currentRevision: current.revision });
@@ -1218,6 +1240,7 @@ async function writeInitiative(input, plan = null) {
     // A ship that landed after the first check refuses the update too, so the record never changes after the initiative shipped.
     await refuseShipped(input.projectRoot, input.initiative);
     const current = await loadRecord(resolved);
+    await checkSpelling(resolved, current);
     checkRevision(current, input);
     const record = workingCopy(current, resolved);
     const effects = newEffects(input, diagramCache, await claimContext(resolved, "apply"), plan?.notes ?? new Map(), false);
@@ -1305,6 +1328,7 @@ async function claimingUpdate(input) {
   const plan = await withClaimsLock(resolved, async () => {
     await refuseShipped(input.projectRoot, input.initiative);
     const current = await loadRecord(resolved);
+    await checkSpelling(resolved, current);
     checkRevision(current, input);
     const record = workingCopy(current, resolved);
     const claims = await claimContext(resolved, "plan", label);
@@ -1460,7 +1484,7 @@ export function initiativeAcknowledgement(result, operations) {
 export const INITIATIVE_TOOLS = [
   {
     name: "get_initiative",
-    description: "Read an initiative's MCP-managed slice record with derived leaves, effective dependencies, completion, design candidates, fixes (each slice with fix slices mapped to their slugs), unfinishedFixes ({ slice, defect, fix, status } for each defect whose fix slice is missing, with fix null and status not-designed, or not done), deferredFindings (each slice whose review deferred findings, mapped to { id, severity, title, gate, followUp, wave } per deferred finding), and readiness to ship, which unfinished fixes hold false, plus run totals computed from run records for each slice, each split parent with its descendants, and the initiative, and each live claim: on its slice in the record view and under claims with its label, activity, and expiry, where heldHere marks this server's claims; lostClaims lists, once, claims this server held that expired or were released or taken over. Reads never create files. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked, to commit apart from the task's changes.",
+    description: "Read an initiative's MCP-managed slice record with derived leaves, effective dependencies, completion, design candidates, fixes (each slice with fix slices mapped to their slugs), unfinishedFixes ({ slice, defect, fix, status } for each defect whose fix slice is missing, with fix null and status not-designed, or not done), deferredFindings (each slice whose review deferred findings, mapped to { id, severity, title, gate, followUp, wave } per deferred finding), and readiness to ship, which unfinished fixes hold false, plus run totals computed from run records for each slice, each split parent with its descendants, and the initiative, and each live claim: on its slice in the record view and under claims with its label, activity, and expiry, where heldHere marks this server's claims; lostClaims lists, once, claims this server held that expired or were released or taken over. Reads never create files. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked; a document in the checkout is to be committed apart from the task's changes, while one in the record store is shared by its sync and needs no commit.",
     inputSchema: GET_INITIATIVE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },

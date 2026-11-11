@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { writeAtomically } from "./artifact-store.mjs";
 import { ARTIFACT_MIGRATIONS, ARTIFACT_NAME_FORM, artifactAddress, artifactLocation, malformedArtifactName, repositoryScope, WORKSPACE_SCOPE } from "./artifact-paths.mjs";
 import { hasStatus, writtenStatus } from "./artifact-status.mjs";
-import { resolveArtifactFile, resolveLedgerFile, STORE_FILE_BOUNDS, withArtifactStoreLock } from "./record-store.mjs";
+import { folderChecks, resolveArtifactFile, resolveLedgerFile, STORE_FILE_BOUNDS, withArtifactStoreLock } from "./record-store.mjs";
 import { scheduleRecordSync } from "./record-store-sync.mjs";
 import { roadmapViewOf } from "./roadmap.mjs";
 import { generatedNotice } from "./projection.mjs";
@@ -697,10 +697,12 @@ async function finishMove(seen, listing, decided, report, { proceed = () => true
   let retry = false;
   const roadmapLocation = artifactLocation(WORKSPACE_SCOPE, { kind: "roadmap", rest: null });
   const stay = (move, reason) => stayed.push({ path: move.from, reason: move.to === roadmapLocation ? "view_differs" : reason, location: move.to });
+  // The store copies are read in one pass, which checks each folder above them once.
+  const reading = { ...seen, folderChecks: folderChecks() };
   for (const move of decided.moved) {
     // A move that no ledger confirms is decided again by a later move, so its file stays in the checkout without a report.
     if (!ledgered?.has(`${move.from}\0${move.to}`)) { retry = true; continue; }
-    const stored = await storedVersion(seen, move.to, move.size, writes).catch(() => "other");
+    const stored = await storedVersion(reading, move.to, move.size, writes).catch(() => "other");
     checked.push({ move, stored, confirmed: stored === move.version || Boolean(stored?.updated) });
   }
   const stayFor = ({ move, stored }) => stay(move, stored === null ? "removed_in_store" : "differs");
