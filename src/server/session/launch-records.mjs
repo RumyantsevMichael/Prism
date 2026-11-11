@@ -21,6 +21,13 @@ export const RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 const UNSTARTED_STALE_MS = 60000;
 const STDERR_LINE_MAX = 300;
 export const SUPERVISION_LOST = "Prism stopped supervising this session; its host process may still run.";
+export const DEFAULT_STOP_GRACE_MS = 10000;
+
+/** The grace period of a stop: PRISM_LAUNCH_STOP_GRACE_MS milliseconds, and 10000 without a valid value. */
+export function stopGraceMs(env = process.env) {
+  const value = typeof env?.PRISM_LAUNCH_STOP_GRACE_MS === "string" ? env.PRISM_LAUNCH_STOP_GRACE_MS.trim() : "";
+  return /^\d{1,9}$/.test(value) ? Number(value) : DEFAULT_STOP_GRACE_MS;
+}
 
 export class LaunchError extends Error {
   constructor(code, message) {

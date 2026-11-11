@@ -8,7 +8,6 @@ import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { listInitiatives } from "../workflow/record-store.mjs";
 import { readRoadmap } from "../workflow/roadmap.mjs";
 import { hostAvailability, hostDefinition, hostEnvironment, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
-import { stopGraceMs } from "./process-tree.mjs";
 import {
   LAUNCH_ID_PATTERN,
   LaunchError,
@@ -26,6 +25,7 @@ import {
   prepareLaunchesDirectory,
   readLaunchRecord,
   removeLaunchFolder,
+  stopGraceMs,
   storeLocation,
   voidToken,
   withRunStartLock,

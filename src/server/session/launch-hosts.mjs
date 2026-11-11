@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { access, constants, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
@@ -138,6 +139,16 @@ export function codexTurnRequest({ threadId, initiative }) {
   return { method: "turn/start", params: { threadId, input: [{ type: "text", text: `$prism:orchestrate ${initiative}` }] } };
 }
 
+/** The stream-json line that Claude Code's own Stop button sends: an interrupt control request with a request id that Prism chooses. */
+export function claudeInterrupt(requestId) {
+  return { type: "control_request", request_id: requestId, request: { subtype: "interrupt" } };
+}
+
+/** The Codex request that interrupts the run's turn, as the app's own Stop button does. */
+export function codexInterruptRequest({ threadId, turnId }) {
+  return { method: "turn/interrupt", params: { threadId, turnId } };
+}
+
 /** The command that continues a host session in a terminal, or null for an id that breaks HOST_SESSION_ID_PATTERN. */
 export function resumeCommandOf(host, hostSessionId) {
   if (!validHostSessionId(hostSessionId)) return null;
@@ -218,6 +229,8 @@ const text = (value) => (typeof value === "string" ? value : "");
  * after it closed the input, and closes it once the host's work is over, so the host exits by itself.
  * `facts` collects { hostSessionId, turnId, refusals, hostError }: host text in them has the host session id, the known one or the
  * one the run names, replaced. onSessionId is called once when a Codex launch names its thread with an id that is safe to keep.
+ * `interrupt()` stops the run the way the host's own Stop button does: it sends the host's interrupt while the input is open and
+ * closes the input once the host has answered it, or at once for a Codex run that has not sent turn/start yet.
  */
 export function hostConversation(host, { initiative, checkout, hostSessionId = null, resume = false, send, closeInput, onSessionId = () => {} }) {
   const facts = { hostSessionId: null, turnId: null, refusals: [], hostError: null };
@@ -238,9 +251,19 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
   function claudeHandler() {
     const toolResults = new Map();
     const tasks = new Set();
+    let interruptId = null;
     return {
       start: () => write(claudePrompt(initiative)),
+      interrupt() {
+        if (interruptId !== null) return;
+        interruptId = randomUUID();
+        write(claudeInterrupt(interruptId));
+      },
       event(event) {
+        if (event.type === "control_response") {
+          if (interruptId !== null && event.response?.request_id === interruptId) close();
+          return;
+        }
         if (event.type === "system" && typeof event.task_id === "string") {
           if (event.subtype === "task_started") tasks.add(event.task_id);
           if (event.subtype === "task_notification") tasks.delete(event.task_id);
@@ -274,14 +297,26 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
     const completed = new Map();
     let nextId = 1;
     let threadId = null;
+    let turnRequested = false;
+    let turnDone = false;
+    let stopAsked = false;
+    let interruptSent = false;
     const request = (method, params) => {
       const id = nextId++;
       pending.set(id, method);
       write({ jsonrpc: "2.0", id, method, params });
     };
     const turnEnded = (turn) => {
+      turnDone = true;
       if (turn?.status === "failed") facts.hostError = redact(text(turn.error?.message));
       close();
+    };
+    // The interrupt goes out once turn/start has named the run's turn and only while that turn has not completed.
+    const sendInterrupt = () => {
+      if (interruptSent || turnDone || facts.turnId === null) return;
+      interruptSent = true;
+      const { method, params } = codexInterruptRequest({ threadId, turnId: facts.turnId });
+      request(method, params);
     };
     const answered = (method, result) => {
       if (method === "initialize") {
@@ -302,6 +337,7 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
           return;
         }
         const { method: turn, params } = codexTurnRequest({ threadId, initiative });
+        turnRequested = true;
         request(turn, params);
         return;
       }
@@ -313,10 +349,16 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
         }
         facts.turnId = id;
         if (completed.has(id)) turnEnded(completed.get(id));
+        else if (stopAsked) sendInterrupt();
       }
     };
     return {
       start: () => request("initialize", CODEX_CLIENT),
+      interrupt() {
+        stopAsked = true;
+        if (!turnRequested) close();
+        else sendInterrupt();
+      },
       event(message) {
         const hasId = typeof message.id === "string" || typeof message.id === "number";
         if (hasId && typeof message.method === "string") {
@@ -327,6 +369,11 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
           const method = pending.get(message.id);
           if (!method) return;
           pending.delete(message.id);
+          // The host answered the interrupt, with a result or an error, so the input closes and the app-server exits by itself.
+          if (method === "turn/interrupt") {
+            close();
+            return;
+          }
           if (message.error !== undefined && message.error !== null) {
             facts.hostError = redact(text(message.error?.message));
             close();
@@ -364,6 +411,8 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
     end: () => splitter.end(),
     /** Writes one more message to the host while its input is open, such as a stop's interrupt; answers whether it was written. */
     send: (message) => { if (!inputOpen) return false; send(message); return true; },
-    closeInput: close
+    closeInput: close,
+    /** Sends the host's interrupt for a stop; a run whose input is already closed gets none. */
+    interrupt: () => { if (inputOpen) handle.interrupt(); }
   };
 }

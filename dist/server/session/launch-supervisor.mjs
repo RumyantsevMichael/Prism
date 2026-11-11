@@ -3,13 +3,15 @@
 // It starts the run's host in the checkout with its own environment, which the starter prepared, holds the host's standard input,
 // gives the host its prompt there and closes it once the host's work is over, reads the host's output, renews the heartbeat in the
 // launch record, and records the run's end with the host's exit code and signal.
-// It watches its launch folder for a stop request that names its run, and then ends the host and every process it started.
+// It watches its launch folder for a stop request that names its run, and then sends the host the interrupt of the host's own Stop
+// button, closes the host's input once the host answered it, and only when the host still runs after the grace period ends the host
+// process itself. It starts, watches, and signals only the host process, never a process that the host started.
 // It names its launch folder on its command line, so any process on this machine can find it.
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { endProcessTree, stopGraceMs, STOP_FINISH_MS } from "./process-tree.mjs";
-import { readLaunchRecord, readStopRequest, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
+import { readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
 import { hostArguments, hostConversation, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
 
 const STDERR_KEEP = 64 * 1024;
@@ -17,6 +19,25 @@ const OUTPUT_DRAIN_MS = 2000;
 // After a stop's forced end, the output is drained for at most this long past the stop's deadline, so the end is recorded in time.
 const STOP_DRAIN_MS = 500;
 const STOP_POLL_MS = 100;
+// After the grace period, the forced end and the recording of the run's end finish within this long, inside the grace period
+// and 5 seconds that a stop answers within.
+const STOP_FINISH_MS = 2000;
+const TASKKILL_TIMEOUT_MS = 2000;
+
+// Forcibly ends the host process alone: SIGKILL to its process id on POSIX, and `taskkill /PID <pid> /F` without /T on Windows,
+// so no process that the host started is ended.
+function forceEndHost(child) {
+  if (process.platform !== "win32") {
+    try { child.kill("SIGKILL"); } catch {}
+    return Promise.resolve();
+  }
+  const root = process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows";
+  const system = path.join(root, "System32", "taskkill.exe");
+  const taskkill = existsSync(system) ? system : "taskkill.exe";
+  return new Promise((done) => {
+    execFile(taskkill, ["/PID", String(child.pid), "/F"], { windowsHide: true, timeout: TASKKILL_TIMEOUT_MS }, () => done());
+  });
+}
 
 // The time of a stop request, never later than now.
 function requestTime(request) {
@@ -52,8 +73,6 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
   const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume });
   const number = record.runs.length + 1;
   const graceMs = stopGraceMs(env);
-  // The launch folder lies in <review app folder>/launches/, whose review-app.json names the review app that a stop spares.
-  const reviewAppFolder = path.dirname(path.dirname(path.resolve(folder)));
   let stderr = Buffer.alloc(0);
 
   // Every listener is attached as soon as the host process exists, so no early output or exit is missed.
@@ -112,7 +131,15 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
             stopping = update((current) => {
               const run = current.runs.find((entry) => entry.token === token);
               if (run && !run.endedAt && !run.stopRequestedAt) run.stopRequestedAt = requestedAt;
-            }).then(() => endProcessTree({ pid: child.pid, running: () => !exited, ended: hostEnded, graceMs, reviewAppFolder, requestedAt: requested })).catch(() => {});
+            }).then(async () => {
+              // The host's own interrupt; the conversation closes the input once the host answers it, so the host exits by itself.
+              if (!exited) conversation.interrupt();
+              let timer;
+              await Promise.race([hostEnded, new Promise((done) => { timer = setTimeout(done, Math.max(0, requested + graceMs - Date.now())); })]);
+              clearTimeout(timer);
+              // The host is this supervisor's own child, so its process id cannot be reused before the exit event, which sets exited.
+              if (!exited) await forceEndHost(child);
+            }).catch(() => {});
           } finally {
             checking = false;
           }
@@ -144,7 +171,6 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
         clearInterval(stopPoll);
         if (!started) return;
         const endedAt = new Date().toISOString();
-        // The end is recorded only once the stop has ended every listed process, so a stopped view means the tree is gone.
         if (stopping) await stopping;
         const drainMs = stopDeadline === null ? OUTPUT_DRAIN_MS : Math.min(OUTPUT_DRAIN_MS, Math.max(0, stopDeadline + STOP_DRAIN_MS - Date.now()));
         let drainTimer;
