@@ -5,6 +5,7 @@ import { semanticError } from "./native-files.mjs";
 import { indexMetadata, readIndex, storedEmbeddings, writeIndex } from "./index-files.mjs";
 import { appendEmbeddings, readEmbeddings, replaceEmbeddings } from "./embedding-store.mjs";
 import { structuralCoverage } from "./structural-coverage.mjs";
+const REUSED_EMBEDDINGS = 4e4;
 class LocalIndexStore {
   constructor(request, stopHelper = () => {
   }) {
@@ -21,7 +22,8 @@ class LocalIndexStore {
       log.warn("index_reuse_unreadable", { indexPath: previous.indexPath, ...errorFields(error) });
       return {};
     }) : {};
-    const previousEmbeddings = { ...indexed, ...await readEmbeddings(directory) };
+    const saved = await readEmbeddings(directory, { limit: REUSED_EMBEDDINGS - Object.keys(indexed).length, skip: indexed });
+    const previousEmbeddings = { ...indexed, ...saved };
     let saving = true;
     const forward = ({ vectors, index: _index, ...value }) => {
       if (vectors && saving) {
@@ -136,5 +138,6 @@ class ThreadIndexStore {
 }
 export {
   LocalIndexStore,
+  REUSED_EMBEDDINGS,
   ThreadIndexStore
 };

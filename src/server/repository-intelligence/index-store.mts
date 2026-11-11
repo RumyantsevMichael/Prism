@@ -29,6 +29,9 @@ export interface IndexStore {
   discard(token: string): Promise<void>;
   close(): Promise<void>;
 }
+// A build request travels as one JSON line, and a string holds at most about 536 million characters, while one saved embedding serializes to at most
+// about 9,700 of them, so a request carries at most this many previous embeddings and an oversized embedding store contributes only its newest records.
+export const REUSED_EMBEDDINGS = 40000;
 export type BuildRequest = (runtime: string, args: BuildArguments, progress: (value: Progress) => void) => Promise<UnitIndex>;
 
 /** A store that does its work where it is called; the thread store runs one, and tests use one with an in-process helper. */
@@ -44,7 +47,8 @@ export class LocalIndexStore implements IndexStore {
       return {};
     }) : {};
     // The embedding store holds what earlier builds of this location embedded, including builds that never saved an index.
-    const previousEmbeddings = { ...indexed, ...await readEmbeddings(directory) };
+    const saved = await readEmbeddings(directory, { limit: REUSED_EMBEDDINGS - Object.keys(indexed).length, skip: indexed });
+    const previousEmbeddings = { ...indexed, ...saved };
     let saving = true;
     const forward = ({ vectors, index: _index, ...value }: Progress & { index?: unknown }) => {
       // Each batch is written before the next message is handled; a store that cannot be written costs only reuse, never the build.

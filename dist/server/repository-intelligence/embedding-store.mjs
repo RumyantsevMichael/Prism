@@ -35,17 +35,24 @@ function appendEmbeddings(directory, pairs) {
   }
   return valid.length;
 }
-async function readEmbeddings(directory) {
+async function readEmbeddings(directory, { limit = Infinity, skip } = {}) {
+  const embeddings = {};
+  if (limit <= 0) return embeddings;
   let bytes;
   try {
     bytes = await regularBytes(embeddingsPath(directory), INDEX_BYTES);
   } catch {
-    return {};
+    return embeddings;
   }
-  const embeddings = {};
-  for (let offset = 0; offset + RECORD_BYTES <= bytes.length; offset += RECORD_BYTES) {
+  let count = 0;
+  for (let offset = (Math.floor(bytes.length / RECORD_BYTES) - 1) * RECORD_BYTES; offset >= 0 && count < limit; offset -= RECORD_BYTES) {
+    const key = bytes.toString("hex", offset, offset + 32);
+    if (key in embeddings || skip && Object.hasOwn(skip, key)) continue;
     const vector = Array.from({ length: DIMENSIONS }, (_, position) => bytes.readFloatLE(offset + 32 + position * 4));
-    if (vector.every(Number.isFinite)) embeddings[bytes.toString("hex", offset, offset + 32)] = vector;
+    if (vector.every(Number.isFinite)) {
+      embeddings[key] = vector;
+      count += 1;
+    }
   }
   return embeddings;
 }

@@ -47,14 +47,22 @@ export function appendEmbeddings(directory: string, pairs: unknown[]): number {
   return valid.length;
 }
 
-/** Every whole record of the store whose values are all finite, the later of two records of one key winning; a store that cannot be read is empty. */
-export async function readEmbeddings(directory: string): Promise<Record<string, number[]>> {
-  let bytes: Buffer;
-  try { bytes = await regularBytes(embeddingsPath(directory), INDEX_BYTES); } catch { return {}; }
+/**
+ * The whole records of the store whose values are all finite, newest first, one per key, leaving out the keys of `skip` and stopping after `limit` records;
+ * a store that cannot be read is empty.
+ * Reading from the end keeps the embeddings of the latest builds when an oversized store holds more than a build request can carry.
+ */
+export async function readEmbeddings(directory: string, { limit = Infinity, skip }: { limit?: number; skip?: Record<string, unknown> } = {}): Promise<Record<string, number[]>> {
   const embeddings: Record<string, number[]> = {};
-  for (let offset = 0; offset + RECORD_BYTES <= bytes.length; offset += RECORD_BYTES) {
+  if (limit <= 0) return embeddings;
+  let bytes: Buffer;
+  try { bytes = await regularBytes(embeddingsPath(directory), INDEX_BYTES); } catch { return embeddings; }
+  let count = 0;
+  for (let offset = (Math.floor(bytes.length / RECORD_BYTES) - 1) * RECORD_BYTES; offset >= 0 && count < limit; offset -= RECORD_BYTES) {
+    const key = bytes.toString("hex", offset, offset + 32);
+    if (key in embeddings || (skip && Object.hasOwn(skip, key))) continue;
     const vector = Array.from({ length: DIMENSIONS }, (_, position) => bytes.readFloatLE(offset + 32 + position * 4));
-    if (vector.every(Number.isFinite)) embeddings[bytes.toString("hex", offset, offset + 32)] = vector;
+    if (vector.every(Number.isFinite)) { embeddings[key] = vector; count += 1; }
   }
   return embeddings;
 }

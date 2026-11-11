@@ -59,8 +59,15 @@ export class Helper {
         log.warn("native_helper_timed_out", { role: this.role, method, limitMs: this.options.operationMs ?? 30 * 60 * 1000 });
         this.stop(semanticError("resource_limit", "Native search exceeded its 30 minute operation limit."));
       }, this.options.operationMs ?? 30 * 60 * 1000) : undefined;
+      // A request that cannot be serialized fails alone and is never registered, so it leaves no entry waiting for an answer.
+      let line: string;
+      try { line = jsonLine({ id, method, args }); } catch (error) {
+        clearTimeout(timeout);
+        if (!this.requests.size) { this.idle = setTimeout(() => this.stop(), this.options.idleMs ?? 300000); this.idle.unref(); }
+        return reject(semanticError("preparation_failed", `The native helper request could not be serialized: ${error.message}`));
+      }
       timeout?.unref(); this.requests.set(id, { resolve: value => resolve(value as WorkerMethods[K]["output"]), reject, timeout, progress, method });
-      this.child!.stdin.write(jsonLine({ id, method, args }), error => { if (error) this.stop(semanticError("preparation_failed", "The native helper input channel failed.")); });
+      this.child!.stdin.write(line, error => { if (error) this.stop(semanticError("preparation_failed", "The native helper input channel failed.")); });
     });
   }
   stop(error = semanticError("preparation_failed", "The native helper stopped.")) {
