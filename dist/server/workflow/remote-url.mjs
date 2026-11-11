@@ -146,6 +146,13 @@ export function withoutCredentials(text) {
   return typeof text === "string" ? text.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^/\s@'"]*@/gi, "$1") : text;
 }
 
+// The form storeIdentity routes a remote value by, checked in its order: a network URL by its scheme, then a file:// URL, then the scp form; null for a file:// URL or a folder.
+function storeForm(value) {
+  if (NETWORK_URL.test(value)) return /^[a-z][a-z0-9+.-]*:/i.exec(value)[0].toLowerCase();
+  if (/^file:\/\//i.test(value)) return null;
+  return STORE_SCP.test(value) ? "scp" : null;
+}
+
 /**
  * A store address with any credential taken out, or null when none can be taken out cleanly: the user information of a URL, a URL's query and fragment,
  * and the user of an scp-form address with a password. An address without a credential comes back as it is.
@@ -167,6 +174,9 @@ export function addressWithoutCredentials(value) {
     stripped = value.replace(/^[^/\\\s]*@(?=[A-Za-z0-9][A-Za-z0-9.-]+:)/, "");
   }
   if (!stripped || credentialsIn(stripped) || !isRemoteStore(stripped)) return null;
+  // The address keeps the value's form under the routing storeIdentity uses, so an scp value on a host named file never becomes a file:// folder store.
+  const form = storeForm(value);
+  if (!form || storeForm(stripped) !== form) return null;
   const identity = networkStoreIdentity(value);
   return identity && networkStoreIdentity(stripped) === identity ? stripped : null;
 }

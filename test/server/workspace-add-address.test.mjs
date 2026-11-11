@@ -21,3 +21,13 @@ test("a user information spelling inside a URL's path stays in the path", async 
   assert.equal(isRemoteStore(address), true);
   assert.equal(await storeIdentity(address), await storeIdentity(value));
 });
+
+test("an scp-form address on a host named file never becomes a file:// folder store", async () => {
+  for (const value of ["u:tok@file:///tmp", "u:tok@file:///etc/x.git", "git:tok@file://srv/repo.git"]) {
+    const address = addressWithoutCredentials(value);
+    if (address === null) continue;
+    assert.equal(isRemoteStore(address), isRemoteStore(value));
+    assert.equal(await storeIdentity(address), await storeIdentity(value), `${value} -> ${address}`);
+  }
+  assert.equal(addressWithoutCredentials("u:tok@file:///tmp"), null);
+});
