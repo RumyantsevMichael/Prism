@@ -8,7 +8,7 @@ sdm: "0.3"
 # Implement a slice
 
 An implementation session receives one slice whose design is accepted and whose frozen tests are in place.
-It works from files and the project's own tools, and its only Prism calls are `verify_slice` and `wait_for_user_gate`.
+It works from files and the project's own tools, and its only Prism calls are `verify_slice` and `wait_for_user_gate`, apart from `get_artifact`, through which it reads `slice.md` files, requirements, and ADRs as [store artifacts](../workflow/SKILL.md#common-terms) in a project with a store.
 
 ## 1. Prepare
 
@@ -30,6 +30,7 @@ It works from files and the project's own tools, and its only Prism calls are `v
 
 - Do
   - Add your own tests in other files when they help.
+  - Give each file that no design named a [portable name](../workflow/SKILL.md#common-terms).
 - Don't
   - Modify, rename, or delete a frozen test.
   - Change requirements or Accepted ADRs.

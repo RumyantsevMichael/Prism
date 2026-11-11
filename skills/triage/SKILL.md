@@ -17,7 +17,7 @@ Triage decides whether a reported problem breaks an obligation that already exis
 
 ## 2. Find the broken obligation
 
-1. Read the Approved requirements, relevant ADRs, and feature files for the behavior.
+1. Read the Approved requirements, relevant ADRs, and feature files for the behavior, through `get_artifact` for [store artifacts](../workflow/SKILL.md#common-terms).
 2. Find each Approved requirement whose stated behavior the reproduction contradicts, and cite it as `<file>.md§<number>`.
 3. When that file does not follow the `write-requirements` format, such as having no numbered sections, return `BLOCKED` with the file and what does not conform.
 4. When no Approved requirement states the behavior the report expects, the report is not a defect.
@@ -26,7 +26,7 @@ Triage decides whether a reported problem breaks an obligation that already exis
 ## 3. Add the fix to the roadmap
 
 1. Read the roadmap with `get_roadmap` and keep its revision.
-2. Call `update_roadmap` with an `add_initiative` operation in band `Now`, an identifier and title that name the defect, a one-sentence intent, and the requirement references.
+2. Call `update_roadmap` with an `add_initiative` operation in band `Now`, an identifier that is a [portable name](../workflow/SKILL.md#common-terms) and a title that name the defect, a one-sentence intent, and the requirement references.
 
 ## 4. Return the result
 

@@ -29,7 +29,7 @@ Onboarding covers every topic in the interview, while migration and amendment co
 | Project kind | Greenfield, with no source or tests yet, or brownfield; and whether the work spans several packages or repositories. |
 | Stack | Languages, test command, BDD harness, typecheck, and lint or format command and whether it writes changes; a project with no tests yet uses `none yet` as its test command, never a no-op command. |
 | Verification | How to exercise the product and prove a change, and the commands that write changes. |
-| Workspace | Whether records live in a store shared with other checkouts or repositories; with a store, its `Store` location, this repository's `Repository` name, `Store sync`, and a workspace name. |
+| Workspace | Whether records live in a store shared with other checkouts or repositories; with a store, its `Store` location, this repository's `Repository` name, `Store sync`, and a workspace name, and that the first Prism call moves the checkout's tracked requirements, ADRs, plans, glossary, and roadmap view into the store as [store artifacts](../workflow/SKILL.md#common-terms). |
 | Components | The packages the person declares as [components](../workflow/SKILL.md#common-terms), and for several repositories, the other repositories' components they depend on. |
 | Tracker and commits | The tracker, its labels, commit scopes, and conventions; for GitHub, whether the repository has a GitHub remote and `gh` is available. |
 | Interaction | `Interaction style`, `Review browser`, and `Session offer`. |
@@ -53,7 +53,7 @@ A missing BDD harness uses `none`, making feature files specification-only.
 ## 3. Write the configuration
 
 1. When migrating `.claude/workflow-config.md`, convert project-root paths such as `/docs/ADRs/` to `docs/ADRs/` and keep other values without reinterpretation.
-2. Write `.prism/workflow.md` with all sections below and the settled values, using `n/a` for unavailable values except the BDD harness value `none`.
+2. Write `.prism/workflow.md` with all sections below and the settled values, using `n/a` for unavailable values except the BDD harness value `none`, and with configured paths that are [portable names](../workflow/SKILL.md#common-terms).
 3. Add `## Workspace` after `## Paths` only when the project uses a shared store.
 
 ```markdown
@@ -131,8 +131,8 @@ Workspace example:
 
 ## 4. Create missing documentation
 
-1. Create missing configured documentation directories, including parent directories for configured files.
-2. If the glossary is absent, create its title and one-line purpose.
+1. Create missing configured documentation directories, including parent directories for configured files, except the requirements, ADR, plans, glossary, and roadmap paths of a project with a store, which hold store artifacts.
+2. If the glossary is absent, create its title and one-line purpose, through `update_artifact` in a project with a store.
 3. If the roadmap record is absent and no legacy roadmap exists, create it by calling `update_roadmap` with `expectedRevision: null` and the product purpose as what the roadmap serves.
 4. If a legacy roadmap or sibling `roadmap.puml` exists without a roadmap record:
    1. Map each legacy initiative to an identifier that matches its plans folder, its band, its required initiatives, its rationale, and its open questions.
