@@ -15,6 +15,8 @@ const { applyAction, listActions } = await import("../../dist/server/workflow/ac
 const { getInitiative, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 const { readCoordinationState, updateCoordinationState } = await import("../../dist/server/workflow/state.mjs");
 const { waitForGateAnswers } = await import("../../dist/hooks/wait-for-gate-answers.mjs");
+const { deliverGateAnswers } = await import("../../dist/hooks/deliver-gate-answers.mjs");
+const { answerUserGate } = await import("../../dist/server/workflow/state.mjs");
 const { readRecord, writeRecord } = await import("../../dist/server/workflow/record-store.mjs");
 
 // What a store sync does when it brings another machine's change: the state gains an entry of that machine, whose clock may be behind.
@@ -149,6 +151,32 @@ test("a session is told once of the person's changes since it last read the init
   assert.deepEqual(changesOf(resumed), [later], "a restarted server of the same session shows only what this session has not seen");
   const other = server(context, root, { data, sessionId: "another-session" });
   assert.equal(changesOf(await other.call("get_initiative", { initiative: INITIATIVE })), undefined);
+});
+
+// The prompt hook as the host runs it for a session's next prompt or resume.
+const promptHook = (root, sessionId, event = "UserPromptSubmit") => deliverGateAnswers({ input: Readable.from([JSON.stringify({ hook_event_name: event, ...(event === "SessionStart" ? { source: "resume" } : { prompt: "go" }), session_id: sessionId, cwd: root })]), environment: {}, directory: path.join(root, ".app", "person-change-notices") });
+const askGate = async (mcp, question, meta) => {
+  const { revision } = await readCoordinationState({ projectRoot: mcp.root, initiative: INITIATIVE });
+  const asked = await mcp.call("update_coordination_state", { initiative: INITIATIVE, expectedRevision: revision, changes: { gateOperations: [{ op: "ask", kind: "visual-review", question, artifacts: [] }] } }, meta);
+  return asked.structuredContent.openedGates[0].id;
+};
+
+test("the prompt hook delivers a gate's answer only to the session whose agent asked it, in Claude Code and in Codex", async (context) => {
+  const { root } = await actionProject(context, { gates: false });
+  const data = await dataDirectory(context);
+  const claude = Object.assign(server(context, root, { data, sessionId: "claude-session" }), { root });
+  const codex = Object.assign(server(context, root, { data, clientName: "codex-mcp-client", version: "0.167.0" }), { root });
+  const fromClaude = await askGate(claude, "Review the export layout.");
+  const fromCodex = await askGate(codex, "Review the export columns.", codexMeta("codex-session", "codex-child", "codex-session"));
+  for (const id of [fromClaude, fromCodex]) await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id, choice: "approve" });
+  const claudeText = (await promptHook(root, "claude-session")).hookSpecificOutput.additionalContext;
+  assert.match(claudeText, new RegExp(fromClaude));
+  assert.doesNotMatch(claudeText, new RegExp(fromCodex), "another session's answer never reaches this one");
+  const codexText = (await promptHook(root, "codex-session")).hookSpecificOutput.additionalContext;
+  assert.match(codexText, new RegExp(fromCodex), "a Codex sub-agent's gate belongs to its root session");
+  assert.doesNotMatch(codexText, new RegExp(fromClaude));
+  assert.equal(await promptHook(root, "idle-session"), null, "a session that asked nothing gets nothing");
+  assert.doesNotMatch((await promptHook(root, "claude-session", "SessionStart")).hookSpecificOutput.additionalContext, new RegExp(fromCodex));
 });
 
 test("a change that a store sync brings is shown once even when its time is older than what the session saw", async (context) => {

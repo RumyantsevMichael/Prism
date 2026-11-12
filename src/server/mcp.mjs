@@ -45,7 +45,7 @@ import { managedStoresDirectory } from "./workflow/remote-url.mjs";
 import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
 import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, waitForUserGates } from "./workflow/gate-wait.mjs";
-import { endGateWait, keptSettingsText, personChangesText, startGateWait, takePersonChanges } from "./workflow/change-notices.mjs";
+import { endGateWait, keptSettingsText, personChangesText, rememberAskedGates, startGateWait, takePersonChanges } from "./workflow/change-notices.mjs";
 import { callAgent, currentCallAgent, withCallAgent } from "./workflow/call-agent.mjs";
 import { recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
@@ -977,6 +977,9 @@ async function callStateTool(name, argumentsValue) {
     resultValue = await validateCoordinationState(input);
   } else if (name === "update_coordination_state") {
     resultValue = await updateCoordinationState(input);
+    // The prompt hooks deliver a gate's answer only to the session that asked it; a gate the session cannot remember is still answered through its wait or a read of the state.
+    const opened = (resultValue?.openedGates ?? []).map((gate) => gate?.id).filter((id) => typeof id === "string");
+    await rememberAskedGates({ projectRoot, initiative: argumentsValue.initiative, gateIds: opened }).catch((error) => log.warn("asked_gates_unrecorded", errorFields(error)));
   } else if (name === "checkpoint_pause") {
     resultValue = await checkpointPause(input);
     const dataDirectory = decisionDataDirectory(argumentsValue);

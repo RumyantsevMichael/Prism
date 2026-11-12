@@ -5,6 +5,8 @@ import { listInitiatives } from "../server/workflow/record-store.mjs";
 import { readCoordinationState } from "../server/workflow/state.mjs";
 import { readWorkflowConfig } from "../server/workflow/workflow-config.mjs";
 import { configureRecordSync } from "../server/workflow/record-store-sync.mjs";
+import { askedGates, noticeDirectory } from "../server/workflow/change-notices.mjs";
+import { sessionHolder } from "../server/workflow/slice-claims.mjs";
 
 const MAX_HOOK_INPUT_BYTES = 4 * 1024 * 1024;
 const MAX_CONTEXT_CHARACTERS = 3500;
@@ -29,8 +31,16 @@ function choiceText(gate) {
   return gate.options?.find((option) => option.id === choice)?.label ?? choice;
 }
 
-export async function answeredGates(projectRoot) {
-  return (await openGates(projectRoot)).filter(({ gate }) => gate.answer);
+// The open gates that the session asked, which are the only ones whose answers are its own: another session's gates in the same project belong to that session's work.
+export async function sessionGates(projectRoot, session, directory = noticeDirectory()) {
+  if (!session) return [];
+  const asked = new Map();
+  const mine = [];
+  for (const item of await openGates(projectRoot)) {
+    if (!asked.has(item.initiative)) asked.set(item.initiative, new Set(await askedGates({ projectRoot, initiative: item.initiative, session, directory }).catch(() => [])));
+    if (asked.get(item.initiative).has(item.gate.id)) mine.push(item);
+  }
+  return mine;
 }
 
 // Every gate still pending in the project's initiatives, answered or not.
@@ -66,27 +76,29 @@ function bounded(lines) {
 }
 
 // A resumed session no longer waits on the gates it opened before, so it learns which are open and waits on them again.
-async function resumedGates(projectRoot) {
-  const gates = await openGates(projectRoot);
+async function resumedGates(gates) {
   if (!gates.length) return null;
   const waiting = gates.filter(({ gate }) => !gate.answer), answered = gates.filter(({ gate }) => gate.answer);
-  const lines = ["This session resumed while Prism user gates are open in this project, and nothing waits on them now."];
-  if (waiting.length) lines.push("For each unanswered gate this session asked, call wait_for_user_gate with its id once you have handled the user's message, so a browser answer reaches you without another message.", ...waiting.map(gateLine));
+  const lines = ["This session resumed while Prism user gates that it asked are open, and nothing waits on them now."];
+  if (waiting.length) lines.push("For these unanswered gates, call wait_for_user_gate with their ids once you have handled the user's message, so a browser answer reaches you without another message.", ...waiting.map(gateLine));
   if (answered.length) lines.push("The user already answered these gates in the review browser; act on each answer, then remove the gate with an update_coordination_state resolve operation for its id.", ...answered.map((item) => `${gateLine(item)} Answer: ${choiceText(item.gate)}${item.gate.answer.note ? `. Note: ${item.gate.answer.note}` : ""}.`));
   return { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: bounded(lines) } };
 }
 
 // Answers recorded in the review browser reach the agent with the user's next prompt, until the agent resolves each gate.
-export async function deliverGateAnswers({ input = process.stdin, environment = process.env } = {}) {
+export async function deliverGateAnswers({ input = process.stdin, environment = process.env, directory } = {}) {
   const hookInput = JSON.parse(await readHookInput(input));
   const event = hookInput.hook_event_name ?? "UserPromptSubmit";
   // Only a resumed session lost a wait; a new session did not open the project's gates, and compaction keeps a running wait.
   if (event === "SessionStart" ? hookInput.source !== "resume" : event !== "UserPromptSubmit") return null;
-  const directory = typeof hookInput.cwd === "string" && path.isAbsolute(hookInput.cwd) ? hookInput.cwd : environment.CLAUDE_PROJECT_DIR;
-  if (!directory) return null;
-  const projectRoot = await realpath(directory);
-  if (event === "SessionStart") return resumedGates(projectRoot);
-  const gates = await answeredGates(projectRoot);
+  const folder = typeof hookInput.cwd === "string" && path.isAbsolute(hookInput.cwd) ? hookInput.cwd : environment.CLAUDE_PROJECT_DIR;
+  if (!folder) return null;
+  const projectRoot = await realpath(folder);
+  // A host names its session in the hook input, as its tool calls name it to Prism's server, so both find the same record of the gates the session asked.
+  const session = sessionHolder({ CLAUDE_CODE_SESSION_ID: hookInput.session_id });
+  const own = await sessionGates(projectRoot, session, directory ?? noticeDirectory(environment));
+  if (event === "SessionStart") return resumedGates(own);
+  const gates = own.filter(({ gate }) => gate.answer);
   if (!gates.length) return null;
   const lines = [
     "The user answered these Prism user gates in the review browser.",
