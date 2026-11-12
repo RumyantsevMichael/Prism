@@ -8,6 +8,7 @@ import { useManagedStores } from "../workflow/record-store-remote.mjs";
 import { describeRecordStore } from "../workflow/record-store.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
 import {
+  APP_LOCK_STALE_MS,
   REVIEW_APP_PROTOCOL,
   lockBase,
   newCredential,
@@ -39,7 +40,7 @@ const IDLE_MS = 30 * 60 * 1000;
 const SWEEP_MS = 30 * 1000;
 const NONCE_MS = 2 * 60 * 1000;
 const LOCK_RENEW_MS = 5 * 1000;
-const LOCK_STALE_MS = 30 * 1000;
+const LOCK_STALE_MS = APP_LOCK_STALE_MS;
 const LOCK_TIMEOUT_MS = 1000;
 const OPEN_LEASE_MS = 10 * 1000;
 const STORAGE_DIRECTORY_LIMIT = 4;

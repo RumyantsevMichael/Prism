@@ -130,7 +130,7 @@ jobs:
           CODEX_HOME: ${{ runner.temp }}/codex-home
         run: |
           mkdir -p "$CODEX_HOME"
-          codex plugin marketplace add .
+          codex plugin marketplace add "$(node scripts/dev-marketplace.mjs "$RUNNER_TEMP/prism-dev-marketplace")"
           codex plugin add prism@prism
           codex plugin list
 

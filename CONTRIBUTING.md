@@ -55,15 +55,18 @@ A `--plugin-dir` plugin shadows an installed one of the same name for that sessi
 
 After editing a skill, run `/reload-plugins` to pick it up without restarting.
 
-Load the native Codex package through the repository marketplace:
+Load the native Codex package through a development marketplace that serves a copy of the working tree:
 
 ```bash
-codex plugin marketplace add .
+codex plugin marketplace add "$(node scripts/dev-marketplace.mjs)"
 codex plugin add prism@prism
 ```
 
+The repository's own marketplace files describe what users install, so they are not the way to load a working tree.
+The script copies the working tree without `.git`, `node_modules`, or built runtime archives into a temporary directory and prints its path.
+It copies rather than links, because Claude Code does not run the hooks of a plugin whose directory is a link.
+After package changes, run it again, then run `codex plugin add prism@prism` again and restart Codex.
 Codex `0.147.0` or later is required.
-Restart Codex after package changes when the installed copy does not refresh.
 
 ## Validation
 
@@ -75,7 +78,7 @@ npm run validate:sdm
 The Claude validator checks the manifests and parses every skill frontmatter block.
 `--strict` promotes unrecognized-field warnings to errors, which catches typos in field names.
 The SDM validator checks the supported version and selected structural conventions.
-CI also installs the native Codex package from an isolated temporary marketplace.
+CI also installs the native Codex package from an isolated development marketplace.
 Run both checks before opening a pull request.
 
 CI then calls a Prism record tool through real Claude Code and Codex CLIs, with a remote record store, and needs no model or API key:
@@ -252,21 +255,18 @@ ONNX Runtime stays pinned to `1.22.0` because the `1.30.0` package omits the Int
 `src/native-runtime/.npmrc` sets `install-links=true`, so npm copies the stub into `node_modules` instead of linking it, and the runtime archive contains a real directory.
 The smoke tests run the packaged Node helper without external executables.
 The MCP smoke test also checks native estimates, offline reuse, responsive discovery, and source changes.
-The release workflow builds and tests all five target platforms for the release pull request.
-It publishes immutable runtime bundles, verifies the default manifest, and commits that manifest to the release pull request.
-The same release mirrors the pinned model files, and the manifest's `modelMirror` points the runtime at them before it falls back to Hugging Face.
-No separate publication branch or manual manifest copy is required for a plugin release.
-The standalone runtime workflow still supports `codex/native-runtime-assets` and manual publication for diagnostics.
+The release workflow builds and tests all five target platforms for the release pull request, and publishes nothing then.
+After the merge it rebuilds the bundles from the release tag and uploads them, with the pinned model files, as assets of that release.
+Each release's package carries a manifest that names those assets, and its `modelMirror` points the runtime at the model files before it falls back to Hugging Face.
+No separate runtime release, publication branch, or manual manifest copy is involved.
+On `main`, `vendor/native-runtime/manifest.json` names the assets of the latest release, so development uses the latest released runtime.
 An empty bundle manifest leaves semantic preparation unavailable and preserves lexical results.
 Use a host-owned `PRISM_NATIVE_ASSET_MANIFEST` path for local archive tests.
 Project files cannot select that manifest.
 
-The runtime publication workflow also tests the default manifest on all five platforms after publication.
+Before a release becomes stable, CI runs the package's default manifest on all five platforms against the public assets.
 Those checks include semantic discovery, retained receipts, and managed-addition readiness without a manifest override.
-Only a successful run produces the `verified-native-manifest` artifact.
-The release workflow promotes that artifact only when the release pull request and `main` still match the tested source.
-It changes only `vendor/native-runtime/manifest.json` during promotion.
-Run `node scripts/native-build/mcp-smoke.mjs --default` to verify the promoted manifest locally.
+Run `node scripts/native-build/mcp-smoke.mjs --default` to verify the manifest on `main` locally.
 
 ## Dependencies
 
@@ -376,40 +376,60 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
 On each push to `main`, it opens or updates a release pull request.
 The pull request updates both native manifest versions and writes the `CHANGELOG.md` section.
 Release-please computes the next version from commits since the last release.
-CI prepares the runtime bundles and adds their verified manifest to that pull request.
-The `Release readiness` status reports the result of runtime preparation and package validation.
+It rebuilds the pull request on every push, so the pull request always contains `main`'s tip.
 
 `CHANGELOG.md` is generated from commit messages, so do not edit it by hand.
 Anything you want to appear there belongs in a commit subject.
 
+The `Release readiness` status checks the pull request and publishes nothing.
+It refuses a version that is already tagged and a branch that does not contain `main`'s tip.
+It builds and tests the runtime on all five platforms and runs package validation.
+It builds the release package and installs it in Claude Code and Codex through a catalog pinned to it, served from a local repository in place of GitHub.
 Wait for `Release readiness` to pass before you merge the release pull request.
-CI checks the merged package and its default runtime on all five platforms before it tags the commit and publishes a GitHub Release.
-The runtime source check permits version and manifest updates but rejects changes to runtime, server, build, or pinned model inputs.
-Failed checks prevent plugin publication.
-Plugin versions are published only after that merge.
 Release-please computes the version from commit prefixes, so the proposed version needs a review.
 Check that the proposed bump matches the actual behavior change before merging.
-Native asset prereleases can exist before the plugin release because CI must test their public download URLs.
 
-Release preparation never writes directly to `main` or merges the release pull request.
-Concurrent changes invalidate the older preparation run instead of overwriting newer source.
-To retry a failed preparation, dispatch the `Release` workflow on `main` or rerun all jobs in the failed run.
+Users install a package, not this repository.
+A package holds only what runs: both manifests, the marketplace files, the MCP definitions, `skills/`, `hooks/`, `dist/`, `bin/`, `vendor/`, `assets/`, the README, the license and notices, and the changelog.
+Each package is one commit on the `package` line, whose history holds only packages, and its tag is `prism--v<version>`.
+Both catalog entries on `main` pin the package tag and its commit, so a push to `main` changes nothing that users install.
+
+After the merge, the release workflow publishes in this order, and each step runs only when the steps before it passed:
+
+1. Release-please tags the merge commit `v<version>` and creates a draft GitHub Release.
+2. CI validates the tagged commit, rebuilds the runtime bundles from it on all five platforms, and uploads them and the model files to the draft.
+3. CI builds the package with a runtime manifest that names those assets, commits it to the `package` line, and tags it.
+4. On all five platforms, CI installs the package from GitHub in Claude Code and Codex through a catalog pinned to it and calls a Prism tool through each host.
+5. CI makes the Release a prerelease, which makes its assets public without making it the latest Release, and runs the package's default runtime from them on all five platforms.
+6. CI makes the Release stable and latest.
+7. CI commits `chore: install <version>` to `main`, which pins both catalog entries to the package and sets `main`'s runtime manifest to the release's.
+
+The Release becomes stable before the pin commit, because that commit starts release-please, which does not count a prerelease as a release.
+Release runs queue rather than overlap, so a push during a release is planned only after the release is stable.
+Users receive the version only at step 7: Claude Code because the version string changes, and Codex at its next `codex plugin marketplace upgrade`, because the catalog changes.
+
+If a step fails because of a flaky runner, rerun the failed jobs.
+A rerun uses the workflow and scripts of the tagged commit, so it cannot pick up a fix.
+To ship a fix, recover the version instead:
+
+1. Delete the draft or prerelease and its `v<version>` tag, and delete the `prism--v<version>` tag if step 3 created it.
+2. Revert the release commit on `main`.
+3. Merge the fix, and release-please opens the release pull request again for the same version.
+
+Nobody has the version until step 7, so recovery affects no user.
+A failed attempt can leave an untagged commit on the `package` line, which is harmless.
 
 To override the computed version, add a `Release-As: 1.0.0` footer to a commit on `main`.
 
 ### Release workflow setup
 
 The release workflow authenticates with a `RELEASE_PLEASE_TOKEN` repository secret, a fine-grained personal access token scoped to this repository with **Contents** and **Pull requests** set to read/write.
-It lets release pull requests and manifest promotion commits trigger normal pull request workflows.
+It lets the release pull request trigger normal pull request workflows, and it pushes the package line, the package tag, and the pin commit.
+A push with the token also starts the release workflow, so release-please runs after the pin commit and finds nothing to release.
 
 If that secret is missing, the workflow falls back to `GITHUB_TOKEN`.
 That fallback only works when **Allow GitHub Actions to create and approve pull requests** is enabled under Settings, Actions, General, Workflow permissions.
 With neither in place the job fails with `GitHub Actions is not permitted to create or approve pull requests`.
+A pin commit pushed with `GITHUB_TOKEN` starts no workflow, so the release pull request for later commits appears at the next push.
 The release workflow also invokes package validation directly, so token fallback does not bypass those checks.
-The workflow uses its scoped `GITHUB_TOKEN` to report the `Release readiness` status.
-
-Run the Claude validator and the Codex installation smoke test before merging a release pull request.
-CI runs both checks on every push.
-
-Users on the default install track `main` and pick up the change on their next marketplace update.
-Users who pinned a tag stay put until they re-add at the new one.
+The workflow uses its scoped `GITHUB_TOKEN` to report the `Release readiness` status and to change the Release.

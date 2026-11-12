@@ -51,6 +51,22 @@ const projectsPath = (directory) => path.join(directory, PROJECTS_FILE);
 // withFileLock locks `${path}.lock`, so this names review-app.lock.
 export const lockBase = (directory) => path.join(directory, LOCK_BASE);
 export const lockPath = (directory) => `${lockBase(directory)}.lock`;
+// The app renews its lock every few seconds; a lock older than this belongs to an app that stopped renewing it.
+export const APP_LOCK_STALE_MS = 30 * 1000;
+
+// Whether the app that a discovery file names is still running: its lock is renewed and its process exists.
+// A slow app that misses a request is alive, and only a dead one justifies serving a project elsewhere or starting another app.
+export async function appAlive(directory, discovery, now = Date.now()) {
+  if (!discovery) return false;
+  const info = await stat(lockPath(directory)).catch(() => null);
+  if (!info || now - info.mtimeMs > APP_LOCK_STALE_MS) return false;
+  try {
+    process.kill(discovery.pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
 
 export function projectId(projectRoot) {
   return createHash("sha256").update(projectRoot).digest("hex").slice(0, 16);

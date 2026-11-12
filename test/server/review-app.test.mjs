@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { spawn } from "node:child_process";
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { chmod, mkdtemp, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readdir, readFile, realpath, rm, stat, utimes, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -1202,4 +1202,87 @@ test("the project list keeps a gate count until a session registers the project 
   assert.equal(await gates(), 1, "a list within the keep time answers the kept count without reading the records");
   await registerRecent(directory, gated);
   assert.equal(await gates(), 2, "a session that registers the project renews its count at once");
+});
+
+// A listener that holds the discovered port and the app's lock like a running app, and answers signed health checks after a delay, or never.
+async function slowApp(context, directory, { delayMs = null, lockAgeMs = 0, pid = process.pid } = {}) {
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const controlToken = randomBytes(16).toString("hex");
+  const timers = new Set();
+  const listener = http.createServer((incoming, outgoing) => {
+    if (delayMs === null) return;
+    const [nonce] = String(incoming.headers["x-prism-control"] || "").split(".");
+    const timer = setTimeout(() => {
+      const body = JSON.stringify({ protocol: 1, pluginVersion: "999.0.0" });
+      outgoing.writeHead(200, { "Content-Type": "application/json", "X-Prism-Proof": proof(controlToken, nonce, body) });
+      outgoing.end(body);
+    }, delayMs);
+    timers.add(timer);
+  });
+  await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  const lock = path.join(directory, "review-app.lock");
+  await writeFile(lock, JSON.stringify({ pid }), { mode: 0o600 });
+  if (lockAgeMs) {
+    const old = new Date(Date.now() - lockAgeMs);
+    await utimes(lock, old, old);
+  }
+  await writeFile(path.join(directory, "review-app.json"), JSON.stringify({ protocol: 1, port: listener.address().port, controlToken, viewerToken: "b".repeat(32), pid }), { mode: 0o600 });
+  // The shared cleanup would wait on this listener and on this test process as the lock owner, so this goes first.
+  defer(context, async () => {
+    await rm(path.join(directory, "review-app.json"), { force: true });
+    await rm(lock, { force: true });
+    for (const timer of timers) clearTimeout(timer);
+    listener.closeAllConnections();
+    listener.close();
+  });
+}
+
+test("a session waits for a running app that answers late and launches no second app", async (context) => {
+  const directory = await appDirectory(context);
+  await slowApp(context, directory, { delayMs: 2500 });
+  let launches = 0;
+  const client = createReviewAppClient({ directory, launch: () => { launches += 1; return null; }, startTimeoutMs: 1000 });
+  defer(context, () => client.close());
+  await client.start();
+  assert.equal(launches, 0);
+});
+
+test("a session launches no second app while a running app stays silent, and says it is busy", async (context) => {
+  const directory = await appDirectory(context);
+  await slowApp(context, directory);
+  let launches = 0;
+  const client = createReviewAppClient({ directory, launch: () => { launches += 1; return null; }, startTimeoutMs: 1000, busyTimeoutMs: 300 });
+  defer(context, () => client.close());
+  await assert.rejects(client.start(), { busy: true, reachable: false, message: /running but too busy/ });
+  assert.equal(launches, 0);
+});
+
+test("a session replaces a silent app whose lock is no longer renewed", async (context) => {
+  const directory = await appDirectory(context);
+  await slowApp(context, directory, { lockAgeMs: 60 * 1000 });
+  let launches = 0;
+  const client = createReviewAppClient({ directory, launch: () => { launches += 1; return null; }, startTimeoutMs: 2500, busyTimeoutMs: 60 * 1000 });
+  defer(context, () => client.close());
+  const started = Date.now();
+  await assert.rejects(client.start(), { reachable: false, message: /did not start within/ });
+  assert.equal(launches, 1);
+  assert.ok(Date.now() - started < 8000, "a dead app gets no busy wait");
+});
+
+test("a session that fell back returns to the shared app once it answers", async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "comeback");
+  let launches = 0;
+  const launch = (options) => (launches += 1) === 1 ? null : launchReviewApp(options);
+  const review = await pool(context, { app: { directory, launch, startTimeoutMs: 500, retryMs: 0 } }).get(root, "task");
+  const fallback = new URL(await review.reviewUrl([]));
+  assert.ok(!fallback.pathname.includes("/p/"), "the first start falls back to the session's own server");
+  assert.ok(review.privateServer());
+  const shared = await eventually(async () => {
+    const url = new URL(await review.reviewUrl([]));
+    return url.pathname.includes("/p/") && url;
+  }, 20000);
+  assert.equal(review.privateServer(), null, "the agent's links no longer say the session alone serves the project");
+  assert.equal(JSON.parse((await request(new URL("api/index", shared))).body).projectRoot, root);
+  assert.equal((await request(new URL("api/index", fallback))).status, 200, "tabs on the session's own server keep working");
 });

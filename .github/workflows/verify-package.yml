@@ -1,0 +1,82 @@
+name: Verify release package
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        description: The release tag, whose scripts run the checks
+        required: true
+        type: string
+      package_ref:
+        description: The package tag
+        required: true
+        type: string
+      package_sha:
+        description: The package commit
+        required: true
+        type: string
+      phase:
+        description: draft installs the package from GitHub in both hosts; public runs its default runtime from the public assets
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: darwin-arm64
+          - os: macos-15-intel
+            platform: darwin-x64
+          - os: ubuntu-24.04
+            platform: linux-x64
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+          - os: windows-2025
+            platform: win32-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.16.0'
+      - name: Check out the package
+        run: |
+          git fetch --no-tags origin "refs/tags/${{ inputs.package_ref }}:refs/tags/${{ inputs.package_ref }}"
+          [ "$(git rev-parse "${{ inputs.package_ref }}^{commit}")" = "${{ inputs.package_sha }}" ] || { echo "::error::${{ inputs.package_ref }} does not name ${{ inputs.package_sha }}"; exit 1; }
+          git worktree add --detach "$RUNNER_TEMP/package" "${{ inputs.package_sha }}"
+
+      # The oldest supported Codex, as in validation, installs the package through a catalog pinned to it on GitHub.
+      - name: Install Claude Code and Codex
+        if: inputs.phase == 'draft'
+        run: npm install -g @anthropic-ai/claude-code @openai/codex@0.147.0
+      - name: Install the package from GitHub and call Prism through both hosts
+        if: inputs.phase == 'draft'
+        run: |
+          catalog=$(node scripts/release-package.mjs catalog "$RUNNER_TEMP/catalog" "$GITHUB_REPOSITORY" "${{ inputs.package_ref }}" "${{ inputs.package_sha }}")
+          if [ "${{ runner.os }}" = Windows ]; then
+            root="$(npm root -g)"
+            export CLAUDE_BIN="$root/@anthropic-ai/claude-code/bin/claude.exe"
+            export CODEX_BIN="$root/@openai/codex/bin/codex.js"
+          fi
+          node scripts/host-smoke.mjs --marketplace "$catalog" claude codex
+
+      # The package's own manifest names the public assets, so this is the runtime a user downloads.
+      - name: Verify default discovery and managed addition readiness from the public assets
+        if: inputs.phase == 'public'
+        run: |
+          mkdir -p "$RUNNER_TEMP/package/scripts/native-build"
+          cp scripts/native-build/mcp-smoke.mjs "$RUNNER_TEMP/package/scripts/native-build/"
+          node "$RUNNER_TEMP/package/scripts/native-build/mcp-smoke.mjs" --default
