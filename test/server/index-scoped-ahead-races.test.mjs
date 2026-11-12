@@ -1,0 +1,56 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { manifestPath, project } from "./fixtures/component-indexes.mjs";
+import { stagedRuntime, until } from "./fixtures/staged-runtime.mjs";
+
+// Races between a call that pauses an unrelated build and the queue that build runs in, for the index-preparation contract's clause 20.
+process.env.PLUGIN_DATA ||= mkdtempSync(path.join(os.tmpdir(), "prism-index-ahead-races-data-"));
+process.env.PRISM_NATIVE_ASSET_MANIFEST ||= manifestPath;
+const { searchRepositoryConcepts } = await import("../../dist/server/repository-intelligence/semantic-native-provider.mjs");
+
+const NET_FILES = ["packages/net/retry.ts", "packages/net/timeout.ts"];
+const APP_FILES = ["packages/app/client.ts"];
+const APP = { name: "app", identity: "root/app", folder: "packages/app" };
+const search = (root, runtime, paths) => searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...(paths ? { filters: { paths } } : {}) }, { runtime, waitMs: 0 });
+const runs = (control, files) => control.builds.filter((build) => build.files.join() === files.join()).length;
+const settled = (runtime, root) => until(async () => {
+  const status = await runtime.status(root);
+  return !(status.components ?? []).some((item) => ["waiting", "preparing"].includes(item.status)) && status;
+}, "The preparations did not settle.");
+
+// An unscoped search whose net build stops before it embeds timeout.ts, with app and the root component queued behind it.
+async function runningNet(t) {
+  const context = await project(t);
+  const staged = await stagedRuntime(context.storage);
+  staged.control.hold("packages/net/timeout.ts");
+  await search(context.root, staged.runtime);
+  await staged.control.reached("packages/net/timeout.ts");
+  return { ...context, ...staged };
+}
+
+test("a needed build that starts while a call checks for stored indexes is not queued again, and runs once", async (t) => {
+  const { root, runtime, control } = await runningNet(t);
+  const app = (await runtime.location(root, APP)).directory;
+  const published = runtime.published.bind(runtime);
+  let raced = false;
+  // The call's read of app's stored index lasts until the net build ended and the queue started app.
+  runtime.published = async (directory) => {
+    if (directory === app && !raced) {
+      raced = true;
+      control.release("packages/net/timeout.ts");
+      await until(() => runtime.running?.directory === app, "The queue did not start app.");
+    }
+    return published(directory);
+  };
+  await search(root, runtime, ["packages/app"]);
+  assert.ok(raced, "the call read app's stored index");
+  assert.equal(runtime.running?.directory, app);
+  assert.equal(runtime.queue.some((job) => job.directory === app), false, "the running app build is not queued again");
+  runtime.published = published;
+  await settled(runtime, root);
+  assert.equal(runs(control, APP_FILES), 1, "the app build ran once");
+  assert.equal(runs(control, NET_FILES), 1);
+});

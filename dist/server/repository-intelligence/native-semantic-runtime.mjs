@@ -468,8 +468,10 @@ class NativeSemanticRuntime {
     }
     for (const job of new Set(jobs)) if (job.reload && job.status === "waiting" && !job.retry) this.reload(job);
     const last = (job) => job.component?.folder === "" ? 1 : 0;
-    const needed = [...new Set(jobs.filter((job) => job.status === "waiting" && !job.reload))].sort((left, right) => last(left) - last(right));
+    const waiting = (job) => job.status === "waiting" && !job.reload && job !== this.running;
+    let needed = [...new Set(jobs.filter(waiting))].sort((left, right) => last(left) - last(right));
     const running = this.running, missing = running?.component && !jobs.includes(running) && await this.unindexed(needed);
+    needed = needed.filter(waiting);
     const paused = missing && this.running === running && running.pause && running.requestedAttempt === running.attempt && running.pausedAttempt !== running.attempt ? running : void 0;
     if (paused) this.pauseJob(paused);
     this.queue = [...needed, ...paused ? [paused] : [], ...this.queue.filter((job) => !needed.includes(job) && job !== paused)];

@@ -427,8 +427,11 @@ export class NativeSemanticRuntime implements ComponentRuntime {
     // sent its build request yet checks assets, waits for a lock, or copies files, which is short or shared work, so it is not paused.
     for (const job of new Set(jobs)) if (job.reload && job.status === "waiting" && !job.retry) this.reload(job);
     const last = (job: Job) => job.component?.folder === "" ? 1 : 0;
-    const needed = [...new Set(jobs.filter(job => job.status === "waiting" && !job.reload))].sort((left, right) => last(left) - last(right));
+    const waiting = (job: Job) => job.status === "waiting" && !job.reload && job !== this.running;
+    let needed = [...new Set(jobs.filter(waiting))].sort((left, right) => last(left) - last(right));
     const running = this.running, missing = running?.component && !jobs.includes(running) && await this.unindexed(needed);
+    // A needed build that started or ended while the stored indexes were read keeps its place, so it is never queued to run again.
+    needed = needed.filter(waiting);
     const paused = missing && this.running === running && running!.pause && running!.requestedAttempt === running!.attempt && running!.pausedAttempt !== running!.attempt ? running! : undefined;
     if (paused) this.pauseJob(paused);
     this.queue = [...needed, ...(paused ? [paused] : []), ...this.queue.filter(job => !needed.includes(job) && job !== paused)];
