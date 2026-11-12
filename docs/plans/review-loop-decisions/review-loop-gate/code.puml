@@ -1,0 +1,12 @@
+@startuml
+title Ask the review loop decision - code
+component "review-ledger.mts\nassertReviewMayContinue, loop gate summary, return_to_design" as Ledger
+component "state.mjs\nupdateCoordinationState ask" as State
+component "verification.mjs\nreportContractDefects" as Verification
+component "initiative.mjs\nreport_contract_defects" as Initiative
+component "conservation-tools.mts\nupdate_review description" as Tools
+Ledger ..> State : records or names the gate
+Ledger ..> Verification : blocks the slice
+Verification ..> Initiative : contract defects
+Tools ..> Ledger : schemas
+@enduml

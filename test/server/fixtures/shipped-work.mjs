@@ -5,6 +5,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { isolatedEnv } from "./isolated-env.mjs";
+import { defer } from "./teardown.mjs";
 
 // Projects with shipped and finished initiatives, built from records written directly and driven through Prism's MCP server,
 // because a real completion gate needs verification and review evidence that these tests do not build.
@@ -26,7 +27,7 @@ export const finished = () => ({
 
 export async function project(context) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-shipped-")));
-  context.after(() => rm(root, { recursive: true, force: true }));
+  defer(context, () => rm(root, { recursive: true, force: true }));
   await mkdir(path.join(root, ".prism"), { recursive: true });
   await mkdir(path.join(root, "docs/requirements"), { recursive: true });
   await writeFile(path.join(root, ".prism/workflow.md"), WORKFLOW);
@@ -78,7 +79,7 @@ export async function mcp(context, root) {
       waiting.delete(message.id);
     }
   });
-  context.after(async () => {
+  defer(context, async () => {
     if (child.exitCode === null) {
       child.stdin.end();
       await new Promise((resolve) => child.once("exit", resolve));

@@ -1,3 +1,5 @@
+# Every text file checks out with LF on every platform, so skills, tests, and fixtures read the same on Windows as elsewhere.
+* text=auto eol=lf
 vendor/plantuml/*.js binary
 vendor/plantuml/LICENSE text eol=lf
 # Preserve upstream license formatting.

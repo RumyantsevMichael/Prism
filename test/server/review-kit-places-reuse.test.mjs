@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 // The places screens draw their reusable pieces with the kit: no screen outside kit/ writes or styles a kit element's inner parts,
 // and the kit's catalog shows each kit class those screens use.
 
-const PUBLIC = path.join(path.dirname(new URL(import.meta.url).pathname), "../../src/server/review/public");
+const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../src/server/review/public");
 
 async function files(folder) {
   const found = [];
@@ -19,7 +20,7 @@ async function files(folder) {
 }
 
 test("no screen outside the kit writes or styles a kit element's inner parts", async () => {
-  const outside = (await files(PUBLIC)).filter((file) => !path.relative(PUBLIC, file).startsWith("kit/"));
+  const outside = (await files(PUBLIC)).filter((file) => !path.relative(PUBLIC, file).split(path.sep).join("/").startsWith("kit/"));
   const inner = ["prism-inbox-tile", "prism-breadcrumbs-item", "prism-breadcrumbs-separator"];
   for (const file of outside) {
     const text = await readFile(file, "utf8");

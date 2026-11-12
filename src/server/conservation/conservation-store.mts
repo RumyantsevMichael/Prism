@@ -15,7 +15,7 @@ import type { NativeSource, SourceSnapshot, SourceFile, Diagnostic } from "../re
 export const digest = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 // A snapshot follows the ignore rules even for tracked files, so force-adding an ignored workflow artifact does not change the source that evidence binds.
 async function trackedIgnored(root: string) {
-  try { return (await promisify(execFile)("git", ["ls-files", "-z", "--cached", "--ignored", "--exclude-standard"], { cwd: root, maxBuffer: 64 * 1024 * 1024 })).stdout.split("\0").filter(Boolean); }
+  try { return (await promisify(execFile)("git", ["ls-files", "-z", "--cached", "--ignored", "--exclude-standard"], { cwd: root, maxBuffer: 64 * 1024 * 1024, windowsHide: true })).stdout.split("\0").filter(Boolean); }
   catch { return []; }
 }
 

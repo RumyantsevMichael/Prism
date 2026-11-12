@@ -97,11 +97,20 @@ export async function privateDirectory(directory: string): Promise<string> {
   }
   await mkdir(directory, { mode: 0o700 }).catch(error => { if (error.code !== "EEXIST") throw error; });
   const info = await lstat(directory);
-  if (info.isSymbolicLink() || !info.isDirectory() || await realpath(directory) !== path.resolve(directory)) throw semanticError("invalid_path", "Private storage must not follow a symlink.");
+  if (info.isSymbolicLink() || !info.isDirectory() || !(await ownRealPath(directory))) throw semanticError("invalid_path", "Private storage must not follow a symlink.");
   await chmod(directory, 0o700);
   return directory;
 }
 
+// Whether a folder's real path is the path it was named by. Windows names a folder by its short 8.3 name (RUNNER~1) or in another letter
+// case as readily as by its own name, and resolving either is not following a link, so there the real path is compared with the real path
+// of the parent, whose every ancestor the caller has already checked for links, joined with the folder's name, ignoring letter case.
+async function ownRealPath(directory: string): Promise<boolean> {
+  const real = await realpath(directory);
+  if (process.platform !== "win32") return real === path.resolve(directory);
+  const named = path.join(await realpath(path.dirname(path.resolve(directory))), path.basename(directory));
+  return real.toLowerCase() === named.toLowerCase();
+}
 
 
 async function readJson<T>(file: string): Promise<T> { return JSON.parse((await regularBytes(file)).toString("utf8")); }

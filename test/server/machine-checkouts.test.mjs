@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { closeServers, cloneOf, configure, git, prismServer, repository, snapshot, storeFolder } from "./fixtures/repository-checkouts.mjs";
+import { defer } from "./fixtures/teardown.mjs";
 
 // Git runs with a private home and configuration, a fixed identity, and only local repositories; each test has its own Prism application folder.
 const environment = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-machine-checkouts-env-")));
@@ -19,7 +20,7 @@ const ok = (response) => { assert.equal(response.error, undefined, response.erro
 
 async function folder(context) {
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-machine-checkouts-")));
-  context.after(async () => { await closeServers(); await rm(parent, { recursive: true, force: true }); });
+  defer(context, async () => { await closeServers(); await rm(parent, { recursive: true, force: true }); });
   return { parent, app: path.join(parent, "app"), store: await storeFolder(parent) };
 }
 
@@ -95,8 +96,15 @@ test("a listed path that no longer holds a checkout of its repository leaves the
   const removed = await cloneOf(api, place.parent, "api-removed", {});
   const renamed = await cloneOf(api, place.parent, "api-renamed", {});
   const moved = await cloneOf(api, place.parent, "api-moved", {});
-  for (const checkout of [removed, renamed, moved]) ok(await (await prismServer(context, checkout, { appFolder: place.app, hostRoot: false })).call("get_roadmap"));
+  const servers = [];
+  for (const checkout of [removed, renamed, moved]) {
+    const server = await prismServer(context, checkout, { appFolder: place.app, hostRoot: false });
+    servers.push(server);
+    ok(await server.call("get_roadmap"));
+  }
   assert.equal((await entries(place)).length, 3);
+  // Windows cannot remove a folder that a running server works in, so the removed checkout's server ends first.
+  await servers[0].close();
   await rm(removed, { recursive: true, force: true });
   // This folder now names its repository differently, as a checkout that changed its Repository line would.
   await configure(renamed, { repository: "api-two" });

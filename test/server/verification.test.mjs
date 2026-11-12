@@ -327,7 +327,7 @@ test("a review stops for the user after two waves with findings, and a finding t
   await assert.rejects(review(coordinator, [{ op: "start_wave", id: "w3", mode: "implementation-review", lanes: lanes("w3"), afterGate: first }]), /that the user answered/, "an unanswered gate does not let the loop go on");
   await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: first, choice: "continue" });
   await review(coordinator, [{ op: "start_wave", id: "w3", mode: "implementation-review", lanes: lanes("w3"), afterGate: first }]);
-  await assert.rejects(review(coordinator, [{ op: "start_wave", id: "w4", mode: "implementation-review", lanes: lanes("w4"), afterGate: first }]), /its own answered decision gate/);
+  await assert.rejects(review(coordinator, [{ op: "start_wave", id: "w4", mode: "implementation-review", lanes: lanes("w4"), afterGate: first }]), (error) => error.code === "gate_blocked" && error.problems?.[0]?.code === "review_loop_limit" && /asked the review loop decision gate/.test(error.message), "a used gate asks the review loop decision again");
   await review(reviewer("w3"), [{ op: "open_finding", lane: "correctness", localId: "C6", title: "Clause 6 drops attributed files", severity: "high", affectedPath: "source.mjs", evidence: "Any code meeting clause 6 misses this case.", conditionToClose: "The contract handles attributed files.", clause: "Contract 6" }]);
   const second = await ask();
   await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: second, choice: "continue" });

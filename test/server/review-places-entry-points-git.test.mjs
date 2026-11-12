@@ -4,11 +4,11 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // How Touched by my work and Changed this week use Git: recorded values never reach Git as options, merges count, and a failing Git says so.
 
-const DIST = process.env.PRISM_ENTRY_POINTS_DIST ?? path.join(path.dirname(new URL(import.meta.url).pathname), "../../dist");
+const DIST = process.env.PRISM_ENTRY_POINTS_DIST ?? path.join(path.dirname(fileURLToPath(import.meta.url)), "../../dist");
 const load = (relative) => import(pathToFileURL(path.join(DIST, relative)).href);
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -99,7 +99,8 @@ test("clause 62: Changed this week counts a record file a merge of this week bro
   assert.ok(Math.abs(Date.parse(result.records[0].at) - (Date.now() - DAY)) < 60 * 60 * 1000, "the merge's time");
 });
 
-test("clause 63: a Git that runs but fails after finding a repository with a commit is reported as Git that could not be run", { timeout: 60000 }, async (context) => {
+// The failing Git is a shell script on PATH, which Node does not run on Windows.
+test("clause 63: a Git that runs but fails after finding a repository with a commit is reported as Git that could not be run", { timeout: 60000, skip: process.platform === "win32" && "the failing Git is a shell script on PATH" }, async (context) => {
   const root = await scratch(context);
   const project = path.join(root, "project");
   await mkdir(project);

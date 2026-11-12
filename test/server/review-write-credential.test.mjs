@@ -173,7 +173,7 @@ test("the shared app grants a write session through the presenting process and r
   }
   if (process.platform !== "win32") {
     for (const entry of await readdir(directory)) {
-      if (/write|session/i.test(entry)) assert.equal((await stat(path.join(directory, entry))).mode & 0o077, 0, `${entry} is private to its user`);
+      if (process.platform !== "win32" && /write|session/i.test(entry)) assert.equal((await stat(path.join(directory, entry))).mode & 0o077, 0, `${entry} is private to its user`);
     }
   }
   const pool = createReviewServerPool({ app: { directory, openBrowser: () => true } });
@@ -218,7 +218,9 @@ test("a write session survives a handoff of the shared app and ends with a cold 
   const kept = await continuation(base, headers, "auto");
   assert.equal(kept.status, 200, `a tab keeps its write session across a handoff: ${kept.text}`);
   const discovery = JSON.parse(await readFile(path.join(directory, "review-app.json"), "utf8"));
-  process.kill(discovery.pid);
+  // Windows ends a process at once without its shutdown, so there the app stops through its shutdown route without a handoff, which also starts it cold.
+  if (process.platform === "win32") assert.equal((await control(discovery, "shutdown", { handoff: false })).status, 200);
+  else process.kill(discovery.pid);
   await eventually(lockGone);
   const restarted = await (await pool.get(root, "task")).reviewUrl([]);
   const coldBase = projectBase(restarted);

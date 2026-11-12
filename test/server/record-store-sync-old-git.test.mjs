@@ -3,7 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 
 // The store sync supports Git from the minimum the user guide states, so its checks hold on a Git that lacks what later releases added.
 const environment = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-sync-old-git-env-")));
@@ -14,7 +14,7 @@ Object.assign(process.env, {
 });
 const SYNC = new URL("../../dist/server/workflow/record-store-sync.mjs", import.meta.url).href;
 const RECORD_STORE = new URL("../../dist/server/workflow/record-store.mjs", import.meta.url).href;
-test.after(() => rm(environment, { recursive: true, force: true }));
+nodeTest.after(() => rm(environment, { recursive: true, force: true }));
 
 const git = (cwd, args, input) => execFileSync("git", ["-C", cwd, ...args], { input, stdio: ["pipe", "pipe", "pipe"] }).toString().trim();
 
@@ -23,17 +23,20 @@ const git = (cwd, args, input) => execFileSync("git", ["-C", cwd, ...args], { in
 // the check of a tree entry name over 4096 bytes, which Git before 2.43 does not have, and any further checks that IGNORE_CHECKS lists, as an older release lacks them.
 // It also walks trees of any depth, as Git before 2.43, which has no core.maxTreeDepth, does, whatever limit the sync sets.
 // index-pack stops at a check whose name its Git does not know, and a Git that does not know a check lacks it already, so the wrapper leaves out only the checks this machine's Git knows.
-const realGit = execFileSync("sh", ["-c", "command -v git"]).toString().trim();
+// Node finds only an .exe for "git" on Windows, never this bash wrapper, so these tests run only on POSIX.
+const POSIX = process.platform !== "win32";
+const test = POSIX ? nodeTest : (name) => nodeTest(name, { skip: "the older Git is a bash wrapper on PATH, which Node does not run on Windows" }, () => {});
+const realGit = POSIX ? execFileSync("sh", ["-c", "command -v git"]).toString().trim() : "git";
 const LEFT_OUT = ["gitattributesLineLength", "gitattributesLarge", "gitattributesMissing", "gitattributesBlob", "gitmodulesUrl", "largePathname"];
 const probe = path.join(environment, "probe.git");
-execFileSync(realGit, ["init", "-q", "--bare", probe], { stdio: "pipe" });
+if (POSIX) execFileSync(realGit, ["init", "-q", "--bare", probe], { stdio: "pipe" });
 const knownChecks = new Map();
 // Whether this machine's Git knows a check by name: index-pack reads its --strict list before its input, so an empty input fails on any other ground once every name is known.
 function knowsCheck(id) {
   if (!knownChecks.has(id)) knownChecks.set(id, !spawnSync(realGit, ["-C", probe, "index-pack", `--strict=${id}=ignore`, "--stdin"], { input: "", encoding: "utf8" }).stderr.includes("Unhandled message id"));
   return knownChecks.get(id);
 }
-const leftOut = LEFT_OUT.filter(knowsCheck).map((id) => `${id}=ignore`).join(",");
+const leftOut = !POSIX ? "" : LEFT_OUT.filter(knowsCheck).map((id) => `${id}=ignore`).join(",");
 const wrapper = path.join(environment, "bin", "git");
 await mkdir(path.dirname(wrapper), { recursive: true });
 await writeFile(wrapper, `#!/bin/bash

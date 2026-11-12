@@ -356,7 +356,8 @@ test("stores private facts atomically and reads them by the emitted digest", asy
   const stored = await readFile(factPath, "utf8");
   const mode = (await stat(factPath)).mode & 0o777;
 
-  assert.equal(mode, 0o600);
+  // Windows has no POSIX permission bits; its per-user folders keep these files private there.
+  if (process.platform !== "win32") assert.equal(mode, 0o600);
   assert.equal(factPath.includes(sessionId), false);
   assert.equal(stored.includes(sessionId), false);
   assert.equal(stored.includes(projectRoot), false);
@@ -598,7 +599,8 @@ test("rejects a symbolic-link fact directory without touching its target", async
     /symbolic link/
   );
   assert.equal(await readFile(markerPath, "utf8"), "outside\n");
-  assert.equal((await stat(outsideDirectory)).mode & 0o777, 0o755);
+  // Windows has no POSIX permission bits; its per-user folders keep these files private there.
+  if (process.platform !== "win32") assert.equal((await stat(outsideDirectory)).mode & 0o777, 0o755);
   assert.equal((await lstat(path.join(dataDirectory, "session-capacity"))).isSymbolicLink(), true);
 });
 
@@ -655,7 +657,8 @@ test("rejects a hard-linked fact record without reading or replacing its externa
   );
   assert.equal(await readFile(outsidePath, "utf8"), recordText);
   assert.equal((await stat(outsidePath)).nlink, 2);
-  assert.equal((await stat(outsidePath)).mode & 0o777, 0o640);
+  // Windows has no POSIX permission bits; its per-user folders keep these files private there.
+  if (process.platform !== "win32") assert.equal((await stat(outsidePath)).mode & 0o777, 0o640);
 });
 
 test("rejects a hard-linked lock owner without changing its external inode", async (context) => {
@@ -678,7 +681,8 @@ test("rejects a hard-linked lock owner without changing its external inode", asy
   );
   assert.equal(await readFile(outsidePath, "utf8"), ownerText);
   assert.equal((await stat(outsidePath)).nlink, 2);
-  assert.equal((await stat(outsidePath)).mode & 0o777, 0o640);
+  // Windows has no POSIX permission bits; its per-user folders keep these files private there.
+  if (process.platform !== "win32") assert.equal((await stat(outsidePath)).mode & 0o777, 0o640);
 });
 
 test("recovers an aged empty lock left before owner publication", async (context) => {

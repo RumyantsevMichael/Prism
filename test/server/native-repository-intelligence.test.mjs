@@ -472,7 +472,8 @@ test("runs an action through the native provider helper", async (context) => {
   assert.equal(result, "native");
 });
 
-test("component sources that share a repository scan list the repository once until it is refreshed", async (t) => {
+// The counting Git is a shell script, which Windows does not start, and the shared scan it counts does not depend on the platform.
+test("component sources that share a repository scan list the repository once until it is refreshed", { skip: process.platform === "win32" && "the counting Git is a shell script" }, async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "prism-shared-scan-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(path.join(root, "a"));

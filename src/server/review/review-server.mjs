@@ -3,6 +3,7 @@ import { arrangeGroups, GROUP_LIMIT, groupNameOf, joinGroup } from "./public/vie
 import { randomBytes } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PLUGIN_ROOT } from "../plugin-root.mjs";
@@ -19,9 +20,10 @@ import { entityContext, entityExists, forgetWorkspace, loadClaims, loadEntity, l
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
-import { readPreferences, writePreferences } from "./review-preferences.mjs";
+import { readStoredPreferences, writePreferences } from "./review-preferences.mjs";
 import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
 import { createViewerHub, openEventStream, writeEvent } from "./viewer-hub.mjs";
+import { createCachedValue } from "./cached-value.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -108,28 +110,32 @@ async function walkArtifacts(projectRoot, relativeRoot, results) {
 }
 
 const SOURCE_SIZE_LIMIT = 512 * 1024;
-const SOURCE_CACHE_MS = 2000;
+const SOURCE_CHECKS = 8;
+const LISTING_MIN_MS = 5000;
+const LISTING_FACTOR = 5;
 const SECRET_NAME = /^(\.env(\..*)?|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.npmrc|\.pypirc|\.netrc|credentials(\.json)?)$|\.(pem|key|p12|pfx|jks|keystore|kdbx|gpg|asc)$/i;
 const BINARY_EXTENSION = /\.(png|jpe?g|gif|webp|ico|bmp|pdf|zip|gz|tgz|bz2|xz|7z|rar|jar|war|class|pyc|so|dylib|dll|exe|wasm|woff2?|ttf|otf|eot|mp3|mp4|mov|avi|sqlite|db)$/i;
-const sourceCache = new Map();
 
 function gitListFiles(projectRoot) {
   return new Promise((resolve) => {
-    execFile("git", ["-C", projectRoot, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { maxBuffer: 64 * 1024 * 1024 }, (error, stdout) => {
+    execFile("git", ["-C", projectRoot, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (error, stdout) => {
       resolve(error ? [] : stdout.split("\0").filter(Boolean));
     });
   });
 }
 
 // Source files are shown read-only: tracked or unignored files only, without secrets, binaries, or very large files.
+// A few file checks run at once, which shortens the listing on a file system where each check waits, such as a Windows drive under WSL.
 export async function listSourceFiles(projectRoot) {
-  const hit = sourceCache.get(projectRoot);
-  if (hit && Date.now() - hit.at < SOURCE_CACHE_MS) return hit.value;
-  const value = (async () => {
-    const files = [];
-    for (const file of await gitListFiles(projectRoot)) {
-      const name = path.posix.basename(file);
-      if (SECRET_NAME.test(name) || BINARY_EXTENSION.test(name)) continue;
+  const candidates = (await gitListFiles(projectRoot)).filter((file) => {
+    const name = path.posix.basename(file);
+    return !SECRET_NAME.test(name) && !BINARY_EXTENSION.test(name);
+  });
+  const files = [];
+  let next = 0;
+  const check = async () => {
+    while (next < candidates.length) {
+      const file = candidates[next++];
       try {
         const metadata = await stat(path.join(projectRoot, file));
         if (metadata.isFile() && metadata.size <= SOURCE_SIZE_LIMIT) files.push(file);
@@ -137,9 +143,38 @@ export async function listSourceFiles(projectRoot) {
         // A file deleted after git listed it is skipped.
       }
     }
-    return files.sort();
-  })();
-  sourceCache.set(projectRoot, { at: Date.now(), value });
+  };
+  await Promise.all(Array.from({ length: SOURCE_CHECKS }, check));
+  return files.sort();
+}
+
+// The review page polls the project's listing every few seconds, so the server answers from its last listing and renews it behind,
+// at most as often as five times the time a listing took, so a project whose listing is slow is not listed again and again.
+const listings = new Map();
+function reviewListing(projectRoot) {
+  let listing = listings.get(projectRoot);
+  if (!listing) {
+    listing = createCachedValue(async () => {
+      const [artifacts, sources] = await Promise.all([listArtifacts(projectRoot), listSourceFiles(projectRoot)]);
+      return { artifacts, sources };
+    }, { ttlMs: (ms) => Math.max(LISTING_MIN_MS, LISTING_FACTOR * ms) });
+    listings.set(projectRoot, listing);
+  }
+  return listing;
+}
+
+// A wanted file whose presence on disk disagrees with the kept listing, such as one an agent has just written, moved, or deleted, lists the project again,
+// so a few checked files keep the listing honest without listing the whole project on every request.
+async function listedFiles(projectRoot, wanted = []) {
+  const listing = reviewListing(projectRoot);
+  let value = await listing.get();
+  const files = wanted.filter((file) => typeof file === "string" && file !== "attention" && !parseEntityRef(file));
+  const listed = (file) => value.artifacts.includes(file) || value.sources.includes(file);
+  const present = await Promise.all(files.map((file) => stat(path.join(projectRoot, file)).then((info) => info.isFile(), () => false)));
+  if (files.some((file, index) => listed(file) !== present[index])) {
+    listing.invalidate();
+    value = await listing.get();
+  }
   return value;
 }
 
@@ -402,10 +437,12 @@ export function publicAsset(route) {
 
 export function openBrowser(url) {
   const platform = process.platform;
-  const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open";
-  const args = platform === "win32" ? ["/c", "start", "", url] : [url];
+  // cmd.exe's start would read an & in the URL's query as a second command, so Windows opens the URL through the shell's URL handler.
+  const command = platform === "darwin" ? "open" : platform === "win32" ? "rundll32" : "xdg-open";
+  const args = platform === "win32" ? ["url.dll,FileProtocolHandler", url] : [url];
   try {
-    const child = spawn(command, args, { detached: true, stdio: "ignore" });
+    // A browser that the opener starts inherits its working folder, so it starts in the home folder and never keeps a project folder busy, which Windows would refuse to remove or rename.
+    const child = spawn(command, args, { cwd: homedir(), detached: true, stdio: "ignore", windowsHide: true });
     child.on("error", () => {});
     child.unref();
     return true;
@@ -644,8 +681,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     return count;
   }
 
-  async function reviewableFiles() {
-    return new Set([...await listArtifacts(projectRoot), ...await listSourceFiles(projectRoot)]);
+  async function reviewableFiles(wanted = []) {
+    const { artifacts, sources } = await listedFiles(projectRoot, wanted);
+    return new Set([...artifacts, ...sources]);
   }
 
   async function assertAvailable(tabs, availableArtifacts) {
@@ -668,6 +706,15 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   // Reading the session first lets moved records' tabs follow them, so every reader sees the records where they now live.
+  // Reads and changes of the session run in the order they arrive, so a page that reloads right after a change reads that change,
+  // however long the file listing that each of them waits on takes, as it does on a slow disk.
+  let sessionWork = Promise.resolve();
+  function inSessionOrder(task) {
+    const run = sessionWork.then(task);
+    sessionWork = run.catch(() => {});
+    return run;
+  }
+
   async function currentSession() {
     return followMovedRecords(await reviewableFiles());
   }
@@ -700,7 +747,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     if (Object.hasOwn(request, "agentTabs")) body.agentTabs = [...new Set(normalizeTabs(request.agentTabs).map(follow))];
     const requestedTabs = body.openTabs;
     // A tab that is already open may name a file that is gone, so the page can keep it open and offer to close it.
-    await assertAvailable(requestedTabs.filter((tab) => !session.openTabs.includes(tab)), available);
+    const added = requestedTabs.filter((tab) => !session.openTabs.includes(tab));
+    await assertAvailable(added, added.length ? await reviewableFiles(added) : available);
     let nextActiveTab;
     if (Object.hasOwn(body, "activeTab")) {
       if (body.activeTab !== null && (typeof body.activeTab !== "string" || !requestedTabs.includes(body.activeTab))) {
@@ -746,7 +794,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   async function presentTabs(tabs, { group } = {}) {
     const requestedTabs = normalizeTabs(tabs);
     const groupName = group === undefined || group === null ? null : groupNameOf(group);
-    const available = await reviewableFiles();
+    const available = await reviewableFiles(requestedTabs);
     await assertAvailable(requestedTabs, available);
     await followMovedRecords(available);
     if (requestedTabs.length === 0) {
@@ -793,7 +841,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       if (asset) await serveFile(response, asset.file, asset.type);
       else send(response, 404, "Not found");
     } else if (route === "/api/preferences" && request.method === "GET") {
-      send(response, 200, JSON.stringify(await readPreferences()), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify(await readStoredPreferences()), "application/json; charset=utf-8");
     } else if (route === "/api/preferences" && request.method === "PUT") {
       if (!fromPage(request)) {
         send(response, 403, "Preferences must come from the review page as JSON.");
@@ -832,7 +880,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         sendJson(response, 404, { code: "stream_gone", message: "The event stream closed; join the stream that replaced it." });
       }
     } else if (route === "/api/index") {
-      const artifacts = await listArtifacts(projectRoot), sources = await listSourceFiles(projectRoot);
+      const { artifacts, sources } = await listedFiles(projectRoot, session.openTabs);
       const available = new Set([...artifacts, ...sources]);
       const snapshot = await followMovedRecords(available);
       const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref) => entityExists(projectRoot, ref));
@@ -845,10 +893,10 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       if (conflict) send(response, 200, JSON.stringify(conflict), "application/json; charset=utf-8");
       else send(response, 404, "No saved conflict has that name.");
     } else if (route === "/api/session" && request.method === "GET") {
-      send(response, 200, JSON.stringify(await currentSession()), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify(await inSessionOrder(currentSession)), "application/json; charset=utf-8");
     } else if (route === "/api/session" && request.method === "PUT") {
       const body = await readJson(request);
-      send(response, 200, JSON.stringify(await updateSession(body)), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify(await inSessionOrder(() => updateSession(body))), "application/json; charset=utf-8");
     } else if (route === "/api/actions" && request.method === "GET") {
       try {
         const listed = await listActions({ projectRoot, target: url.searchParams.get("target"), indexer });
@@ -940,7 +988,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       await resolveProjectFile(projectRoot, artifactPath).catch((error) => {
         if (error.code !== "ENOENT") throw error;
       });
-      if (!(await listArtifacts(projectRoot)).includes(artifactPath) && !(await listSourceFiles(projectRoot)).includes(artifactPath)) {
+      const { artifacts, sources } = await listedFiles(projectRoot, [artifactPath]);
+      if (!artifacts.includes(artifactPath) && !sources.includes(artifactPath)) {
         send(response, 404, "The file is not available for review.");
         return;
       }

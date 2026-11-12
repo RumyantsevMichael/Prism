@@ -13,7 +13,7 @@ import { isManagedRecordFile, keyOfPath, recordPath, sliceDocumentFolder } from 
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 async function trackedIgnored(root) {
   try {
-    return (await promisify(execFile)("git", ["ls-files", "-z", "--cached", "--ignored", "--exclude-standard"], { cwd: root, maxBuffer: 64 * 1024 * 1024 })).stdout.split("\0").filter(Boolean);
+    return (await promisify(execFile)("git", ["ls-files", "-z", "--cached", "--ignored", "--exclude-standard"], { cwd: root, maxBuffer: 64 * 1024 * 1024, windowsHide: true })).stdout.split("\0").filter(Boolean);
   } catch {
     return [];
   }

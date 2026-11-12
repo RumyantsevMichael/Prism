@@ -8,7 +8,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { ROOT } from "./project.mjs";
 import { loadPlaywright, THEMES } from "./layout-audit.mjs";
@@ -427,7 +427,7 @@ async function startDemo(parent) {
   await mkdir(appDirectory, { mode: 0o700 });
   const projectRoot = path.join(parent, "demo");
   execFileSync(process.execPath, [path.join(ROOT, "scripts/review-demo/seed.mjs"), projectRoot], { stdio: "ignore" });
-  const { startStandaloneReview } = await import(path.join(ROOT, "dist/server/review/review-server-pool.mjs"));
+  const { startStandaloneReview } = await import(pathToFileURL(path.join(ROOT, "dist/server/review/review-server-pool.mjs")).href);
   const env = { ...process.env, PRISM_REVIEW_APP_DIR: appDirectory, PLUGIN_DATA: path.join(parent, "demo-data") };
   delete env.PRISM_REVIEW_APP;
   const review = await startStandaloneReview({ projectRoot, env, openBrowser: async () => false });

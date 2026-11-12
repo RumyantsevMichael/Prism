@@ -374,3 +374,17 @@ test("broadcasts session changes to every connected viewer page", async (context
     }
   }
 });
+
+test("a file written after the project was listed is served at once, and the index lists it", async (context) => {
+  const projectRoot = await fixture(context);
+  const review = await startReviewServer({ projectRoot });
+  try {
+    assert.deepEqual((await (await fetchReview(`${review.baseUrl}/api/index`)).json()).artifacts, ["docs/roadmap.md", "docs/roadmap.puml"]);
+    await writeFile(path.join(projectRoot, "docs", "later.md"), "# Later\n");
+    assert.equal((await fetchReview(`${review.baseUrl}/api/artifact?path=docs%2Flater.md`)).status, 200, "a requested file the kept listing lacks lists the project again");
+    assert.ok((await (await fetchReview(`${review.baseUrl}/api/index`)).json()).artifacts.includes("docs/later.md"));
+    assert.equal((await fetchReview(`${review.baseUrl}/api/artifact?path=docs%2Fmissing.md`)).status, 404);
+  } finally {
+    await review.close();
+  }
+});
