@@ -155,31 +155,37 @@ test("a refresh of a graph page replaces the view whole, never showing it shorte
   assert.deepEqual(page.errors, []);
 });
 
-test("choosing a section in a document's contents scrolls there smoothly", { skip, timeout: 90000 }, async (context) => {
-  await useAppDirectory(context);
-  const root = await demoProject(context);
-  const lines = ["# A long document", ""];
-  for (let index = 1; index <= 30; index += 1) lines.push(`## Section ${index}`, "", "A paragraph of the section.", "", "Another paragraph of the section.", "");
-  await writeFile(path.join(root, "docs/long.md"), lines.join("\n"));
-  execFileSync("git", ["add", "docs/long.md"], { cwd: root });
-  execFileSync("git", ["-c", "user.name=Prism Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "Add a long document"], { cwd: root });
-  const { base } = await serveProject(context, root);
-  const browser = await launch(context);
-  const page = await openPage(browser, reviewUrl(base, "docs/long.md"), { viewport: { width: 1440, height: 700 } });
-  await settle(page);
-  const travel = await page.evaluate(async () => {
-    const workspace = document.getElementById("workspace");
-    const link = [...document.querySelectorAll("prism-contents a[data-doc-anchor]")].find((anchor) => anchor.textContent === "Section 25");
-    const positions = [];
-    link.click();
-    for (let frame = 0; frame < 90; frame += 1) {
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-      positions.push(workspace.scrollTop);
-    }
-    return positions;
+for (const [reducedMotion, behavior] of [["no-preference", "smooth"], ["reduce", "instant"]]) {
+  test(`choosing a section in a document's contents scrolls there ${behavior === "smooth" ? "smoothly" : "at once under reduced motion"}`, { skip, timeout: 90000 }, async (context) => {
+    await useAppDirectory(context);
+    const root = await demoProject(context);
+    const lines = ["# A long document", ""];
+    for (let index = 1; index <= 30; index += 1) lines.push(`## Section ${index}`, "", "A paragraph of the section.", "", "Another paragraph of the section.", "");
+    await writeFile(path.join(root, "docs/long.md"), lines.join("\n"));
+    execFileSync("git", ["add", "docs/long.md"], { cwd: root });
+    execFileSync("git", ["-c", "user.name=Prism Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "Add a long document"], { cwd: root });
+    const { base } = await serveProject(context, root);
+    const browser = await launch(context);
+    const page = await openPage(browser, reviewUrl(base, "docs/long.md"), { viewport: { width: 1440, height: 700 }, reducedMotion });
+    await settle(page);
+    // Whether the browser animates a smooth scroll depends on its platform's settings, so the test reads the scroll the page asks for, and where it ends.
+    const result = await page.evaluate(async () => {
+      const workspace = document.getElementById("workspace");
+      const asked = [];
+      const scrollTo = workspace.scrollTo.bind(workspace);
+      workspace.scrollTo = (options) => {
+        asked.push(options?.behavior ?? null);
+        scrollTo(options);
+      };
+      const link = [...document.querySelectorAll("prism-contents a[data-doc-anchor]")].find((anchor) => anchor.textContent === "Section 25");
+      link.click();
+      for (let frame = 0; frame < 120; frame += 1) await new Promise((resolve) => requestAnimationFrame(resolve));
+      const heading = [...document.querySelectorAll("#artifact h2")].find((element) => element.textContent.trim() === "Section 25");
+      return { asked, end: workspace.scrollTop, headingTop: heading.getBoundingClientRect().top - workspace.getBoundingClientRect().top };
+    });
+    assert.deepEqual(result.asked, [behavior], `the page asks for a ${behavior} scroll`);
+    assert.ok(result.end > 0, "the page scrolled to the section");
+    assert.ok(Math.abs(result.headingTop) < 40, `the section ends at the top of the page: ${result.headingTop}`);
+    assert.deepEqual(page.errors, []);
   });
-  const end = travel.at(-1);
-  assert.ok(end > 0, "the page scrolled to the section");
-  assert.ok(travel.some((position) => position > 0 && position < end), "it passed positions on the way rather than jumping");
-  assert.deepEqual(page.errors, []);
-});
+}
