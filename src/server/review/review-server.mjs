@@ -10,7 +10,7 @@ import { PLUGIN_ROOT } from "../plugin-root.mjs";
 import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { RECORD_DIRECTORY, describeRecordStore, keyOfPath, listRecordStoreConflicts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
+import { RECORD_DIRECTORY, describeRecordStore, keyOfPath, listRecordStoreConflicts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile, withRecordReads } from "../workflow/record-store.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
 import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
@@ -845,7 +845,13 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     }
   }
 
-  async function handle(request, response, route, url) {
+  // A page's reads resolve the record store and its folders once per request; the event streams stay open for the page's life, so they read afresh.
+  function handle(request, response, route, url) {
+    if (request.method !== "GET" || route.startsWith("/api/events")) return serve(request, response, route, url);
+    return withRecordReads(() => serve(request, response, route, url));
+  }
+
+  async function serve(request, response, route, url) {
     if (route === "/" || route === "/review") {
       await serveFile(response, path.join(PUBLIC_DIR, "review.html"), "text/html; charset=utf-8");
     } else if (route === "/review.js") {

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { lstat, mkdir, open, readdir, readFile, realpath, rename, rm, rmdir, stat } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
@@ -155,6 +156,36 @@ const physical = (store, relative) => path.join(store.base, relative.slice(RECOR
  * A checkout of an external store passes its repository name check first: repository is its accepted name, and a refused checkout, including one that names no repository, throws.
  */
 export async function recordStoreOf(projectRootPath) {
+  const scope = currentScope();
+  if (!scope) return storeOf(projectRootPath);
+  if (!scope.stores.has(projectRootPath)) scope.stores.set(projectRootPath, storeOf(projectRootPath));
+  return scope.stores.get(projectRootPath);
+}
+
+// One burst of reads, such as one review page request, resolves each project's store once, prepares a synced store once, and resolves each folder once.
+// A page reads hundreds of records, and resolving the store and its folders again for each one costs seconds where file access is slow, as on Windows.
+const readScope = new AsyncLocalStorage();
+
+/** Runs `action` as one burst of record reads: what it reads is resolved as of its start, and writes it makes resolve the store again. */
+export async function withRecordReads(action) {
+  const scope = { open: true, stores: new Map(), synced: new Map(), folders: new Map() };
+  try {
+    return await readScope.run(scope, action);
+  } finally {
+    // Work the burst started that outlives it, such as a background pull, reads afresh.
+    scope.open = false;
+    scope.stores.clear();
+    scope.synced.clear();
+    scope.folders.clear();
+  }
+}
+
+const currentScope = () => {
+  const scope = readScope.getStore();
+  return scope?.open ? scope : null;
+};
+
+async function storeOf(projectRootPath) {
   const store = await resolveStore(projectRootPath);
   if (!store.external) return { ...store, repository: null };
   return { ...store, repository: await checkedRepository(store) };
@@ -257,11 +288,19 @@ export async function resolveRecordFile(projectRootPath, relative) {
 }
 
 // Every existing ancestor must resolve inside the project, or inside the record store, so a symlink cannot redirect writes.
-async function assertContained(root, target, label = "the project root") {
+// A burst of reads resolves each folder once, and a write resolves its folders again, so a symlink placed since cannot redirect it.
+function resolvedFolder(folder, write) {
+  const scope = write ? null : currentScope();
+  if (!scope) return realpath(folder);
+  if (!scope.folders.has(folder)) scope.folders.set(folder, realpath(folder));
+  return scope.folders.get(folder);
+}
+
+async function assertContained(root, target, label = "the project root", { write = false } = {}) {
   let current = path.dirname(target);
   while (true) {
     try {
-      if (!inside(root, await realpath(current))) throw fail("invalid_path", `The record location resolves outside ${label}.`);
+      if (!inside(root, await resolvedFolder(current, write))) throw fail("invalid_path", `The record location resolves outside ${label}.`);
       return;
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
@@ -377,8 +416,8 @@ async function pruneEmptyFolders(target) {
 async function moveRecord(root, store, move, report) {
   const source = path.join(root, move.from), target = physical(store, move.to);
   if (!(await regularFile(source))) return;
-  await assertContained(root, source);
-  await assertContained(store.contain, target, store.external ? "the record store" : "the project root");
+  await assertContained(root, source, "the project root", { write: true });
+  await assertContained(store.contain, target, store.external ? "the record store" : "the project root", { write: true });
   if (await regularFile(target)) {
     const [left, right] = await Promise.all([readFile(source), readFile(target)]);
     if (left.equals(right)) { await rm(source, { force: true }); report.moved.push(move); return; }
@@ -439,7 +478,7 @@ async function migrateIntoStore(root, store, config, report) {
     const at = new Date().toISOString();
     const marker = path.join(store.base, "migrations", `${at.replace(/[:.]/g, "-")}-${randomBytes(4).toString("hex")}.json`);
     await mkdir(path.dirname(marker), { recursive: true });
-    await assertContained(store.contain, marker, "the record store");
+    await assertContained(store.contain, marker, "the record store", { write: true });
     const records = [...new Set(report.moved.map((move) => move.to))];
     await writeAtomically(marker, `${JSON.stringify({ schemaVersion: 2, repository, migratedAt: at, moved: records.length, records, conflicts: report.conflicts }, null, 2)}\n`);
   }, fail, { timeoutMs: 30000 }));
@@ -539,8 +578,17 @@ async function synced(store) {
 // Records move into .prism only on a write, while a record store takes a checkout's records on its first access.
 async function openStore(projectRootPath, { write = false } = {}) {
   const store = await recordStoreOf(projectRootPath);
-  if (write || store.external) await ensureRecords(store.root);
-  await synced(store);
+  const scope = write ? null : currentScope();
+  if (!scope) {
+    if (write || store.external) await ensureRecords(store.root);
+    await synced(store);
+    return store;
+  }
+  if (!scope.synced.has(store.base)) scope.synced.set(store.base, (async () => {
+    if (store.external) await ensureRecords(store.root);
+    await synced(store);
+  })());
+  await scope.synced.get(store.base);
   return store;
 }
 
@@ -574,7 +622,7 @@ export async function readRecord(projectRootPath, key, { maxBytes = RECORD_MAX_B
 export async function writeRecord(projectRootPath, key, contents) {
   const { store, located } = await locate(projectRootPath, key, { write: true });
   await mkdir(path.dirname(located.target), { recursive: true });
-  await assertContained(store.contain, located.target, storeLabel(store));
+  await assertContained(store.contain, located.target, storeLabel(store), { write: true });
   await ensureHousekeeping(store);
   await writeAtomically(located.target, contents);
   if (store.sync) scheduleRecordSync(store.base);
@@ -585,14 +633,14 @@ export async function writeRecord(projectRootPath, key, contents) {
 export async function withRecordLock(projectRootPath, key, action, makeError = fail, options = {}) {
   const { store, located } = await locate(projectRootPath, key, { write: true });
   await mkdir(path.dirname(located.target), { recursive: true });
-  await assertContained(store.contain, located.target, storeLabel(store));
+  await assertContained(store.contain, located.target, storeLabel(store), { write: true });
   return withArtifactLock(located.target, () => withFileLock(located.target, () => action(located), makeError, options));
 }
 
 /** Remove a record's file, and its folder when that leaves it empty; returns whether a file was removed. */
 export async function removeRecord(projectRootPath, key) {
   const { store, located } = await locate(projectRootPath, key, { write: true });
-  await assertContained(store.contain, located.target, storeLabel(store));
+  await assertContained(store.contain, located.target, storeLabel(store), { write: true });
   if (!(await regularFile(located.target))) return false;
   await rm(located.target, { force: true });
   await rmdir(path.dirname(located.target)).catch(() => {});
@@ -623,7 +671,7 @@ export async function appendRecord(projectRootPath, key, id, entry) {
   const target = path.join(located.target, `${id}.json`);
   await ensureHousekeeping(store);
   await mkdir(located.target, { recursive: true });
-  await assertContained(store.contain, target, storeLabel(store));
+  await assertContained(store.contain, target, storeLabel(store), { write: true });
   const appended = await withArtifactLock(target, () => withFileLock(target, async () => {
     if (await regularFile(target)) throw fail("entry_exists", `The entry ${id} already exists.`);
     await writeAtomically(target, `${JSON.stringify(entry, null, 2)}\n`);
@@ -683,7 +731,7 @@ export async function removeInitiativeRecords(projectRootPath, initiative) {
   await ensureRecords(store.root);
   await synced(store);
   const target = path.join(physical(store, INITIATIVES), requireSlug(initiative, "initiative"));
-  await assertContained(store.contain, path.join(target, "x"), storeLabel(store));
+  await assertContained(store.contain, path.join(target, "x"), storeLabel(store), { write: true });
   for (const kind of ["initiative", "state"]) await rm(physical(store, recordPath({ kind, initiative })), { force: true });
   await rm(path.join(target, CLAIMS), { recursive: true, force: true });
   for (const slice of await directoryNames(path.join(target, "slices"))) {
