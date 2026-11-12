@@ -16,10 +16,10 @@ Any required field value or required section body may be the single word `unknow
 - `requirements.dates`: Created is a `YYYY-MM-DD` date, and Approved is a date when the status is Approved and `n/a` when it is Draft.
 - `requirements.sections`: `## Problem`, `## Goals`, `## Non-goals`, and `## Design questions` appear once each in that order before the first numbered section.
 - `requirements.numbering`: Each numbered section is `## <n>. <title>` directly after `<a id="<n>"></a>` with the same positive whole number, and no number repeats.
-- `requirements.fields`: Each numbered section holds `Pattern:`, `Disposition:`, `Requirement:`, `Rationale:`, and `Related:` in that order, with an optional `Supersedes:` after `Related:`.
+- `requirements.fields`: Each numbered section holds `Pattern:`, `Disposition:`, `Requirement:`, `Rationale:`, and `Related:` once each in that order, with at most one optional `Supersedes:` line anywhere after `Disposition:`.
 - `requirements.pattern`: The pattern is `Ubiquitous`, `State-driven`, `Event-driven`, `Optional feature`, `Unwanted behavior`, or `Complex`.
 - `requirements.disposition`: The disposition is `Active`, `Withdrawn` optionally followed by a date and a reason, or `Superseded by <link>`.
-- `requirements.links`: Related is `n/a` or comma-separated Markdown links whose targets are relative `.md` paths with an optional `#<anchor>`, or `#<anchor>` alone.
+- `requirements.links`: Related is `n/a` or comma-separated Markdown links whose targets are relative `.md` paths with an optional `#<anchor>`, or `#<anchor>` alone, optionally followed by one period.
 
 ## Defaults
 

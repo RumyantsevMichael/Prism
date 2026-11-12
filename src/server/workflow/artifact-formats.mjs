@@ -106,7 +106,7 @@ const isLinkTo = (target, { anchor }) => {
   if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("/")) return false;
   const match = /^([^#]*)(?:#([A-Za-z0-9_-]+))?$/.exec(target);
   if (!match) return false;
-  if (match[1] === "") return anchor !== "required-path" && match[2] !== undefined;
+  if (match[1] === "") return anchor !== "required-path" && anchor !== "optional-path" && match[2] !== undefined;
   if (!match[1].endsWith(".md")) return false;
   if (anchor === "required" || anchor === "required-path") return match[2] !== undefined;
   if (anchor === "none") return match[2] === undefined;
@@ -202,6 +202,12 @@ function inspectRequirements(text) {
   return { findings, unknowns };
 }
 
+// Related links may end with one period, as lines written to the template before the formats did.
+const relatedLinks = (value) => {
+  const links = value.replace(/\.$/, "");
+  return LINK_LIST.test(links) && linkTargets(links).every((target) => isLinkTo(target, { anchor: "optional" }));
+};
+
 function inspectRequirementSection(section, number, findings, unknowns) {
   const type = "requirements";
   const labels = [...REQUIREMENT_FIELDS, "Supersedes"];
@@ -212,10 +218,13 @@ function inspectRequirementSection(section, number, findings, unknowns) {
     if (match && labels.includes(match[1])) fields.push({ label: match[1], value: match[2], line: item.line });
   }
   const order = fields.map((field) => field.label);
-  const valid = order.join(",") === REQUIREMENT_FIELDS.join(",") || order.join(",") === [...REQUIREMENT_FIELDS, "Supersedes"].join(",");
+  // One optional Supersedes: line may sit anywhere after Disposition:, as the template before the formats placed it.
+  const supersedes = order.flatMap((label, index) => (label === "Supersedes" ? [index] : []));
+  const valid = order.filter((label) => label !== "Supersedes").join(",") === REQUIREMENT_FIELDS.join(",")
+    && supersedes.length <= 1 && supersedes.every((index) => index > order.indexOf("Disposition"));
   if (!valid) {
     const missing = REQUIREMENT_FIELDS.filter((label) => !order.includes(label));
-    findings.push(finding(`${type}.fields`, section.line, `Section ${number} must hold ${REQUIREMENT_FIELDS.map((label) => `${label}:`).join(", ")} in that order, with an optional Supersedes: after Related:${missing.length ? `; ${missing.map((label) => `${label}:`).join(", ")} ${missing.length === 1 ? "is" : "are"} missing` : ""}.`));
+    findings.push(finding(`${type}.fields`, section.line, `Section ${number} must hold ${REQUIREMENT_FIELDS.map((label) => `${label}:`).join(", ")} once each in that order, with at most one optional Supersedes: anywhere after Disposition:${missing.length ? `; ${missing.map((label) => `${label}:`).join(", ")} ${missing.length === 1 ? "is" : "are"} missing` : ""}.`));
   }
   for (const field of fields) {
     if (field.label === "Supersedes") continue;
@@ -223,8 +232,8 @@ function inspectRequirementSection(section, number, findings, unknowns) {
     if (field.value === "") findings.push(finding(`${type}.fields`, field.line, `Section ${number} has an empty ${field.label}:.`));
     else if (field.label === "Pattern" && !PATTERNS.includes(field.value)) findings.push(finding(`${type}.pattern`, field.line, `Pattern must be one of ${PATTERNS.join(", ")}, not "${field.value}".`));
     else if (field.label === "Disposition" && !disposition(field.value)) findings.push(finding(`${type}.disposition`, field.line, `Disposition must be Active, Withdrawn with an optional date and reason, or Superseded by <link>, not "${field.value}".`));
-    else if (field.label === "Related" && field.value !== "n/a" && !(LINK_LIST.test(field.value) && linkTargets(field.value).every((target) => isLinkTo(target, { anchor: "optional" })))) {
-      findings.push(finding(`${type}.links`, field.line, `Related must be n/a or comma-separated Markdown links to relative .md paths or #anchors, not "${field.value}".`));
+    else if (field.label === "Related" && field.value !== "n/a" && !relatedLinks(field.value)) {
+      findings.push(finding(`${type}.links`, field.line, `Related must be n/a or comma-separated Markdown links to relative .md paths or #anchors, optionally followed by one period, not "${field.value}".`));
     }
   }
 }
@@ -261,13 +270,17 @@ function inspectAdr(text) {
     if (!ADR_SECTIONS.includes(section.title)) continue;
     const body = bodyText(section.body);
     if (body === UNKNOWN) { unknowns.push({ line: section.body.find((item) => !blank(item)).line, field: section.title }); continue; }
-    if (body === "") { findings.push(finding(`${type}.sections`, section.line, `The section ## ${section.title} is empty.`)); continue; }
+    if (body === "") {
+      // Only the Decision Log may be empty, as the template before the formats left it until a clarification.
+      if (section.title !== "Decision Log") findings.push(finding(`${type}.sections`, section.line, `The section ## ${section.title} is empty.`));
+      continue;
+    }
     if (section.title !== "Requirements" || body === "n/a") continue;
     for (const item of section.body) {
-      if (blank(item)) continue;
-      const match = /^\s*[-*]\s+\[[^\]]*\]\(([^)\s]+)\)\s*$/.exec(item.value);
-      if (!match || !isLinkTo(match[1], { anchor: "required-path" })) {
-        findings.push(finding(`${type}.requirements`, item.line, `The Requirements section must hold only list items that are each one Markdown link to <path>.md#<anchor>, or n/a; found "${item.value.trim()}".`));
+      if (blank(item) || item.fenced) continue;
+      const wrong = linkTargets(item.value).filter((target) => !isLinkTo(target, { anchor: "optional-path" }));
+      if (wrong.length) {
+        findings.push(finding(`${type}.requirements`, item.line, `Every Markdown link in the Requirements section must target a relative <path>.md with an optional #<anchor>, or the section must be n/a; found ${wrong.map((target) => `"${target}"`).join(", ")}.`));
       }
     }
   }

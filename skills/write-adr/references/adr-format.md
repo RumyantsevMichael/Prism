@@ -14,8 +14,8 @@ Any required field value or required section body may be the single word `unknow
 - `adr.header`: `Status:` and then `Created:` follow the title before any section.
 - `adr.status`: The status is `Proposed`, `Accepted`, `Declined`, or `Superseded by <link>`.
 - `adr.dates`: Created is a `YYYY-MM-DD` date.
-- `adr.sections`: `## Requirements`, `## Problem`, `## Decision`, `## Rationale`, `## Alternatives`, `## Consequences`, `## Mechanism`, and `## Decision Log` appear once each in that order.
-- `adr.requirements`: The Requirements section holds only Markdown links to `<path>.md#<anchor>`, one per list item, or `n/a`.
+- `adr.sections`: `## Requirements`, `## Problem`, `## Decision`, `## Rationale`, `## Alternatives`, `## Consequences`, `## Mechanism`, and `## Decision Log` appear once each in that order, where only the Decision Log may be empty.
+- `adr.requirements`: The Requirements section is `n/a` or paragraphs or list items in which every Markdown link targets a relative `<path>.md` with an optional `#<anchor>`; write one link to `<path>.md#<anchor>` per list item, as the example does.
 
 ## Defaults
 

@@ -50,8 +50,8 @@ Each format's reference sits beside the skill that writes the artifact:
 
 | Artifact | Reference | What it requires |
 |---|---|---|
-| Requirement file | `skills/write-requirements/references/requirement-format.md` | A `# <capability>` title, `Status:`, `Created:`, and `Approved:` lines, the Problem, Goals, Non-goals, and Design questions sections, and numbered sections with anchors and the Pattern, Disposition, Requirement, Rationale, and Related fields |
-| ADR | `skills/write-adr/references/adr-format.md` | A `# <decision>` title, `Status:` and `Created:` lines, and the eight sections from Requirements to Decision Log, where Requirements lists links to requirement sections |
+| Requirement file | `skills/write-requirements/references/requirement-format.md` | A `# <capability>` title, `Status:`, `Created:`, and `Approved:` lines, the Problem, Goals, Non-goals, and Design questions sections, and numbered sections with anchors and the Pattern, Disposition, Requirement, Rationale, and Related fields, with at most one `Supersedes:` line anywhere after Disposition |
+| ADR | `skills/write-adr/references/adr-format.md` | A `# <decision>` title, `Status:` and `Created:` lines, and the eight sections from Requirements to Decision Log, where only the Decision Log may be empty and every link in Requirements is a relative `.md` link, written as one link to a requirement section per list item |
 | Glossary | `skills/workflow/references/glossary-format.md` | A `# <name>` title and a purpose paragraph, then terms, each a `## <term>` heading after an `<a id="<id>"></a>` anchor, a definition whose first sentence stands on its own, and a `Source:` line that links the Approved requirement section or Accepted ADR that introduced it |
 | Feature file | `skills/write-feature/references/feature-format.md` | A `Feature:` line, and Rules that each link a requirement and hold examples with Given, one When, and Then steps |
 
