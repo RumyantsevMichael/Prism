@@ -74,14 +74,14 @@ jobs:
         if: runner.os != 'Linux'
         run: npx playwright install chromium
 
-      # A test that hangs fails after ten minutes instead of holding the runner; a test that needs longer sets its own timeout.
+      # A test or test file that hangs fails after twenty minutes instead of holding the runner; the bound covers a whole file, whose tests run one after another.
       - name: Test the server
         env:
           PRISM_REQUIRE_BROWSER: "1"
         run: |
           npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
           npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
-          node scripts/test-shard.mjs --shard ${{ matrix.shard }}/3 -- --test-timeout=600000
+          node scripts/test-shard.mjs --shard ${{ matrix.shard }}/3 -- --test-timeout=1200000
 
   checks:
     runs-on: ubuntu-latest

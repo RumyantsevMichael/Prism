@@ -116,7 +116,7 @@ A test file that the durations do not list counts as a median file, so a new fil
 Run one shard locally the way CI does, or list its files:
 
 ```bash
-PRISM_REQUIRE_BROWSER=1 node scripts/test-shard.mjs --shard 2/3 -- --test-timeout=600000
+PRISM_REQUIRE_BROWSER=1 node scripts/test-shard.mjs --shard 2/3 -- --test-timeout=1200000
 node scripts/test-shard.mjs --shard 2/3 --list
 ```
 
