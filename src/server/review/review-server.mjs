@@ -158,7 +158,7 @@ function reviewListing(projectRoot) {
   let listing = listings.get(projectRoot);
   if (!listing) {
     listing = createCachedValue(async () => {
-      const [artifacts, sources] = await Promise.all([listArtifacts(projectRoot), listReviewSources(projectRoot)]);
+      const [artifacts, sources] = await Promise.all([listCheckoutArtifacts(projectRoot), listReviewSources(projectRoot)]);
       return { artifacts, sources };
     }, { ttlMs: (ms) => Math.max(LISTING_MIN_MS, LISTING_FACTOR * ms) });
     listings.set(projectRoot, listing);
@@ -168,21 +168,19 @@ function reviewListing(projectRoot) {
 
 // A wanted file whose presence on disk disagrees with the kept listing, such as one an agent has just written, moved, or deleted, lists the project again,
 // so a few checked files keep the listing honest without listing the whole project on every request.
+// The listing keeps only what the checkout holds; a store's artifacts, which another process's tool call can change at any time, are listed on every request.
 async function listedFiles(projectRoot, wanted = []) {
   const listing = reviewListing(projectRoot);
   let value = await listing.get();
-  const files = wanted.filter((file) => typeof file === "string" && file !== "attention" && !parseEntityRef(file));
+  const isArtifact = await artifactPathTest(projectRoot);
+  const files = wanted.filter((file) => typeof file === "string" && file !== "attention" && !parseEntityRef(file) && !isArtifact(file));
   const listed = (file) => value.artifacts.includes(file) || value.sources.includes(file);
-  // A store artifact is there when a scope of the store holds it, whatever the checkout holds at its path; a store that cannot answer leaves the listing as it is.
-  const isArtifact = files.length ? await artifactPathTest(projectRoot) : () => false;
-  const present = await Promise.all(files.map((file) => isArtifact(file)
-    ? readStoreArtifact(projectRoot, file).then((found) => found !== null, () => listed(file))
-    : stat(path.join(projectRoot, file)).then((info) => info.isFile(), () => false)));
+  const present = await Promise.all(files.map((file) => stat(path.join(projectRoot, file)).then((info) => info.isFile(), () => false)));
   if (files.some((file, index) => listed(file) !== present[index])) {
     listing.invalidate();
     value = await listing.get();
   }
-  return value;
+  return { artifacts: await withStoreArtifacts(projectRoot, value.artifacts), sources: value.sources };
 }
 
 // With a record store, the descriptive artifacts the checkout sees come from the store, by path, while the checkout's own files under those paths are not artifacts.
@@ -220,21 +218,31 @@ export async function listArtifactScopes(projectRoot) {
 }
 
 export async function listArtifacts(projectRoot) {
+  return withStoreArtifacts(projectRoot, await listCheckoutArtifacts(projectRoot));
+}
+
+// The artifacts the checkout itself holds, without a checkout file at an artifact path of a project with a store, which is never the artifact.
+async function listCheckoutArtifacts(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   const results = new Set();
   for (const root of configuredRoots(config)) {
     await walkArtifacts(projectRoot, root, results);
   }
-  const stored = await storeArtifactEntries(projectRoot);
-  if (stored !== null) {
-    const isArtifact = await artifactPathTest(projectRoot);
-    for (const file of [...results]) if (isArtifact(file)) results.delete(file);
-    for (const entry of stored) if (TEXT_EXTENSIONS.has(path.posix.extname(entry.path).toLowerCase())) results.add(entry.path);
-  }
+  const isArtifact = await artifactPathTest(projectRoot);
+  for (const file of [...results]) if (isArtifact(file)) results.delete(file);
   // Machine records live under .prism, which the walk above skips as a hidden folder.
   await walkArtifacts(projectRoot, `${RECORD_DIRECTORY}/initiatives`, results);
   const roadmap = recordPath({ kind: "roadmap" });
   if (await resolveRecordFile(projectRoot, roadmap).then(({ target }) => stat(target)).then((info) => info.isFile(), () => false)) results.add(roadmap);
+  return [...results].sort();
+}
+
+// The checkout's artifacts with the text artifacts that the store's scopes hold, as the store lists them now.
+async function withStoreArtifacts(projectRoot, local) {
+  const stored = await storeArtifactEntries(projectRoot);
+  if (stored === null) return local;
+  const results = new Set(local);
+  for (const entry of stored) if (TEXT_EXTENSIONS.has(path.posix.extname(entry.path).toLowerCase())) results.add(entry.path);
   return [...results].sort();
 }
 
