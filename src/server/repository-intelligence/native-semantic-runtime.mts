@@ -10,6 +10,7 @@ import { ProgressRecorder, componentStorageKey, gitFingerprint, lockHolder, proj
 import { assertSafeAncestors, regularBytes, semanticError } from "./native-files.mjs";
 import { publishedUnits, unitsFile } from "./index-files.mjs";
 import { Helper } from "./native-helper.mjs";
+import { forgetMirror, markIndexed, updateMirror } from "./index-mirror.mjs";
 import { LocalIndexStore, ThreadIndexStore } from "./index-store.mjs";
 import type { IndexStore } from "./index-store.mjs";
 import type { GitFingerprint } from "./index-progress.mjs";
@@ -168,7 +169,8 @@ const UNITS_FILE = /^units-([a-f\d]{64})\.json$/;
 
 
 // Keep the current index and the most recently used earlier revisions, so a retained before-change snapshot still reuses its index.
-// Each source change writes a complete index, so older revisions, their generation pointers, and abandoned snapshot mirrors are removed.
+// Each source change writes a complete index, so older revisions, their generation pointers, and snapshot folders of earlier versions are removed,
+// while the kept mirror, its manifest, and the runtime's state stay for the next build.
 // A structure-only index that a complete index replaced is removed with its sidecar and never takes a kept slot.
 // Call only while holding the project directory lock.
 export async function pruneIndexes(directory: string, current: string, keep = KEPT_INDEX_REVISIONS, replaced: string[] = []) {
@@ -680,57 +682,54 @@ export class NativeSemanticRuntime implements ComponentRuntime {
         } catch (error) { if (error.code !== "ENOENT") throw error; }
         // A load never builds beside the running build; it hands the job back to the build queue.
         if (job.reload && this.running !== job) throw reloadMiss();
-        const mirror = await privateDirectory(path.join(directory, `snapshot-${randomUUID()}`));
-        try {
-          report({ phase: "snapshot-copy", current: 0, total: snapshot.files.length, unit: "files" });
-          for (const [index, file] of snapshot.files.entries()) {
-            current();
-            const target = path.resolve(mirror, file.file);
-            if (!inside(mirror, target)) throw semanticError("invalid_path", "A snapshot path escapes its mirror.");
-            await privateDirectory(path.dirname(target));
-            const handle = await open(target, "wx", 0o400);
-            try {
-              const bytes = await regularBytes(file.absolutePath, 2 * 1024 * 1024);
-              if (sha(bytes) !== file.hash) throw semanticError("stale_snapshot", "Source bytes changed while copying the snapshot.");
-              await handle.writeFile(bytes);
-            } finally { await handle.close(); }
-            report({ phase: "snapshot-copy", current: index + 1, total: snapshot.files.length, unit: "files" });
-          }
-          await source.verifySnapshot();
-          current();
-          // The structure is stored while the build goes on embedding, and the complete index is saved only after it, so the complete index replaces it.
-          let structureSaved = Promise.resolve();
-          const structure = (token: string) => { structureSaved = this.publishStructure(job, token, directory, generation, snapshot, assets); };
-          // A structure-only build embeds nothing, so it reuses no embeddings and saves its whole result as the structure-only index.
-          const structureOnly = Boolean(job.structureOnly);
-          // A call may pause this run only once the store sent its request, after it read the saved embeddings that the request reuses.
-          const sent = () => { job.requestedAttempt = attempt; };
-          const token = await this.store.build({ runtime: assets.runtime, directory, args: { mirror, files: snapshot.files.map(({ file, hash }) => ({ file, hash })),
-            snapshot: snapshot.sourceFingerprint, modelDirectory: assets.modelDirectory, modelIdentity: assets.modelIdentity, fragmentsOnly: structureOnly },
-          ...(previous && !structureOnly ? { previous: { indexPath: previous.indexPath, revision: previous.revision } } : {}) }, (progress, embedded) => report(progress, embedded), structureOnly ? undefined : structure, sent);
-          if (structureOnly) {
-            try { this.alive(job); await source.verifySnapshot(); } catch (error) { await this.store.discard(token).catch(() => {}); throw error; }
-            return await this.saveStructureOnly(job, token, directory, generation, snapshot, assets, report);
-          }
-          report({ phase: "saving" });
-          await structureSaved;
+        // The kept mirror copies only the files that changed since it was last brought up to date, and names those since the indexed build.
+        const { mirror, changedFiles, removedFiles } = await updateMirror(directory, snapshot.files, { privateDirectory, current,
+          report: (done, total) => report({ phase: "snapshot-copy", current: done, total, unit: "files" }) });
+        const changes = changedFiles && removedFiles ? { changedFiles, removedFiles } : {};
+        // The runtime's kept state now holds this build's files, once it reported their structure or returned their index; a stopped build records nothing,
+        // so its changes are named again to the next build.
+        let indexedSaved = Promise.resolve();
+        const indexed = () => { if (!job.stalled && job.pausedAttempt !== attempt) indexedSaved = indexedSaved.then(() => markIndexed(directory, snapshot.files)).catch(error => log.warn("index_mirror_unwritable", { directory, ...errorFields(error) })); };
+        await source.verifySnapshot();
+        current();
+        // The structure is stored while the build goes on embedding, and the complete index is saved only after it, so the complete index replaces it.
+        let structureSaved = Promise.resolve();
+        const structure = (token: string) => { indexed(); structureSaved = this.publishStructure(job, token, directory, generation, snapshot, assets); };
+        // A structure-only build embeds nothing, so it reuses no embeddings and saves its whole result as the structure-only index.
+        const structureOnly = Boolean(job.structureOnly);
+        // A call may pause this run only once the store sent its request, after it read the saved embeddings that the request reuses.
+        const sent = () => { job.requestedAttempt = attempt; };
+        const token = await this.store.build({ runtime: assets.runtime, directory, args: { mirror, files: snapshot.files.map(({ file, hash }) => ({ file, hash })), ...changes,
+          snapshot: snapshot.sourceFingerprint, modelDirectory: assets.modelDirectory, modelIdentity: assets.modelIdentity, fragmentsOnly: structureOnly },
+        ...(previous && !structureOnly ? { previous: { indexPath: previous.indexPath, revision: previous.revision } } : {}) }, (progress, embedded) => report(progress, embedded), structureOnly ? undefined : structure, sent)
+          .catch(async error => {
+            // A mirror file that no longer matches its manifest is never trusted again, so the next build copies everything.
+            if (error.code === "stale_snapshot") await forgetMirror(directory).catch(() => {});
+            throw error;
+          });
+        indexed();
+        await indexedSaved;
+        if (structureOnly) {
           try { this.alive(job); await source.verifySnapshot(); } catch (error) { await this.store.discard(token).catch(() => {}); throw error; }
-          // The structure-only index that this complete index replaces, which no pointer names once the complete pointers are written.
-          const replacedPointer = await optionalJson(generation).catch(() => null);
-          const replaced = replacedPointer && pointerStage(replacedPointer) === "structure" && /^[a-f\d]{64}$/.test(replacedPointer.revision ?? "") ? [replacedPointer.revision!] : [];
-          const { revision, indexPath, bytes, index } = await this.store.save(token, { directory, assetIdentity: assets.assetIdentity, incomplete: !snapshot.complete });
-          const coverage = coverageOf(index);
-          const builtAt = new Date().toISOString();
-          const pointerContents = JSON.stringify({ snapshot: index.snapshot, revision, stage: "complete", chunkerVersion: index.chunkerVersion, coverage, diagnostics: index.diagnostics, builtAt });
-          await writeAtomically(generation, pointerContents, { mode: 0o600 });
-          await writeAtomically(path.join(directory, "current.json"), pointerContents, { mode: 0o600 });
-          job.revision = revision; job.coverage = coverage; job.diagnostics = index.diagnostics; job.builtAt = builtAt;
-          await rm(mirror, { recursive: true, force: true });
-          await pruneIndexes(directory, revision, KEPT_INDEX_REVISIONS, replaced).catch(() => {});
-          log.info("index_built", { directory, revision, component: job.component?.identity, files: snapshot.files.length, bytes, counts: index.counts,
-            indexMs: Math.round(index.resources?.indexMilliseconds ?? 0), diagnostics: index.diagnostics.length });
-          return { ...assets, index, indexPath, revision, stage: "complete" };
-        } finally { await rm(mirror, { recursive: true, force: true }); }
+          return await this.saveStructureOnly(job, token, directory, generation, snapshot, assets, report);
+        }
+        report({ phase: "saving" });
+        await structureSaved;
+        try { this.alive(job); await source.verifySnapshot(); } catch (error) { await this.store.discard(token).catch(() => {}); throw error; }
+        // The structure-only index that this complete index replaces, which no pointer names once the complete pointers are written.
+        const replacedPointer = await optionalJson(generation).catch(() => null);
+        const replaced = replacedPointer && pointerStage(replacedPointer) === "structure" && /^[a-f\d]{64}$/.test(replacedPointer.revision ?? "") ? [replacedPointer.revision!] : [];
+        const { revision, indexPath, bytes, index } = await this.store.save(token, { directory, assetIdentity: assets.assetIdentity, incomplete: !snapshot.complete });
+        const coverage = coverageOf(index);
+        const builtAt = new Date().toISOString();
+        const pointerContents = JSON.stringify({ snapshot: index.snapshot, revision, stage: "complete", chunkerVersion: index.chunkerVersion, coverage, diagnostics: index.diagnostics, builtAt });
+        await writeAtomically(generation, pointerContents, { mode: 0o600 });
+        await writeAtomically(path.join(directory, "current.json"), pointerContents, { mode: 0o600 });
+        job.revision = revision; job.coverage = coverage; job.diagnostics = index.diagnostics; job.builtAt = builtAt;
+        await pruneIndexes(directory, revision, KEPT_INDEX_REVISIONS, replaced).catch(() => {});
+        log.info("index_built", { directory, revision, component: job.component?.identity, files: snapshot.files.length, bytes, counts: index.counts,
+          indexMs: Math.round(index.resources?.indexMilliseconds ?? 0), diagnostics: index.diagnostics.length });
+        return { ...assets, index, indexPath, revision, stage: "complete" };
       }, job.component ? heldError : semanticError, { renew: true, timeoutMs: job.component ? 250 : 120000 }));
     } finally { clearTimeout(waiting); }
   }

@@ -37,7 +37,10 @@ export interface IndexComponent { name: string; identity: string; folder: string
 export interface ComponentState { component: string; folder: string; status: "included" | "waiting" | "preparing" | "failed"; indexRevision: string | null; failure: ComponentFailure | null; embeddings?: "pending"; waitingFor?: WaitingFor }
 // `vectors` holds the embedding key and vector of each fragment embedded since the previous embedding value; Prism saves and strips them.
 export interface Progress { phase: string; current?: number; total?: number; file?: string; unit?: "bytes" | "files"; item?: number; items?: number; vectors?: [string, number[]][] }
-export interface BuildArguments { mirror: string; files: Pick<SourceFile, "file" | "hash">[]; snapshot: string; modelDirectory: string; modelIdentity: string; previousEmbeddings?: Record<string, number[]>; fragmentsOnly?: boolean }
+// `changedFiles` and `removedFiles` name, in sorted order, what changed since the build whose structure the runtime last returned for this mirror,
+// and a build without them is a full one; `files` always lists every file of the snapshot.
+export interface BuildArguments { mirror: string; files: Pick<SourceFile, "file" | "hash">[]; snapshot: string; modelDirectory: string; modelIdentity: string; previousEmbeddings?: Record<string, number[]>; fragmentsOnly?: boolean;
+  changedFiles?: string[]; removedFiles?: string[] }
 export interface SearchArguments { query: string; filters?: SearchFilters; limit: number; mode?: "lexical"; snapshot: string; modelDirectory: string; modelIdentity: string; indexPath: string }
 export type WorkerRequest = { id: number; method: "build"; args: BuildArguments } | { id: number; method: "search"; args: SearchArguments };
 export interface WorkerMethods { build: { input: BuildArguments; output: UnitIndex }; search: { input: SearchArguments; output: SearchResult[] } }
