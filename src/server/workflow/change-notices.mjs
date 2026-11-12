@@ -11,7 +11,7 @@ import { parseStoreJson } from "./store-json.mjs";
 
 // What each session was shown of the person's changes, and which of its agents coordinates the initiative, kept per session and initiative in Prism's private app directory.
 // Every server process of the session reads and writes one record under one lock, so an entry is shown in at most one result or gate wait of the session.
-// A record holds { shown, coordinator, waits }; shown is null before the session's starting point exists.
+// A record holds { shown, coordinator, waits, asked }; shown is null before the session's starting point exists, and asked lists the pending gates the session asked.
 export const NOTICE_FOLDER = "person-change-notices";
 const ENTRY_ID = /^[0-9a-f]{32}$/;
 
@@ -38,16 +38,17 @@ async function readNotice(file) {
     return {
       shown: Array.isArray(value?.shown) ? value.shown.filter((id) => typeof id === "string") : null,
       coordinator: typeof value?.coordinator === "string" && value.coordinator ? value.coordinator : MAIN_AGENT,
-      waits: readWaits(value?.waits, Date.now())
+      waits: readWaits(value?.waits, Date.now()),
+      asked: Array.isArray(value?.asked) ? value.asked.filter((id) => typeof id === "string") : []
     };
   } catch {
-    return { shown: null, coordinator: MAIN_AGENT, waits: [] };
+    return { shown: null, coordinator: MAIN_AGENT, waits: [], asked: [] };
   }
 }
 
 const wellFormed = (state) => (Array.isArray(state?.history) ? state.history : []).filter((entry) => typeof entry?.id === "string" && ENTRY_ID.test(entry.id));
 
-const recordText = ({ shown, coordinator, waits }) => `${JSON.stringify({ shown, coordinator, ...(waits.length ? { waits } : {}) })}\n`;
+const recordText = ({ shown, coordinator, waits, asked }) => `${JSON.stringify({ shown, coordinator, ...(waits.length ? { waits } : {}), ...(asked.length ? { asked } : {}) })}\n`;
 
 // One step for the session: read its record and the coordination state, decide, and write the record, under a lock that every process of the session honors.
 // The step gets the state and its well-formed history entries in history order; while the state reads invalid it gets no state and no history, so it shows nothing from the history,
@@ -61,14 +62,16 @@ async function withNotice({ projectRoot, initiative, session, directory }, step)
     const read = await readCoordinationState({ projectRoot, initiative });
     const state = read.valid ? read.state ?? {} : null;
     const history = state ? wellFormed(state) : [];
-    const { result, shown = record.shown, coordinator = record.coordinator, waits = record.waits } = await step(record, history, state);
+    const { result, shown = record.shown, coordinator = record.coordinator, waits = record.waits, asked = record.asked } = await step(record, history, state);
     // A first valid read counts every existing entry as shown; the kept ids are then only those still in the history.
     let kept = shown;
     if (state) {
       const ids = history.map((entry) => entry.id);
       kept = shown === null ? ids : ids.filter((id) => shown.includes(id));
     }
-    const next = recordText({ shown: kept, coordinator, waits });
+    // A gate that is no longer pending needs no delivery, so the session keeps only the pending gates it asked.
+    const pending = state && new Set((Array.isArray(state.pending) ? state.pending : []).map((gate) => gate?.id));
+    const next = recordText({ shown: kept, coordinator, waits, asked: pending ? asked.filter((id) => pending.has(id)) : asked });
     if (next !== recordText(record)) await writeAtomically(file, next, { mode: 0o600 });
     return result;
   }, undefined, { renew: true, abandonWhenUnrenewed: true }));
@@ -92,6 +95,17 @@ export async function takePersonChanges({ projectRoot, initiative, agent = MAIN_
     const changes = history.filter((entry) => !record.shown.includes(entry.id) && !isHeld(entry, held));
     return { result: changes, shown: [...record.shown, ...changes.map((entry) => entry.id)], coordinator };
   });
+}
+
+/** Remember that the session asked these gates, so the prompt hooks deliver their answers to this session and to no other. */
+export async function rememberAskedGates({ projectRoot, initiative, gateIds, session = claimHolder(), directory = noticeDirectory() }) {
+  if (!gateIds.length) return;
+  await withNotice({ projectRoot, initiative, session, directory }, (record) => ({ result: null, asked: [...new Set([...record.asked, ...gateIds])] }));
+}
+
+/** The ids of the gates the session asked on an initiative that were still pending when its record last changed. */
+export async function askedGates({ projectRoot, initiative, session, directory = noticeDirectory() }) {
+  return (await readNotice(noticeFile(directory, session, projectRoot, initiative))).asked;
 }
 
 /**

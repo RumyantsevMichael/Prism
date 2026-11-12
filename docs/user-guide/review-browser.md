@@ -132,10 +132,11 @@ While a question waits, the tab title starts with the number of waiting question
 Choose "Notify me about new questions" on Attention to also get a desktop notification when a question arrives while the page is in the background.
 The browser keeps that permission per review app address, and a restarted review app uses a new address, so it can ask again.
 In Claude Code a waiting agent resumes on its own shortly after your answer.
-When you resume a session with open questions, Prism lists them for the agent with your first message, and the agent waits on them again, so later browser answers still resume it on its own.
+When you resume a session with open questions, Prism lists the ones that session asked for the agent with your first message, and the agent waits on them again, so later browser answers still resume it on its own.
 In Codex the agent ends its turn, and Prism's Stop hook keeps the turn open for up to 55 minutes and continues it with your answer.
 Codex runs that hook only after you trust Prism's current hook definition through `/hooks`.
 Elsewhere, or after the 55 minutes, the agent receives the answer with your next message, even a short one such as "go".
+An answer to a question that an agent asked reaches only the session whose agent or sub-agents asked it, so another session working in the same project, on the same initiative or another, never receives it.
 An answer to the approval of a requirement or ADR reaches, once and in the same ways, only an agent working in the checkout that asked for the approval, however long you take to answer.
 Agents in other checkouts or on other machines are not told, but any agent that reads that file also reads your latest answer and its note, so requested changes are not lost when nothing waits.
 Attention also lists blocked slices, open findings, failed verifications, and active work.
