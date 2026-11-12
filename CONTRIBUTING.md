@@ -110,14 +110,15 @@ npx playwright install chromium
 PRISM_REQUIRE_BROWSER=1 npm test
 ```
 
-CI splits the server tests into three shards on Linux and three on Windows, each on its own runner, so the browser tests do not hold one runner for half an hour.
+CI splits the server tests into four shards on Linux and four on Windows, each on its own runner, so the browser tests do not hold one runner for half an hour.
+A Windows shard runs two test files at a time with `--test-concurrency=2`, because three browser test files at once on one Windows runner fail with `net::ERR_NO_BUFFER_SPACE`.
 `scripts/test-shard.mjs` balances the shards by the file durations in `test/server/durations.json`, and the `validate` and `windows` checks pass only when every shard passed.
 A test file that the durations do not list counts as a median file, so a new file needs no update to run.
 Run one shard locally the way CI does, or list its files:
 
 ```bash
-PRISM_REQUIRE_BROWSER=1 node scripts/test-shard.mjs --shard 2/3 -- --test-timeout=1200000
-node scripts/test-shard.mjs --shard 2/3 --list
+PRISM_REQUIRE_BROWSER=1 node scripts/test-shard.mjs --shard 2/4 -- --test-timeout=1200000
+node scripts/test-shard.mjs --shard 2/4 --list
 ```
 
 When a shard runs much longer than the others, record the durations again with a full run and commit the rewritten file:
