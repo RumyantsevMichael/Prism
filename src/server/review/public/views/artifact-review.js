@@ -61,8 +61,15 @@ function keepLinesInView(box, state) {
     const line = box.querySelector(`#L${kept.line}`);
     box.scrollTop = line ? line.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop + kept.offset : kept.top;
   };
-  // A box that is not laid out yet, as while its disclosure still renders, takes its place on the next frame.
-  if (kept) { if (box.clientHeight) restore(); else requestAnimationFrame(() => { if (box.isConnected && box.clientHeight) restore(); }); }
+  // A box that is not shown yet, as while its disclosure still renders or while the page builds the view out of sight, takes its place once it is shown,
+  // since moving the box into the page drops its scroll; a box that leaves the page first is left alone.
+  const staged = () => box.closest(".artifact-stage") !== null;
+  const settle = () => {
+    if (!box.isConnected) return;
+    if (staged()) requestAnimationFrame(settle);
+    else if (box.clientHeight) restore();
+  };
+  if (kept) { if (box.clientHeight && !staged()) restore(); else requestAnimationFrame(settle); }
   let pending = false;
   box.addEventListener("scroll", () => {
     if (pending) return;
@@ -220,7 +227,9 @@ export function mountArtifactReview(root, data, { actionApi, state, readPage, on
   // The page redraws the card for a changed file or an arriving comment, so the numbered lines stay open or closed as the person left them.
   root.querySelector("[data-artifact-lines]")?.addEventListener("toggle", (event) => { state.artifactLinesOpen = event.detail.open === true; });
   keepLinesInView(root.querySelector(".artifact-lines-scroll"), state);
-  if (data.artifact && readPage) bindMoreComments(root, data, state, { readPage, onListed });
+  // The page may build the view out of sight and move it into place, so More comments works within the review card, which moves with it.
+  const card = root.querySelector(".artifact-review");
+  if (card && data.artifact && readPage) bindMoreComments(card, data, state, { readPage, onListed });
   const slot = root.querySelector("[data-comment-form]");
   if (!slot || !data.artifact || !actionApi) return null;
   const target = commentTarget(data);

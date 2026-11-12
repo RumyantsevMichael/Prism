@@ -231,7 +231,7 @@ export function graphCard({ title, eyebrow, legend = "" }) {
       <prism-button variant="ghost" size="sm" data-zoom="in" label="Zoom in" tip="Zoom in">+</prism-button>
     </div>
     ${legend ? `<div class="graph-legend">${legend}</div>` : ""}
-    <div class="graph-viewport" tabindex="-1"><prism-spinner label="Laying out graph"></prism-spinner></div>`;
+    <prism-canvas class="graph-viewport" pannable tabindex="-1"><prism-spinner label="Laying out graph"></prism-spinner></prism-canvas>`;
   return section;
 }
 
@@ -250,6 +250,8 @@ export function enablePanZoom(section, state) {
     svg.style.width = `${naturalWidth * state.scale}px`;
     svg.style.height = `${naturalHeight * state.scale}px`;
     label.textContent = `${Math.round(state.scale * 100)}%`;
+    // The canvas's dotted grid scales with the graph.
+    viewport.setAttribute("scale", String(state.scale));
   };
   apply(state.scale ?? Math.max(0.85, fitScale()));
   // The pan position survives a refresh the same way the zoom does.

@@ -172,6 +172,9 @@ export function shownActionEntries() {
   return entries;
 }
 
+// The last listing of each target, per API, so a list drawn again when its page refreshes starts from what it showed rather than from Loading, and the page does not jump while the listing is read again.
+const lastListings = new WeakMap();
+
 /**
  * Draws the actions of one or more targets into root, keeps them current, and applies them.
  * api is { list(target), apply(request), confirm({ title, message }), toast(message) }: list resolves to a listing, apply to { status, json },
@@ -180,7 +183,9 @@ export function shownActionEntries() {
  * notice false leaves out the read-only notice, for a page that shows many lists and says it once for all of them.
  */
 export function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, notice = true, onRender = null, keepStaleDrafts = false }) {
-  const listings = new Map();
+  if (!lastListings.has(api)) lastListings.set(api, new Map());
+  const known = lastListings.get(api);
+  const listings = new Map(targets.filter((target) => known.has(target)).map((target) => [target, known.get(target)]));
   const entries = new Map();
   let failure = null;
   let rendered = "";
@@ -240,7 +245,10 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     failure = null;
     for (const { target, listing, error } of results) {
       if (error) failure = error.message;
-      else listings.set(target, listing);
+      else {
+        listings.set(target, listing);
+        known.set(target, listing);
+      }
     }
     if (root.isConnected) render();
   });

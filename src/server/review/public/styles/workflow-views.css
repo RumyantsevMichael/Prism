@@ -363,8 +363,19 @@
 }
 
 /* The list and the detail run to the island's edges below the page head, as an inbox does, so Attention's page drops its padding and only its head keeps it. */
+/* The page fills the workspace and the list and the detail scroll apart, so the picked item stays in view however far the list is scrolled. */
 .artifact-view:has(.attention-inbox) {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   padding: 0;
+}
+
+.artifact-view:has(.attention-inbox) > .structured-view {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .artifact-view:has(.attention-inbox) > .artifact-header {
@@ -374,8 +385,10 @@
 
 .attention-inbox {
   display: grid;
+  flex: 1 1 auto;
   grid-template-columns: var(--prism-list-width) minmax(0, 1fr);
   min-width: 0;
+  min-height: 0;
   border-top: var(--prism-stroke) solid var(--prism-color-line);
 }
 
@@ -385,6 +398,8 @@
   gap: var(--prism-space-1);
   min-width: 0;
   padding: var(--prism-space-4);
+  overflow: auto;
+  overscroll-behavior: contain;
   border-right: var(--prism-stroke) solid var(--prism-color-line);
   background: var(--prism-color-sunken);
 }
@@ -445,6 +460,8 @@
   gap: var(--prism-space-5);
   min-width: 0;
   padding: var(--prism-space-6);
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .attention-sheet {
@@ -888,6 +905,14 @@ a.inspect-tile:focus-visible {
 .recent-change:first-child {
   padding-top: 0;
   border-top: 0;
+}
+
+/* An answer names the question it answered above the answer, so the list reads as a record of decisions. */
+.recent-change-question {
+  margin: 0;
+  color: var(--prism-color-ink);
+  font-weight: var(--prism-font-weight-semibold);
+  overflow-wrap: anywhere;
 }
 
 .recent-change-values,
