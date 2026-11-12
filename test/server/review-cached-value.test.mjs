@@ -70,3 +70,22 @@ test("a failed first computation is not kept, so the next read tries again", asy
   await assert.rejects(value.get(), /unreadable/);
   assert.equal(await value.get(), "read");
 });
+
+test("a time to live given as a function of the last computation's duration renews a slow value less often", async () => {
+  let now = 0;
+  let calls = 0;
+  const value = createCachedValue(async () => {
+    calls += 1;
+    now += 2000;
+    return calls;
+  }, { ttlMs: (ms) => Math.max(1000, 5 * ms), now: () => now });
+  assert.equal(await value.get(), 1);
+  now += 9999;
+  assert.equal(await value.get(), 1);
+  await settle();
+  assert.equal(calls, 1, "a value that took 2 seconds is kept for 10");
+  now += 1;
+  assert.equal(await value.get(), 1);
+  await settle();
+  assert.equal(calls, 2);
+});

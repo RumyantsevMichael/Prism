@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
@@ -11,13 +11,14 @@ import { answerUserGate, readCoordinationState, updateCoordinationState } from "
 import { waitForGateAnswers } from "../../dist/hooks/wait-for-gate-answers.mjs";
 import { Readable } from "node:stream";
 import { readdir } from "node:fs/promises";
+import { defer } from "./fixtures/teardown.mjs";
 
 const SERVER_PATH = fileURLToPath(new URL("../../dist/server/mcp.mjs", import.meta.url));
 const INITIATIVE = "reports";
 
 async function project(context) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-gate-wait-")));
-  context.after(() => rm(root, { recursive: true, force: true }));
+  defer(context, () => rm(root, { recursive: true, force: true }));
   await mkdir(path.join(root, ".prism"), { recursive: true });
   await writeFile(path.join(root, ".prism/workflow.md"), "## Paths\n- Plans (scratch): docs/plans/\n");
   await mkdir(path.join(root, "docs/plans/reports"), { recursive: true });
@@ -41,7 +42,7 @@ function server(context, root, clientName, { version = "2.1.296", environment = 
     messages.push(message);
     for (const listener of listeners) listener();
   });
-  context.after(async () => {
+  defer(context, async () => {
     if (child.exitCode === null) {
       child.stdin.end();
       await new Promise((resolve) => child.once("exit", resolve));
@@ -74,6 +75,18 @@ function wait(mcp, id, root, gateId, extra = {}, meta = { progressToken: `wait-$
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
+// The ids of the waits, other than those named, that hold a gate in the session's notice record, once there is one: a wait holds its gates from its first read until it ends.
+async function waitsHolding(root, gateId, others, timeout = 20000) {
+  const folder = path.join(root, ".app", "person-change-notices");
+  for (const deadline = Date.now() + timeout; Date.now() < deadline; await delay(20)) {
+    const files = await readdir(folder).catch(() => []);
+    const records = await Promise.all(files.filter((name) => name.endsWith(".json")).map((name) => readFile(path.join(folder, name), "utf8").then(JSON.parse, () => ({}))));
+    const holding = records.flatMap((record) => record.waits ?? []).filter((item) => item.gates?.includes(gateId) && !others.includes(item.id)).map((item) => item.id);
+    if (holding.length) return holding;
+  }
+  throw new Error(`No wait held ${gateId} within ${timeout} ms.`);
+}
+
 test("returns the browser answer and sends progress while it waits", async (context) => {
   const { root, gateId } = await project(context);
   const mcp = server(context, root, "claude-code");
@@ -97,11 +110,12 @@ test("ends when the gate is resolved, missing, timed out, or cancelled", async (
   assert.equal((await mcp.response(2)).result.structuredContent.status, "unknown_gate");
   wait(mcp, 3, root, gateId, { maxWaitMinutes: 0.005 });
   assert.equal((await mcp.response(3)).result.structuredContent.status, "timeout");
+  // Each wait is resolved or cancelled only once its first read holds the gate: a wait whose first read finds the gate gone reports it unknown, however late the server reads.
   wait(mcp, 4, root, gateId, {}, undefined);
-  await delay(300);
+  const [cancelled] = await waitsHolding(root, gateId, []);
   mcp.send({ method: "notifications/cancelled", params: { requestId: 4, reason: "user pressed Esc" } });
   wait(mcp, 5, root, gateId);
-  await delay(300);
+  await waitsHolding(root, gateId, [cancelled]);
   const { revision } = await readCoordinationState({ projectRoot: root, initiative: INITIATIVE });
   await updateCoordinationState({ projectRoot: root, initiative: INITIATIVE, expectedRevision: revision, changes: { gateOperations: [{ op: "resolve", id: gateId, reason: "Answered in the conversation." }] } });
   assert.equal((await mcp.response(5)).result.structuredContent.status, "resolved");

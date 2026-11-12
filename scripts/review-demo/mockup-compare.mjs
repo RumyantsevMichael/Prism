@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { ROOT } from "./project.mjs";
 import { loadPlaywright, THEMES } from "./layout-audit.mjs";
@@ -66,59 +66,31 @@ const SCENES = {
 };
 const DENSITIES = ["compact", "comfortable"];
 
-const { values } = parseArgs({
-  options: {
-    out: { type: "string" },
-    scenes: { type: "string", default: Object.keys(SCENES).join(",") },
-    widths: { type: "string", default: "1440,820,390" },
-    themes: { type: "string", default: THEMES.join(",") },
-    densities: { type: "string", default: DENSITIES.join(",") },
-    mockup: { type: "string", default: path.join(ROOT, "docs/plans/review-app-ui-kit/mockup/mockup.html") }
-  }
-});
-if (!values.out) {
-  process.stderr.write("mockup-compare: pass --out <directory>.\n");
-  process.exit(2);
-}
-const scenes = values.scenes.split(",");
-const widths = values.widths.split(",").map(Number);
-const themes = values.themes.split(",");
-const densities = values.densities.split(",");
-for (const name of scenes) if (!SCENES[name]) throw new Error(`Unknown scene ${name}; use ${Object.keys(SCENES).join(", ")}.`);
-for (const name of themes) if (!THEMES.includes(name)) throw new Error(`Unknown theme ${name}; use ${THEMES.join(", ")}.`);
-for (const name of densities) if (!DENSITIES.includes(name)) throw new Error(`Unknown density ${name}; use ${DENSITIES.join(", ")}.`);
-for (const width of widths) if (!Number.isInteger(width) || width < 320) throw new Error(`Unknown width ${width}; use whole pixels of 320 or more.`);
-
-const playwright = loadPlaywright();
-if (!playwright) {
-  process.stderr.write("mockup-compare: Playwright is not installed. Install it with `npm install -g playwright` and `npx playwright install chromium`.\n");
-  process.exit(2);
-}
-const out = path.resolve(values.out);
-await mkdir(out, { recursive: true });
-
-// The mockup's own controls set its theme and density from the query string.
-// The mockup page frames each scene in a captioned window of fixed height; these rules make the scene's window fill the browser window instead.
-const MOCKUP_FRAME_CSS = `
-  .mock-bar, .mock-caption { display: none !important; }
-  .mock-frames { padding: 0 !important; gap: 0 !important; }
-  .mock-frame, .mock-frame.is-tablet { max-width: none !important; width: 100% !important; margin: 0 !important; }
-  .mock-frame > .app { height: ${HEIGHT}px !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
-  *, *::before, *::after { animation: none !important; transition: none !important; }
-  .caret { visibility: hidden !important; }
-`;
-
-async function shootMockup(browser, { scene, width, theme, density }) {
-  const context = await browser.newContext({ viewport: { width, height: HEIGHT }, deviceScaleFactor: 1, colorScheme: theme });
-  const page = await context.newPage();
-  const url = pathToFileURL(values.mockup);
+// The mockup page frames each scene in a captioned window of fixed height.
+// frameWindow opens the mockup in the page's theme and density, shows only the scene's frame, and makes its window fill the browser window, so the mockup's own container queries answer to the window width.
+export async function frameWindow(page, { file, scene, theme, density, height }) {
+  const url = pathToFileURL(file);
   url.searchParams.set("theme", theme);
   url.searchParams.set("density", density);
   await page.goto(url.href);
-  await page.addStyleTag({ content: MOCKUP_FRAME_CSS });
+  await page.addStyleTag({ content: `
+    .mock-bar, .mock-caption, .shot-caption { display: none !important; }
+    .mock-frames { display: block !important; padding: 0 !important; gap: 0 !important; }
+    .mock-frame:not(#${scene}) { display: none !important; }
+    .mock-frame, .mock-frame.is-tablet, .mock-frame.is-phone { max-width: none !important; width: 100% !important; margin: 0 !important; padding: 0 !important; }
+    .mock-frame > .app { height: ${height}px !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+    .caret { visibility: hidden !important; }
+  ` });
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(150);
-  const frame = page.locator(`#${scene} > .app`);
+  return page.locator(`#${scene} > .app`);
+}
+
+async function shootMockup(browser, mockupFile, { scene, width, theme, density }) {
+  const context = await browser.newContext({ viewport: { width, height: HEIGHT }, deviceScaleFactor: 1, colorScheme: theme });
+  const page = await context.newPage();
+  const frame = await frameWindow(page, { file: mockupFile, scene, theme, density, height: HEIGHT });
   const buffer = await frame.screenshot({ animations: "disabled" });
   await context.close();
   return buffer;
@@ -174,7 +146,7 @@ async function compose(browser, { mockup, app, width, title }) {
   return buffer;
 }
 
-function indexHtml(entries) {
+function indexHtml(scenes, entries) {
   const escape = (text) => String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
   const sections = scenes.map((scene) => {
     const rows = entries.filter((entry) => entry.scene === scene).map((entry) => `
@@ -191,50 +163,93 @@ ${sections}
 </body></html>`;
 }
 
-const parent = await mkdtemp(path.join(os.tmpdir(), "prism-mockup-compare-"));
-const appDirectory = path.join(parent, "app");
-await mkdir(appDirectory, { mode: 0o700 });
-const browser = await playwright.chromium.launch();
-let held = null;
-const entries = [];
-try {
-  const projectRoot = path.join(parent, "demo");
-  execFileSync(process.execPath, [path.join(ROOT, "scripts/review-demo/seed.mjs"), projectRoot], { stdio: "ignore" });
-  const { startStandaloneReview } = await import(path.join(ROOT, "dist/server/review/review-server-pool.mjs"));
-  const env = { ...process.env, PRISM_REVIEW_APP_DIR: appDirectory, PLUGIN_DATA: path.join(parent, "demo-data") };
-  delete env.PRISM_REVIEW_APP;
-  const review = await startStandaloneReview({ projectRoot, env, openBrowser: async () => false });
-  held = review.held;
-  const project = { url: new URL(review.url) };
-  project.url.search = "";
+async function main() {
 
-  // The review app stores one theme and density for every page it serves, and shares its open page between browsers, so the combinations run one after another.
-  const jobs = densities.flatMap((density) => scenes.flatMap((scene) => widths.flatMap((width) => themes.map((theme) => ({ scene, width, theme, density })))));
-  for (const job of jobs) {
-    const stored = await fetch(new URL("api/preferences", project.url), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ theme: job.theme, density: job.density }) });
-    if (!stored.ok) throw new Error(`The review app did not store the ${job.theme} theme and ${job.density} density (${stored.status}).`);
-    const [mockup, app] = await Promise.all([shootMockup(browser, job), shootApp(browser, project, job)]);
-    const file = `${job.scene}-${job.width}-${job.theme}-${job.density}.png`;
-    const title = `${SCENES[job.scene].caption} · ${job.width}px · ${job.theme} · ${job.density}`;
-    await writeFile(path.join(out, file), await compose(browser, { mockup, app: app.buffer, width: job.width, title }));
-    entries.push({ ...job, file, note: app.note });
-    process.stdout.write(`${file}${app.note ? `  (${app.note})` : ""}\n`);
-  }
-  const order = (entry) => [scenes.indexOf(entry.scene), widths.indexOf(entry.width), themes.indexOf(entry.theme), densities.indexOf(entry.density)];
-  entries.sort((a, b) => {
-    const [x, y] = [order(a), order(b)];
-    const at = x.findIndex((value, index) => value !== y[index]);
-    return at === -1 ? 0 : x[at] - y[at];
+  const { values } = parseArgs({
+    options: {
+      out: { type: "string" },
+      scenes: { type: "string", default: Object.keys(SCENES).join(",") },
+      widths: { type: "string", default: "1440,820,390" },
+      themes: { type: "string", default: THEMES.join(",") },
+      densities: { type: "string", default: DENSITIES.join(",") },
+      mockup: { type: "string", default: path.join(ROOT, "docs/plans/review-app-ui-kit/mockup/mockup.html") }
+    }
   });
-  await writeFile(path.join(out, "index.html"), indexHtml(entries));
-  process.stdout.write(`${entries.length} pairs in ${out}; open index.html to see them.\n`);
-} finally {
-  await browser.close();
-  await held?.close?.();
-  try {
-    const discovery = JSON.parse(await readFile(path.join(appDirectory, "review-app.json"), "utf8"));
-    process.kill(discovery.pid);
-  } catch {
+  if (!values.out) {
+    process.stderr.write("mockup-compare: pass --out <directory>.\n");
+    process.exit(2);
   }
-  await rm(parent, { recursive: true, force: true });
+  const scenes = values.scenes.split(",");
+  const widths = values.widths.split(",").map(Number);
+  const themes = values.themes.split(",");
+  const densities = values.densities.split(",");
+  for (const name of scenes) if (!SCENES[name]) throw new Error(`Unknown scene ${name}; use ${Object.keys(SCENES).join(", ")}.`);
+  for (const name of themes) if (!THEMES.includes(name)) throw new Error(`Unknown theme ${name}; use ${THEMES.join(", ")}.`);
+  for (const name of densities) if (!DENSITIES.includes(name)) throw new Error(`Unknown density ${name}; use ${DENSITIES.join(", ")}.`);
+  for (const width of widths) if (!Number.isInteger(width) || width < 320) throw new Error(`Unknown width ${width}; use whole pixels of 320 or more.`);
+
+  const playwright = loadPlaywright();
+  if (!playwright) {
+    process.stderr.write("mockup-compare: Playwright is not installed. Install it with `npm install -g playwright` and `npx playwright install chromium`.\n");
+    process.exit(2);
+  }
+  const out = path.resolve(values.out);
+  await mkdir(out, { recursive: true });
+
+
+  const parent = await mkdtemp(path.join(os.tmpdir(), "prism-mockup-compare-"));
+  const appDirectory = path.join(parent, "app");
+  await mkdir(appDirectory, { mode: 0o700 });
+  const browser = await playwright.chromium.launch();
+  let held = null;
+  const entries = [];
+  try {
+    const projectRoot = path.join(parent, "demo");
+    execFileSync(process.execPath, [path.join(ROOT, "scripts/review-demo/seed.mjs"), projectRoot], { stdio: "ignore" });
+    const { startStandaloneReview } = await import(pathToFileURL(path.join(ROOT, "dist/server/review/review-server-pool.mjs")).href);
+    const env = { ...process.env, PRISM_REVIEW_APP_DIR: appDirectory, PLUGIN_DATA: path.join(parent, "demo-data") };
+    delete env.PRISM_REVIEW_APP;
+    const review = await startStandaloneReview({ projectRoot, env, openBrowser: async () => false });
+    held = review.held;
+    const project = { url: new URL(review.url) };
+    project.url.search = "";
+
+    // The review app stores one theme and density for every page it serves, and shares its open page between browsers, so the combinations run one after another.
+    const jobs = densities.flatMap((density) => scenes.flatMap((scene) => widths.flatMap((width) => themes.map((theme) => ({ scene, width, theme, density })))));
+    for (const job of jobs) {
+      const stored = await fetch(new URL("api/preferences", project.url), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ theme: job.theme, density: job.density }) });
+      if (!stored.ok) throw new Error(`The review app did not store the ${job.theme} theme and ${job.density} density (${stored.status}).`);
+      const [mockup, app] = await Promise.all([shootMockup(browser, values.mockup, job), shootApp(browser, project, job)]);
+      const file = `${job.scene}-${job.width}-${job.theme}-${job.density}.png`;
+      const title = `${SCENES[job.scene].caption} · ${job.width}px · ${job.theme} · ${job.density}`;
+      await writeFile(path.join(out, file), await compose(browser, { mockup, app: app.buffer, width: job.width, title }));
+      entries.push({ ...job, file, note: app.note });
+      process.stdout.write(`${file}${app.note ? `  (${app.note})` : ""}\n`);
+    }
+    const order = (entry) => [scenes.indexOf(entry.scene), widths.indexOf(entry.width), themes.indexOf(entry.theme), densities.indexOf(entry.density)];
+    entries.sort((a, b) => {
+      const [x, y] = [order(a), order(b)];
+      const at = x.findIndex((value, index) => value !== y[index]);
+      return at === -1 ? 0 : x[at] - y[at];
+    });
+    await writeFile(path.join(out, "index.html"), indexHtml(scenes, entries));
+    process.stdout.write(`${entries.length} pairs in ${out}; open index.html to see them.\n`);
+  } finally {
+    await browser.close();
+    await held?.close?.();
+    try {
+      const discovery = JSON.parse(await readFile(path.join(appDirectory, "review-app.json"), "utf8"));
+      process.kill(discovery.pid);
+      // The app logs its stop into the app folder as it exits, so the folder is removed only once the app has gone.
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        try { process.kill(discovery.pid, 0); } catch { break; }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    } catch {
+    }
+    await rm(parent, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
 }
+
+// The places comparison imports frameWindow, so the comparison runs only when this file is the command.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

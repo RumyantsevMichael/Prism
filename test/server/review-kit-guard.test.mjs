@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §1, §2, §12.
@@ -26,7 +26,7 @@ async function project(context, files) {
 }
 
 async function check(context, files) {
-  const { checkKitUsage } = await import(GUARD);
+  const { checkKitUsage } = await import(pathToFileURL(GUARD).href);
   const root = await project(context, files);
   return checkKitUsage({ root, files: Object.keys(files) });
 }

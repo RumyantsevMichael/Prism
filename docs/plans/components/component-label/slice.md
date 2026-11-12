@@ -1,5 +1,8 @@
 # Label each slice's component in the review browser
 
+> Shipped history: initiative `components` shipped on 2026-11-07, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 The review browser labels each slice that records a component with its identity.

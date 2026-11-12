@@ -165,6 +165,10 @@ prism-doc-tabs[empty] {
   display: none;
 }
 
+prism-doc-tabs[dragging] {
+  cursor: grabbing;
+}
+
 prism-doc-tabs[fade-start] {
   mask-image: linear-gradient(to right, transparent, var(--prism-color-ink) var(--prism-space-7));
 }
@@ -328,6 +332,53 @@ prism-menu-group[layout="segmented"] > .prism-menu-group-items {
 
 prism-menu-group[layout="segmented"] prism-menu-item {
   flex: 1 1 0;
+}
+
+/* ---------- prism-segmented: a few views or modes as one switch; the chosen segment stands on the surface ---------- */
+prism-segmented {
+  display: inline-flex;
+  align-self: flex-start;
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--prism-space-1);
+  border: var(--prism-stroke) solid var(--prism-color-line-control);
+  border-radius: var(--prism-radius-sm);
+  background: var(--prism-color-sunken);
+}
+
+.prism-segment {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: calc(var(--prism-control-height) - 2 * var(--prism-space-1) - 2 * var(--prism-stroke));
+  padding: 0 var(--prism-space-4);
+  border: 0;
+  border-radius: var(--prism-radius-xs);
+  background: none;
+  color: var(--prism-color-ink-muted);
+  font: inherit;
+  font-size: var(--prism-font-size-sm);
+  font-weight: var(--prism-font-weight-medium);
+  cursor: pointer;
+}
+
+.prism-segment-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-segment:hover {
+  color: var(--prism-color-ink);
+}
+
+.prism-segment[aria-checked="true"] {
+  background: var(--prism-color-surface);
+  color: var(--prism-color-ink);
+  box-shadow: var(--prism-shadow-lift);
 }
 
 /* A theme preview draws a small window in the theme it names, from that theme's own tokens; a system preview shows light and dark side by side. */
@@ -612,7 +663,7 @@ prism-dialog[open] {
 }
 
 /* The parts a light-DOM container renders hide with the hidden attribute, whatever display they take. */
-:is(prism-panel, prism-tree, prism-listbox, prism-dialog, prism-popover, prism-disclosure, prism-banner, prism-empty-state, prism-toast, prism-claim, prism-stepper, prism-breadcrumbs, prism-code) [hidden] {
+:is(prism-panel, prism-tree, prism-listbox, prism-dialog, prism-popover, prism-disclosure, prism-banner, prism-empty-state, prism-toast, prism-claim, prism-stepper, prism-breadcrumbs, prism-code, prism-row, prism-page-sub) [hidden] {
   display: none !important;
 }
 
@@ -788,7 +839,8 @@ prism-tree-item {
   gap: var(--prism-space-3);
   min-width: 0;
   height: var(--prism-row-height);
-  padding: 0 var(--prism-space-3) 0 calc(var(--prism-space-3) + var(--prism-tree-level, 0) * var(--prism-space-6));
+  /* Each level steps in by the twisty and its gap, so a child's glyph sits exactly under its parent's glyph. */
+  padding: 0 var(--prism-space-3) 0 calc(var(--prism-space-3) + var(--prism-tree-level, 0) * (var(--prism-icon-size-xs) + var(--prism-space-3)));
   border-radius: var(--prism-radius-sm);
   color: var(--prism-color-ink-muted);
   text-decoration: none;
@@ -837,7 +889,7 @@ prism-tree-item[aria-expanded="true"]:focus-visible > .prism-tree-row {
   visibility: hidden;
 }
 
-/* A leaf with a glyph starts with the glyph, as its parent's glyph sits after its twisty one level up. */
+/* A leaf with a glyph among leaves starts with the glyph, as its parent's glyph sits after its twisty one level up; beside a parent it keeps the twisty's room. */
 .prism-tree-twisty.is-gone {
   display: none;
 }
@@ -878,6 +930,78 @@ prism-tree-item[selected] > .prism-tree-row > .prism-tree-start,
   white-space: nowrap;
 }
 
+/* A word that flags a row, such as `Blocked`, in the danger tone at the end of the row. */
+.prism-tree-flag {
+  flex: none;
+  color: var(--prism-color-danger);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+/* A muted flag names a settled fact, such as `Superseded`, without a warning or danger tone. */
+.prism-tree-flag.is-muted {
+  color: var(--prism-color-ink-muted);
+  font-weight: var(--prism-font-weight-medium);
+}
+
+/* ---------- Kit classes around a tree: a group heading with its count, and a closing note ---------- */
+
+/* A group's heading is a level 3 heading that reads as a quiet caption above its rows, in the tree's own size and weight, with its count at the end.
+   Its letters are drawn as capitals by small caps rather than by a text transform, so the heading's text stays as written for every reader and copy;
+   the browser draws small capitals at about 72% of the font size, so the size grows by that much to match the capitals of the tree's size. */
+.prism-group-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  margin: 0;
+  padding: 0 var(--prism-space-3);
+  color: var(--prism-color-ink-muted);
+  font-size: calc(var(--prism-font-size-md) / 0.72);
+  font-weight: var(--prism-font-weight-regular);
+  font-variant-caps: all-small-caps;
+  letter-spacing: calc(var(--prism-tracking-caps) * 0.72);
+  line-height: calc(var(--prism-font-size-md) * var(--prism-line-height));
+  text-transform: none;
+}
+
+.prism-group-heading > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-group-heading > .prism-group-count {
+  flex: none;
+  font-size: var(--prism-font-size-md);
+  font-variant-caps: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A closing note says where the rest went, after a glyph, in a quiet tone below the groups; the muted ink keeps its small text readable. */
+.prism-foot-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--prism-space-3);
+  margin: var(--prism-space-5) 0 0;
+  padding: var(--prism-space-3);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.prism-foot-note-glyph {
+  display: inline-flex;
+  flex: none;
+  margin-top: var(--prism-space-1);
+}
+
+.prism-foot-note > span:not(.prism-foot-note-glyph) {
+  min-width: 0;
+}
+
 /* A tree in a rail shows each top item's glyph alone, with its count badge on the glyph; the label becomes the tooltip. */
 prism-tree[rail] .prism-tree-row {
   position: relative;
@@ -908,6 +1032,245 @@ prism-tree[rail] .prism-tree-end {
 
 prism-tree[rail] .prism-tree-end > :not(prism-badge) {
   display: none;
+}
+
+/* ---------- prism-rail: the icon rail of places at the window's start edge ---------- */
+
+/* The rail is as wide as a place button and the room for its accent bar; it draws no border and no fill of its own, so the canvas shows through. */
+prism-rail {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: calc(var(--prism-control-height) + var(--prism-space-5));
+  height: 100%;
+  min-height: 0;
+}
+
+.prism-rail-nav {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--prism-space-2);
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--prism-space-3) 0 var(--prism-space-4);
+}
+
+/* A rail with a head block starts with it, level with the top of the main island beside it. */
+.prism-rail-nav.has-head {
+  padding-top: 0;
+}
+
+/* The head block is as tall as a strip of document tabs over a page bar, and a pale rule ends it. */
+.prism-rail-head {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  align-self: stretch;
+  height: calc(var(--prism-stroke) + var(--prism-subtab-height) + var(--prism-pagebar-height));
+}
+
+.prism-rail-head[hidden],
+.prism-rail-foot[hidden] {
+  display: none;
+}
+
+.prism-rail-head-content {
+  display: grid;
+  place-items: center;
+}
+
+.prism-rail-rule {
+  position: absolute;
+  right: var(--prism-space-3);
+  bottom: 0;
+  left: var(--prism-space-3);
+  height: var(--prism-stroke);
+  background: var(--prism-color-line);
+}
+
+.prism-rail-places,
+.prism-rail-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--prism-space-2);
+}
+
+.prism-rail-foot {
+  margin-top: auto;
+}
+
+prism-rail-item {
+  display: block;
+  flex: none;
+}
+
+.prism-rail-button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: calc(var(--prism-control-height) + var(--prism-space-2));
+  height: calc(var(--prism-control-height) + var(--prism-space-2));
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--prism-radius-md);
+  background: none;
+  color: var(--prism-color-ink-muted);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--prism-duration-fast) var(--prism-easing-standard), color var(--prism-duration-fast) var(--prism-easing-standard);
+}
+
+.prism-rail-button:hover {
+  background: var(--prism-color-chrome-hover);
+  color: var(--prism-color-ink);
+}
+
+.prism-rail-button:focus-visible {
+  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
+  outline-offset: var(--prism-stroke);
+}
+
+.prism-rail-button[aria-pressed="true"] {
+  background: var(--prism-color-selected);
+  color: var(--prism-color-accent-text);
+}
+
+/* The current place carries an accent bar at its start, outside the button, as the mockup draws it. */
+.prism-rail-button[aria-pressed="true"]::before {
+  content: "";
+  position: absolute;
+  top: var(--prism-space-3);
+  bottom: var(--prism-space-3);
+  left: calc(-1 * var(--prism-space-3));
+  width: var(--prism-stroke-strong);
+  border-radius: var(--prism-radius-round);
+  background: var(--prism-color-accent);
+}
+
+.prism-rail-badge {
+  position: absolute;
+  top: calc(-1 * var(--prism-space-1));
+  right: calc(-1 * var(--prism-space-1));
+  pointer-events: none;
+}
+
+.prism-rail-badge[hidden] {
+  display: none;
+}
+
+/* A small item is a top bar icon button: the control height, a small radius, and a small count. */
+prism-rail-item[size="sm"] > .prism-rail-button {
+  width: var(--prism-control-height);
+  height: var(--prism-control-height);
+  border: var(--prism-stroke) solid transparent;
+  border-radius: var(--prism-radius-sm);
+}
+
+prism-rail-item[size="sm"] .prism-rail-badge {
+  right: calc(-1 * var(--prism-space-2));
+}
+
+/* ---------- prism-place-head: a place's title on the tab strip's line and its subtitle on the page bar's line ---------- */
+
+prism-place-head {
+  display: grid;
+  grid-template-rows: calc(var(--prism-stroke) + var(--prism-subtab-height)) var(--prism-pagebar-height);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0 var(--prism-space-3);
+}
+
+.prism-place-head-title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--prism-color-ink);
+  font-size: var(--prism-font-size-lg);
+  font-weight: var(--prism-font-weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-place-head-subtitle {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-place-head-subtitle[hidden] {
+  display: none;
+}
+
+/* ---------- prism-page-sub: a line under a page's title, and a .prism-page-subs group of lines that belong together ---------- */
+
+prism-page-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2) var(--prism-space-3);
+  min-width: 0;
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-md);
+  overflow-wrap: anywhere;
+}
+
+.prism-page-sub-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.prism-page-sub-end {
+  display: contents;
+}
+
+.prism-page-sub-glyph {
+  display: inline-flex;
+  flex: none;
+}
+
+prism-page-sub b {
+  color: var(--prism-color-ink);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+prism-page-sub a {
+  color: var(--prism-color-accent-text);
+  font-weight: var(--prism-font-weight-regular);
+  text-decoration: none;
+}
+
+prism-page-sub a:hover {
+  text-decoration: underline;
+}
+
+prism-page-sub a:focus-visible {
+  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
+  outline-offset: var(--prism-stroke);
+  border-radius: var(--prism-radius-xs);
+}
+
+/* A quieter line, such as the reason of a decision under the line that names it. */
+prism-page-sub[detail] {
+  font-size: var(--prism-font-size-sm);
+}
+
+.prism-page-subs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  max-width: var(--prism-measure);
+  margin: 0 0 var(--prism-space-2);
 }
 
 /* ---------- prism-listbox: options of one row height, the active one ringed ---------- */
@@ -1076,7 +1439,7 @@ prism-list-item mark {
 }
 
 /* A drawer's surface spans --prism-drawer-width from the left edge between the top bar and the status bar, and draws nothing itself:
-   its frame is the island, inset by the island gap, on the chrome color. */
+   its frame is the island, --prism-drawer-width wide and inset by the island gap, on the chrome color. */
 .prism-dialog-surface[data-placement="start"] {
   inset: var(--prism-bar-height) auto var(--prism-status-height) 0;
   width: min(var(--prism-drawer-width), 100vw);
@@ -1092,10 +1455,13 @@ prism-list-item mark {
   box-shadow: none;
 }
 
+/* The island stands at the island gap from the edge and is --prism-drawer-width wide, as wide as the drawer the surface names. */
 .prism-dialog-surface[data-placement="start"][open] > .prism-dialog-frame {
+  position: absolute;
+  inset: 0 auto 0 var(--prism-island-gap);
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
+  width: min(var(--prism-drawer-width), calc(100vw - 2 * var(--prism-island-gap)));
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -1107,6 +1473,16 @@ prism-list-item mark {
 
 .prism-dialog-surface[data-placement="start"] .prism-dialog-body {
   padding: var(--prism-space-4);
+}
+
+/* A flush dialog's body draws no padding and does not clip, for content that lays itself out to the island's edges and scrolls itself, as the navigation drawer's rail and sidebar do; the rail's accent bar then shows on the island's edge. */
+.prism-dialog-surface[data-flush] .prism-dialog-body {
+  padding: 0;
+  overflow: visible;
+}
+
+.prism-dialog-surface[data-flush][data-placement="start"][open] > .prism-dialog-frame {
+  overflow: visible;
 }
 
 /* A drawer and a sheet fade in where they stand, so they sit on their edge from the first frame. */
@@ -1288,8 +1664,58 @@ prism-field[variant="bare"] > .prism-field-control {
   font-size: var(--prism-font-size-lg);
 }
 
-prism-field[variant="bare"] > .prism-field-control::-webkit-search-cancel-button {
+/* Bare and filter fields draw no native search clear button or decoration; Escape clears them instead. */
+prism-field:is([variant="bare"], [variant="filter"]) > .prism-field-control::-webkit-search-cancel-button,
+prism-field:is([variant="bare"], [variant="filter"]) > .prism-field-control::-webkit-search-decoration {
+  appearance: none;
   display: none;
+}
+
+/* A filter field, such as a sidebar's filter: the label names the control without showing, the placeholder says what it filters,
+   and the control keeps its box at the control height with a start-slot icon drawn over its inline padding. */
+prism-field[variant="filter"] {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 0;
+}
+
+prism-field[variant="filter"] > .prism-field-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+prism-field[variant="filter"] > :is(.prism-field-control, [slot="start"], [slot="end"]) {
+  grid-row: 1;
+  grid-column: 1;
+}
+
+prism-field[variant="filter"] > [slot="start"] {
+  justify-self: start;
+  margin-inline-start: var(--prism-space-3);
+  color: var(--prism-color-ink-muted);
+  pointer-events: none;
+}
+
+prism-field[variant="filter"] > [slot="end"] {
+  justify-self: end;
+  margin-inline-end: var(--prism-space-2);
+}
+
+prism-field[variant="filter"] > .prism-field-control {
+  height: var(--prism-control-height);
+  min-height: var(--prism-control-height);
+  padding: 0 var(--prism-space-2) 0 calc(var(--prism-space-3) + var(--prism-icon-size-sm) + var(--prism-space-3));
+  font-size: var(--prism-font-size-sm);
+}
+
+prism-field[variant="filter"] > .prism-field-control:focus-visible {
+  outline: none;
+  border-color: var(--prism-color-accent);
+  box-shadow: 0 0 0 var(--prism-stroke) var(--prism-color-accent);
 }
 
 /* ---------- prism-popover: glass anchored to its button ---------- */
@@ -1751,6 +2177,165 @@ prism-step[state="current"] .prism-step-name {
   font-weight: var(--prism-font-weight-semibold);
 }
 
+/* A vertical stepper hangs each step on a rail as a dot: a step's piece of rail is as tall as the step and starts at its dot, so the rail runs
+   from the first dot to the last, and each dot centers on its label's first line, an odd-width rail under an odd-width dot sharing its center pixel. */
+prism-stepper[orientation="vertical"] {
+  display: block;
+}
+
+prism-stepper[orientation="vertical"] prism-step {
+  --prism-step-dot-center: calc(var(--prism-space-1) + 0.5lh);
+  position: relative;
+  display: block;
+  padding: var(--prism-space-1) 0 var(--prism-space-3) calc(var(--prism-space-5) + var(--prism-dot-size) / 2);
+  font-size: inherit;
+}
+
+prism-stepper[orientation="vertical"] prism-step:not([phase])[state="done"] { --prism-step-fill: var(--prism-color-success); }
+prism-stepper[orientation="vertical"] prism-step:not([phase])[state="current"] { --prism-step-fill: var(--prism-color-accent); --prism-step-ink: var(--prism-color-ink); }
+
+prism-stepper[orientation="vertical"] prism-step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: var(--prism-step-dot-center);
+  left: calc((var(--prism-dot-size) - var(--prism-stroke)) / 2);
+  width: var(--prism-stroke);
+  height: 100%;
+  background: var(--prism-color-line-strong);
+}
+
+prism-stepper[orientation="vertical"] .prism-step-bar {
+  position: absolute;
+  z-index: var(--prism-layer-raised);
+  top: calc(var(--prism-step-dot-center) - var(--prism-dot-size) / 2);
+  left: 0;
+  width: var(--prism-dot-size);
+  height: var(--prism-dot-size);
+  border: var(--prism-stroke) solid var(--prism-color-line-strong);
+  background: var(--prism-color-raised);
+}
+
+prism-stepper[orientation="vertical"] prism-step:is([state="done"], [state="current"]) > .prism-step-bar {
+  border-color: var(--prism-step-fill);
+  background: var(--prism-step-fill);
+  box-shadow: none;
+}
+
+prism-stepper[orientation="vertical"] .prism-step-name {
+  display: block;
+}
+
+.prism-step-detail {
+  display: grid;
+  gap: var(--prism-space-1);
+  margin-top: var(--prism-space-1);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+}
+
+/* ---------- prism-table: a compact table of figures that becomes blocks of named values in a narrow column ---------- */
+
+prism-table {
+  container: prism-table / inline-size;
+  display: block;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+prism-table table {
+  width: max-content;
+  border-collapse: collapse;
+  font-size: var(--prism-font-size-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+prism-table :is(th, td) {
+  padding: var(--prism-space-1) var(--prism-space-4);
+  text-align: end;
+  vertical-align: baseline;
+}
+
+prism-table :is(th, td):first-child {
+  padding-inline-start: 0;
+  text-align: start;
+}
+
+prism-table thead th {
+  color: var(--prism-color-ink-muted);
+  font-weight: var(--prism-font-weight-medium);
+}
+
+prism-table thead th[scope="colgroup"] {
+  border-bottom: var(--prism-stroke) solid var(--prism-color-line);
+  text-align: center;
+}
+
+prism-table tbody tr {
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+/* Names wrap, so a long row or column name never widens the table past its column; figures stay on one line. */
+prism-table th {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+prism-table tbody th {
+  font-weight: var(--prism-font-weight-medium);
+}
+
+prism-table .prism-table-note {
+  color: var(--prism-color-ink-muted);
+  text-align: start;
+}
+
+.prism-table-mark {
+  margin-inline-end: var(--prism-space-1);
+  color: var(--prism-color-warning);
+}
+
+@container prism-table (max-width: 600px) {
+  prism-table :is(table, tbody, tr, th, td) {
+    display: block;
+  }
+
+  prism-table table {
+    width: 100%;
+  }
+
+  prism-table thead {
+    display: none;
+  }
+
+  prism-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(calc(var(--prism-control-height) * 4.5), 1fr));
+    gap: 0 var(--prism-space-4);
+    padding-block: var(--prism-space-2);
+  }
+
+  prism-table tbody th,
+  prism-table .prism-table-note {
+    grid-column: 1 / -1;
+    padding-inline: 0;
+  }
+
+  prism-table tbody td {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0 var(--prism-space-3);
+    padding-inline: 0;
+  }
+
+  prism-table tbody td[data-label]::before {
+    content: attr(data-label);
+    margin-inline-end: auto;
+    color: var(--prism-color-ink-muted);
+  }
+}
+
 /* ---------- prism-breadcrumbs: crumbs that shorten before the current page does ---------- */
 
 prism-breadcrumbs {
@@ -1821,6 +2406,20 @@ prism-breadcrumbs {
 .prism-breadcrumbs-link:hover {
   color: var(--prism-color-accent-text);
   text-decoration: underline;
+}
+
+/* A trail that shows only its current page, as current-only does always and current-only="narrow" does in a phone-width window:
+   the other crumbs leave, and the current page needs no separator before it. */
+prism-breadcrumbs[current-only=""] .prism-breadcrumbs-item:not(:last-child),
+prism-breadcrumbs[current-only=""] .prism-breadcrumbs-item:last-child > .prism-breadcrumbs-separator {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  prism-breadcrumbs[current-only="narrow"] .prism-breadcrumbs-item:not(:last-child),
+  prism-breadcrumbs[current-only="narrow"] .prism-breadcrumbs-item:last-child > .prism-breadcrumbs-separator {
+    display: none;
+  }
 }
 
 /* ---------- prism-doc: rendered Markdown ---------- */
@@ -1931,6 +2530,178 @@ prism-doc img {
   border-radius: var(--prism-radius-md);
 }
 
+/* ---------- prism-maximize: the icon button that maximizes a region and restores it ---------- */
+
+prism-maximize {
+  display: inline-flex;
+  flex: none;
+}
+
+/* In a region without a header the button floats at the top end corner, beside the region's first lines, and sticks while the region scrolls. */
+prism-maximize[floating] {
+  position: sticky;
+  top: 0;
+  z-index: var(--prism-layer-raised);
+  float: inline-end;
+  margin: 0 0 var(--prism-space-3) var(--prism-space-4);
+}
+
+/* ---------- prism-contents: a document's contents, beside it on a wide window and above it, folded, on a narrow one ---------- */
+
+/* The box that holds the contents and the document lays them out side by side; the contents column runs the box's full height. */
+:has(> prism-contents) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) calc(var(--prism-sidebar-width) * 0.8);
+  column-gap: var(--prism-space-7);
+  align-items: start;
+}
+
+:has(> prism-contents) > :not(prism-contents) {
+  grid-column: 1;
+}
+
+prism-contents {
+  display: block;
+  grid-column: 2;
+  grid-row: 1 / span 40;
+  align-self: stretch;
+  min-width: 0;
+  margin-block: calc(var(--prism-contents-inset, 0px) * -1);
+  border-inline-start: var(--prism-stroke) solid var(--prism-color-line);
+  font-size: var(--prism-font-size-sm);
+}
+
+/* The header and list stick inside the full-height column and fit the visible part of the scrolling element, which fit() measures. */
+.prism-contents-body {
+  position: sticky;
+  top: var(--prism-contents-top, 0px);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  max-height: var(--prism-contents-fit, 100vh);
+  padding: var(--prism-contents-inset, 0px) 0 var(--prism-contents-inset, 0px) var(--prism-space-5);
+}
+
+.prism-contents-head {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--prism-space-3);
+  min-height: var(--prism-control-height-sm);
+}
+
+.prism-contents-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-inline: var(--prism-space-3);
+  color: var(--prism-color-ink-muted);
+  font-weight: var(--prism-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.prism-contents-toggle {
+  display: none;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.prism-contents-tools {
+  display: flex;
+  flex: none;
+  gap: var(--prism-space-2);
+  margin-inline-start: auto;
+}
+
+.prism-contents-tools:empty {
+  display: none;
+}
+
+/* Only the list scrolls, so the header never scrolls away. */
+.prism-contents-list {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.prism-contents-list ol {
+  display: grid;
+  gap: var(--prism-space-1);
+  margin: var(--prism-space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.prism-contents-list a {
+  display: block;
+  padding: var(--prism-space-1) var(--prism-space-3);
+  border-radius: var(--prism-radius-sm);
+  color: var(--prism-color-ink-muted);
+  line-height: var(--prism-line-height-tight);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.prism-contents-list a:hover {
+  background: var(--prism-color-hover);
+  color: var(--prism-color-ink);
+}
+
+/* The list clips its overflow, so the focus ring is drawn inside the link. */
+.prism-contents-list a:focus-visible {
+  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
+  outline-offset: calc(var(--prism-stroke-strong) * -1);
+}
+
+.prism-contents-list a[aria-current="location"] {
+  background: var(--prism-color-selected);
+  color: var(--prism-color-accent-text);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.prism-contents-list .depth-1 { padding-inline-start: var(--prism-space-6); }
+.prism-contents-list .depth-2 { padding-inline-start: var(--prism-space-8); }
+
+@media (max-width: 1100px) {
+  :has(> prism-contents) {
+    display: block;
+  }
+
+  prism-contents {
+    margin: 0 0 var(--prism-space-5);
+    border: var(--prism-stroke) solid var(--prism-color-line);
+    border-radius: var(--prism-radius-md);
+    background: var(--prism-color-surface);
+  }
+
+  .prism-contents-body {
+    position: static;
+    max-height: none;
+    padding: var(--prism-space-2) var(--prism-space-4);
+  }
+
+  .prism-contents-title {
+    display: none;
+  }
+
+  .prism-contents-toggle {
+    display: inline-flex;
+  }
+
+  prism-contents:not([open]) .prism-contents-list {
+    display: none;
+  }
+
+  prism-contents[pinned] {
+    position: sticky;
+    top: var(--prism-contents-top, 0px);
+    z-index: var(--prism-layer-raised);
+  }
+
+  prism-contents[pinned] .prism-contents-body {
+    max-height: var(--prism-contents-fit, 100vh);
+  }
+}
+
 /* ---------- prism-code: a code block with a line-number gutter ---------- */
 
 prism-code {
@@ -1985,6 +2756,348 @@ prism-code > pre > code {
 :is(prism-code, prism-doc) .tok-function { color: var(--prism-color-syntax-function); }
 :is(prism-code, prism-doc) .tok-attr { color: var(--prism-color-syntax-attr); }
 
+/* ---------- prism-lib-table: one bordered list of records with a head row, group heads, and rows ---------- */
+
+/* A page sets its columns with --prism-lib-columns on the table; a phone-width window, or a table narrower than its columns need, keeps a record's title on its own line and the rest on the line below. */
+prism-lib-table {
+  container: prism-lib-table / inline-size;
+  display: block;
+  min-width: 0;
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-lg);
+  overflow: hidden;
+}
+
+.prism-lib-row {
+  display: grid;
+  grid-template-columns: var(--prism-lib-columns, minmax(0, 1fr));
+  align-items: center;
+  gap: var(--prism-space-5);
+  min-width: 0;
+  min-height: calc(var(--prism-row-height) + var(--prism-space-5));
+  padding: var(--prism-space-2) var(--prism-space-5);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.prism-lib-row:hover {
+  background: var(--prism-color-hover);
+}
+
+/* The head row names the columns in small capitals on the sunken tone. */
+.prism-lib-row.is-head {
+  min-height: 0;
+  padding-top: var(--prism-space-3);
+  padding-bottom: var(--prism-space-3);
+  border-top: 0;
+  background: var(--prism-color-sunken);
+}
+
+.prism-lib-row.is-head > * {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-semibold);
+  letter-spacing: var(--prism-tracking-caps);
+  text-transform: uppercase;
+}
+
+/* A record's title follows its kind's glyph; a long title wraps rather than ending in an ellipsis, since a plain link has no tooltip to show the rest. */
+.prism-lib-title {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.prism-lib-title > a,
+.prism-lib-title > span {
+  min-width: 0;
+  font-weight: var(--prism-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.prism-lib-kind {
+  flex: none;
+  color: var(--prism-color-ink-muted);
+}
+
+.prism-lib-cell {
+  min-width: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.prism-lib-cell.is-detail {
+  font-size: var(--prism-font-size-xs);
+}
+
+/* A group head names the group with its count, and where the group comes from at its end. */
+.prism-lib-group {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  padding: var(--prism-space-3) var(--prism-space-5);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+  background: var(--prism-color-raised);
+}
+
+.prism-lib-group-name {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  gap: var(--prism-space-3);
+  margin: 0;
+  font-size: var(--prism-font-size-md);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.prism-lib-group-name > prism-badge {
+  flex: none;
+}
+
+.prism-lib-group-source {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A group without records says so in one quiet line. */
+.prism-lib-nothing {
+  margin: 0;
+  padding: var(--prism-space-3) var(--prism-space-5);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+}
+
+@media (max-width: 720px) {
+  .prism-lib-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--prism-space-1) var(--prism-space-4);
+    padding-top: var(--prism-space-3);
+    padding-bottom: var(--prism-space-3);
+  }
+
+  .prism-lib-row > :first-child {
+    flex: 1 0 100%;
+    min-width: 0;
+  }
+
+  .prism-lib-row.is-head {
+    display: none;
+  }
+
+  .prism-lib-row > .prism-lib-cell {
+    flex: 0 1 auto;
+  }
+
+  .prism-lib-group {
+    flex-wrap: wrap;
+  }
+
+  .prism-lib-group-source {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+}
+
+/* The same layout answers the table's own width, so a table in a narrow column of a wide window, such as a catalog stage, still reads; the app's pages are wider than this at every window wider than a phone. */
+@container prism-lib-table (max-width: 600px) {
+  .prism-lib-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--prism-space-1) var(--prism-space-4);
+    padding-top: var(--prism-space-3);
+    padding-bottom: var(--prism-space-3);
+  }
+
+  .prism-lib-row > :first-child {
+    flex: 1 0 100%;
+    min-width: 0;
+  }
+
+  .prism-lib-row.is-head {
+    display: none;
+  }
+
+  .prism-lib-row > .prism-lib-cell {
+    flex: 0 1 auto;
+  }
+
+  .prism-lib-group {
+    flex-wrap: wrap;
+  }
+
+  .prism-lib-group-source {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+}
+
+/* ---------- prism-row in a .prism-rows list: rows that share their columns, so kinds, times, and actions line up down the list ---------- */
+
+/* The kind, time, and action columns fit their content up to a share of the row, so a long kind or action never takes the title's room. */
+.prism-rows {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) fit-content(30%) fit-content(15%) fit-content(25%);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-lg);
+  list-style: none;
+}
+
+prism-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+  gap: var(--prism-space-5);
+  min-width: 0;
+  padding: var(--prism-space-3) var(--prism-space-5);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+prism-row:first-child {
+  border-top: 0;
+}
+
+prism-row .prism-row-tile {
+  width: calc(var(--prism-avatar-size) + var(--prism-space-2));
+  height: calc(var(--prism-avatar-size) + var(--prism-space-2));
+}
+
+.prism-row-tile[data-none] {
+  visibility: hidden;
+}
+
+prism-row[wrap] > .prism-row-tile {
+  align-self: start;
+}
+
+.prism-row-text {
+  display: grid;
+  min-width: 0;
+}
+
+.prism-row-title {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: var(--prism-font-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A title that links to where the row is handled reads as the title and ends with an ellipsis of its own, so the link is never cut off;
+   its focus ring stays inside the title's box. */
+.prism-row-title > a {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+prism-row[wrap] .prism-row-title > a {
+  overflow: visible;
+}
+
+.prism-row-title a {
+  color: var(--prism-color-ink);
+  font-weight: inherit;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.prism-row-title a:hover {
+  color: var(--prism-color-accent-text);
+  text-decoration: underline;
+}
+
+.prism-row-title a:focus-visible {
+  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
+  outline-offset: calc(-1 * var(--prism-stroke-strong));
+  border-radius: var(--prism-radius-xs);
+}
+
+.prism-row-description {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A wrapping row shows its title and its detail in full. */
+prism-row[wrap] .prism-row-title {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.prism-row-detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  margin-top: var(--prism-space-2);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+/* A slotted span of detail lays its pieces out as the detail's own, so a badge and its note keep the detail's gap. */
+.prism-row-detail > span[slot="detail"] {
+  display: contents;
+}
+
+.prism-row-kind,
+.prism-row-action {
+  display: flex;
+  align-items: center;
+  justify-self: start;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.prism-row-kind > *,
+.prism-row-action > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.prism-row-time {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* In a phone-width window a row keeps its tile, its text, and its action. */
+@media (max-width: 720px) {
+  .prism-rows {
+    grid-template-columns: auto minmax(0, 1fr) fit-content(40%);
+  }
+
+  .prism-row-kind,
+  .prism-row-time {
+    display: none;
+  }
+}
+
 /* ---------- prism-inbox: two-line items to pick one from, the picked one raised on the surface ---------- */
 
 :where(prism-inbox, prism-inbox-item),
@@ -2035,7 +3148,7 @@ prism-inbox:focus-visible:not(:has(prism-inbox-item[selected])) prism-inbox-item
   outline-offset: calc(-1 * var(--prism-stroke));
 }
 
-.prism-inbox-tile {
+:is(.prism-inbox-tile, .prism-row-tile) {
   display: grid;
   place-items: center;
   width: calc(var(--prism-avatar-size) + var(--prism-space-3));
@@ -2045,11 +3158,11 @@ prism-inbox:focus-visible:not(:has(prism-inbox-item[selected])) prism-inbox-item
   color: var(--prism-color-ink-muted);
 }
 
-.prism-inbox-tile[data-tone="accent"] { background: var(--prism-color-accent-soft); color: var(--prism-color-accent-text); }
-.prism-inbox-tile[data-tone="info"] { background: var(--prism-color-info-soft); color: var(--prism-color-info); }
-.prism-inbox-tile[data-tone="warning"] { background: var(--prism-color-warning-soft); color: var(--prism-color-warning); }
-.prism-inbox-tile[data-tone="danger"] { background: var(--prism-color-danger-soft); color: var(--prism-color-danger); }
-.prism-inbox-tile[data-tone="success"] { background: var(--prism-color-success-soft); color: var(--prism-color-success); }
+:is(.prism-inbox-tile, .prism-row-tile)[data-tone="accent"] { background: var(--prism-color-accent-soft); color: var(--prism-color-accent-text); }
+:is(.prism-inbox-tile, .prism-row-tile)[data-tone="info"] { background: var(--prism-color-info-soft); color: var(--prism-color-info); }
+:is(.prism-inbox-tile, .prism-row-tile)[data-tone="warning"] { background: var(--prism-color-warning-soft); color: var(--prism-color-warning); }
+:is(.prism-inbox-tile, .prism-row-tile)[data-tone="danger"] { background: var(--prism-color-danger-soft); color: var(--prism-color-danger); }
+:is(.prism-inbox-tile, .prism-row-tile)[data-tone="success"] { background: var(--prism-color-success-soft); color: var(--prism-color-success); }
 
 .prism-inbox-start {
   display: inline-flex;

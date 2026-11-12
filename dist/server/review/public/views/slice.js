@@ -7,11 +7,20 @@ import { codeParts } from "./code-location.js";
 import { claimChip } from "./claims.js";
 import { componentChip } from "./components.js";
 import { mountInitiativeSettings } from "./actions.js";
+import { shippedHistoryHtml } from "./shipped-history.js";
 
 function sliceChip(data, slug, ctx) {
   return artifactChip(`slice:${data.id}/${slug}`, ctx, data.titles[slug] ?? slug);
 }
 
+
+// Each deferred finding stays on record with the decision gate that accepted it and its follow-up in the tracker.
+function deferredList(findings) {
+  return `<p class="label-caps">Deferred findings</p><ul class="deferred-list">${findings.map((finding) => `<li>
+    <span class="deferred-head">${badge(finding.severity)}<span class="deferred-title">${escapeHtml(finding.title)}</span></span>
+    <span class="deferred-meta muted">${finding.gate ? `gate <code>${escapeHtml(finding.gate)}</code>` : "no gate recorded"} · follow-up ${finding.followUp ? escapeHtml(finding.followUp) : "none recorded"}</span>
+  </li>`).join("")}</ul>`;
+}
 
 function reviewCard(review, ctx) {
   // A card names a record by its kind, never by its file name.
@@ -23,9 +32,11 @@ function reviewCard(review, ctx) {
       ${stat(review.waves === 1 ? "wave" : "waves", String(review.waves))}
       ${stat("unresolved", String(review.unresolved), { tone: review.unresolved ? "warning" : "success" })}
       ${stat("blocker / high not verified", String(review.blocking), { tone: review.blocking ? "danger" : "" })}
+      ${review.deferred ? stat("deferred", String(review.deferred), { hint: "accepted with a follow-up" }) : ""}
     </div>
     ${review.currentWave ? `<p>Current wave <code>${escapeHtml(review.currentWave.id)}</code> (${escapeHtml(review.currentWave.mode)}) is ${review.currentWave.accepted ? "accepted" : "not accepted"}.</p>` : ""}
     ${statuses ? `<p class="chip-row">${statuses}</p>` : ""}
+    ${review.deferredFindings?.length ? deferredList(review.deferredFindings) : ""}
     <p>${artifactChip(review.path, ctx, "Open the findings board")}</p>`);
 }
 
@@ -427,7 +438,7 @@ export async function render(container, entity, ctx) {
     files: filesPanel(artifacts, ctx)
   };
   const designNote = data.designReview ? `<p class="muted">${data.designReview === "answered" ? "You answered the design question; the agent accepts or revises the design next." : "The design waits for your answer on the Attention page."}</p>` : "";
-  container.innerHTML = `
+  container.innerHTML = `${shippedHistoryHtml(data.shippedHistory)}
     <div class="slice-head-tags chip-row">${phaseTag(slice, data)}${requirementLinks(slice.requirements, ctx, { icon: "list" })}${componentChip(slice.component)}${data.complete && slice.status === "split" ? badge("all descendants done", "success") : ""}</div>
     ${stepper(slice, data)}
     ${held ? `<div class="slice-claim-strip">${claimChip(held, "strip")}</div>` : ""}

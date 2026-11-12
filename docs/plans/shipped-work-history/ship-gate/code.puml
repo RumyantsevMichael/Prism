@@ -1,0 +1,12 @@
+@startuml
+title ship-gate - code
+component "shipped-history.mjs\nshippedDecision, openWork,\nShippedHistoryError" as History
+component "roadmap.mjs\nship, deriveItem,\nupdate_initiative, set_requires" as Roadmap
+component "state.mjs\nreadCoordinationState" as State
+component "record-store.mjs\nclaim records" as Store
+component "mcp.mjs\nstateErrorData" as Mcp
+Roadmap --> History : open work, refusal
+History --> State : pending gates
+History --> Store : live claims
+Mcp ..> Roadmap : error data
+@enduml

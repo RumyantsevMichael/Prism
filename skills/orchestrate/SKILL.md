@@ -46,7 +46,7 @@ When a Prism result carries a [person change notice](../workflow/SKILL.md#common
 
 ## 3. Design each scope
 
-A scope is the root slice, or a part that a split design created; design it when its dependencies are done.
+A scope is the root slice, a part that a split design created, or a fix scope, a done slice whose defect `get_initiative` lists under `derived.unfinishedFixes` with status `not-designed`; design it when its dependencies are done.
 
 1. Call `update_initiative` with a `claim` operation for the scope, so no other agent starts it, and when Prism refuses the claim with `slice_claimed`, leave the scope to the holder it names and continue with another eligible scope or slice.
 2. Run `design` for the scope in a fresh child agent, passing its slug, its folder, and any reproduction that triage returned.
@@ -69,7 +69,7 @@ Repeat for the next leaf that is `not-started`, has an accepted design, and whos
 7. When continuation is `stepwise`, pause and report the finished slice.
 
 - When the slice is `blocked` with contract defects, or its dependencies changed:
-  1. Call `update_initiative` with `restore_tests` for the scope.
+  1. Call `update_initiative` with a `claim` operation and `restore_tests` for the scope.
   2. Return the defects to design with the scope.
   3. Accept design's revised proposal, then start the slice again with a fresh implementation session.
 - When the implementer returns `BLOCKED` on an approval gate that needs the user's chat approval, ask the user in chat whether Prism may run the exact command, then run a fresh implementation session with the gate id and their answer quoted word for word; on any other approval gate, wait for it as in [user gates](#6-user-gates), then run a fresh implementation session.
@@ -80,24 +80,23 @@ On resume, continue an `in-progress` slice with a fresh implementation session b
 ## 5. Review
 
 1. Call `update_review` as the coordinator with a `start_wave` operation in `implementation-review` mode, one lane per review focus, a fresh reviewer identifier per lane, as `base`, the last commit that a child reported before the slice started, when one did, and, on the first wave, the implementer's worker id as `delivery`.
-2. Run `review` for each lane in a fresh child agent, and use a security-focused lane with the `securityReview` model for trust-boundary changes.
+2. Run `review` for each lane in a fresh child agent, use a security-focused lane with the `securityReview` model for trust-boundary changes, and when every lane is `CLEAN`, call `update_review` with `accept_wave`.
 3. When a finding names a contract clause, call `verify_slice` with `contractDefects` for those clauses and handle the slice as blocked with contract defects, unless the code only missed a sound clause, in which case clear the clause with `revise_finding` and that reason.
 4. Otherwise, when a lane returns `FINDINGS`, run a fresh `implement` session with the findings of every wave so far, asking whether they share a cause in the contract, and once it returns `DONE`, set each finding it fixed `FIXED` with its summary through `update_review` as the review's `delivery` worker, then start a new wave with fresh reviewers.
-5. When `start_wave` refuses a further wave, ask a `decision` gate whether to continue the review, return the slice to design, or narrow it, and pass the answered gate's id as `afterGate`.
-6. When every lane is `CLEAN`, call `update_review` with `accept_wave`.
+5. When `start_wave` refuses with a `review_loop_limit` problem, wait for the review loop decision gate that it names as in [user gates](#6-user-gates), asking no question of your own, then for `continue-review` start the wave again with the gate's id as `afterGate`, for `return-to-design` call `update_review` with only a `return_to_design` operation that names the gate and handle the slice as blocked with contract defects, and for `accept-deferred` file one follow-up per unresolved finding in the tracker that `.prism/workflow.md` names, or when it names none add the finding to the roadmap's open questions through `update_roadmap` `set_open_questions` with the existing questions kept, and call `update_review` with `accept_wave`, the gate, and `deferrals` that pair each finding with its follow-up, the tracker's reference or `roadmap: <question>`.
 
 ## 6. User gates
 
-- Record every question to the user before asking it, through `update_coordination_state` with a `gateOperations` `ask` operation that names the kind, slice, question, its context, artifacts, and for a decision its options with consequences and the recommended answer, written as a [blocker](../workflow/SKILL.md#common-terms).
-- Use `visual-review` for design gates, `decision` for choices, and `assistance` for actions the user must take.
+- Record every question to the user before asking it, through `update_coordination_state` with a `gateOperations` `ask` operation that names the kind, `visual-review` for a design gate, `decision` for a choice, or `assistance` for an action the user must take, and the slice, question, its context, artifacts, and for a decision its options with consequences and the recommended answer, written as a [blocker](../workflow/SKILL.md#common-terms).
 - After asking, call `wait_for_user_gate` once with the ids just recorded, and when it returns without an answer, end the turn.
-- Treat an answer recorded in the review browser as the user's answer, never ask an answered gate again, and `resolve` each gate after acting on it or as soon as it no longer applies, such as when its artifacts are gone, with a reason unless the browser recorded the answer.
+- Treat an answer recorded in the review browser as the user's answer, never ask an answered gate again, and `resolve` each gate after acting on it or as soon as it no longer applies, such as when its artifacts are gone, with a reason unless the browser recorded the answer, and for a decision answered in conversation with the chosen option's id as `choice`.
 
 ## 7. Finish or pause
 
 - When every leaf is done:
   1. Run the dependents' run of each contract scope that has no `passed` entry in `get_initiative`'s `dependents`.
-  2. Call `update_roadmap` with a `ship` operation for the initiative; when it refuses with `dependents_blocked`, run the dependents' run again of each listed scope whose `reason` is `not_run` and call `ship` again, then report each scope whose `reason` is `failed` or whose new run did not pass to the user with its `blocked` components and stop until a later dependents' run passes.
-  3. Move facts that later work needs from the initiative's slice folders into requirements, ADRs, or user documentation.
-  4. Keep the slice folders and the initiative's records, because they are the initiative's history.
+  2. Call `update_roadmap` with a `ship` operation for the initiative; when it refuses with `open_work`, act on and `resolve` each listed gate, accept or revise each listed proposal, and end or wait out each listed claim, and when it refuses with `fixes_unfinished`, design and run each listed fix through sections 3 and 4, then call `ship` again.
+  3. When `ship` refuses with `dependents_blocked`, run the dependents' run again of each listed scope whose `reason` is `not_run` or `stale` and call `ship` again, then report each scope whose `reason` is `failed` or whose new run did not pass to the user with its `blocked` components and stop until a later dependents' run passes.
+  4. Move facts that later work needs from the initiative's slice folders into requirements, ADRs, or user documentation.
+  5. Keep the slice folders and the initiative's records, because they are the initiative's history, and when commit is on, commit the slice documents that ship lists under `historyMarks` apart from other changes.
 - When work must pause, call `checkpoint_pause` with the initiative, the current revision, the active slice, recovery content that names the next action, and the state changes.

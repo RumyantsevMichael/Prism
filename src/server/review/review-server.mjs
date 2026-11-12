@@ -1,7 +1,9 @@
 import { createServer } from "node:http";
+import { arrangeGroups, GROUP_LIMIT, groupNameOf, joinGroup } from "./public/views/tab-groups.js";
 import { randomBytes } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PLUGIN_ROOT } from "../plugin-root.mjs";
@@ -14,12 +16,14 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { entityContext, entityExists, forgetWorkspace, loadClaims, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
+import { entityContext, entityExists, forgetWorkspace, loadClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords } from "./workspace-model.mjs";
+import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
-import { readPreferences, writePreferences } from "./review-preferences.mjs";
+import { readStoredPreferences, writePreferences } from "./review-preferences.mjs";
 import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
 import { createViewerHub, openEventStream, writeEvent } from "./viewer-hub.mjs";
+import { createCachedValue } from "./cached-value.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -106,28 +110,32 @@ async function walkArtifacts(projectRoot, relativeRoot, results) {
 }
 
 const SOURCE_SIZE_LIMIT = 512 * 1024;
-const SOURCE_CACHE_MS = 2000;
+const SOURCE_CHECKS = 8;
+const LISTING_MIN_MS = 5000;
+const LISTING_FACTOR = 5;
 const SECRET_NAME = /^(\.env(\..*)?|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.npmrc|\.pypirc|\.netrc|credentials(\.json)?)$|\.(pem|key|p12|pfx|jks|keystore|kdbx|gpg|asc)$/i;
 const BINARY_EXTENSION = /\.(png|jpe?g|gif|webp|ico|bmp|pdf|zip|gz|tgz|bz2|xz|7z|rar|jar|war|class|pyc|so|dylib|dll|exe|wasm|woff2?|ttf|otf|eot|mp3|mp4|mov|avi|sqlite|db)$/i;
-const sourceCache = new Map();
 
 function gitListFiles(projectRoot) {
   return new Promise((resolve) => {
-    execFile("git", ["-C", projectRoot, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { maxBuffer: 64 * 1024 * 1024 }, (error, stdout) => {
+    execFile("git", ["-C", projectRoot, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (error, stdout) => {
       resolve(error ? [] : stdout.split("\0").filter(Boolean));
     });
   });
 }
 
 // Source files are shown read-only: tracked or unignored files only, without secrets, binaries, or very large files.
+// A few file checks run at once, which shortens the listing on a file system where each check waits, such as a Windows drive under WSL.
 export async function listSourceFiles(projectRoot) {
-  const hit = sourceCache.get(projectRoot);
-  if (hit && Date.now() - hit.at < SOURCE_CACHE_MS) return hit.value;
-  const value = (async () => {
-    const files = [];
-    for (const file of await gitListFiles(projectRoot)) {
-      const name = path.posix.basename(file);
-      if (SECRET_NAME.test(name) || BINARY_EXTENSION.test(name)) continue;
+  const candidates = (await gitListFiles(projectRoot)).filter((file) => {
+    const name = path.posix.basename(file);
+    return !SECRET_NAME.test(name) && !BINARY_EXTENSION.test(name);
+  });
+  const files = [];
+  let next = 0;
+  const check = async () => {
+    while (next < candidates.length) {
+      const file = candidates[next++];
       try {
         const metadata = await stat(path.join(projectRoot, file));
         if (metadata.isFile() && metadata.size <= SOURCE_SIZE_LIMIT) files.push(file);
@@ -135,9 +143,38 @@ export async function listSourceFiles(projectRoot) {
         // A file deleted after git listed it is skipped.
       }
     }
-    return files.sort();
-  })();
-  sourceCache.set(projectRoot, { at: Date.now(), value });
+  };
+  await Promise.all(Array.from({ length: SOURCE_CHECKS }, check));
+  return files.sort();
+}
+
+// The review page polls the project's listing every few seconds, so the server answers from its last listing and renews it behind,
+// at most as often as five times the time a listing took, so a project whose listing is slow is not listed again and again.
+const listings = new Map();
+function reviewListing(projectRoot) {
+  let listing = listings.get(projectRoot);
+  if (!listing) {
+    listing = createCachedValue(async () => {
+      const [artifacts, sources] = await Promise.all([listArtifacts(projectRoot), listSourceFiles(projectRoot)]);
+      return { artifacts, sources };
+    }, { ttlMs: (ms) => Math.max(LISTING_MIN_MS, LISTING_FACTOR * ms) });
+    listings.set(projectRoot, listing);
+  }
+  return listing;
+}
+
+// A wanted file whose presence on disk disagrees with the kept listing, such as one an agent has just written, moved, or deleted, lists the project again,
+// so a few checked files keep the listing honest without listing the whole project on every request.
+async function listedFiles(projectRoot, wanted = []) {
+  const listing = reviewListing(projectRoot);
+  let value = await listing.get();
+  const files = wanted.filter((file) => typeof file === "string" && file !== "attention" && !parseEntityRef(file));
+  const listed = (file) => value.artifacts.includes(file) || value.sources.includes(file);
+  const present = await Promise.all(files.map((file) => stat(path.join(projectRoot, file)).then((info) => info.isFile(), () => false)));
+  if (files.some((file, index) => listed(file) !== present[index])) {
+    listing.invalidate();
+    value = await listing.get();
+  }
   return value;
 }
 
@@ -400,10 +437,12 @@ export function publicAsset(route) {
 
 export function openBrowser(url) {
   const platform = process.platform;
-  const command = platform === "darwin" ? "open" : platform === "win32" ? "cmd" : "xdg-open";
-  const args = platform === "win32" ? ["/c", "start", "", url] : [url];
+  // cmd.exe's start would read an & in the URL's query as a second command, so Windows opens the URL through the shell's URL handler.
+  const command = platform === "darwin" ? "open" : platform === "win32" ? "rundll32" : "xdg-open";
+  const args = platform === "win32" ? ["url.dll,FileProtocolHandler", url] : [url];
   try {
-    const child = spawn(command, args, { detached: true, stdio: "ignore" });
+    // A browser that the opener starts inherits its working folder, so it starts in the home folder and never keeps a project folder busy, which Windows would refuse to remove or rename.
+    const child = spawn(command, args, { cwd: homedir(), detached: true, stdio: "ignore", windowsHide: true });
     child.on("error", () => {});
     child.unref();
     return true;
@@ -443,6 +482,34 @@ export function normalizeTabs(value) {
     throw new Error("The open tabs must be an array of project-relative artifact paths.");
   }
   return [...new Set(tabs)];
+}
+
+function copyGroups(groups) {
+  return groups.map((group) => ({ name: group.name, tabs: [...group.tabs], collapsed: group.collapsed }));
+}
+
+// A page's groups name open tabs, each tab in one group at most, with names that differ.
+function checkGroups(value, openTabs, follow = (tab) => tab) {
+  if (!Array.isArray(value) || value.length > GROUP_LIMIT) {
+    throw new Error(`The tab groups must be an array of at most ${GROUP_LIMIT} groups.`);
+  }
+  const names = new Set();
+  const grouped = new Set();
+  return value.map((group) => {
+    if (!group || typeof group !== "object" || Array.isArray(group)) throw new Error("Each tab group must be an object with a name and its tabs.");
+    const name = groupNameOf(group.name);
+    if (names.has(name)) throw new Error(`Two tab groups are named ${name}.`);
+    names.add(name);
+    const tabs = normalizeTabs(group.tabs).map(follow);
+    if (!tabs.length) throw new Error(`The tab group ${name} has no tabs.`);
+    for (const tab of tabs) {
+      if (!openTabs.includes(tab)) throw new Error("Grouped tabs must be open tabs.");
+      if (grouped.has(tab)) throw new Error("A tab can be in one tab group only.");
+      grouped.add(tab);
+    }
+    if (Object.hasOwn(group, "collapsed") && typeof group.collapsed !== "boolean") throw new Error("A tab group's collapsed must be true or false.");
+    return { name, tabs, collapsed: group.collapsed === true };
+  });
 }
 
 // Reads a request body of at most 64 KiB as text; the review app needs the exact text because control requests sign it.
@@ -536,7 +603,11 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       Promise.resolve(rebuildIndex(root, component)).catch(() => {});
     }
   };
-  let session = { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], revision: 0 };
+  // activeSource says who chose the active tab last: "agent" for a presentation, or the id of the review window that chose it, so each window
+  // follows what an agent presents and its own choices, never another window's.
+  // groups name sets of open tabs, such as the tabs an agent presented for one piece of work: each group's tabs stay side by side in openTabs,
+  // in the order openTabs gives them, and a collapsed group shows only its name and its selected tab.
+  let session = { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], groups: [], activeSource: null, revision: 0 };
   // Each viewer stream maps to its heartbeat and whether it carries a live write session; only writable streams count as connected tabs.
   // The review page joins the origin's shared stream instead, as a member of the hub under this page's path, and counts the same way.
   const viewers = new Map();
@@ -546,7 +617,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   const writableRequest = (request) => canWrite(request.headers["x-prism-write"]);
 
   function sessionSnapshot() {
-    const snapshot = { openTabs: [...session.openTabs], activeTab: session.activeTab, previewTab: session.previewTab, agentTabs: [...session.agentTabs], revision: session.revision };
+    const snapshot = { openTabs: [...session.openTabs], activeTab: session.activeTab, previewTab: session.previewTab, agentTabs: [...session.agentTabs], groups: copyGroups(session.groups), activeSource: session.activeSource, revision: session.revision };
     return instance ? { ...snapshot, instance, ...(appVersion ? { appVersion } : {}) } : snapshot;
   }
 
@@ -610,8 +681,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     return count;
   }
 
-  async function reviewableFiles() {
-    return new Set([...await listArtifacts(projectRoot), ...await listSourceFiles(projectRoot)]);
+  async function reviewableFiles(wanted = []) {
+    const { artifacts, sources } = await listedFiles(projectRoot, wanted);
+    return new Set([...artifacts, ...sources]);
   }
 
   async function assertAvailable(tabs, availableArtifacts) {
@@ -629,17 +701,33 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     const follow = (tab) => moves.get(tab) ?? tab;
     const agentTabs = [...new Set(session.agentTabs.map(follow))];
     const previewTab = session.previewTab && follow(session.previewTab);
-    return commitSession({ openTabs: [...new Set(session.openTabs.map(follow))], activeTab: session.activeTab && follow(session.activeTab), previewTab: agentTabs.includes(previewTab) ? null : previewTab, agentTabs });
+    const groups = session.groups.map((group) => ({ ...group, tabs: group.tabs.map(follow) }));
+    return commitSession({ openTabs: [...new Set(session.openTabs.map(follow))], activeTab: session.activeTab && follow(session.activeTab), previewTab, agentTabs, groups, activeSource: session.activeSource });
   }
 
   // Reading the session first lets moved records' tabs follow them, so every reader sees the records where they now live.
+  // Reads and changes of the session run in the order they arrive, so a page that reloads right after a change reads that change,
+  // however long the file listing that each of them waits on takes, as it does on a slow disk.
+  let sessionWork = Promise.resolve();
+  function inSessionOrder(task) {
+    const run = sessionWork.then(task);
+    sessionWork = run.catch(() => {});
+    return run;
+  }
+
   async function currentSession() {
     return followMovedRecords(await reviewableFiles());
   }
 
-  function commitSession(next) {
+  // Every change goes through here, so grouped tabs always sit side by side and neither an agent tab nor a grouped tab is ever the preview.
+  function commitSession(proposed) {
+    const arranged = arrangeGroups(proposed.openTabs, proposed.groups ?? session.groups);
+    const grouped = new Set(arranged.groups.flatMap((group) => group.tabs));
+    const previewTab = proposed.previewTab && !proposed.agentTabs.includes(proposed.previewTab) && !grouped.has(proposed.previewTab) ? proposed.previewTab : null;
+    const next = { ...proposed, ...arranged, previewTab };
     const changed = ["openTabs", "agentTabs"].some((key) => next[key].length !== session[key].length || next[key].some((tab, index) => tab !== session[key][index]))
-      || next.activeTab !== session.activeTab || next.previewTab !== session.previewTab;
+      || JSON.stringify(next.groups) !== JSON.stringify(session.groups)
+      || next.activeTab !== session.activeTab || next.previewTab !== session.previewTab || next.activeSource !== session.activeSource;
     if (changed) {
       session = { ...next, revision: session.revision + 1 };
       notify("session", sessionSnapshot());
@@ -659,7 +747,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     if (Object.hasOwn(request, "agentTabs")) body.agentTabs = [...new Set(normalizeTabs(request.agentTabs).map(follow))];
     const requestedTabs = body.openTabs;
     // A tab that is already open may name a file that is gone, so the page can keep it open and offer to close it.
-    await assertAvailable(requestedTabs.filter((tab) => !session.openTabs.includes(tab)), available);
+    const added = requestedTabs.filter((tab) => !session.openTabs.includes(tab));
+    await assertAvailable(added, added.length ? await reviewableFiles(added) : available);
     let nextActiveTab;
     if (Object.hasOwn(body, "activeTab")) {
       if (body.activeTab !== null && (typeof body.activeTab !== "string" || !requestedTabs.includes(body.activeTab))) {
@@ -684,35 +773,43 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       }
       agentTabs = requestedAgentTabs;
     }
+    const groups = Object.hasOwn(body, "groups") ? checkGroups(body.groups, requestedTabs, follow) : session.groups;
     if (requestedTabs.length === 0) {
       nextActiveTab = null;
     }
-    return commitSession({ openTabs: requestedTabs, activeTab: nextActiveTab, previewTab: agentTabs.includes(previewTab) ? null : previewTab, agentTabs });
+    // A window names itself with a short id; an active tab it did not choose keeps its source.
+    const source = typeof body.source === "string" && /^[\w-]{1,64}$/.test(body.source) ? body.source : "page";
+    const activeSource = nextActiveTab === session.activeTab ? session.activeSource : source;
+    return commitSession({ openTabs: requestedTabs, activeTab: nextActiveTab, previewTab, agentTabs, groups, activeSource });
   }
 
   // get_review_url adds tabs the same way present_review does, so neither tool closes the human's tabs.
-  async function setOpenTabs(tabs) {
-    return (await presentTabs(tabs)).openTabs;
+  async function setOpenTabs(tabs, options) {
+    return (await presentTabs(tabs, options)).openTabs;
   }
 
   // present_review adds agent tabs beside the human's tabs and focuses the first one without replacing the preview.
-  async function presentTabs(tabs) {
+  // A group name gathers the presented tabs into that group, made when no group has the name yet, and shows the group expanded;
+  // a tab already in another group moves into it, and tabs presented without a name keep the groups they are in.
+  async function presentTabs(tabs, { group } = {}) {
     const requestedTabs = normalizeTabs(tabs);
-    const available = await reviewableFiles();
+    const groupName = group === undefined || group === null ? null : groupNameOf(group);
+    const available = await reviewableFiles(requestedTabs);
     await assertAvailable(requestedTabs, available);
     await followMovedRecords(available);
     if (requestedTabs.length === 0) {
       if (session.openTabs.includes("attention")) {
-        return commitSession({ ...session, activeTab: "attention" });
+        return commitSession({ ...session, activeTab: "attention", activeSource: "agent" });
       }
       // Attention opens in the preview tab, replacing whatever the preview showed.
       const openTabs = [...session.openTabs.filter((tab) => tab !== session.previewTab), "attention"];
-      return commitSession({ openTabs, activeTab: "attention", previewTab: "attention", agentTabs: session.agentTabs });
+      return commitSession({ openTabs, activeTab: "attention", previewTab: "attention", agentTabs: session.agentTabs, activeSource: "agent" });
     }
     const openTabs = [...session.openTabs, ...requestedTabs.filter((tab) => !session.openTabs.includes(tab))];
     const agentTabs = [...session.agentTabs, ...requestedTabs.filter((tab) => !session.agentTabs.includes(tab))];
     const previewTab = requestedTabs.includes(session.previewTab) ? null : session.previewTab;
-    return commitSession({ openTabs, activeTab: requestedTabs[0], previewTab, agentTabs });
+    const groups = groupName ? joinGroup(session.groups, groupName, requestedTabs) : session.groups;
+    return commitSession({ openTabs, activeTab: requestedTabs[0], previewTab, agentTabs, groups, activeSource: "agent" });
   }
 
   function closeViewerStreams() {
@@ -744,7 +841,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       if (asset) await serveFile(response, asset.file, asset.type);
       else send(response, 404, "Not found");
     } else if (route === "/api/preferences" && request.method === "GET") {
-      send(response, 200, JSON.stringify(await readPreferences()), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify(await readStoredPreferences()), "application/json; charset=utf-8");
     } else if (route === "/api/preferences" && request.method === "PUT") {
       if (!fromPage(request)) {
         send(response, 403, "Preferences must come from the review page as JSON.");
@@ -755,7 +852,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         try {
           change = JSON.parse(await readBody(request));
         } catch {
-          throw Object.assign(new Error("The preferences must be a JSON object with theme, density, or both."), { code: "invalid_preference" });
+          throw Object.assign(new Error("The preferences must be a JSON object that gives one or more preferences."), { code: "invalid_preference" });
         }
         send(response, 200, JSON.stringify(await writePreferences(change)), "application/json; charset=utf-8");
       } catch (error) {
@@ -783,7 +880,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         sendJson(response, 404, { code: "stream_gone", message: "The event stream closed; join the stream that replaced it." });
       }
     } else if (route === "/api/index") {
-      const artifacts = await listArtifacts(projectRoot), sources = await listSourceFiles(projectRoot);
+      const { artifacts, sources } = await listedFiles(projectRoot, session.openTabs);
       const available = new Set([...artifacts, ...sources]);
       const snapshot = await followMovedRecords(available);
       const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref) => entityExists(projectRoot, ref));
@@ -796,10 +893,10 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       if (conflict) send(response, 200, JSON.stringify(conflict), "application/json; charset=utf-8");
       else send(response, 404, "No saved conflict has that name.");
     } else if (route === "/api/session" && request.method === "GET") {
-      send(response, 200, JSON.stringify(await currentSession()), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify(await inSessionOrder(currentSession)), "application/json; charset=utf-8");
     } else if (route === "/api/session" && request.method === "PUT") {
       const body = await readJson(request);
-      send(response, 200, JSON.stringify(await updateSession(body)), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify(await inSessionOrder(() => updateSession(body))), "application/json; charset=utf-8");
     } else if (route === "/api/actions" && request.method === "GET") {
       try {
         const listed = await listActions({ projectRoot, target: url.searchParams.get("target"), indexer });
@@ -868,6 +965,20 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       send(response, 200, JSON.stringify(await loadEvidence(projectRoot, url.searchParams.get("id"), evidenceStore())), "application/json; charset=utf-8");
     } else if (route === "/api/indexing" && request.method === "GET") {
       send(response, 200, JSON.stringify(await indexingStatus()), "application/json; charset=utf-8");
+    } else if (route === "/api/records/search" && request.method === "GET") {
+      // The Knowledge search: requirements, decisions, glossary terms, and diagrams whose title or text holds every word.
+      send(response, 200, JSON.stringify(await searchRecords(projectRoot, url.searchParams.get("q"))), "application/json; charset=utf-8");
+    } else if (route === "/api/touched" && request.method === "GET") {
+      // Touched by my work: the records behind one slice, what its contract cites and what its work changes.
+      try {
+        send(response, 200, JSON.stringify(await touchedRecords(projectRoot, url.searchParams.get("slice"))), "application/json; charset=utf-8");
+      } catch (error) {
+        if (!(error instanceof TouchedError)) throw error;
+        send(response, error.status, JSON.stringify({ code: error.code, error: error.message }), "application/json; charset=utf-8");
+      }
+    } else if (route === "/api/changed" && request.method === "GET") {
+      // Changed this week: the record files changed in the last 7 days, read from Git on each request.
+      send(response, 200, JSON.stringify(await loadRecordChanges(projectRoot)), "application/json; charset=utf-8");
     } else if (route === "/api/search") {
       send(response, 200, JSON.stringify(await searchArtifacts(projectRoot, url.searchParams.get("q"))), "application/json; charset=utf-8");
     } else if (route === "/api/artifact") {
@@ -877,7 +988,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       await resolveProjectFile(projectRoot, artifactPath).catch((error) => {
         if (error.code !== "ENOENT") throw error;
       });
-      if (!(await listArtifacts(projectRoot)).includes(artifactPath) && !(await listSourceFiles(projectRoot)).includes(artifactPath)) {
+      const { artifacts, sources } = await listedFiles(projectRoot, [artifactPath]);
+      if (!artifacts.includes(artifactPath) && !sources.includes(artifactPath)) {
         send(response, 404, "The file is not available for review.");
         return;
       }
@@ -979,9 +1091,9 @@ export async function startReviewServer(options = {}) {
     viewerCount: review.viewerCount,
     setOpenTabs: review.setOpenTabs,
     reviewUrl: review.reviewUrl,
-    async open(artifactPaths) {
+    async open(artifactPaths, options) {
       const tabs = normalizeTabs(artifactPaths);
-      await review.presentTabs(tabs);
+      await review.presentTabs(tabs, options);
       const url = review.reviewUrl(tabs);
       if (!review.claimBrowserOpen()) {
         return { url, opened: false, ...review.getSession() };

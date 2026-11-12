@@ -1,0 +1,10 @@
+@startuml
+title done-work-fixes - code
+component "initiative-graph.mjs\nanalyzeInitiative" as Graph
+component "initiative.mjs\nreport_defect, add_fix,\naccept_proposal, set_status,\nderived unfinishedFixes" as Initiative
+component "roadmap.mjs\nship, deriveItem" as Roadmap
+component "mcp.mjs\nstateErrorData" as Mcp
+Initiative --> Graph : fix slices as leaves
+Roadmap --> Initiative : unfinished fixes
+Mcp ..> Roadmap : fixes data
+@enduml

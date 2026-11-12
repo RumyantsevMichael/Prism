@@ -24,6 +24,7 @@ import {
 } from "../server/session/session-trace-store.mjs";
 import { recordFinishedRuns } from "../server/session/run-records.mjs";
 import { readWorkflowConfig, runStatisticsCollection } from "../server/workflow/workflow-config.mjs";
+import { configureRecordSync } from "../server/workflow/record-store-sync.mjs";
 
 const MAX_HOOK_INPUT_BYTES = 4 * 1024 * 1024;
 const DEFAULT_USAGE_READ_BUDGET_MS = 1500;
@@ -986,6 +987,8 @@ export async function recordSessionTrace({
 }
 
 async function main() {
+  // A hook must answer within its host's time limit, so its record reads never start a store pull; the session's server keeps the store current.
+  configureRecordSync({ pullOnRead: false });
   await recordSessionTrace();
 }
 

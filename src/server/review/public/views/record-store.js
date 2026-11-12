@@ -64,7 +64,9 @@ function unsavedHtml(status, describe) {
   return unsaved.length ? `<p class="muted">Deleted locally while the upstream changed ${unsaved.map((item) => escapeHtml(recordName(item.path, describe))).join(", ")}; the upstream version was kept and nothing was saved.</p>` : "";
 }
 
-export function createRecordStoreStatus({ storeButton, storeLabel, syncButton, syncLabel, dialog, fetchJson, openRecord, hasArtifact, describe = (path) => ({ label: path, kind: "Record" }) }) {
+// One status bar button names the store and, beside it, its sync state; both open the same details, so they are one control.
+// Its tone is the sync state's, and its tip says where the records live, then the sync message.
+export function createRecordStoreStatus({ storeButton, storeLabel, syncPart, syncLabel, dialog, fetchJson, openRecord, hasArtifact, describe = (path) => ({ label: path, kind: "Record" }) }) {
   let store = null;
   let status = null;
   // The dialog keeps its own header and Close button, so the details render into one holder in its body.
@@ -77,18 +79,14 @@ export function createRecordStoreStatus({ storeButton, storeLabel, syncButton, s
     status = nextStatus ?? null;
     const where = storeItem(store);
     storeButton.hidden = !where;
-    if (where) {
-      storeLabel.textContent = where.short;
-      storeButton.setAttribute("tip", where.title);
-      storeButton.dataset.tone = where.tone;
-    }
+    if (!where) return;
     const sync = syncItem(store, status);
-    syncButton.hidden = !sync;
-    if (sync) {
-      syncLabel.textContent = sync.label;
-      syncButton.dataset.tone = sync.tone;
-      syncButton.setAttribute("tip", [status?.message, sync.problem ? "Click for details" : ""].filter(Boolean).join("\n") || sync.label);
-    }
+    storeLabel.textContent = where.short;
+    syncPart.hidden = !sync;
+    if (sync) syncLabel.textContent = sync.label;
+    storeButton.dataset.tone = sync?.tone ?? where.tone;
+    const tip = [where.title, sync ? [sync.label, status?.message].filter(Boolean).join(": ") : "", sync?.problem ? "Click for details" : ""];
+    storeButton.setAttribute("tip", tip.filter(Boolean).join("\n"));
   }
 
   async function open() {
@@ -131,6 +129,5 @@ export function createRecordStoreStatus({ storeButton, storeLabel, syncButton, s
   }
 
   storeButton.addEventListener("click", open);
-  syncButton.addEventListener("click", open);
   return { update };
 }

@@ -8,6 +8,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { jsonLine, readJsonLines } from "../../dist/server/json-lines.mjs";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
+import { defer } from "./fixtures/teardown.mjs";
 
 const SERVER_PATH = fileURLToPath(new URL("../../dist/server/mcp.mjs", import.meta.url));
 const SEPARATORS = "a\u2028b\u2029c";
@@ -38,11 +39,13 @@ test("the reader splits only at line feeds, across chunks, and drops a trailing 
 
 test("the MCP server keeps a request with raw U+2028 and U+2029 whole and answers on one line", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "prism-json-lines-"));
-  context.after(() => rm(root, { recursive: true, force: true }));
+  defer(context, () => rm(root, { recursive: true, force: true }));
   const env = isolatedEnv({ PRISM_REVIEW_APP: "off", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) });
   delete env.CLAUDE_PROJECT_DIR;
   const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "ignore"] });
-  context.after(() => { if (child.exitCode === null) child.kill("SIGKILL"); });
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  // Windows cannot remove a folder that a running process uses as its working folder, so cleanup waits for the server to end.
+  defer(context, async () => { if (child.exitCode === null) child.kill("SIGKILL"); await exited; });
   let output = "";
   child.stdout.setEncoding("utf8");
   const answered = new Promise((resolve) => child.stdout.on("data", (chunk) => { output += chunk; if (output.includes("\n")) resolve(); }));

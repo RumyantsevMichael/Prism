@@ -16,7 +16,10 @@ const { openNativeRepositoryIntelligence } = await import("../../dist/server/rep
 const ROOT_FILES = [".prism/workflow.md", "README.md"];
 const NET_FILES = ["packages/net/retry.ts", "packages/net/timeout.ts"];
 const APP_FILES = ["packages/app/client.ts"];
-const search = (root, runtime, input = {}, waitMs = 2000) => searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...input }, { runtime, waitMs });
+// A call answers as soon as its components are ready, so the default bound only has to outlast preparation on a busy runner, where it can take longer than two seconds; tests of the bound itself pass their own.
+const search = (root, runtime, input = {}, waitMs = 30000) => searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...input }, { runtime, waitMs });
+// Asserts a ready result and otherwise names each component that is missing and why.
+const assertReady = (result) => assert.equal(result.status, "ready", JSON.stringify(result.diagnostics));
 const built = (control) => control.builds.map((build) => build.files);
 
 test("clause 1: a repository without components keeps its one index, its storage, and its fields", async (t) => {
@@ -28,7 +31,7 @@ test("clause 1: a repository without components keeps its one index, its storage
   // A later session reuses the index that the earlier one prepared, from the same storage.
   const later = await fakeRuntime(storage);
   const found = await search(root, later.runtime);
-  assert.equal(found.status, "ready");
+  assertReady(found);
   assert.deepEqual(later.control.builds, []);
   assert.equal("components" in found, false);
   assert.equal("components" in (await later.runtime.status(root)), false);
@@ -39,7 +42,7 @@ test("clauses 2, 8, and 10: a path-scoped call prepares only the components that
   const { runtime, control } = await fakeRuntime(storage);
   const found = await search(root, runtime, { filters: { paths: ["packages/net"] } });
   assert.deepEqual(built(control), [NET_FILES]);
-  assert.equal(found.status, "ready");
+  assertReady(found);
   assert.deepEqual((found.components ?? []).map(({ indexRevision, ...rest }) => rest), [{ component: "root/net", folder: "packages/net", status: "included", failure: null }]);
   assert.match(found.components?.[0].indexRevision, /^[a-f0-9]{64}$/);
   assert.ok(found.results.length > 0 && found.results.every((result) => result.file.startsWith("packages/net/")));
@@ -59,7 +62,7 @@ test("clauses 2 and 8: an unscoped call prepares every component that holds a fi
   const found = await search(root, runtime);
   assert.deepEqual(built(control), [NET_FILES, APP_FILES, ["packages/empty/.gitkeep"], ROOT_FILES]);
   assert.deepEqual((found.components ?? []).map((item) => [item.component, item.status]), [["root/root", "included"], ["root/net", "included"], ["root/app", "included"], ["root/empty", "included"]]);
-  assert.equal(found.status, "ready");
+  assertReady(found);
   assert.equal(entry(found, "root/root").folder, "");
 });
 
@@ -115,7 +118,7 @@ test("clause 5: a later call's waiting components move ahead of components that 
 test("a stored component index loads at once instead of waiting behind a build", async (t) => {
   const { root, storage, write } = await project(t);
   const first = await fakeRuntime(storage);
-  assert.equal((await search(root, first.runtime)).status, "ready");
+  assertReady(await search(root, first.runtime));
   await write("packages/net/retry.ts", `${FILES["packages/net/retry.ts"]}// changed\n`);
   // A new process, as after a restart, has nothing loaded; net must build again, and app and the root component only load.
   const later = await fakeRuntime(storage);
@@ -125,18 +128,18 @@ test("a stored component index loads at once instead of waiting behind a build",
   assert.deepEqual(built(later.control), [NET_FILES]);
   later.control.release("packages/net/retry.ts");
   await settled(later.runtime, root);
-  assert.equal((await search(root, later.runtime)).status, "ready");
+  assertReady(await search(root, later.runtime));
 });
 
 test("a stored index pointer whose index is gone hands the component back to the build queue", async (t) => {
   const { root, storage } = await project(t);
   const first = await fakeRuntime(storage);
-  assert.equal((await search(root, first.runtime)).status, "ready");
+  assertReady(await search(root, first.runtime));
   const { directory } = await first.runtime.location(root, { name: "app", identity: "root/app", folder: "packages/app" });
   for (const name of await readdir(directory)) if (/^[a-f\d]{64}\.json$/.test(name)) await rm(path.join(directory, name));
   const later = await fakeRuntime(storage);
-  const found = await search(root, later.runtime, {}, 2000);
-  assert.equal(found.status, "ready");
+  const found = await search(root, later.runtime);
+  assertReady(found);
   assert.deepEqual(built(later.control), [APP_FILES]);
   assert.equal((await settled(later.runtime, root)).status, "indexed");
 });
@@ -182,7 +185,7 @@ test("clauses 7, 11, and 12: a component that reaches a native limit is named, k
   assert.deepEqual([failed.status, entry(failed, "root/net").status, entry(failed, "root/net").failure.code], ["degraded", "failed", "preparation_failed"]);
   control.recover("packages/net/retry.ts");
   const retried = await search(root, runtime, { filters: { paths: ["packages/net"] } });
-  assert.equal(retried.status, "ready");
+  assertReady(retried);
   assert.equal(control.builds.length, 5);
 });
 
@@ -203,7 +206,7 @@ test("clause 13: snapshot and indexRevision identify the selected components, an
   const net = fingerprint(NET_FILES.map((file) => [file, FILES[file]]));
   assert.equal(found.snapshot, sha256(`root/net ${net}\n`));
   assert.equal(found.indexRevision, sha256(`root/net ${found.components?.[0].indexRevision}\n`));
-  assert.equal((await search(root, runtime, { filters: { paths: ["packages/net"] }, expectedSnapshot: found.snapshot })).status, "ready");
+  assertReady(await search(root, runtime, { filters: { paths: ["packages/net"] }, expectedSnapshot: found.snapshot }));
   // A change in another component leaves this selection's snapshot as it was.
   await write("packages/app/client.ts", "export function other(value) {\n  return value;\n}\n");
   assert.equal((await search(root, runtime, { filters: { paths: ["packages/net"] }, expectedSnapshot: found.snapshot })).snapshot, found.snapshot);

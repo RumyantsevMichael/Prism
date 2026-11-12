@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { withFileLock, writeAtomically } from "./artifact-store.mjs";
+import { renameWhenFree, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { commitProblem, gitFileName, isLinkMode, LINK_TARGET_BYTES_MAX, linkTargetProblem, TREE_DEPTH_MAX, TREE_DEPTH_TEXT, tooDeepTree, treeEntries, treeProblems } from "./git-objects.mjs";
 import { hasRecordMerge, recordMergeFor } from "./record-merge.mjs";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
@@ -12,6 +13,8 @@ import { withoutCredentials } from "./remote-url.mjs";
 // One process at a time syncs a store, and record reads and writes wait while a merge replaces record files.
 export const SYNC_DIRECTORY = ".prism-sync";
 const SETTINGS = { debounceMs: 5000, pullIntervalMs: 30000, waitMs: 10000, applyLockMs: 2000, gitTimeoutMs: 120000 };
+// A short-lived process, such as a hook, reads the clone as it is: a pull it starts would outlive its host's time limit and be killed partway.
+let pullOnRead = true;
 const PUSH_ATTEMPTS = 3;
 const COMMIT_LIST = 20;
 const scheduled = new Map();
@@ -29,9 +32,10 @@ const managed = new Set();
 // which the parent process may hold, as when a Git hook starts the server, so no store command inherits them.
 const INHERITED_OUT = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|QUARANTINE_PATH|REPLACE_REF_BASE|GRAFT_FILE|SHALLOW_FILE|LITERAL_PATHSPECS|GLOB_PATHSPECS|NOGLOB_PATHSPECS|ICASE_PATHSPECS|ATTR_SOURCE|REDIRECT_STDIN|REDIRECT_STDOUT|REDIRECT_STDERR)$/;
 
-/** Change the debounce, pull interval, or torn-read wait; tests shorten them. */
+/** Change the debounce, pull interval, or torn-read wait, which tests shorten, or turn off the pull that a record read starts. */
 export function configureRecordSync(settings = {}) {
   for (const key of Object.keys(SETTINGS)) if (Number.isFinite(settings[key])) SETTINGS[key] = settings[key];
+  if (typeof settings.pullOnRead === "boolean") pullOnRead = settings.pullOnRead;
 }
 
 /** Cancel every debounced sync and forget fetch times, so a process or a test can finish. */
@@ -90,7 +94,7 @@ export function runGit(base, args, options) {
 
 function git(base, args, { env = {}, input, maxBuffer = 64 * 1024 * 1024 } = {}) {
   return new Promise((resolve) => {
-    const child = execFile("git", [...FIXED_CONFIG, "-C", base, ...args], { env: gitEnvironment(env), timeout: SETTINGS.gitTimeoutMs, maxBuffer, encoding: "buffer" }, (error, stdout, stderr) => {
+    const child = execFile("git", [...FIXED_CONFIG, "-C", base, ...args], { env: gitEnvironment(env), timeout: SETTINGS.gitTimeoutMs, maxBuffer, encoding: "buffer", windowsHide: true }, (error, stdout, stderr) => {
       resolve({ ok: !error, code: error ? (typeof error.code === "number" ? error.code : -1) : 0, missing: error?.code === "ENOENT", stdout, text: stdout.toString("utf8").trim(), stderr: stderr.toString("utf8").trim() });
     });
     if (input !== undefined) child.stdin.end(input);
@@ -112,7 +116,7 @@ export function gitTooOld() {
   const key = process.env.PATH ?? "";
   if (!versionChecks.has(key)) {
     versionChecks.set(key, new Promise((resolve) => {
-      execFile("git", ["--version"], { env: gitEnvironment(), timeout: SETTINGS.gitTimeoutMs }, (error, stdout) => {
+      execFile("git", ["--version"], { env: gitEnvironment(), timeout: SETTINGS.gitTimeoutMs, windowsHide: true }, (error, stdout) => {
         const found = /^git version (\d+)\.(\d+)(?:\.(\d+))?/.exec(error ? "" : String(stdout).trim());
         if (!found) return resolve(null);
         const [major, minor] = GIT_MINIMUM.split(".").map(Number);
@@ -162,7 +166,7 @@ export function scheduleRecordSync(base) {
 /** Start a background sync after a record read when the last fetch is older than the pull interval; the read never waits for it. */
 export function pullRecordStoreIfStale(base) {
   watched.add(base);
-  if (running.has(base) || Date.now() - (lastFetch.get(base) ?? 0) < SETTINGS.pullIntervalMs) return;
+  if (!pullOnRead || running.has(base) || Date.now() - (lastFetch.get(base) ?? 0) < SETTINGS.pullIntervalMs) return;
   lastFetch.set(base, Date.now());
   syncRecordStore(base).catch(() => {});
 }
@@ -1700,6 +1704,14 @@ async function storedInSpelling(base, file, cache) {
   return true;
 }
 
+// Windows refuses to rename a folder to another spelling of its own name, so there the folder first moves to a unique name beside it.
+async function respell(from, to) {
+  if (process.platform !== "win32") return rename(from, to);
+  const between = `${from}.respell-${process.pid}-${randomBytes(4).toString("hex")}`;
+  await renameWhenFree(from, between);
+  try { await renameWhenFree(between, to); } catch (error) { await renameWhenFree(between, from).catch(() => {}); throw error; }
+}
+
 /**
  * Give each folder above a path that the file system stores in another letter case, and finds by this spelling too, this spelling, as it would after a removal emptied it,
  * so a file written below it lands at the target's spelling, which the next commit reads back; a file system that tells letter case apart keeps the two spellings as two folders.
@@ -1713,7 +1725,7 @@ async function respellFolders(base, file) {
     if (stored === undefined) return;
     if (stored !== name) {
       if (!(await lstat(path.join(folder, name)).then((stats) => stats.isDirectory(), () => false))) return;
-      await rename(path.join(folder, stored), path.join(folder, name));
+      await respell(path.join(folder, stored), path.join(folder, name));
     }
     folder = path.join(folder, name);
   }

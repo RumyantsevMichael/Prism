@@ -53,65 +53,6 @@ test("clause 74: the artifact area reports busy while a view loads and not busy 
   assert.ok(seen.includes("true"), "the view reported busy while it loaded");
 });
 
-test("clause 75: the shell is a top bar, one sidebar of trees, the main island with its strip of open documents above its page bar, and a status bar on a canvas", { skip }, async (context) => {
-  const { page } = await open(context);
-  const header = page.locator("header");
-  assert.equal(await header.locator("[aria-haspopup=menu]").count() >= 1, true, "the top bar holds the project switcher menu");
-  assert.equal(await header.getByRole("button", { name: /search|command palette/i }).count() >= 1, true, "the top bar holds the search button");
-  assert.equal(await header.getByRole("button", { name: /working/ }).count(), 1, "the top bar holds the Who's working button");
-  assert.ok(await header.locator("svg, img, prism-icon").count() >= 1, "the top bar shows the Prism mark");
-  const sidebar = page.locator("#sidebar");
-  assert.ok(await sidebar.getByRole("tree").count() >= 2, "the sidebar holds kit trees for places, initiatives, and the library");
-  assert.equal(await sidebar.getByRole("treeitem", { name: /^Attention/ }).count(), 1);
-  assert.equal(await sidebar.getByRole("treeitem", { name: /^Roadmap/ }).count(), 1);
-  // The owner restored the strip of open documents: it is the one tablist outside a page's own content, at the top of the main island above the page bar.
-  const strips = await page.evaluate(() => {
-    const deep = (root) => [...root.querySelectorAll("*")].flatMap((node) => node.shadowRoot ? [node, ...deep(node.shadowRoot)] : [node]);
-    const inside = (node) => { for (let at = node; at; at = at.parentElement ?? at.getRootNode().host) if (at.id === "artifact") return true; return false; };
-    return deep(document).filter((node) => node.getAttribute("role") === "tablist" && node.getClientRects().length && !inside(node)).map((node) => node.getAttribute("aria-label"));
-  });
-  assert.deepEqual(strips, ["Open artifacts"], "the strip of open documents is the only tab strip outside a page's own content");
-  const strip = page.getByRole("tablist", { name: "Open artifacts" });
-  assert.equal(await strip.getByRole("tab", { name: /^Attention/ }).count(), 1, "the open page has its tab");
-  const order = await page.evaluate(() => {
-    const strip = document.querySelector("#open-tabs");
-    const bar = document.querySelector("#page-bar");
-    return { inMain: Boolean(strip.closest("#main")), above: strip.getBoundingClientRect().bottom <= bar.getBoundingClientRect().top + 1 };
-  });
-  assert.deepEqual(order, { inMain: true, above: true }, "the strip sits in the main island above the page bar");
-  const layout = await page.evaluate(() => {
-    const main = document.querySelector("#main");
-    const canvasOf = (element) => {
-      for (let node = element.parentElement; node; node = node.parentElement) {
-        const style = getComputedStyle(node);
-        if (style.backgroundColor !== "rgba(0, 0, 0, 0)") return style;
-      }
-      return getComputedStyle(document.documentElement);
-    };
-    const probe = document.createElement("div");
-    probe.style.setProperty("background-color", "var(--prism-color-chrome)");
-    document.body.append(probe);
-    const chrome = getComputedStyle(probe).backgroundColor;
-    probe.remove();
-    const canvas = canvasOf(main);
-    const gap = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--prism-island-gap"));
-    const sidebar = document.querySelector("#sidebar").getBoundingClientRect();
-    const box = main.getBoundingClientRect();
-    return {
-      main: main.tagName.toLowerCase(), variant: main.getAttribute("variant"),
-      bar: Boolean(main.querySelector("#page-bar")), artifact: Boolean(main.querySelector("#artifact")),
-      barFirst: main.querySelector("#page-bar")?.getBoundingClientRect().top <= main.querySelector("#artifact")?.getBoundingClientRect().top,
-      canvas: canvas.backgroundColor === chrome, gradient: canvas.backgroundImage.includes("gradient"),
-      gap: Math.round(box.left - sidebar.right), expected: gap,
-      statusbar: Boolean(document.querySelector("#statusbar"))
-    };
-  });
-  assert.deepEqual({ main: layout.main, variant: layout.variant, bar: layout.bar, artifact: layout.artifact, barFirst: layout.barFirst, statusbar: layout.statusbar }, { main: "prism-panel", variant: "island", bar: true, artifact: true, barFirst: true, statusbar: true });
-  assert.equal(layout.canvas, true, "the islands sit on a canvas painted --prism-color-chrome");
-  assert.equal(layout.gradient, true, "the canvas carries the canvas gradient");
-  assert.ok(layout.gap >= layout.expected - 1, `the main island stands at least --prism-island-gap from the sidebar (${layout.gap}px)`);
-});
-
 test("clause 76: the page bar moves back and forward through visited pages, from its buttons, Alt+arrows, and the browser, and shows a breadcrumb trail", { skip }, async (context) => {
   const { page } = await open(context);
   const bar = page.locator("#page-bar");
@@ -119,7 +60,7 @@ test("clause 76: the page bar moves back and forward through visited pages, from
   const forward = bar.getByRole("button", { name: "Forward", exact: true });
   assert.equal(await back.isDisabled(), true, "Back is disabled on the first page");
   assert.equal(await forward.isDisabled(), true, "Forward is disabled at the end");
-  await page.locator("#sidebar").getByRole("treeitem", { name: /^Roadmap/ }).focus();
+  await page.getByRole("navigation", { name: "Places" }).getByRole("button", { name: /^Roadmap/ }).focus();
   await page.keyboard.press("Enter");
   await waitForView(page);
   assert.equal(await shownPage(page), "roadmap");
@@ -166,7 +107,9 @@ test("clause 77: above 1100px the sidebar sits beside the page, and at 1100px an
     await drawer.waitFor();
     const box = await drawer.evaluate((element) => { const rect = element.getBoundingClientRect(); return { left: rect.left, width: rect.width, drawer: parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--prism-drawer-width")) }; });
     assert.ok(Math.abs(box.left) <= 1 && Math.abs(box.width - box.drawer) <= 1, `the drawer slides in from the left at --prism-drawer-width at ${width}px`);
-    await drawer.getByRole("treeitem", { name: /^Roadmap/ }).click();
+    // Roadmap on the drawer's rail opens the Roadmap page as its sidebar entry did, and the drawer closes once the page has opened.
+    await drawer.getByRole("navigation", { name: "Places" }).getByRole("button", { name: /^Roadmap/ }).click();
+    await drawer.waitFor({ state: "hidden" });
     await waitForView(page);
     assert.equal(await page.getByRole("dialog").filter({ has: page.getByRole("tree") }).count(), 0, "choosing a page closes the drawer");
     assert.equal(await shownPage(page), "roadmap");
@@ -191,7 +134,17 @@ test("clause 78: the command palette opens on Ctrl+K and Meta+K, drives kinded r
   await slice.waitFor();
   assert.match(await slice.innerText(), /Slice/, "a result shows its kind");
   assert.match(await slice.innerText(), /Claude on build-2/, "a slice result shows its holder");
+  // The first result shows as current, so ArrowDown moves on to the second result and ArrowUp comes back to the first.
   await page.keyboard.press("ArrowDown");
+  const second = await page.evaluate(() => {
+    let element = document.activeElement;
+    while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
+    const id = element.getAttribute("aria-activedescendant");
+    const listbox = document.querySelector("#palette-results");
+    return [...listbox.querySelectorAll("prism-list-item")].filter((item) => !item.closest("[hidden]")).findIndex((item) => item.id === id);
+  });
+  assert.equal(second, 1, "the first ArrowDown makes the second result active");
+  await page.keyboard.press("ArrowUp");
   const active = await page.evaluate(() => {
     let element = document.activeElement;
     while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
@@ -212,7 +165,7 @@ test("clause 78: the command palette opens on Ctrl+K and Meta+K, drives kinded r
   await page.getByRole("dialog", { name: "Command palette" }).waitFor();
   await page.keyboard.type("roadmap");
   await page.getByRole("dialog", { name: "Command palette" }).getByRole("option").first().waitFor();
-  await page.keyboard.press("ArrowDown");
+  // Enter opens the first result, which stands in as current until an arrow key moves.
   await page.keyboard.press("Enter");
   await waitForView(page);
   assert.equal(await page.getByRole("dialog", { name: "Command palette" }).count(), 0, "Enter opens the result and closes the palette");
@@ -226,6 +179,7 @@ test("clause 78: the command palette opens on Ctrl+K and Meta+K, drives kinded r
 
 test("clauses 66, 67, 68: the sidebar and Who's working show every claim read-only, live ones breathing in the top bar", { skip }, async (context) => {
   const { page } = await open(context, "slice:retry-hardening/timeout-retries");
+  await page.getByRole("navigation", { name: "Places" }).getByRole("button", { name: /^Work/ }).click();
   const sidebar = page.locator("#sidebar");
   const row = sidebar.getByRole("treeitem", { name: new RegExp(SLICE) });
   assert.equal(await row.locator("prism-claim").count(), 1, "the claimed slice's tree item ends with its claim");

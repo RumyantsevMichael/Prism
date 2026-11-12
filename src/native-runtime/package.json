@@ -14,10 +14,12 @@
     "jsonc-parser": "3.3.1",
     "mdast-util-from-markdown": "2.0.2",
     "onnxruntime-node": "1.22.0",
+    "sharp": "file:./stubs/sharp",
     "yaml": "2.8.1"
   },
   "overrides": {
-    "onnxruntime-node": "$onnxruntime-node"
+    "onnxruntime-node": "$onnxruntime-node",
+    "sharp": "$sharp"
   },
   "scripts": {
     "test": "node --test ../../test/native-runtime/*.test.mjs"

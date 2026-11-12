@@ -181,8 +181,8 @@ test("a passing run completes the slice, and only project content changes make i
   await writeFile(path.join(root, "source.mjs"), "export const value = 2;\n");
   const stale = await checkSliceGate({ projectRoot: root, initiative: INITIATIVE, slice: "download", gate: "completion" });
   assert.deepEqual(stale.problems.map((problem) => problem.code), ["verification_stale"]);
-  await initiativeUpdate(root, [{ op: "set_status", slug: "download", status: "in-progress" }]);
-  await assert.rejects(initiativeUpdate(root, [{ op: "set_status", slug: "download", status: "done" }]), /changed after the verification run/);
+  // A done slice stays done, so its stale gate is fixed as new work rather than by reopening the slice.
+  await assert.rejects(initiativeUpdate(root, [{ op: "set_status", slug: "download", status: "in-progress" }]), /stays done/);
   assert.equal((await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download" })).status, "passed", "an approved command runs without asking again");
   assert.equal((await getInitiative({ projectRoot: root, initiative: INITIATIVE })).record.slices.download.status, "done");
 });
@@ -257,6 +257,19 @@ test("cancelling the call stops the run", async (context) => {
   assert.ok(Date.now() - started < 10000);
 });
 
+test("a call cancelled while verification sets up stops the run", async (context) => {
+  const root = await project(context, `${node} sleep.mjs 20000`);
+  await accept(root);
+  const gateId = await approve(root);
+  // The abort fires before the run starts listening for it, as a cancel can on a loaded machine.
+  const controller = new AbortController();
+  controller.abort();
+  const started = Date.now();
+  const cancelled = await verifySlice({ projectRoot: root, initiative: INITIATIVE, slice: "download", approvalGate: gateId, signal: controller.signal });
+  assert.equal(cancelled.status, "cancelled");
+  assert.ok(Date.now() - started < 10000);
+});
+
 test("a slice whose design requires review completes on a review of its verified result", async (context) => {
   const root = await project(context);
   await accept(root, "download", "required");
@@ -314,7 +327,7 @@ test("a review stops for the user after two waves with findings, and a finding t
   await assert.rejects(review(coordinator, [{ op: "start_wave", id: "w3", mode: "implementation-review", lanes: lanes("w3"), afterGate: first }]), /that the user answered/, "an unanswered gate does not let the loop go on");
   await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: first, choice: "continue" });
   await review(coordinator, [{ op: "start_wave", id: "w3", mode: "implementation-review", lanes: lanes("w3"), afterGate: first }]);
-  await assert.rejects(review(coordinator, [{ op: "start_wave", id: "w4", mode: "implementation-review", lanes: lanes("w4"), afterGate: first }]), /its own answered decision gate/);
+  await assert.rejects(review(coordinator, [{ op: "start_wave", id: "w4", mode: "implementation-review", lanes: lanes("w4"), afterGate: first }]), (error) => error.code === "gate_blocked" && error.problems?.[0]?.code === "review_loop_limit" && /asked the review loop decision gate/.test(error.message), "a used gate asks the review loop decision again");
   await review(reviewer("w3"), [{ op: "open_finding", lane: "correctness", localId: "C6", title: "Clause 6 drops attributed files", severity: "high", affectedPath: "source.mjs", evidence: "Any code meeting clause 6 misses this case.", conditionToClose: "The contract handles attributed files.", clause: "Contract 6" }]);
   const second = await ask();
   await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: second, choice: "continue" });

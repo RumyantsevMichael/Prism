@@ -72,10 +72,14 @@ test("derives planned and in-progress from records and refuses to ship unfinishe
   assert.deepEqual(roadmap.derived[0].progress, { leaves: 2, "not-started": 2, "in-progress": 0, blocked: 0, deferred: 0, done: 0 });
   await updateCoordinationState({ projectRoot, initiative: "reports", expectedRevision: null, changes: { settings: { autonomy: "broad" } } });
   assert.equal((await getRoadmap({ projectRoot })).derived[0].state, "planned");
-  await updateInitiative({ projectRoot, initiative: "reports", expectedRevision: initiative.revision, operations: [{ op: "set_status", slug: "a", status: "in-progress" }] });
+  const started = await updateInitiative({ projectRoot, initiative: "reports", expectedRevision: initiative.revision, operations: [{ op: "set_status", slug: "a", status: "in-progress" }] });
   roadmap = await getRoadmap({ projectRoot });
   assert.equal(roadmap.derived[0].state, "in-progress");
   assert.equal(roadmap.derived[0].readyToShip, false);
+  // Starting a slice claims it, and open work refuses ship before the leaf check, so the claim is released to reach that check.
+  await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: roadmap.revision, operations: [{ op: "ship", id: "reports" }] }), (error) => error.code === "open_work");
+  await updateInitiative({ projectRoot, initiative: "reports", expectedRevision: started.revision, operations: [{ op: "release_claim", slug: "a" }] });
+  roadmap = await getRoadmap({ projectRoot });
   await assert.rejects(updateRoadmap({ projectRoot, expectedRevision: roadmap.revision, operations: [{ op: "ship", id: "reports" }] }), (error) => error.code === "gate_blocked" && error.state === "in-progress");
 });
 

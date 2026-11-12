@@ -7,7 +7,7 @@ const SIZES = ["sm", "md", "lg"];
 
 export class PrismDialog extends Base {
   static tag = "prism-dialog";
-  static observedAttributes = ["heading", "open", "size", "placement", "bare", "modeless"];
+  static observedAttributes = ["heading", "open", "size", "placement", "bare", "modeless", "flush"];
   static catalog = {
     purpose: "A modal dialog on frosted glass over a blurred scrim, which keeps focus inside it and returns focus where it was when it closes; it can also open near the top as a command palette does, as a drawer from the left edge, or as a sheet from the bottom.",
     options: [
@@ -16,10 +16,11 @@ export class PrismDialog extends Base {
       { name: "size", values: SIZES, default: "md", description: "The width of a centered dialog." },
       { name: "placement", values: PLACEMENTS, default: "center", description: "center floats in the window; top hangs below the top bar with the spectrum on its top edge, as a command palette; start opens a drawer at --prism-drawer-width from the left edge, an island between the top bar and the status bar; bottom rises from the bottom edge at full width; and end stands at --prism-panel-width against the right edge between the top bar and the status bar." },
       { name: "modeless", values: ["boolean"], default: "false", description: "Opens without a scrim and leaves the page usable behind it, as a drawer of details beside the page does; Escape and Close still close it, and focus moves into it when it opens." },
-      { name: "bare", values: ["boolean"], default: "false", description: "Shows no header: the heading still names the dialog for assistive technology, and Escape or a click on the scrim closes it, for a dialog whose content draws its own header or none." },
+      { name: "bare", values: ["boolean"], default: "false", description: "Shows no header: the heading still names the dialog for assistive technology without being a heading of its own, and Escape or a click on the scrim closes it, for a dialog whose content draws its own header or none." },
+      { name: "flush", values: ["boolean"], default: "false", description: "The body draws no padding, for content that lays itself out to the dialog's edges, such as the navigation drawer's rail and sidebar." },
       { name: "slot=\"footer\"", values: ["children"], default: "", description: "Actions after the body." }
     ],
-    states: ["closed", "center", "top", "start", "bottom", "end", "modeless", "bare", "long-content"],
+    states: ["closed", "center", "top", "start", "bottom", "end", "modeless", "bare", "flush", "long-content"],
     keyboard: [
       "Focus moves into the dialog when it opens, and Tab and Shift+Tab stay inside it.",
       "Escape, the Close button, or a click on the scrim closes it and sends prism-close; focus returns to the element that had it; a bare dialog has no Close button."
@@ -92,8 +93,11 @@ export class PrismDialog extends Base {
     setAttribute(this.surface, "data-size", SIZES.includes(this.getAttribute("size")) ? this.getAttribute("size") : "md");
     const bare = this.hasAttribute("bare");
     setAttribute(this.surface, "data-bare", bare ? "" : null);
+    // A bare dialog shows no header, so its heading only names the dialog and is no heading of the content, which may draw its own.
+    setAttribute(this.headingElement, "role", bare ? "none" : null);
     this.closeButton.hidden = bare;
     this.footer.hidden = this.footer.childNodes.length === 0;
+    setAttribute(this.surface, "data-flush", this.hasAttribute("flush") ? "" : null);
     const modeless = this.hasAttribute("modeless");
     setAttribute(this.surface, "aria-modal", modeless ? "false" : "true");
     setAttribute(this.surface, "data-modeless", modeless ? "" : null);

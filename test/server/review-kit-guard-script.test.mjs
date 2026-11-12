@@ -3,13 +3,13 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Contract: docs/plans/review-app-ui-kit/slice.md clause 73.
 // A control role or a title tooltip set from script code is the same native control as one written as markup.
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
-const { checkKitUsage } = await import(path.join(ROOT, "scripts/review-kit/kit-guard.mjs"));
+const { checkKitUsage } = await import(pathToFileURL(path.join(ROOT, "scripts/review-kit/kit-guard.mjs")).href);
 
 async function check(context, files) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-kit-guard-script-")));

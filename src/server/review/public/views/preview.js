@@ -3,6 +3,7 @@ import { highlight, highlightLines, languageOf } from "./highlight.js";
 import { anchorTarget, LINE_RANGE } from "./markdown.js";
 import { escapeHtml, pathName } from "./util.js";
 import { themeDiagram } from "../kit/diagram-theme.js";
+import { shippedHistoryHtml } from "./shipped-history.js";
 
 const SHOW_DELAY_MS = 400;
 const HIDE_DELAY_MS = 200;
@@ -42,12 +43,16 @@ function entitySummary(entity) {
     body = `<p class="chip-row"><prism-badge variant="status">${escapeHtml(data.slice.status)}</prism-badge><span class="muted">${escapeHtml(data.initiativeTitle)}</span></p>${data.slice.outcome ? `<p>${escapeHtml(data.slice.outcome)}</p>` : ""}`;
   } else if (entity.kind === "roadmap") {
     body = `<p>${escapeHtml(data.serves || "")}</p><p class="muted">${data.items?.length ?? 0} initiatives</p>`;
+  } else if (entity.kind === "attention" && data.filter) {
+    body = `<p class="muted">${escapeHtml(data.filter.label)} · ${escapeHtml(String(data.filter.items.length))} of ${escapeHtml(String(data.filter.total))} items</p>`;
+  } else if (entity.kind === "attention" && data.answered && !data.needsYou) {
+    body = `<p class="muted">${escapeHtml(String(data.answered.length))} answered or closed in the last 7 days</p>`;
   } else if (entity.kind === "attention") {
     body = `<p class="muted">${escapeHtml(String(data.gateCount ?? 0))} recorded questions</p>`;
   } else if (Array.isArray(data.entries)) {
     body = `<p class="muted">${data.entries.length} documents</p>`;
   }
-  return `<p class="eyebrow">${escapeHtml(label.eyebrow ?? entity.kind)}</p><h3>${escapeHtml(label.title)}</h3>${body}`;
+  return `${shippedHistoryHtml(data.shippedHistory)}<p class="eyebrow">${escapeHtml(label.eyebrow ?? entity.kind)}</p><h3>${escapeHtml(label.title)}</h3>${body}`;
 }
 
 // A line range previews those lines with their numbers, up to a cap, so a planned change shows the code it touches.
@@ -109,6 +114,20 @@ async function fileSummary(data, anchor, { renderMarkdown, kindLabel, drawDiagra
   return `${head}<prism-doc class="document-content">${section || '<p class="muted">The document is empty.</p>'}</prism-doc>`;
 }
 
+// A slice document of a shipped initiative previews with the label its page shows, so a link to old work never reads as current intent.
+async function documentHistory(ref, fetchJson) {
+  if (ref.split("/").pop() !== "slice.md") return null;
+  const context = await fetchJson(`./api/context?ref=${encodeURIComponent(ref)}`).catch(() => null);
+  return context?.shippedHistory ?? null;
+}
+
+/** The preview of an internal link's target: an entity's summary, or a file's start or linked section under any shipped history label it carries. */
+export async function previewHtml({ ref, anchor = null }, { fetchJson, renderMarkdown, kindLabel, drawDiagram = null, describe = null }) {
+  if (parseEntityRef(ref)) return entitySummary(await fetchJson(`./api/entity?ref=${encodeURIComponent(ref)}`));
+  const [data, history] = await Promise.all([fetchJson(`./api/artifact?path=${encodeURIComponent(ref)}`), documentHistory(ref, fetchJson)]);
+  return `${shippedHistoryHtml(history)}${await fileSummary(data, anchor, { renderMarkdown, kindLabel, drawDiagram, describe })}`;
+}
+
 // Hovering or focusing an internal link shows what it points to: an entity's summary, the start of a file or the linked section, or a diagram drawn small.
 // A file's preview offers to show the whole file in the side panel when the page has one.
 // The preview is a hover card on glass that only repeats what the link leads to, so it is no landmark or dialog of its own.
@@ -130,16 +149,14 @@ export function createLinkPreview({ root, fetchJson, renderMarkdown, kindLabel, 
     if (element.dataset.docLink) return { ref: element.dataset.docLink, anchor };
     if (element.dataset.artifact) return { ref: element.dataset.artifact, anchor };
     // An in-document anchor previews its section of the open document; contents entries need no preview.
-    return anchor && !element.closest(".doc-toc") && currentPath() ? { ref: currentPath(), anchor } : null;
+    return anchor && !element.closest("prism-contents") && currentPath() ? { ref: currentPath(), anchor } : null;
   }
 
   async function load({ ref, anchor }) {
     const key = `${ref}#${anchor ?? ""}`;
     const cached = cache.get(key);
     if (cached && Date.now() - cached.at < CACHE_MS) return cached.html;
-    const html = parseEntityRef(ref)
-      ? entitySummary(await fetchJson(`./api/entity?ref=${encodeURIComponent(ref)}`))
-      : await fileSummary(await fetchJson(`./api/artifact?path=${encodeURIComponent(ref)}`), anchor, { renderMarkdown, kindLabel, drawDiagram, describe });
+    const html = await previewHtml({ ref, anchor }, { fetchJson, renderMarkdown, kindLabel, drawDiagram, describe });
     cache.set(key, { at: Date.now(), html });
     return html;
   }

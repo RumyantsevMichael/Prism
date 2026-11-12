@@ -8,6 +8,7 @@ import { useManagedStores } from "../workflow/record-store-remote.mjs";
 import { describeRecordStore } from "../workflow/record-store.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
 import {
+  APP_LOCK_STALE_MS,
   REVIEW_APP_PROTOCOL,
   lockBase,
   newCredential,
@@ -25,6 +26,7 @@ import {
   writeProjectRoots
 } from "./review-app-discovery.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
+import { errorFields, log } from "../log.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { createProjectReview, isTrustedHost, normalizeTabs, readBody, send, sendUnavailable, serveOutsideSession, wantsPage } from "./review-server.mjs";
 import { loadAttention } from "./workspace-model.mjs";
@@ -38,7 +40,7 @@ const IDLE_MS = 30 * 60 * 1000;
 const SWEEP_MS = 30 * 1000;
 const NONCE_MS = 2 * 60 * 1000;
 const LOCK_RENEW_MS = 5 * 1000;
-const LOCK_STALE_MS = 30 * 1000;
+const LOCK_STALE_MS = APP_LOCK_STALE_MS;
 const LOCK_TIMEOUT_MS = 1000;
 const OPEN_LEASE_MS = 10 * 1000;
 const STORAGE_DIRECTORY_LIMIT = 4;
@@ -413,7 +415,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       }
       if (body.open === true) {
         const tabs = normalizeTabs(body.tabs);
-        await review.presentTabs(tabs);
+        await review.presentTabs(tabs, Object.hasOwn(body, "group") ? { group: body.group } : {});
         await touch(project);
         const url = review.reviewUrl(tabs);
         return withGrant({ url, open: announce(project, url, workspaceLabel(await readWorkspaceIdentity(project.root)), acceptsGrant), session: review.getSession() }, acceptsGrant);
@@ -456,7 +458,19 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     response.end(body);
   }
 
+  // A request that takes longer than this is logged, by its route without the viewer credential, so a stalled app leaves a trace.
+  const SLOW_REQUEST_MS = 2000;
+  const routeOf = (request) => {
+    let pathname;
+    try { pathname = new URL(request.url, "http://127.0.0.1").pathname; } catch { return "<invalid>"; }
+    return pathname.startsWith(viewerPrefix()) ? `<viewer>${pathname.slice(viewerPrefix().length)}` : pathname.startsWith("/control/") ? pathname : "<other>";
+  };
   const server = createServer(async (request, response) => {
+    const started = performance.now();
+    response.once("finish", () => {
+      const ms = performance.now() - started;
+      if (ms >= SLOW_REQUEST_MS) log.warn("slow_request", { method: request.method, route: routeOf(request), status: response.statusCode, ms: Math.round(ms) });
+    });
     try {
       if (!isTrustedHost(request.headers.host)) {
         send(response, 403, "Unknown host");
@@ -505,6 +519,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
       }
       await project.review.handle(request, response, match[2] || "/", url);
     } catch (error) {
+      log.warn("request_failed", { method: request.method, route: routeOf(request), status: error.status ?? 400, ...errorFields(error) });
       if (response.headersSent) {
         response.destroy();
       } else {

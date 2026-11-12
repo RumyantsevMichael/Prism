@@ -1,5 +1,8 @@
 # Verify a slice in its component
 
+> Shipped history: initiative `components` shipped on 2026-11-07, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 `verify_slice` runs the slice's component's test command in its folder, asks once per command and folder, and fails a run whose changes leave the component.

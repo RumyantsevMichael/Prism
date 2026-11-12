@@ -1,4 +1,4 @@
-import { artifactChip, badge, bindLinks, chip, emptyState, escapeHtml, plural, stat } from "./util.js";
+import { artifactChip, artifactLink, badge, bindLinks, chip, emptyState, escapeHtml, messageHtml, pageSub, plural, setPageSub, stat } from "./util.js";
 import { recordKind, recordLabel } from "./entities.js";
 import { claimAttributes } from "./claims.js";
 import { isExpired } from "./claim-index.js";
@@ -237,7 +237,12 @@ function answerForm(item, draft) {
   </div>`;
 }
 
-function gateDetail(item, ctx, draft) {
+// A question the server no longer takes an answer to, such as one of a shipped initiative, names why in place of the form.
+function unavailableAnswer(item) {
+  return `<prism-banner class="gate-unavailable" tone="warning" heading="Cannot be answered"><p>${escapeHtml(item.unavailable)}</p></prism-banner>`;
+}
+
+export function gateDetail(item, ctx, draft) {
   return `<article class="gate attention-item gate-${escapeHtml(item.kind)}" aria-label="${escapeHtml(GATE_LABELS[item.kind] ?? "Question")}">
     <header class="gate-head">
       ${gateHead(item, ctx, item.askedAt)}
@@ -252,7 +257,7 @@ function gateDetail(item, ctx, draft) {
         ${inspectList(item, ctx)}
         ${item.stale ? `<p class="notice">Every file this question refers to is gone, so it may no longer apply. The agent that asked it withdraws it when it does not.</p>` : ""}
       </div>
-      ${answerForm(item, draft)}
+      ${item.unavailable ? unavailableAnswer(item) : answerForm(item, draft)}
     </div>
   </article>`;
 }
@@ -288,6 +293,13 @@ function closedDetail(item, ctx) {
     title: escapeHtml(item.question),
     body: `<p class="gate-given">${outcome}</p>${item.reason ? `<p class="muted">${escapeHtml(item.reason)}</p>` : ""}`
   });
+}
+
+// A refused answer shows beside the form: the server's reason for an action it no longer offers, and a re-render shows the question as it now stands.
+export function answerError(error) {
+  if (error.code === "action_unavailable" || error.code === "gate_answered") return { message: error.message, rerender: true };
+  if (error.code === "unknown_gate") return { message: "The agent already resolved or withdrew this question.", rerender: true };
+  return { message: error.message, rerender: false };
 }
 
 function bindAnswers(container, ctx, gates) {
@@ -367,12 +379,13 @@ function bindAnswers(container, ctx, gates) {
         ctx.rerender();
       } catch (error) {
         // The server stays the backstop: its refusal shows beside the form, and the draft keeps the note through a re-render.
-        draft.error = error.code === "gate_answered" ? "This question already has an answer." : error.code === "unknown_gate" ? "The agent already resolved or withdrew this question." : error.message;
+        const refusal = answerError(error);
+        draft.error = refusal.message;
         failure.textContent = draft.error;
         failure.hidden = false;
         sending = false;
         refresh();
-        if (error.code === "gate_answered" || error.code === "unknown_gate") ctx.rerender();
+        if (refusal.rerender) ctx.rerender();
       }
     });
     // The page re-renders when live data changes, so an unsent note and its cursor are restored.
@@ -468,11 +481,11 @@ function noteEntry(item, ctx) {
   const roadmapLink = artifactChip("roadmap", ctx, "Roadmap");
   const describe = {
     "pending-note": () => ({ kind: "Pending item", icon: "document", tone: "neutral", title: escapeHtml(item.text), text: "", where: location(item, ctx), meta: item.initiative?.title ?? "" }),
-    unlisted: () => ({ kind: "Needs prioritization", icon: "roadmap", tone: "warning", title: `${escapeHtml(item.initiative.id)} is not on the roadmap`, text: `${escapeHtml(item.initiative.id)} has an initiative record but no roadmap entry. Ask the agent to run <code>roadmap</code>.`, where: location(item, ctx), meta: "Needs prioritization" }),
+    unlisted: () => ({ kind: "Needs prioritization", icon: "roadmap", tone: "warning", title: `${escapeHtml(item.initiative.title ?? item.initiative.id)} is not on the roadmap`, text: `${escapeHtml(item.initiative.title ?? item.initiative.id)} has an initiative record but no roadmap entry. Ask the agent to run <code>roadmap</code>.`, where: location(item, ctx), meta: "Needs prioritization" }),
     "open-question": () => ({ kind: "Roadmap question", icon: "roadmap", tone: "neutral", title: escapeHtml(item.text), text: "", where: roadmapLink, meta: "Open question on the roadmap" }),
     "roadmap-missing": () => ({ kind: "No roadmap", icon: "warning", tone: "warning", title: "No roadmap", text: "No roadmap record exists yet. Ask the agent to run <code>setup</code>.", where: "", meta: "Roadmap" }),
-    "roadmap-problem": () => ({ kind: "Roadmap problem", icon: "warning", tone: "danger", title: "The roadmap has a problem", text: escapeHtml(item.message), where: roadmapLink, meta: "Roadmap problem" }),
-    config: () => ({ kind: "Workflow settings", icon: "warning", tone: "warning", title: "Check the workflow settings", text: escapeHtml(item.message), where: "", meta: "Workflow settings" })
+    "roadmap-problem": () => ({ kind: "Roadmap problem", icon: "warning", tone: "danger", title: "The roadmap has a problem", text: messageHtml(item.message), where: roadmapLink, meta: "Roadmap problem" }),
+    config: () => ({ kind: "Workflow settings", icon: "warning", tone: "warning", title: "Check the workflow settings", text: messageHtml(item.message), where: "", meta: "Workflow settings" })
   }[item.type];
   const content = describe ? describe() : { kind: item.type, icon: "info", tone: "neutral", title: escapeHtml(item.type), text: "", where: "", meta: "" };
   return {
@@ -494,6 +507,7 @@ function watchEntry(item, ctx) {
     blocked: () => ({ icon: "warning", tone: "danger", title: "The slice is blocked", meta: slice, head: badge("blocked", "danger"), text: "The slice is blocked." }),
     findings: () => ({ icon: "flask", tone: item.blocking ? "danger" : "warning", title: item.blocking ? plural(item.blocking, "blocking finding") : plural(item.unresolved, "open finding"), meta: `Review ledger · ${slice}`, head: item.blocking ? badge(plural(item.blocking, "blocking finding"), "danger") : badge(plural(item.unresolved, "open finding"), "warning"), text: artifactChip(item.path, ctx, "Open the findings board") }),
     active: () => ({ icon: "agent", tone: "info", title: `${escapeHtml(item.workers.join(", ") || "An agent")} ${item.activity === "design" ? "is designing" : "is implementing"}`, meta: `${slice}${item.label ? ` · ${item.label}` : ""}`, head: badge("active", "info"), text: `${escapeHtml(item.activity)}${item.label ? ` · ${escapeHtml(item.label)}` : ""} · ${escapeHtml(item.workers.join(", "))}` }),
+    "failed-verification": () => ({ icon: "flask", tone: "danger", title: `${escapeHtml(slice)} failed verification`, meta: failedReason(item), head: badge("failed verification", "danger"), text: `${escapeHtml(failedReason(item))}${item.finishedAt ? ` · ${when(item.finishedAt)}` : ""}` }),
     "ready-to-ship": () => ({ icon: "check-circle", tone: "success", title: "Ready to ship", meta: slice, head: badge("ready to ship", "success"), text: "Every slice is done; the orchestrator records the ship decision at graduation." }),
     "record-problem": () => ({ icon: "warning", tone: "danger", title: "A record has a problem", meta: recordName(item.path, ctx) ?? "Record", head: badge("record problem", "danger"), text: `${artifactChip(item.path, ctx, recordName(item.path, ctx) ?? undefined)} ${escapeHtml(item.message)}` })
   }[item.type];
@@ -502,6 +516,22 @@ function watchEntry(item, ctx) {
     row: { icon: row.icon, tone: row.tone, title: row.title, meta: escapeHtml(row.meta) },
     detail: detailSheet({ className: `watch-${escapeHtml(item.type)}`, head: `${row.head}<span class="attention-where">${where}</span>`, title: row.title, body: row.text ? `<p class="watch-detail">${row.text}</p>` : "" })
   };
+}
+
+// A failed verification run's reason in words, with the number of failing tests when the run names them.
+const RUN_REASONS = {
+  command_failed: "The tests failed",
+  timed_out: "The tests timed out",
+  cancelled: "The run was cancelled",
+  tracked_files_changed: "The run changed tracked files",
+  frozen_tests_changed: "The frozen tests changed",
+  start_content_missing: "The slice's start content is missing",
+  component_boundary: "The change crossed its component's boundary"
+};
+
+export function failedReason(item) {
+  const words = RUN_REASONS[item.reason] ?? "The run failed";
+  return Number.isInteger(item.failingCount) && item.failingCount > 0 ? `${words}, ${plural(item.failingCount, "test")} failed` : words;
 }
 
 // A claim in the Watch group: who holds which slice for what, and how long it has left or since when it lapsed; it offers no action.
@@ -522,16 +552,95 @@ function inboxRow(key, row) {
 }
 
 // A group of the list: a label with its count and the rows to pick from.
-function group(id, label, entries, { count = entries.length, tone = "neutral" } = {}) {
+function group(id, label, entries, { count = entries.length, tone = "neutral", note = "" } = {}) {
   if (!entries.length) return "";
   return `<section class="attention-group" aria-labelledby="attention-group-${id}">
     <h2 class="attention-group-label" id="attention-group-${id}"><span>${escapeHtml(label)}</span> <prism-badge tone="${tone}">${count}</prism-badge></h2>
+    ${note ? `<p class="attention-footnote attention-group-note muted">${escapeHtml(note)}</p>` : ""}
     <prism-inbox label="${escapeHtml(label)}" data-inbox>${entries.map(({ key, row }) => inboxRow(key, row)).join("")}</prism-inbox>
   </section>`;
 }
 
+// A question chosen on a filtered page opens Everything with that question picked, so it can be answered there.
+let pendingSelection = null;
+
+// The filter's name and count above its items, with the way back to everything, in the page head.
+function filterLine(container, text, ctx) {
+  setPageSub(container, pageSub(escapeHtml(text), { end: '<a href="./review?artifact=attention" data-artifact="attention">Show everything</a>' }), ctx);
+}
+
+const where = (item) => [item.initiative?.title, item.slice?.title].filter(Boolean);
+
+// One item of a filtered page: its kind tile, its title as a link to where it is handled, where it belongs and what it is, its kind, and its time.
+function filteredItem({ kind, item }, ctx) {
+  const slice = item.slice?.title ?? "";
+  const sliceRef = item.slice && item.initiative ? `slice:${item.initiative.id}/${item.slice.slug}` : null;
+  const initiativeRef = item.initiative ? `initiative:${item.initiative.id}` : null;
+  const plain = (...parts) => parts.filter(Boolean).map(escapeHtml).join(" · ");
+  const look = {
+    gate: () => ({ icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: KIND_LOOK[item.kind]?.tone ?? "info", title: escapeHtml(item.question), ref: "attention", select: `gate:${item.id}`, sub: plain(...where(item), GATE_LABELS[item.kind] ?? item.kind), chip: ["Question", "accent"], at: item.askedAt, action: "Answer" }),
+    "pending-note": () => ({ icon: "document", tone: "neutral", title: escapeHtml(item.text), ref: initiativeRef, sub: plain(item.initiative?.title, "pending item"), chip: ["Question", "accent"] }),
+    findings: () => ({ icon: "eye", tone: "warning", title: escapeHtml(slice), ref: ctx.hasArtifact(item.path) ? item.path : sliceRef, sub: plain(item.initiative?.title, item.blocking ? plural(item.blocking, "blocking finding") : plural(item.unresolved, "open finding")), chip: ["Finding", "warning"] }),
+    "failed-verification": () => ({ icon: "flask", tone: "danger", title: `${escapeHtml(slice)} failed verification`, ref: sliceRef, sub: plain(item.initiative?.title, failedReason(item)), chip: ["Failed verification", "danger"], at: item.finishedAt }),
+    blocked: () => ({ icon: "warning", tone: "danger", title: `${escapeHtml(slice)} is blocked`, ref: sliceRef, sub: plain(item.initiative?.title, "blocked slice"), chip: ["Blocked", "danger"] }),
+    "ready-to-ship": () => ({ icon: "check-circle", tone: "success", title: `${escapeHtml(item.initiative.title)} is ready to ship`, ref: initiativeRef, sub: "Every slice is done", chip: ["Ready to ship", "success"] }),
+    "record-problem": () => ({ icon: "warning", tone: "danger", title: `${escapeHtml(recordName(item.path, ctx) ?? "A record")} has a problem`, ref: ctx.hasArtifact(item.path) ? item.path : initiativeRef, sub: [escapeHtml(item.initiative?.title ?? ""), messageHtml(item.message ?? "")].filter(Boolean).join(" · "), chip: ["Problem", "danger"] }),
+    unlisted: () => ({ icon: "roadmap", tone: "warning", title: `${escapeHtml(item.initiative.title)} is not on the roadmap`, ref: initiativeRef, sub: "It has an initiative record but no roadmap entry", chip: ["Problem", "warning"] }),
+    "open-question": () => ({ icon: "roadmap", tone: "neutral", title: escapeHtml(item.text), ref: "roadmap", sub: "Open question on the roadmap", chip: ["Problem", "warning"] }),
+    "roadmap-missing": () => ({ icon: "warning", tone: "warning", title: "No roadmap", ref: null, sub: "No roadmap record exists yet; ask the agent to run setup", chip: ["Problem", "warning"] }),
+    "roadmap-problem": () => ({ icon: "warning", tone: "danger", title: "The roadmap has a problem", ref: "roadmap", sub: messageHtml(item.message ?? ""), chip: ["Problem", "danger"] }),
+    config: () => ({ icon: "warning", tone: "warning", title: "Check the workflow settings", ref: null, sub: messageHtml(item.message ?? ""), chip: ["Problem", "warning"] })
+  }[item.type]?.() ?? { icon: "info", tone: "neutral", title: escapeHtml(item.type), ref: null, sub: "", chip: [kind, "neutral"] };
+  const linked = look.ref && ctx.hasArtifact(look.ref);
+  const select = look.select ? ` data-attention-select="${escapeHtml(look.select)}"` : "";
+  const title = linked ? `<a href="./review?artifact=${encodeURIComponent(look.ref)}" data-artifact="${escapeHtml(look.ref)}"${select}>${look.title}</a>` : look.title;
+  const time = look.at ? `<time slot="time" datetime="${escapeHtml(look.at)}">${escapeHtml(shortAgo(look.at))}</time>` : "";
+  const action = linked ? `<prism-button slot="action" size="sm" data-artifact="${escapeHtml(look.ref)}"${select}>${escapeHtml(look.action ?? "Open")}</prism-button>` : "";
+  return `<prism-row icon="${escapeHtml(look.icon)}" tone="${escapeHtml(look.tone)}">${title}${look.sub ? `<span slot="description">${look.sub}</span>` : ""}<prism-chip slot="kind" tone="${escapeHtml(look.chip[1])}">${escapeHtml(look.chip[0])}</prism-chip>${time}${action}</prism-row>`;
+}
+
+function bindSelection(container) {
+  container.addEventListener("click", (event) => {
+    const chosen = event.target.closest?.("[data-attention-select]");
+    if (chosen) pendingSelection = chosen.dataset.attentionSelect;
+  }, { capture: true });
+}
+
+// Attention filtered to one kind or one initiative: only its items, as rows that open where each is handled.
+function renderFiltered(container, filter, ctx) {
+  filterLine(container, `${filter.label} · ${filter.items.length} of ${filter.total} ${filter.total === 1 ? "item" : "items"}`, ctx);
+  container.innerHTML = filter.items.length
+    ? `<div class="prism-rows" role="list" aria-label="${escapeHtml(filter.label)}">${filter.items.map((entry) => filteredItem(entry, ctx)).join("")}</div>`
+    : `<div class="attention-nothing">${emptyState("Nothing here waits on you", `No item of ${filter.label} needs you now.`)}</div>`;
+  bindSelection(container);
+  bindLinks(container, ctx);
+}
+
+// The questions answered or closed in the last 7 days, newest first, each with where it belongs and the answer or the reason it was closed.
+function renderAnswered(container, answered, ctx) {
+  filterLine(container, `Answered in the last 7 days · ${plural(answered.length, "question")}`, ctx);
+  if (!answered.length) {
+    container.innerHTML = `<div class="attention-nothing">${emptyState("Nothing answered this week", "No question was answered or closed in the last 7 days.")}</div>`;
+    return;
+  }
+  container.innerHTML = `<div class="prism-rows" role="list" aria-label="Answered in the last 7 days">${answered.map((item) => {
+    const place = [item.initiative ? artifactLink(`initiative:${item.initiative.id}`, ctx, item.initiative.title) : "", item.slice && item.initiative ? artifactLink(`slice:${item.initiative.id}/${item.slice.slug}`, ctx, item.slice.title) : ""].filter(Boolean).join(" · ");
+    const outcome = item.answer ? given(item) : `${badge("Closed by the agent")}${item.reason ? ` <span>${escapeHtml(item.reason)}</span>` : ""}`;
+    const tone = item.answer ? (item.answer.choice === "request-changes" ? "danger" : "success") : "neutral";
+    return `<prism-row wrap icon="${item.answer ? "check-circle" : "close"}" tone="${tone}">${escapeHtml(item.question)}${place ? `<span slot="description">${place}</span>` : ""}<span slot="detail">${outcome}</span><prism-chip slot="kind" tone="${item.answer ? "success" : "neutral"}">${item.answer ? "Answered" : "Closed"}</prism-chip><time slot="time" datetime="${escapeHtml(item.at ?? "")}">${escapeHtml(shortAgo(item.at))}</time></prism-row>`;
+  }).join("")}</div>`;
+  bindLinks(container, ctx);
+}
+
 export function render(container, entity, ctx) {
+  if (entity.data.filter) return renderFiltered(container, entity.data.filter, ctx);
+  if (entity.ref === "attention:answered") return renderAnswered(container, entity.data.answered ?? [], ctx);
   const data = entity.data;
+  if (pendingSelection) {
+    ctx.state.selected = pendingSelection;
+    ctx.state.pane = "detail";
+    pendingSelection = null;
+  }
   const drafts = (ctx.state.drafts ??= {});
   const answered = data.answered ?? [];
   const earlier = data.earlier ?? [];
@@ -549,6 +658,12 @@ export function render(container, entity, ctx) {
     })),
     ...notes.map((item, index) => ({ key: `note:${index}`, ...noteEntry(item, ctx) }))
   ];
+  // A shipped initiative's open questions can no longer be answered, so they list apart from Needs you and raise no count.
+  const shippedRows = (data.shippedGates ?? []).map((item) => ({
+    key: `shipped:${item.id}`,
+    row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: "neutral", title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, "Cannot be answered", item.slice?.title ?? item.initiative?.title].filter(Boolean).join(" · ")), end: escapeHtml(shortAgo(item.askedAt)) },
+    detail: gateDetail(item, ctx, {})
+  }));
   const waiting = answered.map((item) => ({
     key: `answered:${item.id}`,
     row: { icon: "check", tone: "success", title: escapeHtml(item.question), meta: escapeHtml(`${choiceLabel(item, item.answer.choice)} · waiting for the agent`), end: escapeHtml(shortAgo(item.answer.answeredAt)) },
@@ -568,7 +683,7 @@ export function render(container, entity, ctx) {
     row: { icon: "clock", tone: "neutral", title: "Recent changes", meta: escapeHtml(recent.length ? `${plural(recent.length, "change")} from the review app` : "No changes from the review app yet"), end: recent[0]?.at ? escapeHtml(shortAgo(recent[0].at)) : "" },
     detail: detailSheet({ className: "recent-changes-sheet", head: badge("From the review app, newest first"), title: "Recent changes", body: `<div data-recent-changes>${recent.length ? `<ul class="recent-changes">${recent.map((entry) => changeHtml(entry, ctx)).join("")}</ul>` : emptyState("No changes yet", "No one changed settings, answered a question, or rebuilt an index from the review app yet.")}</div>` })
   }];
-  const all = [...needs, ...waiting, ...watch, ...closed, ...history];
+  const all = [...needs, ...shippedRows, ...waiting, ...watch, ...closed, ...history];
   if (!all.some((entry) => entry.key === ctx.state.selected)) ctx.state.selected = all[0].key;
   ctx.state.pane ??= "detail";
   const selected = ctx.state.selected;
@@ -577,6 +692,7 @@ export function render(container, entity, ctx) {
     <div class="attention-inbox" data-pane="${ctx.state.pane}">
       <div class="attention-list" aria-label="Items that need you">
         ${needs.length ? group("needs", "Needs you", needs, { tone: "accent" }) : `<div class="attention-nothing">${emptyState("Nothing is waiting on you", "Questions an agent asks during an orchestrated run appear here.")}</div>`}
+        ${group("shipped", "Shipped history", shippedRows, { note: "These questions were left open when their initiative shipped, so they can no longer be answered." })}
         ${group("answered", "Answered", waiting)}
         ${group("watch", "Watch", watch)}
         ${closed.length ? `<prism-disclosure class="attention-earlier" summary="${escapeHtml(`Earlier questions · ${closed.length}`)}"${closed.some((entry) => entry.key === selected) || ctx.state.earlierOpen ? " open" : ""}><prism-inbox label="Earlier questions" data-inbox>${closed.map(({ key, row }) => inboxRow(key, row)).join("")}</prism-inbox></prism-disclosure>` : ""}

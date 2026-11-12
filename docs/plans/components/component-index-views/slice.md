@@ -1,5 +1,8 @@
 # Background preparation and the review browser per component
 
+> Shipped history: initiative `components` shipped on 2026-11-07, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 Background preparation, the review browser's index status and rebuild, and its code places work per component.

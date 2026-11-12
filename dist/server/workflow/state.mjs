@@ -8,6 +8,7 @@ import { SLUG_PATTERN } from "./initiative-graph.mjs";
 import { locateRecord, moveLegacyRecords, sliceDocumentFolder, writeRecord } from "./record-store.mjs";
 import { canonicalJson, mergeOrder, mergeScalars, mergeUnit, MergeConflict, parseVersions } from "./record-merge.mjs";
 import { revisionMismatch } from "./revision.mjs";
+import { refuseShipped } from "./shipped-history.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 
 const SCHEMA_VERSION = 1;
@@ -474,15 +475,20 @@ function validateClosed(value, errors) {
       addError(errors, entryPath, "must be a closed user gate");
       return;
     }
-    const { closedAt, reason, ...gate } = entry;
+    const { closedAt, reason, choice, ...gate } = entry;
     validateGate(gate, entryPath, errors);
+    if (choice !== undefined && (gate.kind !== "decision" || !(gate.options ?? []).some((option) => option?.id === choice))) addError(errors, `${entryPath}.choice`, "must be the id of one of the decision gate's options");
+    else if (choice !== undefined && conflictingChoice(gate.answer, choice)) addError(errors, `${entryPath}.choice`, "must match the option of the gate's browser answer");
     if (typeof closedAt !== "string" || Number.isNaN(Date.parse(closedAt))) addError(errors, `${entryPath}.closedAt`, "must be an ISO timestamp");
     if (reason !== undefined && (typeof reason !== "string" || !reason.trim() || reason.length > REASON_LIMIT)) addError(errors, `${entryPath}.reason`, `must be a non-empty reason of at most ${REASON_LIMIT} characters`);
   });
 }
 
-function closedGate(gate, reason) {
-  return { ...gate, closedAt: new Date().toISOString(), ...(reason ? { reason } : {}) };
+// A browser answer that chose an option leaves no room for a different choice on the closed gate.
+const conflictingChoice = (answer, choice) => isRecord(answer) && typeof answer.choice === "string" && answer.choice !== choice;
+
+function closedGate(gate, reason, choice) {
+  return { ...gate, closedAt: new Date().toISOString(), ...(reason ? { reason } : {}), ...(choice === undefined ? {} : { choice }) };
 }
 
 // Replacing the pending list may drop answered gates, but an unanswered question is withdrawn only through resolve with a reason.
@@ -533,7 +539,7 @@ function applyGateOperations(pending, operations) {
       next.push(gate);
       opened.push({ id: gate.id, kind: gate.kind, slice: gate.slice ?? null });
     } else if (operation.op === "resolve") {
-      const unknown = Object.keys(operation).filter((key) => !["op", "id", "reason"].includes(key));
+      const unknown = Object.keys(operation).filter((key) => !["op", "id", "reason", "choice"].includes(key));
       if (unknown.length) {
         throw error("invalid_changes", `gateOperations[${index}] has unsupported fields: ${unknown.join(", ")}.`);
       }
@@ -548,13 +554,33 @@ function applyGateOperations(pending, operations) {
       if (!next[position].answer && !reason) {
         throw error("invalid_changes", `gateOperations[${index}] resolves the unanswered gate ${operation.id}; give a reason, such as the user's answer in the conversation or why the question no longer applies.`);
       }
-      closed.push(closedGate(next[position], reason));
+      // A choice the user gave in the conversation stays on the closed gate, so a later operation can act on it.
+      if (operation.choice !== undefined && (next[position].kind !== "decision" || !(next[position].options ?? []).some((option) => option?.id === operation.choice))) {
+        throw error("invalid_changes", `gateOperations[${index}].choice must be the id of one of the options of the decision gate ${operation.id}.`);
+      }
+      // The user's browser answer is their decision, so a choice from the conversation may repeat it but never replace it.
+      if (operation.choice !== undefined && conflictingChoice(next[position].answer, operation.choice)) {
+        throw error("invalid_changes", `gateOperations[${index}].choice ${operation.choice} differs from the option ${next[position].answer.choice} that the user chose for the gate ${operation.id} in the review browser.`);
+      }
+      closed.push(closedGate(next[position], reason, operation.choice));
       next.splice(position, 1);
     } else {
       throw error("invalid_changes", `gateOperations[${index}].op must be ask or resolve.`);
     }
   });
   return { pending: next, opened, closed };
+}
+
+// The user answered the question as it was asked, so a replacement pending list keeps an answered gate exactly as it stands:
+// moving it to another slice, refreshing when it was asked, or rewording its question or options would reuse the answer for a question the user never saw.
+function assertAnsweredGatesUnchanged(before, replacement) {
+  if (replacement === undefined) return;
+  const answered = new Map(before.filter((gate) => isRecord(gate) && gate.answer !== undefined).map((gate) => [gate.id, canonicalJson(gate)]));
+  for (const gate of replacement.filter(isRecord)) {
+    if (answered.has(gate.id) && answered.get(gate.id) !== canonicalJson(gate)) {
+      throw error("invalid_changes", `The user gate ${gate.id} has an answer, so the pending list must keep it unchanged; drop it or resolve it instead.`);
+    }
+  }
 }
 
 // Only the review browser records answers, so agent updates may keep an answer but never add or change one.
@@ -959,10 +985,16 @@ export async function updateCoordinationState({ projectRoot, initiative, expecte
   if (expectedRevision !== null && typeof expectedRevision !== "string") {
     throw error("invalid_revision", "The expectedRevision argument must be a state revision string or null.");
   }
+  // A shipped initiative's coordination state is history, so a change to it is refused after argument validation and before any other check or write.
+  await refuseShipped(projectRoot, initiative);
   await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
   await mkdir(path.dirname(resolved.path), { recursive: true });
-  return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => applyStateChange(resolved, expectedRevision, changes), error, { renew: Boolean(changes.activeOperations?.length) }));
+  return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
+    // A ship that landed after the first check refuses the change too, so the state never changes after the initiative shipped.
+    await refuseShipped(projectRoot, initiative);
+    return applyStateChange(resolved, expectedRevision, changes);
+  }, error, { renew: Boolean(changes.activeOperations?.length) }));
 }
 
 // Resolving a gate by its id removes only that gate, so it holds after any other change, such as the browser answer that prompted it.
@@ -983,6 +1015,7 @@ async function applyStateChange(resolved, expectedRevision, changes) {
     if (changes.active !== undefined && JSON.stringify(changes.active) !== JSON.stringify(before.active)) throw error("gate_blocked", "Use typed activeOperations to change active work; array replacement cannot bypass review gates.");
     return withReviewGatesLocked(resolved.root, resolved.initiative, before.active, changes.activeOperations ?? [], async () => {
     const activeResult = await applyActiveOperations(resolved.root, resolved.initiative, before.active, changes.activeOperations ?? []);
+    assertAnsweredGatesUnchanged(before.pending, changes.pending);
     const dropped = droppedGates(before.pending, changes.pending);
     const gateResult = applyGateOperations(changes.pending ?? before.pending, changes.gateOperations ?? []);
     assertAnswersUnchanged(before.pending, gateResult.pending);
@@ -1019,10 +1052,12 @@ async function applyStateChange(resolved, expectedRevision, changes) {
 }
 
 export async function answerUserGate({ projectRoot, initiative, id, choice = null, note = null, write = writeRecord }) {
+  await refuseShipped(projectRoot, initiative);
   await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
   await mkdir(path.dirname(resolved.path), { recursive: true });
   return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
+    await refuseShipped(projectRoot, initiative);
     const current = await loadState(resolved.path);
     if (!current.exists || !current.valid) {
       throw error("invalid_state", "The coordination state is missing or invalid.");
@@ -1071,6 +1106,8 @@ export async function recordPersonAction({ projectRoot, initiative, prepare }) {
   const preview = await resolveState(projectRoot, initiative);
   const previewed = await loadState(preview.path);
   if (await decide(preview, previewed) === null) return { ...publicStateResult(preview, previewed), entry: null };
+  // The action's own checks answer first, so the review browser can say why an action is unavailable; a change that passes them is still refused for a shipped initiative.
+  await refuseShipped(projectRoot, initiative);
   await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
   await mkdir(path.dirname(resolved.path), { recursive: true });
@@ -1078,6 +1115,8 @@ export async function recordPersonAction({ projectRoot, initiative, prepare }) {
     const current = await loadState(resolved.path);
     const change = await decide(resolved, current);
     if (change === null) return { ...publicStateResult(resolved, current), entry: null };
+    // A ship that landed after the first check refuses the action too, so the state never changes after the initiative shipped.
+    await refuseShipped(projectRoot, initiative);
     const { entry, setting, answer } = change;
     const problem = historyEntryProblem(entry);
     if (problem) throw error("invalid_changes", `The history entry is invalid: ${problem}.`);
@@ -1113,6 +1152,8 @@ export async function checkpointPause({ projectRoot, initiative, expectedRevisio
   if (typeof activeSlice !== "string" || !SLUG_PATTERN.test(activeSlice) || typeof recoveryContent !== "string" || !recoveryContent.trim() || Buffer.byteLength(recoveryContent) > 65536) {
     throw error("invalid_pause", "An active slice and a recovery note of at most 64 KiB are required.");
   }
+  // A shipped initiative's state is history, so the pause is refused before the recovery note or any record is written.
+  await refuseShipped(projectRoot, initiative);
   await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
   const folder = await sliceDocumentFolder(resolved.root, resolved.initiative, activeSlice);
@@ -1126,6 +1167,8 @@ export async function checkpointPause({ projectRoot, initiative, expectedRevisio
   await assertNearestExistingPathInside(resolved.root, path.dirname(recovery));
   await mkdir(path.dirname(resolved.path), { recursive: true });
   return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
+    // A ship that landed after the first check refuses the pause too, before the recovery note is written.
+    await refuseShipped(projectRoot, initiative);
     const current = await loadState(resolved.path);
     if (current.revision !== expectedRevision) {
       throw error(expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("coordination state", expectedRevision, current.revision), { current: publicStateResult(resolved, current) });

@@ -5,6 +5,7 @@ import { readChangeMapDocument, writeDerivedChangeMap } from "./change-map.mjs";
 import { prepareAnalysis, sourceUnits } from "./conservation-analysis.mjs";
 import { conservationStore } from "./conservation-store.mjs";
 import { acceptedDesign, latestVerification } from "../workflow/slice-design.mjs";
+import { shippedDecision } from "../workflow/shipped-history.mjs";
 
 const RETRY_MS = 15000;
 const RETRY_LIMIT = 40;
@@ -92,6 +93,8 @@ function entryOf(change, before, after) {
  */
 export async function deriveSliceChangeMap({ projectRoot, initiative, slice }, options = {}) {
   const root = await realpath(projectRoot);
+  // A shipped initiative's change maps are history, so opening one of its slices never writes a derived change map.
+  if (await shippedDecision(root, initiative)) return { status: "unavailable", reason: "The initiative shipped, so its state is history and its change maps are not derived again." };
   const design = await acceptedDesign(root, initiative, slice);
   if (!design?.baselineId) return { status: "unavailable", reason: "The slice has no accepted design with a baseline snapshot." };
   const latest = await latestVerification(root, initiative, slice);

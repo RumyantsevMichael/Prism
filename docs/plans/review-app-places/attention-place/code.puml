@@ -1,0 +1,12 @@
+@startuml
+title attention-place - units
+component "workspace-model.mjs\ncomputeAttention, parseEntityRef" as Model
+component "review.js\nrenderAttentionPlace" as Sidebar
+component "views/attention.js\nrenderAttention" as Page
+component "record-store runs" as Runs
+component "state.json pending and closed" as State
+Model --> Runs : latest failed run per slice
+Model --> State : answered and closed this week
+Sidebar --> Model : places.attention
+Page --> Model : attention:<kind>, attention:work/<id>, attention:answered
+@enduml
