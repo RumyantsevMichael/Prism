@@ -10,7 +10,7 @@ import { conservationStore } from "../conservation/conservation-store.mjs";
 import { artifactKinds, parseWorkflowConfig, readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { RECORD_DIRECTORY, artifactPathTest, artifactsInCheckout, describeRecordStore, inArtifactStore, isStoreWithoutCheckout, outsideToolCall, keyOfPath, recordStoreOf, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
 import { artifactStoreLocation, readStoreArtifact, readStoreArtifactAt, reviewStoreArtifact, reviewStoreArtifactAt, storeArtifactLocation, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
-import { resolveLinks } from "./artifact-links.mjs";
+import { codeRefOf, parseCodeRef, resolveLinks } from "./artifact-links.mjs";
 import { registeredRepositories } from "./workspaces.mjs";
 import { withoutCredentials } from "../workflow/remote-url.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
@@ -823,7 +823,43 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   async function reviewableFiles() {
     const stored = workspace ? await workspaceStoreArtifacts(projectRoot) : null;
     const refs = stored ? stored.entries.map((entry) => storeRefOf(entry.location)) : [];
-    return new Set([...await listArtifacts(projectRoot), ...await listReviewSources(projectRoot), ...refs]);
+    return new Set([...await listArtifacts(projectRoot), ...await listReviewSources(projectRoot), ...refs, ...await codeRefs()]);
+  }
+
+  // The review sources of each registered checkout of a workspace whose repository is known, by repository, holding a repository only while one of its checkouts lists its sources.
+  async function codeSources() {
+    const sources = new Map();
+    for (const member of await workspace?.checkouts?.() ?? []) {
+      if (!member.repository) continue;
+      const files = await listReviewSources(member.root).catch(() => null);
+      if (files === null) continue;
+      const known = sources.get(member.repository) ?? new Set();
+      for (const file of files) known.add(file);
+      sources.set(member.repository, known);
+    }
+    return sources;
+  }
+
+  // A workspace page opens a code file that a store artifact links to by its ref, code:<repository>:<path>, as a tab like any other file.
+  async function codeRefs() {
+    const refs = [];
+    for (const [repository, files] of await codeSources()) for (const file of files) refs.push(codeRefOf(repository, file));
+    return refs;
+  }
+
+  // A workspace page's read of a code file by its ref, answered as a checkout's read of a review source is, from a registered checkout of that repository whose review sources list the path.
+  async function serveCodeFile(response, ref, code) {
+    for (const member of await workspace?.checkouts?.() ?? []) {
+      if (member.repository !== code.repository) continue;
+      if (!(await listReviewSources(member.root).catch(() => [])).includes(code.path)) continue;
+      let loaded;
+      try { loaded = await loadArtifact(member.root, code.path); }
+      catch (error) { if (error.code === "ENOENT") continue; throw error; }
+      const diagrams = (loaded.diagrams ?? []).map((diagram) => ({ ...diagram, path: codeRefOf(code.repository, diagram.path) }));
+      send(response, 200, JSON.stringify({ ...loaded, diagrams, ref, path: ref, file: code.path, repository: code.repository }), "application/json; charset=utf-8");
+      return;
+    }
+    send(response, 404, "No registered checkout of that repository holds the file for review.");
   }
 
   // The repositories a workspace's store registers, with those its registered checkouts name, by name.
@@ -835,12 +871,16 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     return [...names].sort();
   }
 
-  // The configured artifact kinds of a checkout of a scope's repository that the workspace registers, of the checkout the page reads through for the workspace scope, or else Prism's default paths.
-  async function kindsFor(scope) {
+  // What resolves the links of a scope's artifacts: the configured artifact kinds of a registered checkout of its repository, of the checkout the page reads through for the workspace scope, or else Prism's default paths,
+  // the code repository its links to files name, that of the checkout the page reads through for the workspace scope or null without one, and the review sources registered checkouts of that repository list, or null with none.
+  async function linkContext(scope) {
     const members = await workspace?.checkouts?.() ?? [];
+    const reading = members.find((member) => member.root === projectRoot) ?? null;
+    const repository = scope.repository ?? reading?.repository ?? null;
     const root = scope.repository ? members.find((member) => member.repository === scope.repository)?.root ?? null : projectRoot;
     const config = root ? await readWorkflowConfig(root).catch(() => null) : null;
-    return artifactKinds(config ?? parseWorkflowConfig(""));
+    const sources = repository === null ? null : (await codeSources()).get(repository) ?? null;
+    return { kinds: artifactKinds(config ?? parseWorkflowConfig("")), repository, sources };
   }
 
   // A workspace page's read of a store artifact by its ref, answered as a checkout's artifact read is, with its location, scope, links, and the count of links that resolve to nothing.
@@ -863,11 +903,12 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     const stored = await workspaceStoreArtifacts(projectRoot);
     const held = new Set((stored?.entries ?? []).map((entry) => entry.location));
     const content = read.bytes.toString("utf8");
-    const links = resolveLinks({ content, location, kinds: await kindsFor(read.scope), has: (candidate) => held.has(candidate) });
+    // Only a Markdown artifact's text is rendered with links, as the page renders it.
+    const links = location.toLowerCase().endsWith(".md") ? resolveLinks({ content, location, ...await linkContext(read.scope), has: (candidate) => held.has(candidate) }) : [];
     const { scope, version, accepted, changed, comments, totalComments, nextCommentOffset } = read;
     const below = location.slice(scopePrefix(scope).length);
     const artifact = { scope, version, accepted, changed, comments, totalComments, nextCommentOffset, target: `artifact:${scope.label}:${below}` };
-    const answer = { ref, path: ref, location, scope, content, modifiedAt: read.modifiedAt, artifact, links, unresolvedLinks: links.filter((link) => !link.resolved).length };
+    const answer = { ref, path: ref, location, scope, content, modifiedAt: read.modifiedAt, artifact, links, unresolvedLinks: links.filter((link) => link.resolved === false).length };
     if (path.posix.extname(location).toLowerCase() === ".json") Object.assign(answer, { diagrams: [] }, await loadJsonArtifact(projectRoot, location, content));
     else answer.diagrams = await storeDiagrams(location, content, links, held);
     send(response, 200, JSON.stringify(answer), "application/json; charset=utf-8");
@@ -875,7 +916,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
 
   // The PlantUML diagrams a store artifact shows: the files its links name, and the diagram beside it of the same name, or itself when it is one.
   async function storeDiagrams(location, content, links, held) {
-    const wanted = new Set(links.filter((link) => link.resolved && link.target.toLowerCase().endsWith(".puml")).map((link) => link.target.slice(STORE_REF.length)));
+    const wanted = new Set(links.filter((link) => link.resolved && link.target.startsWith(STORE_REF) && link.target.toLowerCase().endsWith(".puml")).map((link) => link.target.slice(STORE_REF.length)));
     if (location.toLowerCase().endsWith(".puml")) wanted.add(location);
     else if (held.has(location.replace(/\.[^./]+$/, ".puml"))) wanted.add(location.replace(/\.[^./]+$/, ".puml"));
     const diagrams = [];
@@ -1037,7 +1078,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         storeIndex = await workspaceIndex(projectRoot, stored, scopeFilterOf(url), storeRepositories);
         artifacts = [...artifacts.filter((file) => !isArtifact(file)), ...storeIndex.refs];
       }
-      const available = new Set([...artifacts, ...sources, ...(storeIndex?.every ?? [])]);
+      const available = new Set([...artifacts, ...sources, ...(storeIndex?.every ?? []), ...(workspace ? await codeRefs() : [])]);
       const snapshot = await followMovedRecords(available);
       const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref) => entityExists(projectRoot, ref));
       // A workspace read through its store's clone alone has no checkout to name.
@@ -1124,10 +1165,13 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         return;
       }
       // A workspace's page reads a store artifact by its ref, store:<location>, which it also passes as the path of the page that shows it.
-      const ref = url.searchParams.get("ref") ?? (artifactPath?.startsWith(STORE_REF) ? artifactPath : null);
+      // A code file that a store artifact links to is read the same way by its ref, code:<repository>:<path>.
+      const ref = url.searchParams.get("ref") ?? (artifactPath?.startsWith(STORE_REF) || parseCodeRef(artifactPath) ? artifactPath : null);
       if (ref !== null) {
-        if (workspace) await serveStoreArtifact(response, ref, Number(commentOffset));
-        else send(response, 404, "Only a workspace's page reads a store artifact by its store location.");
+        const code = parseCodeRef(ref);
+        if (!workspace) send(response, 404, "Only a workspace's page reads a store artifact or a code file by its ref.");
+        else if (code) await serveCodeFile(response, ref, code);
+        else await serveStoreArtifact(response, ref, Number(commentOffset));
         return;
       }
       // Only listed documents and filtered source files are served, never an arbitrary project path such as .env.

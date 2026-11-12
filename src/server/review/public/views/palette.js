@@ -12,7 +12,7 @@ const TEXT_SEARCH_MINIMUM = 3;
 
 function rank(entry, query, tokens) {
   const label = entry.label.toLowerCase();
-  const haystack = `${label} ${String(entry.detail ?? "").toLowerCase()} ${String(entry.kindLabel ?? "").toLowerCase()} ${entry.ref.toLowerCase()}`;
+  const haystack = `${label} ${String(entry.detail ?? "").toLowerCase()} ${String(entry.kindLabel ?? "").toLowerCase()} ${String(entry.scope ?? "").toLowerCase()} ${entry.ref.toLowerCase()}`;
   if (!tokens.every((token) => haystack.includes(token))) return null;
   const position = label.startsWith(query) ? 0 : label.includes(query) ? 1 : 2;
   return [KIND_ORDER.indexOf(entry.kind), position, label.length];
@@ -77,7 +77,7 @@ export function createPalette({ dialog, field, results, preview, entries, onOpen
           // As in the Records group, a record that belongs to a slice or initiative reads as its kind, and the preview names its owner.
           const owned = !named.code && named.owner && named.label !== named.kind;
           const label = owned ? named.kind : named.label;
-          return { ref: result.path, kind: "text", label, kindLabel: owned ? "Record" : named.kind, code: Boolean(named.code), detail: match.text, line: match.line, find: query(), preview: owned ? { kind: named.kind, title: named.owner } : null };
+          return { ref: result.path, kind: "text", label, kindLabel: owned ? "Record" : named.kind, code: Boolean(named.code), detail: match.text, line: match.line, find: query(), scope: result.scope ?? null, preview: owned ? { kind: named.kind, title: named.owner } : null };
         }));
         textState = "done";
         render({ keep: true });
@@ -99,6 +99,12 @@ export function createPalette({ dialog, field, results, preview, entries, onOpen
     meta.slot = "meta";
     const claim = entry.kind === "slice" ? claimFor(entry.ref) : null;
     if (claim) meta.append(claimElement(claim, "inline"), " ");
+    // A store artifact's row names its scope, so artifacts of one name in several scopes read apart in the list itself.
+    if (entry.scope) {
+      const scope = node("prism-chip", "", entry.scope);
+      scope.dataset.scopeLabel = "";
+      meta.append(scope, " ");
+    }
     meta.append(node("span", "palette-kind", kindOf(entry)));
     item.append(meta);
     return item;

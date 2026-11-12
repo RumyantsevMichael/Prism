@@ -1141,7 +1141,8 @@ export async function storeArtifactTarget(projectRoot, label, file) {
       const seen = await seenScopes(projectRoot).catch((error) => { if (error?.code === "store_not_configured") return null; throw error; });
       const location = seen && belowScope(seen, label, file);
       const held = location && await atLocation(seen, location);
-      if (held) return { path: checkoutPath(seen.kinds, held.address), location, scope: held.scope, kind: held.address.kind, version: held.record.version };
+      // The location names its own scope, so a target names it only under that scope's label, and an artifact has one comment target.
+      if (held && held.scope.label === label) return { path: checkoutPath(seen.kinds, held.address), location, scope: held.scope, kind: held.address.kind, version: held.record.version };
     }
     let checked;
     try { checked = await ownArtifact(projectRoot, file); }

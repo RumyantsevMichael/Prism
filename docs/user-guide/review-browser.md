@@ -309,7 +309,12 @@ The scope chips above the list are the scope filter: select one or more scopes t
 The filter stays in the page's address as `scopes=<label>,<label>`, so it survives a reload and a shared link, and it never changes the workspace the page shows.
 
 A relative Markdown link in a store artifact opens the artifact it names, looked for first beside the artifact's place in the store, and then at the path the link names from the file's checkout path, as a checkout of its repository on this machine configures its folders, or as Prism's default folders do without one, in the file's own scope or else the workspace scope.
-A link that names no artifact keeps its text and shows **link not found** beside it, and the page's heading counts such links.
+A link whose path falls outside every artifact folder names a code file of the artifact's repository, or, for a workspace artifact, of the checkout the page reads through.
+It opens that file from a checkout of the repository on this machine that offers it for review, in a tab named `code:<repository>:<path>`.
+When no checkout of that repository is registered on this machine, the link keeps its text and shows **not available on this machine** beside it, and the page's heading counts such links apart.
+A link that names no artifact and no file keeps its text and shows **link not found** beside it, and the page's heading counts such links.
+An image, a link inside a fenced code block of backticks or tildes, and a link inside inline code are not links.
+The Jump palette lists each store artifact once, names its scope in its row, and finds only the artifacts of the scopes the filter shows.
 
 A store that holds no artifacts yet, because no Prism session moved a checkout's files into it, shows a note in the **Store** section that names its repositories and says that each keeps its artifacts in its checkouts until a Prism session there moves them into the store.
 

@@ -807,8 +807,9 @@ function markdownOptions(basePath, links = null) {
   return { basePath, isKnown: (path) => availableArtifacts.has(path), links: linkTargets(links) };
 }
 
-// The read of a page's file: a store artifact by its ref, and any other file by its path.
-const artifactQuery = (path) => isStoreRef(path) ? `ref=${encodeURIComponent(path)}` : `path=${encodeURIComponent(path)}`;
+// The read of a page's file: a store artifact, or a code file a store artifact links to, code:<repository>:<path>, by its ref, and any other file by its path.
+const isCodeRef = (path) => typeof path === "string" && /^code:[^:/]+:./.test(path);
+const artifactQuery = (path) => isStoreRef(path) || isCodeRef(path) ? `ref=${encodeURIComponent(path)}` : `path=${encodeURIComponent(path)}`;
 
 // A short outage shows the retrying banner; one that outlasts the grace period shows the stopped banner, and any answer clears both.
 function reportRefresh(ok) {
@@ -1606,7 +1607,8 @@ async function showArtifact(path) {
       </div>
       <div class="artifact-meta">
         ${data.scope ? `<prism-chip tone="accent" data-scope-label tip="The scope that holds this artifact in the record store">${escapeHtml(data.scope.label)}</prism-chip>` : ""}
-        ${data.unresolvedLinks ? `<prism-chip tone="warning" tip="Links in this file that name no artifact in the record store">${escapeHtml(countText(data.unresolvedLinks, "link not found", "links not found"))}</prism-chip>` : ""}
+        ${data.unresolvedLinks ? `<prism-chip tone="warning" tip="Links in this file that name no artifact in the record store and no file">${escapeHtml(countText(data.unresolvedLinks, "link not found", "links not found"))}</prism-chip>` : ""}
+        ${unavailableLinks(data) ? `<prism-chip tip="Links to code files that no checkout of their repository on this machine holds">${escapeHtml(countText(unavailableLinks(data), "code link not available on this machine", "code links not available on this machine"))}</prism-chip>` : ""}
         ${named.code || structured ? `<prism-chip>${escapeHtml(kind)}</prism-chip>` : ""}
         ${source ? "<prism-chip>Read-only</prism-chip>" : structured ? "" : `<prism-chip>${diagramLabel}</prism-chip>`}
       </div>
@@ -1730,6 +1732,9 @@ function viewContext(path, state) {
   };
 }
 
+// The links of a store artifact's read to code files that no checkout on this machine holds.
+const unavailableLinks = (data) => Array.isArray(data.links) ? data.links.filter((item) => item.resolved === null).length : 0;
+
 function paletteEntries() {
   const places = [
     { ref: "attention", label: "Attention", kind: "place", detail: "What needs you" },
@@ -1738,7 +1743,13 @@ function paletteEntries() {
     { ref: "decisions", label: "Decisions", kind: "place", detail: "Library" },
     { ref: "glossary", label: "Glossary", kind: "place", detail: "Library" }
   ];
-  const indexed = navigation.index ?? [];
+  // A library entry that names a store artifact by the reading checkout's path is that store artifact: it opens by its ref, follows the scope filter, and names its scope,
+  // so the Records group below never lists it a second time.
+  const indexed = (navigation.index ?? []).flatMap((entry) => {
+    const ref = localTab(entry.ref);
+    if (!isStoreRef(ref)) return [entry];
+    return scopeShown(refScopes.get(ref)) ? [{ ...entry, ref, scope: refScopes.get(ref) ?? "workspace" }] : [];
+  });
   const known = new Set(indexed.map((entry) => entry.ref));
   const titles = titleIndex();
   // Prism's own records are named by title and kind; repository files keep their paths, since code is their subject.
@@ -1747,7 +1758,7 @@ function paletteEntries() {
     // A store artifact names its scope and its place in it, so files of one name in several scopes read apart.
     if (isStoreRef(file)) {
       const named = recordLabel(file, titles);
-      return { ref: file, label: named.owner ? named.kind : named.label, kind: "record", kindLabel: named.kind, detail: `${refScopes.get(file) ?? "workspace"} · ${belowScope(file)}` };
+      return { ref: file, label: named.owner ? named.kind : named.label, kind: "record", kindLabel: named.kind, scope: refScopes.get(file) ?? "workspace", detail: `${refScopes.get(file) ?? "workspace"} · ${belowScope(file)}` };
     }
     // A record that belongs to a slice or initiative reads as its kind, so its owner's title stays the owner's own result; the preview names the owner.
     const named = recordLabel(file, titles);
@@ -1906,7 +1917,12 @@ async function initialize() {
     entries: paletteEntries,
     describe,
     claimFor: (ref) => claimIndex.claimFor(ref),
-    search: async (query) => (await fetchJson(`./api/search?q=${encodeURIComponent(query)}`)).results,
+    // A text match in a store artifact found by the reading checkout's path opens the store artifact, follows the scope filter, and names its scope.
+    search: async (query) => (await fetchJson(`./api/search?q=${encodeURIComponent(query)}`)).results.flatMap((result) => {
+      const ref = localTab(result.path);
+      if (!isStoreRef(ref)) return [result];
+      return scopeShown(refScopes.get(ref)) ? [{ ...result, path: ref, scope: refScopes.get(ref) ?? "workspace" }] : [];
+    }),
     onOpen: (ref, { find, ...options }) => {
       pendingFind = find ? { path: ref, text: find } : null;
       openRef(ref, options);

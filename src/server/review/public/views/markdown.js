@@ -48,20 +48,24 @@ function decode(value) {
   return value.replaceAll("&quot;", '"').replaceAll("&gt;", ">").replaceAll("&lt;", "<").replaceAll("&amp;", "&");
 }
 
-// A store artifact's links come resolved from the server as { href, target }, by the href as written, with target store:<location> or null for a link that names nothing.
+// A store artifact's links come resolved from the server as { href, target, resolved }, by the href as written:
+// target store:<location> or code:<repository>:<path> of what it opens, resolved null for a code file no checkout on this machine holds, and false for a link that names nothing.
 function storeLink(label, href, options) {
   const found = options.links?.get(decode(href));
   if (found === undefined) return null;
   const anchor = decode(href).split("#")[1] ?? "";
-  if (found === null) {
-    return `<span class="doc-link-unresolved" data-link="unresolved">${label}<prism-chip tone="warning" tip="${escapeHtml(decode(href))} names no artifact in the record store">link not found</prism-chip></span>`;
+  if (found.resolved === null) {
+    return `<span class="doc-link-unresolved" data-link="unavailable">${label}<prism-chip tip="${escapeHtml(decode(href))} names a code file that no checkout of its repository on this machine holds">not available on this machine</prism-chip></span>`;
   }
-  return `<a href="./review?artifact=${encodeURIComponent(found)}" data-doc-link="${escapeHtml(found)}"${anchor ? ` data-doc-anchor="${escapeHtml(anchor)}"` : ""}>${label}</a>`;
+  if (!found.resolved || !found.target) {
+    return `<span class="doc-link-unresolved" data-link="unresolved">${label}<prism-chip tone="warning" tip="${escapeHtml(decode(href))} names no artifact in the record store and no file">link not found</prism-chip></span>`;
+  }
+  return `<a href="./review?artifact=${encodeURIComponent(found.target)}" data-doc-link="${escapeHtml(found.target)}"${anchor ? ` data-doc-anchor="${escapeHtml(anchor)}"` : ""}>${label}</a>`;
 }
 
-/** Markdown options' links from a store artifact's read: a map from each link's href to its target, or null without links. */
+/** Markdown options' links from a store artifact's read: a map from each link's href to its { target, resolved }, or null without links. */
 export function linkTargets(links) {
-  return Array.isArray(links) ? new Map(links.map((item) => [item.href, item.target])) : null;
+  return Array.isArray(links) ? new Map(links.map((item) => [item.href, { target: item.target ?? null, resolved: item.resolved === undefined ? false : item.resolved }])) : null;
 }
 
 // External links open in a new tab; in-document anchors scroll; repository paths open as review tabs when the review knows them.
@@ -84,7 +88,8 @@ function inlineMarkdown(value, options) {
   const codes = [];
   return value
     .replace(/`([^`]+)`/g, (_, code) => `\u0000${codes.push(code) - 1}\u0000`)
-    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, href) => link(label, href, options))
+    // An image, ![alt](target), is no link and shows its alt text; the server's link extraction (artifact-links.mjs) reads links the same way.
+    .replace(/(!?)\[([^\]]+)\]\(([^)\s]+)\)/g, (_, image, label, href) => image ? label : link(label, href, options))
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/\*([^*]+)\*/g, "<em>$1</em>")
     .replace(/\u0000(\d+)\u0000/g, (_, index) => `<code>${codes[Number(index)]}</code>`);
@@ -103,6 +108,9 @@ function codeBlock(html, language) {
 function fencedBlock(html, language) {
   return `<pre><code${language ? ` class="language-${language}"` : ""}>${html}</code></pre>`;
 }
+
+// A fence opens with three or more backticks or tildes and closes on a line that starts with the same character.
+const FENCE = /^(`{3,}|~{3,})/;
 
 // Renders the small Markdown subset Prism artifacts use; any other file shows as preformatted text.
 export function renderText(path, content, options = {}) {
@@ -133,14 +141,15 @@ export function renderText(path, content, options = {}) {
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     const item = line.match(LIST_ITEM);
-    if (fence && line.trim().startsWith("```")) {
+    const marker = line.trim().match(FENCE)?.[1] ?? null;
+    if (fence && marker?.[0] === fence.marker) {
       output.push(fencedBlock(highlight(decode(fence.lines.join("\n")), fence.language), fence.language));
       fence = null;
     } else if (fence) {
       fence.lines.push(line);
-    } else if (line.trim().startsWith("```")) {
+    } else if (marker) {
       closeList();
-      fence = { language: languageOf(decode(line.trim().slice(3))), lines: [] };
+      fence = { marker: marker[0], language: languageOf(decode(line.trim().slice(marker.length))), lines: [] };
     } else if (line.trim().startsWith("|") && /^\s*\|?\s*:?-+/.test(lines[index + 1] ?? "")) {
       closeList();
       const headers = tableCells(line, options);
