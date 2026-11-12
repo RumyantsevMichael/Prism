@@ -1,3 +1,4 @@
+import { appendFileSync as require_appendFileSync } from "node:fs";
 import { spawn as defaultSpawn } from "node:child_process";
 import path from "node:path";
 import { commandLaunch } from "../../command-launch.mjs";
@@ -76,9 +77,15 @@ function requestWithAppServer({ cwd, environment, spawnProcess = defaultSpawn, t
       shell: started.shell,
       windowsHide: true
     });
+    const diagStarted = Date.now();
     const finish = (error, value) => {
       if (settled) return;
       settled = true;
+      if (process.env.DIAGCFG_LOG) {
+        try {
+          require_appendFileSync(process.env.DIAGCFG_LOG, `${new Date(diagStarted).toISOString()} pid=${process.pid} ms=${Date.now() - diagStarted} ${error ? `error=${error.message}` : "ok"} command=${started.command} cwd=${cwd} path0=${(environment.PATH || environment.Path || "").split(path.delimiter).slice(0, 3).join("|")} cli=${environment.CODEX_CLI_PATH || ""} sock=${environment.CODEX_APP_SERVER_SOCKET || environment.CODEX_APP_SERVER_CONTROL_SOCKET || ""}\n`);
+        } catch {}
+      }
       clearTimeout(timer);
       child.kill?.();
       if (error) reject(error);

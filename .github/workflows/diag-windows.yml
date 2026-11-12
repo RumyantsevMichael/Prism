@@ -25,6 +25,7 @@ jobs:
       - run: |
           npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
           npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          npm run build:native
       - name: Dynamic ports and TCP settings
         shell: pwsh
         run: |
@@ -53,3 +54,36 @@ jobs:
           echo "== error times"; grep -ho "ERR_NO_BUFFER_SPACE" "$RUNNER_TEMP"/*.txt | wc -l
           echo "== samples (max total)"; sort -t= -k2 -n -r <(sed 's/.*total=\([0-9]*\).*/\1 &/' "$samples") | head -5
           echo "== all samples"; cat "$samples"
+
+  smoke:
+    name: smoke (${{ matrix.round }})
+    strategy:
+      fail-fast: false
+      matrix:
+        round: [1, 2, 3]
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install -g @anthropic-ai/claude-code @openai/codex@0.147.0
+      - run: |
+          npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          npm run build:native
+      - name: Run the Codex model turn five times and log each settings read
+        run: |
+          export DIAGCFG_LOG="$RUNNER_TEMP/config-reads.txt"
+          root="$(npm root -g)"
+          export CLAUDE_BIN="$root/@anthropic-ai/claude-code/bin/claude.exe"
+          export CODEX_BIN="$root/@openai/codex/bin/codex.js"
+          node scripts/host-smoke.mjs claude codex || true
+          npm install --prefix "$RUNNER_TEMP/codex-current" @openai/codex@latest
+          export CODEX_BIN="$RUNNER_TEMP/codex-current/node_modules/@openai/codex/bin/codex.js"
+          for i in 1 2 3 4 5; do echo "== turn $i $(date +%T.%N)"; node scripts/host-smoke.mjs codex-turn; done
+          echo "== config reads"; cat "$DIAGCFG_LOG"
