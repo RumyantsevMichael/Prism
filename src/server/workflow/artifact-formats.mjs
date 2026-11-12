@@ -81,14 +81,15 @@ function markdownSections(items) {
 
 const bodyText = (body) => body.filter((item) => !blank(item)).map((item) => item.value.trim()).join("\n");
 
-// A header of `Label: value` lines in a fixed order; returns the values by label.
+// A header that starts with `Label: value` lines in a fixed order; returns the values by label.
 function header(type, head, labels, findings) {
   const fields = head.filter((item) => !blank(item) && item.line > 1 && !/^<a id=/.test(item.value));
   const found = fields.map((item) => ({ item, match: /^([A-Za-z][A-Za-z ]*):\s*(.*?)\s*$/.exec(item.value) }));
   const order = found.map((entry) => entry.match?.[1] ?? null);
   const values = {};
   for (const entry of found) if (entry.match && !(entry.match[1] in values)) values[entry.match[1]] = { value: entry.match[2], line: entry.item.line };
-  if (order.length !== labels.length || order.some((label, index) => label !== labels[index])) {
+  // Further `Label: value` lines may follow the required ones, as an ADR's Accepted or Supersedes line does.
+  if (order.length < labels.length || labels.some((label, index) => order[index] !== label) || order.slice(labels.length).some((label) => label === null || labels.includes(label))) {
     const missing = labels.filter((label) => !order.includes(label));
     const detail = missing.length ? `${missing.join(" and ")} ${missing.length === 1 ? "is" : "are"} missing` : `found ${order.map((label) => label ?? "text").join(", ")}`;
     findings.push(finding(`${type}.header`, fields[0]?.line ?? 1, `The header must be ${labels.map((label) => `${label}:`).join(", then ")} before any section; ${detail}.`));
