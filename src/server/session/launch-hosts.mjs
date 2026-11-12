@@ -237,6 +237,12 @@ const text = (value) => (typeof value === "string" ? value : "");
 // A Claude Code error result's text: its `result` when that is a non-empty string, and otherwise its `errors` strings joined.
 const claudeErrorText = (event) => (text(event.result) || (Array.isArray(event.errors) ? event.errors.filter((entry) => typeof entry === "string").join("; ") : ""));
 
+// A slice of a long string can keep the whole string alive, so kept host text is copied into a string of its own; the UTF-16
+// round trip keeps every code unit, a lone surrogate at the cut included.
+const detached = (text) => Buffer.from(text, "utf16le").toString("utf16le");
+// Host ids are kept by a fixed-size digest, so a long id costs no more than a short one.
+const digestKey = (id) => createHash("sha256").update(id).digest("base64");
+
 /**
  * One run's conversation with its host over the host's standard input and output.
  * `send(message)` writes one JSON line to the host's input and `closeInput()` ends that input; the conversation calls neither
@@ -252,9 +258,9 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
   let inputOpen = true;
   const redact = (value) => redactSessionId(redactSessionId(value, hostSessionId), facts.hostSessionId);
   // The id is replaced before the text is cut, so no cut leaves part of it behind.
-  const cut = (value) => redact(value).slice(0, REFUSAL_REASON_MAX);
+  const cut = (value) => detached(redact(value).slice(0, REFUSAL_REASON_MAX));
   const hostError = (value) => cut(value || HOST_ERROR_FALLBACK);
-  const toolName = (value, fallback) => (typeof value === "string" && value ? redact(value).slice(0, TOOL_NAME_MAX) : fallback);
+  const toolName = (value, fallback) => (typeof value === "string" && value ? detached(redact(value).slice(0, TOOL_NAME_MAX)) : fallback);
   const write = (message) => {
     if (inputOpen) send(message);
   };
@@ -273,7 +279,7 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
     const toolResults = new Map();
     const tasks = new Set();
     let untrackedTasks = 0;
-    const taskKey = (id) => createHash("sha256").update(id).digest("base64");
+    const taskKey = digestKey;
     let interruptId = null;
     return {
       start: () => write(claudePrompt(initiative)),
@@ -301,8 +307,9 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
           // Only error tool results can be refusal reasons; the oldest kept one goes once more than KEPT_TOOL_RESULTS are held.
           for (const block of event.message.content) {
             if (block?.type !== "tool_result" || block.is_error !== true || typeof block.tool_use_id !== "string") continue;
-            toolResults.delete(block.tool_use_id);
-            toolResults.set(block.tool_use_id, cut(blockText(block.content).trim()));
+            const key = digestKey(block.tool_use_id);
+            toolResults.delete(key);
+            toolResults.set(key, cut(blockText(block.content).trim()));
             if (toolResults.size > KEPT_TOOL_RESULTS) toolResults.delete(toolResults.keys().next().value);
           }
           return;
@@ -313,7 +320,7 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
         facts.refusalCount = denials.length;
         facts.refusals = denials.slice(0, RECORDED_REFUSALS).map((denial) => {
           const tool = toolName(denial.tool_name, "a tool");
-          const reason = toolResults.get(denial.tool_use_id)?.trim();
+          const reason = typeof denial.tool_use_id === "string" ? toolResults.get(digestKey(denial.tool_use_id))?.trim() : undefined;
           return { tool, reason: reason || cut(`${tool} was refused.`) };
         });
         facts.hostError = event.is_error === true ? hostError(claudeErrorText(event)) : null;
@@ -381,7 +388,7 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
           return;
         }
         facts.turnId = id;
-        if (completed.has(id)) turnEnded(completed.get(id));
+        if (completed.has(digestKey(id))) turnEnded(completed.get(digestKey(id)));
         else if (stopAsked) sendInterrupt();
       }
     };
@@ -430,8 +437,9 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
           if (facts.turnId === null) {
             const { status, error } = params.turn;
             const kept = status === "failed" ? { status, error: { message: hostError(text(error?.message)) } } : {};
-            completed.delete(params.turn.id);
-            completed.set(params.turn.id, kept);
+            const key = digestKey(params.turn.id);
+            completed.delete(key);
+            completed.set(key, kept);
             if (completed.size > KEPT_EARLY_COMPLETIONS) completed.delete(completed.keys().next().value);
           }
           else if (params.turn.id === facts.turnId) turnEnded(params.turn);
