@@ -250,6 +250,9 @@ async function checkoutFiles(root, decided = null) {
       }
       return null;
     }
+    // A folder whose real path is its place passes through no link, which one look tells; only a folder that does not resolve is walked, to tell a missing folder from a dangling link.
+    const resolved = await realpath(place).catch(() => null);
+    if (resolved !== null) return resolved === place && await rootHere() ? place : null;
     let current = real;
     for (const name of folder === "" ? [] : folder.split("/")) {
       current = path.join(current, name);

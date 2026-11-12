@@ -328,10 +328,15 @@ function baseFor(seen, target) {
   return seen.base;
 }
 
-// A written file's path is checked again just before the write, below the folder it belongs to, looking at every folder above it again.
-const resolveAgain = (seen, target) => baseFor(seen, target) === seen.base
-  ? resolveArtifactFile(seen, path.relative(seen.base, target).split(path.sep).join("/"), { fresh: true })
-  : resolveStatusFile(seen, path.relative(seen.store.base, target).split(path.sep).join("/"), { fresh: true });
+// A written file's path is checked again just before the write, below the folder it belongs to, looking at every folder above it again;
+// with writes, the checks that one update's writes share, a folder above it that an earlier write's check found to be a real folder is not looked at again, and a missing folder is never taken from an earlier look.
+const writeChecks = () => ({ folders: new Set(), missing: { has: () => false, add: () => {} }, reals: new Map() });
+const resolveAgain = (seen, target, writes = null) => {
+  const fresh = { ...seen, folderChecks: writes };
+  return baseFor(seen, target) === seen.base
+    ? resolveArtifactFile(fresh, path.relative(seen.base, target).split(path.sep).join("/"), { fresh: writes === null })
+    : resolveStatusFile(fresh, path.relative(seen.store.base, target).split(path.sep).join("/"), { fresh: writes === null });
+};
 
 /**
  * The status record of an artifact in a scope, or the record of an artifact that no gate changed yet when none is stored.
@@ -823,9 +828,11 @@ async function applyOperations(seenStore, checked, { held = null, noteWrites = f
     await rm(stray, { recursive: true, force: true });
     await pruneArtifactFolders(baseFor(seen, stray), stray);
   }
+  // The writes create folders and remove none, so a folder that one write's check found real stands for the later writes; a missing folder is never taken from an earlier look.
+  const writes = writeChecks();
   for (const [target, record] of changed.filter(([, record]) => record !== null)) {
     await mkdir(path.dirname(target), { recursive: true });
-    await resolveAgain(seen, target);
+    await resolveAgain(seen, target, writes);
     await writeAtomically(target, record.bytes);
     if (noteWrites) noteToolCallWrite(target, record.version);
   }

@@ -74,6 +74,9 @@ test("with store sync on, the moved files and their ledger reach the remote in o
   assert.ok(commit.some((file) => file.startsWith("artifact-status/repositories/api/requirements/billing.md/")), "its status record is in the same commit");
 });
 
+// A move makes a fixed number of file-system calls for each file it takes, which Windows answers several times slower, while a move that listed the store again for each file would take minutes there.
+const MOVE_BOUND = process.platform === "win32" ? 90000 : 30000;
+
 test("one write that the store refuses keeps only its file, and the rest of a long move goes on without listing the store again for each file", async (context) => {
   const place = await workspace(context);
   const files = { "docs/plans/odd/a.md": "# Odd\n" };
@@ -84,7 +87,7 @@ test("one write that the store refuses keeps only its file, and the rest of a lo
   const started = Date.now();
   const access = await (await server(context, place, api)).call("get_artifact", { path: "docs/plans/p0/s0.md" });
   assert.equal(ok(access).content, "# S0\n");
-  assert.ok(Date.now() - started < 30000, `the move took ${Date.now() - started} ms`);
+  assert.ok(Date.now() - started < MOVE_BOUND, `the move took ${Date.now() - started} ms`);
   assert.match(notes(access), /docs\/plans\/odd\/a\.md \(name_conflict\)/);
   assert.equal(await readFile(path.join(api, "docs/plans/odd/a.md"), "utf8"), "# Odd\n", "the refused file stays in the checkout");
   assert.equal(await exists(path.join(api, "docs/plans/p49/s999.md")), false, "every other file moved");
