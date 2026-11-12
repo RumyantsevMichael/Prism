@@ -470,7 +470,7 @@ class NativeSemanticRuntime {
     const last = (job) => job.component?.folder === "" ? 1 : 0;
     const waiting = (job) => job.status === "waiting" && !job.reload && job !== this.running;
     let needed = [...new Set(jobs.filter(waiting))].sort((left, right) => last(left) - last(right));
-    const running = this.running, missing = running?.component && !jobs.includes(running) && await this.unindexed(needed);
+    const running = this.running, missing = running?.component && !jobs.some((job) => job.directory === running.directory) && await this.unindexed(needed);
     needed = needed.filter(waiting);
     const paused = missing && this.running === running && running.pause && running.requestedAttempt === running.attempt && running.pausedAttempt !== running.attempt ? running : void 0;
     if (paused) this.pauseJob(paused);
@@ -478,9 +478,9 @@ class NativeSemanticRuntime {
     this.pump();
     return jobs;
   }
-  // Whether a component among the jobs has no index of any snapshot, neither in this process nor stored.
+  // Whether a component among the jobs has no index of any snapshot, neither in this process nor stored, and no running build.
   async unindexed(jobs) {
-    for (const job of jobs) if (job.component && job.status === "waiting" && !job.prepared && !job.structure && !(await this.published(job.directory))?.revision) return true;
+    for (const job of jobs) if (job.component && job.status === "waiting" && job.directory !== this.running?.directory && !job.prepared && !job.structure && !(await this.published(job.directory))?.revision) return true;
     return false;
   }
   // Ends the running job's current run at once as waiting, without a failure or a failed progress record, and stops its build as a stall does;

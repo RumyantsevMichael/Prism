@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { manifestPath, project } from "./fixtures/component-indexes.mjs";
@@ -80,4 +81,22 @@ test("a pause that arrives after the running build returned its index leaves the
   await settled(runtime, root);
   assert.equal(job.attempt, 1, "the net job ran once");
   assert.equal(runs(control, NET_FILES), 1);
+});
+
+test("a call for the running build's component at changed content never pauses that build, even before it published structure", async (t) => {
+  const context = await project(t);
+  const { root } = context;
+  const { runtime, control } = await stagedRuntime(context.storage);
+  control.hold("packages/net/timeout.ts", "structure");
+  await search(root, runtime);
+  await control.reached("packages/net/timeout.ts");
+  const net = (await runtime.location(root, NET)).directory, building = runtime.running;
+  assert.equal(building?.directory, net);
+  await writeFile(path.join(root, "packages/net/retry.ts"), "export function retry(value) {\n  return value + 1;\n}\n");
+  await search(root, runtime, ["packages/net"]);
+  assert.equal(control.stops, 0, "the running net build is not stopped");
+  assert.equal(runtime.running, building, "the running net build keeps running");
+  control.release("packages/net/timeout.ts");
+  await settled(runtime, root);
+  assert.equal(control.stops, 0);
 });

@@ -429,7 +429,8 @@ export class NativeSemanticRuntime implements ComponentRuntime {
     const last = (job: Job) => job.component?.folder === "" ? 1 : 0;
     const waiting = (job: Job) => job.status === "waiting" && !job.reload && job !== this.running;
     let needed = [...new Set(jobs.filter(waiting))].sort((left, right) => last(left) - last(right));
-    const running = this.running, missing = running?.component && !jobs.includes(running) && await this.unindexed(needed);
+    // A call that asks for the running build's component, also at content that changed since that build started, never pauses it.
+    const running = this.running, missing = running?.component && !jobs.some(job => job.directory === running.directory) && await this.unindexed(needed);
     // A needed build that started or ended while the stored indexes were read keeps its place, so it is never queued to run again.
     needed = needed.filter(waiting);
     const paused = missing && this.running === running && running!.pause && running!.requestedAttempt === running!.attempt && running!.pausedAttempt !== running!.attempt ? running! : undefined;
@@ -438,9 +439,9 @@ export class NativeSemanticRuntime implements ComponentRuntime {
     this.pump();
     return jobs;
   }
-  // Whether a component among the jobs has no index of any snapshot, neither in this process nor stored.
+  // Whether a component among the jobs has no index of any snapshot, neither in this process nor stored, and no running build.
   async unindexed(jobs: Job[]) {
-    for (const job of jobs) if (job.component && job.status === "waiting" && !job.prepared && !job.structure && !(await this.published(job.directory))?.revision) return true;
+    for (const job of jobs) if (job.component && job.status === "waiting" && job.directory !== this.running?.directory && !job.prepared && !job.structure && !(await this.published(job.directory))?.revision) return true;
     return false;
   }
   // Ends the running job's current run at once as waiting, without a failure or a failed progress record, and stops its build as a stall does;
