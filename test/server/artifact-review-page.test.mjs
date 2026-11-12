@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { browserRequest, checkout, git, isolateGit, ok, requirementFile, reviewBrowser, server, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 import { launch, settle, skip as noBrowser } from "./fixtures/kit-browser.mjs";
+import { defer } from "./fixtures/teardown.mjs";
 
 // The Review card of a store artifact keeps the person's place while the page redraws it: the numbered lines' own scroll and an unsent comment, also when the file moves to another scope.
 const environment = await isolateGit();
@@ -12,12 +13,19 @@ test.after(() => rm(environment, { recursive: true, force: true }));
 
 const FILE = "docs/requirements/billing.md";
 
+// The workspace removes its folder in the first after hook that it adds, while an open page still polls the review app in that folder,
+// which Windows refuses with EBUSY, so the teardown stack is added first: it closes the page's browser, then the review app, and only then the folder goes.
 async function project(context) {
+  defer(context, () => {});
   const place = await workspace(context);
   const api = await checkout(place, "api");
   git(api, "config", "user.name", "Ada Reviewer");
   const prism = await server(context, place, api);
   const review = await reviewBrowser(context, api);
+  const close = review.close.bind(review);
+  let closing = null;
+  review.close = () => (closing ??= close());
+  defer(context, () => review.close());
   return { place, prism, review };
 }
 
