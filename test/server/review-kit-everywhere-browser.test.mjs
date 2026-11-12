@@ -13,9 +13,10 @@ import { contrastFailures, demoProject, launch, movingElements, openPage, review
 const run = promisify(execFile);
 const choose = (base, body) => fetch(`${base}/api/preferences`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
-// The check runs in four parts side by side, each over a quarter of the pages, since a lone check spends most of its time waiting for pages to settle.
-// Together they take about four minutes on a Linux runner and up to twice that on Windows.
-const LAYOUT_CHECK_PARTS = 4;
+// The check runs in two parts side by side, each over half of the pages, since a lone check spends much of its time waiting for pages to settle.
+// More parts finish sooner but load the runner enough to slow the browser tests that run beside them past their own bounds.
+// Together they take about five minutes on a Linux runner and up to twice that on Windows.
+const LAYOUT_CHECK_PARTS = 2;
 const LAYOUT_CHECK_MS = process.platform === "win32" ? 890000 : 590000;
 test("clause 62: the layout check passes every page, overlay, and the catalog at a phone and a laptop width in both themes", { skip, timeout: LAYOUT_CHECK_MS + 10000 }, async () => {
   const parts = await Promise.all(Array.from({ length: LAYOUT_CHECK_PARTS }, (_, index) => run(process.execPath, [path.join(ROOT, "scripts/review-demo/layout-check.mjs"), "--viewports", "phone,laptop", "--themes", "light,dark", "--part", `${index + 1}/${LAYOUT_CHECK_PARTS}`], { maxBuffer: 16 * 1024 * 1024, timeout: LAYOUT_CHECK_MS }).catch((error) => error)));
