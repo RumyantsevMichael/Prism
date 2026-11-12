@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import test from "node:test";
-import { git, isolateGit, networkStore, ok, place, server, startApp, storeCheckout, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
+import { eventually, git, isolateGit, networkStore, ok, place, server, startApp, storeCheckout, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
 import { launch, playwright, settle, skip } from "./fixtures/kit-browser.mjs";
 
 // Contract clauses 34-40 of the workspace-view design: the app shows every scope's artifacts together, by store location, with a filter and resolved links.
@@ -64,6 +64,9 @@ test("clause 35: a scope filter narrows the artifacts and keeps the workspace", 
 
 test("clause 36: an artifact is read by its store identity, also in a workspace with no registered checkout", async (context) => {
   const { store, where, id } = await combined(context, { register: false });
+  // Checkout servers push store writes only after the record-sync debounce, so the add waits until the remote holds the artifact it reads.
+  const pushed = () => { try { git(store.bare, "cat-file", "-e", "main:artifacts/repositories/web/plans/reports/slice.md"); return true; } catch { return false; } };
+  await eventually(pushed, 15000, "the web artifact reaching the remote");
   const prism = await startApp(context, { ...where, app: `${where.app}-b` });
   await prism.grant();
   assert.equal((await prism.post("/api/workspaces", { url: store.url })).status, 200);
