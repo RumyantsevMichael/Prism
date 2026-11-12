@@ -121,6 +121,8 @@ PRISM_REQUIRE_BROWSER=1 npm test
 CI splits the server tests into four shards on Linux and four on Windows, each on its own runner, so the browser tests do not hold one runner for half an hour.
 A Windows shard runs two test files at a time with `--test-concurrency=2`, because three browser test files at once on one Windows runner fail with `net::ERR_NO_BUFFER_SPACE`.
 `scripts/test-shard.mjs` balances the shards by the file durations in `test/server/durations.json`, and the `validate` and `windows` checks pass only when every shard passed.
+When Validate fails on main, the `Report main failures` workflow comments on the open issue labelled `ci-main-failure` with each failed test and its error, and opens that issue when none is open.
+Close that issue once main is stable again.
 A test file that the durations do not list counts as a median file, so a new file needs no update to run.
 Run one shard locally the way CI does, or list its files:
 

@@ -11,7 +11,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { ROOT } from "./project.mjs";
-import { loadPlaywright, THEMES } from "./layout-audit.mjs";
+import { CHROMIUM_OPTIONS, loadPlaywright, THEMES } from "./layout-audit.mjs";
 import { frameWindow } from "./mockup-compare.mjs";
 
 const HEIGHT = 900;
@@ -493,7 +493,7 @@ async function main() {
   await mkdir(out, { recursive: true });
 
   const parent = await mkdtemp(path.join(os.tmpdir(), "prism-places-compare-"));
-  const browser = await playwright.chromium.launch();
+  const browser = await playwright.chromium.launch(CHROMIUM_OPTIONS);
   let demo = null;
   let failure = null;
   const pairs = [];
