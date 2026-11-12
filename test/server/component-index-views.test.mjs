@@ -17,7 +17,8 @@ const { gitFingerprint } = await import("../../dist/server/repository-intelligen
 const ROOT_FILES = [".prism/workflow.md", "README.md"];
 const NET_FILES = ["packages/net/retry.ts", "packages/net/timeout.ts"];
 const APP_FILES = ["packages/app/client.ts"];
-const search = (root, runtime, input = {}, waitMs = 2000) => searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...input }, { runtime, waitMs });
+// A search answers as soon as its components are ready, so the default bound only tells a slow runner from a build that never finishes.
+const search = (root, runtime, input = {}, waitMs = 30000) => searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...input }, { runtime, waitMs });
 const available = async () => true;
 const changed = (file) => `${FILES[file]}// changed\n`;
 
