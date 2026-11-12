@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "prism",
+  "description": "Home of the Prism plugin, a spec-driven agentic engineering workflow for Claude Code.",
+  "owner": {
+    "name": "Michael Rumyantsev"
+  },
+  "plugins": [
+    {
+      "name": "prism",
+      "source": "./",
+      "displayName": "Prism",
+      "description": "Code-centered workflow with EARS requirements, architecture decisions, outcome slices designed as frozen contracts, verified implementation, and opt-in independent review.",
+      "author": {
+        "name": "Michael Rumyantsev"
+      },
+      "homepage": "https://github.com/RumyantsevMichael/Prism#readme",
+      "repository": "https://github.com/RumyantsevMichael/Prism",
+      "license": "Apache-2.0",
+      "category": "workflow",
+      "tags": [
+        "workflow",
+        "spec-driven",
+        "requirements",
+        "ears",
+        "adr",
+        "bdd",
+        "gherkin",
+        "planning",
+        "architecture",
+        "tdd"
+      ]
+    }
+  ]
+}

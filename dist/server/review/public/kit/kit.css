@@ -1,0 +1,3222 @@
+/* The kit's base styles: typography, the keyboard focus outline, and content elements, all from the design values in tokens.css.
+   Light-DOM kit elements add their rules here; shadow-DOM elements carry their own stylesheets and read the same tokens through inheritance. */
+
+html {
+  background: var(--prism-color-chrome);
+  color: var(--prism-color-ink);
+  font-family: var(--prism-font-ui);
+  font-weight: var(--prism-font-weight-regular);
+  line-height: var(--prism-line-height);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: var(--prism-font-ui);
+  letter-spacing: var(--prism-tracking-body);
+}
+
+*,
+::before,
+::after {
+  box-sizing: border-box;
+}
+
+button,
+input {
+  color: inherit;
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--prism-font-code);
+}
+
+:focus-visible {
+  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
+  outline-offset: var(--prism-stroke);
+}
+
+::selection {
+  background: var(--prism-color-selected);
+  color: var(--prism-color-ink);
+}
+
+a {
+  color: var(--prism-color-accent-text);
+  text-decoration-color: color-mix(in srgb, var(--prism-color-accent) 35%, transparent);
+  text-underline-offset: 0.2em;
+}
+
+mark {
+  background: var(--prism-color-warning-soft);
+  color: var(--prism-color-ink);
+}
+
+kbd {
+  padding: 0 var(--prism-space-2);
+  border: var(--prism-stroke) solid var(--prism-color-line-strong);
+  border-radius: var(--prism-radius-xs);
+  background: var(--prism-color-surface);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-2xs);
+}
+
+hr {
+  border: 0;
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+/* ---------- Elements before they are defined ----------
+   An element whose script has not run yet keeps the room it will take, so the page does not shift when the kit defines it. */
+
+:is(prism-button, prism-chip, prism-badge, prism-icon, prism-tab):not(:defined) {
+  display: inline-block;
+  visibility: hidden;
+  vertical-align: middle;
+}
+
+prism-button:not(:defined) {
+  height: var(--prism-control-height);
+}
+
+prism-button[size="sm"]:not(:defined),
+:is(prism-chip, prism-badge):not(:defined) {
+  height: var(--prism-control-height-sm);
+}
+
+prism-icon:not(:defined) {
+  width: var(--prism-icon-size);
+  height: var(--prism-icon-size);
+}
+
+prism-tab:not(:defined) {
+  height: var(--prism-subtab-height);
+}
+
+prism-menu:not(:defined),
+prism-tooltip:not(:defined),
+prism-option {
+  display: none;
+}
+
+/* ---------- Light-DOM elements size their own boxes, borders and padding included ---------- */
+
+:where(prism-tabs, prism-menu, prism-menu-group, prism-field, prism-choice, prism-choice-option),
+:where(prism-tabs, prism-menu, prism-field, prism-choice) *,
+:where(prism-tabs, prism-menu, prism-field, prism-choice) ::before,
+:where(prism-tabs, prism-menu, prism-field, prism-choice) ::after {
+  box-sizing: border-box;
+}
+
+/* ---------- Kit buttons and tabs: the element is the control's box ---------- */
+
+prism-button:focus-visible {
+  outline: none;
+}
+
+/* ---------- prism-tabs: a strip of sub-tabs that scrolls when they do not fit ---------- */
+
+prism-tabs {
+  display: flex;
+  gap: var(--prism-space-1);
+  min-width: 0;
+  max-width: 100%;
+  padding: calc(var(--prism-stroke-strong) + var(--prism-stroke)) calc(var(--prism-stroke-strong) + var(--prism-stroke)) 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: var(--prism-stroke) solid var(--prism-color-line);
+  scrollbar-width: thin;
+}
+
+/* ---------- prism-doc-tabs: the strip of open documents, sunken under the page, scrolling inside itself ----------
+   The bottom line is an inset shadow, so the selected tab's surface paints over it and the tab joins the page below. */
+
+prism-doc-tabs {
+  position: relative;
+  display: flex;
+  flex: none;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  height: var(--prism-subtab-height);
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: var(--prism-color-sunken);
+  box-shadow: inset 0 calc(-1 * var(--prism-stroke)) 0 var(--prism-color-line);
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+
+prism-doc-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+prism-doc-tabs[empty] {
+  display: none;
+}
+
+prism-doc-tabs[dragging] {
+  cursor: grabbing;
+}
+
+prism-doc-tabs[fade-start] {
+  mask-image: linear-gradient(to right, transparent, var(--prism-color-ink) var(--prism-space-7));
+}
+
+prism-doc-tabs[fade-end] {
+  mask-image: linear-gradient(to left, transparent, var(--prism-color-ink) var(--prism-space-7));
+}
+
+prism-doc-tabs[fade-start][fade-end] {
+  mask-image: linear-gradient(to right, transparent, var(--prism-color-ink) var(--prism-space-7), var(--prism-color-ink) calc(100% - var(--prism-space-7)), transparent);
+}
+
+/* ---------- Glass: menus, popovers, tooltips, dialogs, and the toast float on frosted glass ----------
+   One surface for every overlay; the tooltip's shadow stylesheet repeats it. A field or choice control on glass draws its boundary in the glass control color. */
+
+prism-menu,
+prism-popover,
+.prism-dialog-surface,
+prism-toast[shown] {
+  --prism-color-line-control: var(--prism-color-glass-control);
+  border: var(--prism-stroke) solid var(--prism-color-glass-edge);
+  border-radius: var(--prism-radius-overlay);
+  background: var(--prism-color-glass);
+  backdrop-filter: blur(var(--prism-blur-glass)) saturate(var(--prism-saturate-glass));
+  box-shadow: var(--prism-shadow-glass);
+  color: var(--prism-color-ink);
+}
+
+prism-menu {
+  display: block;
+  width: max-content;
+  min-width: calc(var(--prism-menu-width) / 2);
+  max-width: min(var(--prism-menu-width), 100%);
+  padding: var(--prism-space-2);
+  overflow: auto;
+  font-size: var(--prism-font-size-md);
+  overscroll-behavior: contain;
+}
+
+prism-menu[popover] {
+  position: fixed;
+  inset: auto;
+  z-index: var(--prism-layer-popup);
+  max-width: min(var(--prism-menu-width), calc(100vw - 2 * var(--prism-space-3)));
+  max-height: calc(100vh - 2 * var(--prism-space-3));
+  margin: 0;
+}
+
+prism-menu[popover]:not(:popover-open) {
+  display: none;
+}
+
+prism-menu[popover]:popover-open {
+  animation: prism-rise var(--prism-duration-normal) var(--prism-easing-enter);
+}
+
+@keyframes prism-rise {
+  from {
+    opacity: 0;
+    transform: translateY(var(--prism-space-2));
+  }
+}
+
+prism-menu-group {
+  display: block;
+  min-width: 0;
+}
+
+prism-menu-group + prism-menu-group,
+prism-menu-group + prism-menu-item,
+prism-menu-item + prism-menu-group {
+  margin-top: var(--prism-space-2);
+  padding-top: var(--prism-space-2);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.prism-menu-group-label {
+  min-width: 0;
+  padding: var(--prism-space-2) var(--prism-space-3) var(--prism-space-1);
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A wide menu, such as Appearance, takes the menu width; its title row names it and shows its shortcut. */
+prism-menu[size="wide"] {
+  width: min(var(--prism-menu-width), calc(100vw - 2 * var(--prism-space-3)));
+  max-width: none;
+  padding: var(--prism-space-4);
+}
+
+.prism-menu-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  margin: 0 0 var(--prism-space-4);
+  padding: 0 var(--prism-space-2);
+  color: var(--prism-color-ink);
+  font-size: var(--prism-font-size-md);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.prism-menu-title[hidden] {
+  display: none;
+}
+
+.prism-menu-title > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-menu-group-items {
+  display: contents;
+}
+
+/* A group laid out as tiles or as a segmented switch: its label in caps above, its items side by side. */
+prism-menu-group[layout] {
+  margin-bottom: var(--prism-space-5);
+}
+
+prism-menu-group[layout] + prism-menu-group[layout] {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+prism-menu-group[layout] + prism-menu-item {
+  margin-top: 0;
+  padding-top: var(--prism-space-3);
+}
+
+prism-menu-group[layout] > .prism-menu-group-label {
+  margin: 0 0 var(--prism-space-3);
+  padding: 0 var(--prism-space-2);
+  font-size: var(--prism-font-size-2xs);
+  letter-spacing: var(--prism-tracking-caps);
+  text-transform: uppercase;
+}
+
+prism-menu-group[layout="tiles"] > .prism-menu-group-items {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  gap: var(--prism-space-3);
+}
+
+prism-menu-group[layout="segmented"] > .prism-menu-group-items {
+  display: flex;
+  min-width: 0;
+  padding: var(--prism-space-1);
+  border: var(--prism-stroke) solid var(--prism-color-line-control);
+  border-radius: var(--prism-radius-sm);
+  background: var(--prism-color-sunken);
+}
+
+prism-menu-group[layout="segmented"] prism-menu-item {
+  flex: 1 1 0;
+}
+
+/* ---------- prism-segmented: a few views or modes as one switch; the chosen segment stands on the surface ---------- */
+prism-segmented {
+  display: inline-flex;
+  align-self: flex-start;
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--prism-space-1);
+  border: var(--prism-stroke) solid var(--prism-color-line-control);
+  border-radius: var(--prism-radius-sm);
+  background: var(--prism-color-sunken);
+}
+
+.prism-segment {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: calc(var(--prism-control-height) - 2 * var(--prism-space-1) - 2 * var(--prism-stroke));
+  padding: 0 var(--prism-space-4);
+  border: 0;
+  border-radius: var(--prism-radius-xs);
+  background: none;
+  color: var(--prism-color-ink-muted);
+  font: inherit;
+  font-size: var(--prism-font-size-sm);
+  font-weight: var(--prism-font-weight-medium);
+  cursor: pointer;
+}
+
+.prism-segment-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-segment:hover {
+  color: var(--prism-color-ink);
+}
+
+.prism-segment[aria-checked="true"] {
+  background: var(--prism-color-surface);
+  color: var(--prism-color-ink);
+  box-shadow: var(--prism-shadow-lift);
+}
+
+/* A theme preview draws a small window in the theme it names, from that theme's own tokens; a system preview shows light and dark side by side. */
+.prism-theme-preview {
+  display: grid;
+  grid-template-columns: 28% minmax(0, 1fr);
+  gap: var(--prism-space-1);
+  height: calc(2 * var(--prism-control-height));
+  padding: var(--prism-space-2);
+  overflow: hidden;
+  border-radius: var(--prism-radius-sm);
+  background: var(--prism-color-chrome);
+}
+
+.prism-theme-preview-side {
+  display: grid;
+  align-content: start;
+  gap: var(--prism-space-1);
+}
+
+.prism-theme-preview-line {
+  display: block;
+  height: var(--prism-meter-height);
+  border-radius: var(--prism-radius-round);
+  background: var(--prism-color-line-strong);
+}
+
+.prism-theme-preview-line.is-on {
+  background: var(--prism-color-accent);
+}
+
+.prism-theme-preview-page {
+  display: block;
+  border-radius: var(--prism-radius-xs);
+  background: var(--prism-color-surface);
+  box-shadow: var(--prism-shadow-island);
+}
+
+.prism-theme-preview-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  height: calc(2 * var(--prism-control-height));
+  overflow: hidden;
+  border-radius: var(--prism-radius-sm);
+}
+
+.prism-theme-preview-split > .prism-theme-preview {
+  grid-template-columns: minmax(0, 1fr);
+  border-radius: 0;
+}
+
+.prism-theme-preview-split .prism-theme-preview-side {
+  display: none;
+}
+
+/* ---------- prism-field: label, native control, hint, and error ---------- */
+
+prism-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+.prism-field-label {
+  min-width: 0;
+  color: var(--prism-color-ink);
+  font-size: var(--prism-font-size-md);
+  font-weight: var(--prism-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.prism-field-control {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--prism-control-height);
+  margin: 0;
+  padding: 0 var(--prism-space-4);
+  border: var(--prism-stroke) solid var(--prism-color-line-control);
+  border-radius: var(--prism-radius-sm);
+  background: var(--prism-color-surface);
+  color: var(--prism-color-ink);
+  font: inherit;
+  font-size: var(--prism-font-size-md);
+  letter-spacing: inherit;
+  text-overflow: ellipsis;
+}
+
+textarea.prism-field-control {
+  min-height: calc(3 * var(--prism-control-height));
+  padding: var(--prism-space-3) var(--prism-space-4);
+  line-height: var(--prism-line-height);
+  resize: vertical;
+}
+
+select.prism-field-control {
+  height: var(--prism-control-height);
+  padding-inline-end: var(--prism-space-2);
+}
+
+.prism-field-control::placeholder {
+  color: var(--prism-color-ink-muted);
+  opacity: 1;
+}
+
+.prism-field-control[aria-invalid="true"] {
+  border-color: var(--prism-color-danger);
+}
+
+.prism-field-control:disabled {
+  border-color: var(--prism-color-line-strong);
+  background: var(--prism-color-sunken);
+  color: var(--prism-color-ink-muted);
+}
+
+.prism-field-hint,
+.prism-field-error {
+  min-width: 0;
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.prism-field-error {
+  color: var(--prism-color-danger);
+  font-weight: var(--prism-font-weight-medium);
+}
+
+/* ---------- prism-choice: radio options drawn as cards with an indicator ---------- */
+
+prism-choice {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.prism-choice-label {
+  min-width: 0;
+  color: var(--prism-color-ink);
+  font-weight: var(--prism-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+prism-choice-option {
+  display: block;
+  min-width: 0;
+  border-radius: var(--prism-radius-md);
+}
+
+.prism-choice-box {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--prism-space-1) var(--prism-space-4);
+  min-width: 0;
+  padding: var(--prism-space-4) var(--prism-space-5);
+  border: var(--prism-stroke) solid var(--prism-color-line-control);
+  border-radius: var(--prism-radius-md);
+  background: var(--prism-color-surface);
+  color: var(--prism-color-ink);
+  cursor: pointer;
+  transition: background-color var(--prism-duration-fast) var(--prism-easing-standard), border-color var(--prism-duration-fast) var(--prism-easing-standard);
+}
+
+.prism-choice-box:hover {
+  background: var(--prism-color-hover);
+}
+
+.prism-choice-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.prism-choice-input:focus-visible {
+  outline: none;
+}
+
+prism-choice-option:has(.prism-choice-input:focus-visible) {
+  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
+  outline-offset: var(--prism-stroke);
+}
+
+.prism-choice-indicator {
+  display: grid;
+  place-items: center;
+  width: var(--prism-icon-size);
+  height: var(--prism-icon-size);
+  margin-top: var(--prism-space-1);
+  border: var(--prism-stroke-strong) solid var(--prism-color-line-control);
+  border-radius: var(--prism-radius-round);
+  background: var(--prism-color-surface);
+}
+
+.prism-choice-indicator::after {
+  content: "";
+  width: calc(var(--prism-icon-size) / 2 - var(--prism-stroke));
+  height: calc(var(--prism-icon-size) / 2 - var(--prism-stroke));
+  border-radius: var(--prism-radius-round);
+  background: var(--prism-color-on-accent);
+  visibility: hidden;
+}
+
+.prism-choice-title {
+  min-width: 0;
+  font-weight: var(--prism-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.prism-choice-detail {
+  grid-column: 2;
+  min-width: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.prism-choice-box:has(.prism-choice-input:checked) {
+  border-color: var(--prism-color-accent);
+  background: var(--prism-color-selected);
+  box-shadow: 0 0 0 var(--prism-stroke) var(--prism-color-accent);
+}
+
+.prism-choice-input:checked ~ .prism-choice-indicator {
+  border-color: var(--prism-color-accent);
+  background: var(--prism-color-accent);
+}
+
+.prism-choice-input:checked ~ .prism-choice-indicator::after {
+  visibility: visible;
+}
+
+prism-choice-option[tone="danger"] .prism-choice-box:has(.prism-choice-input:checked) {
+  border-color: var(--prism-color-danger);
+  box-shadow: 0 0 0 var(--prism-stroke) var(--prism-color-danger);
+}
+
+prism-choice-option[tone="danger"] .prism-choice-input:checked ~ .prism-choice-indicator {
+  border-color: var(--prism-color-danger);
+  background: var(--prism-color-danger);
+}
+
+prism-choice-option[disabled] .prism-choice-box {
+  border-color: var(--prism-color-line-strong);
+  background: var(--prism-color-sunken);
+  color: var(--prism-color-ink-muted);
+  cursor: default;
+}
+
+prism-choice-option[disabled] .prism-choice-indicator {
+  border-color: var(--prism-color-line-strong);
+}
+
+/* ---------- Visually hidden text ---------- */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+
+/* ---------- Containers and content blocks before they are defined ---------- */
+
+prism-dialog:not([open]),
+prism-popover:not(:defined) {
+  display: none;
+}
+
+prism-dialog[open] {
+  display: contents;
+}
+
+/* The parts a light-DOM container renders hide with the hidden attribute, whatever display they take. */
+:is(prism-panel, prism-tree, prism-listbox, prism-dialog, prism-popover, prism-disclosure, prism-banner, prism-empty-state, prism-toast, prism-claim, prism-stepper, prism-breadcrumbs, prism-code, prism-row, prism-page-sub) [hidden] {
+  display: none !important;
+}
+
+:where(prism-panel, prism-tree, prism-listbox, prism-dialog, prism-popover, prism-disclosure, prism-banner, prism-empty-state, prism-toast, prism-claim, prism-stepper, prism-breadcrumbs, prism-doc, prism-code),
+:where(prism-panel, prism-tree, prism-listbox, prism-dialog, prism-popover, prism-disclosure, prism-banner, prism-empty-state, prism-toast, prism-claim, prism-stepper, prism-breadcrumbs, prism-doc, prism-code) * {
+  box-sizing: border-box;
+}
+
+/* ---------- prism-panel: a card, a plain block, an inset, or an island with a header, a body, and a footer ---------- */
+
+prism-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+prism-panel:is([variant="card"], [variant="inset"], [variant="island"]) {
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-lg);
+  background: var(--prism-color-surface);
+}
+
+prism-panel[variant="inset"] {
+  background: var(--prism-color-sunken);
+}
+
+prism-panel[variant="island"] {
+  overflow: hidden;
+  border-color: var(--prism-color-island-edge);
+  border-radius: var(--prism-radius-island);
+  box-shadow: var(--prism-shadow-island);
+}
+
+/* The titles take the room first; tools that do not fit beside them wrap below. */
+.prism-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2) var(--prism-space-4);
+  min-width: 0;
+  padding: var(--prism-space-5) var(--prism-space-5) var(--prism-space-4);
+}
+
+.prism-panel-titles {
+  display: grid;
+  gap: var(--prism-space-1);
+  flex: 1 1 calc(var(--prism-sidebar-width) / 2);
+  min-width: 0;
+}
+
+.prism-panel-maximize {
+  flex: none;
+}
+
+.prism-panel-eyebrow {
+  min-width: 0;
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.prism-panel-heading {
+  min-width: 0;
+  margin: 0;
+  color: var(--prism-color-ink);
+  font-size: var(--prism-font-size-lg);
+  font-weight: var(--prism-font-weight-semibold);
+  letter-spacing: var(--prism-tracking-heading);
+  line-height: var(--prism-line-height-tight);
+  overflow-wrap: anywhere;
+}
+
+.prism-panel-tools {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--prism-space-2);
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.prism-panel-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 var(--prism-space-5) var(--prism-space-5);
+}
+
+.prism-panel-head[hidden] + .prism-panel-body {
+  padding-top: var(--prism-space-5);
+}
+
+.prism-panel-body > :first-child {
+  margin-top: 0;
+}
+
+.prism-panel-body > :last-child {
+  margin-bottom: 0;
+}
+
+.prism-panel-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  padding: var(--prism-space-4) var(--prism-space-5);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+prism-panel[variant="plain"] > :is(.prism-panel-head, .prism-panel-body, .prism-panel-foot) {
+  padding-inline: 0;
+}
+
+prism-panel[variant="plain"] > .prism-panel-head[hidden] + .prism-panel-body {
+  padding-top: 0;
+}
+
+/* A flush body has no padding of its own, also under a hidden header, whose rule above would otherwise add the top padding back. */
+prism-panel[flush] > .prism-panel-body,
+prism-panel[flush] > .prism-panel-head[hidden] + .prism-panel-body {
+  padding: 0;
+}
+
+prism-panel[maximized] {
+  position: fixed;
+  inset: var(--prism-island-gap);
+  z-index: var(--prism-layer-dialog);
+  overflow: auto;
+  border-color: var(--prism-color-island-edge);
+  border-radius: var(--prism-radius-island);
+  background: var(--prism-color-surface);
+  box-shadow: var(--prism-shadow-dialog);
+}
+
+prism-panel[maximized] > .prism-panel-body {
+  overflow: auto;
+}
+
+/* ---------- prism-tree: rows of one height, indented by level, with a twisty, a label, and trailing content ---------- */
+
+prism-tree,
+.prism-tree-group {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--prism-space-1);
+  min-width: 0;
+}
+
+prism-tree {
+  font-size: var(--prism-font-size-md);
+}
+
+.prism-tree-group {
+  margin-top: var(--prism-space-1);
+}
+
+prism-tree-item {
+  display: block;
+  min-width: 0;
+  border-radius: var(--prism-radius-sm);
+}
+
+.prism-tree-row {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  height: var(--prism-row-height);
+  /* Each level steps in by the twisty and its gap, so a child's glyph sits exactly under its parent's glyph. */
+  padding: 0 var(--prism-space-3) 0 calc(var(--prism-space-3) + var(--prism-tree-level, 0) * (var(--prism-icon-size-xs) + var(--prism-space-3)));
+  border-radius: var(--prism-radius-sm);
+  color: var(--prism-color-ink-muted);
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color var(--prism-duration-fast) var(--prism-easing-standard);
+  -webkit-user-drag: none;
+}
+
+.prism-tree-row:hover {
+  background: var(--prism-color-chrome-hover);
+  color: var(--prism-color-ink);
+}
+
+prism-tree-item[aria-expanded] > .prism-tree-row {
+  color: var(--prism-color-ink);
+  font-weight: var(--prism-font-weight-medium);
+}
+
+prism-tree-item[selected] > .prism-tree-row {
+  background: var(--prism-color-surface);
+  color: var(--prism-color-ink);
+  font-weight: var(--prism-font-weight-medium);
+  box-shadow: var(--prism-shadow-lift);
+}
+
+/* An expanded item holds its children, so its focus ring goes around its row alone. */
+prism-tree-item[aria-expanded="true"]:focus-visible {
+  outline: none;
+}
+
+prism-tree-item[aria-expanded="true"]:focus-visible > .prism-tree-row {
+  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
+  outline-offset: var(--prism-stroke);
+}
+
+.prism-tree-twisty {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--prism-icon-size-xs);
+  height: var(--prism-icon-size-xs);
+  color: var(--prism-color-ink-muted);
+}
+
+.prism-tree-twisty.is-leaf {
+  visibility: hidden;
+}
+
+/* A leaf with a glyph among leaves starts with the glyph, as its parent's glyph sits after its twisty one level up; beside a parent it keeps the twisty's room. */
+.prism-tree-twisty.is-gone {
+  display: none;
+}
+
+.prism-tree-start {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: var(--prism-glyph-size);
+  color: var(--prism-color-ink-muted);
+}
+
+prism-tree-item[selected] > .prism-tree-row > .prism-tree-start,
+.prism-tree-row:hover > .prism-tree-start {
+  color: var(--prism-color-ink);
+}
+
+.prism-tree-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-tree-end {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-2);
+  flex: none;
+  min-width: 0;
+  max-width: 50%;
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A word that flags a row, such as `Blocked`, in the danger tone at the end of the row. */
+.prism-tree-flag {
+  flex: none;
+  color: var(--prism-color-danger);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+/* A muted flag names a settled fact, such as `Superseded`, without a warning or danger tone. */
+.prism-tree-flag.is-muted {
+  color: var(--prism-color-ink-muted);
+  font-weight: var(--prism-font-weight-medium);
+}
+
+/* ---------- Kit classes around a tree: a group heading with its count, and a closing note ---------- */
+
+/* A group's heading is a level 3 heading that reads as a quiet caption above its rows, in the tree's own size and weight, with its count at the end.
+   Its letters are drawn as capitals by small caps rather than by a text transform, so the heading's text stays as written for every reader and copy;
+   the browser draws small capitals at about 72% of the font size, so the size grows by that much to match the capitals of the tree's size. */
+.prism-group-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  margin: 0;
+  padding: 0 var(--prism-space-3);
+  color: var(--prism-color-ink-muted);
+  font-size: calc(var(--prism-font-size-md) / 0.72);
+  font-weight: var(--prism-font-weight-regular);
+  font-variant-caps: all-small-caps;
+  letter-spacing: calc(var(--prism-tracking-caps) * 0.72);
+  line-height: calc(var(--prism-font-size-md) * var(--prism-line-height));
+  text-transform: none;
+}
+
+.prism-group-heading > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-group-heading > .prism-group-count {
+  flex: none;
+  font-size: var(--prism-font-size-md);
+  font-variant-caps: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A closing note says where the rest went, after a glyph, in a quiet tone below the groups; the muted ink keeps its small text readable. */
+.prism-foot-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--prism-space-3);
+  margin: var(--prism-space-5) 0 0;
+  padding: var(--prism-space-3);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.prism-foot-note-glyph {
+  display: inline-flex;
+  flex: none;
+  margin-top: var(--prism-space-1);
+}
+
+.prism-foot-note > span:not(.prism-foot-note-glyph) {
+  min-width: 0;
+}
+
+/* A tree in a rail shows each top item's glyph alone, with its count badge on the glyph; the label becomes the tooltip. */
+prism-tree[rail] .prism-tree-row {
+  position: relative;
+  justify-content: center;
+  padding: 0;
+}
+
+prism-tree[rail] .prism-tree-twisty,
+prism-tree[rail] .prism-tree-group {
+  display: none;
+}
+
+prism-tree[rail] .prism-tree-label {
+  position: absolute;
+  width: var(--prism-stroke);
+  height: var(--prism-stroke);
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+prism-tree[rail] .prism-tree-end {
+  position: absolute;
+  top: calc(-1 * var(--prism-space-2));
+  right: calc(-1 * var(--prism-space-1));
+  max-width: none;
+  overflow: visible;
+}
+
+prism-tree[rail] .prism-tree-end > :not(prism-badge) {
+  display: none;
+}
+
+/* ---------- prism-rail: the icon rail of places at the window's start edge ---------- */
+
+/* The rail is as wide as a place button and the room for its accent bar; it draws no border and no fill of its own, so the canvas shows through. */
+prism-rail {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: calc(var(--prism-control-height) + var(--prism-space-5));
+  height: 100%;
+  min-height: 0;
+}
+
+.prism-rail-nav {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--prism-space-2);
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--prism-space-3) 0 var(--prism-space-4);
+}
+
+/* A rail with a head block starts with it, level with the top of the main island beside it. */
+.prism-rail-nav.has-head {
+  padding-top: 0;
+}
+
+/* The head block is as tall as a strip of document tabs over a page bar, and a pale rule ends it. */
+.prism-rail-head {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  align-self: stretch;
+  height: calc(var(--prism-stroke) + var(--prism-subtab-height) + var(--prism-pagebar-height));
+}
+
+.prism-rail-head[hidden],
+.prism-rail-foot[hidden] {
+  display: none;
+}
+
+.prism-rail-head-content {
+  display: grid;
+  place-items: center;
+}
+
+.prism-rail-rule {
+  position: absolute;
+  right: var(--prism-space-3);
+  bottom: 0;
+  left: var(--prism-space-3);
+  height: var(--prism-stroke);
+  background: var(--prism-color-line);
+}
+
+.prism-rail-places,
+.prism-rail-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--prism-space-2);
+}
+
+.prism-rail-foot {
+  margin-top: auto;
+}
+
+prism-rail-item {
+  display: block;
+  flex: none;
+}
+
+.prism-rail-button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: calc(var(--prism-control-height) + var(--prism-space-2));
+  height: calc(var(--prism-control-height) + var(--prism-space-2));
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--prism-radius-md);
+  background: none;
+  color: var(--prism-color-ink-muted);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--prism-duration-fast) var(--prism-easing-standard), color var(--prism-duration-fast) var(--prism-easing-standard);
+}
+
+.prism-rail-button:hover {
+  background: var(--prism-color-chrome-hover);
+  color: var(--prism-color-ink);
+}
+
+.prism-rail-button:focus-visible {
+  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
+  outline-offset: var(--prism-stroke);
+}
+
+.prism-rail-button[aria-pressed="true"] {
+  background: var(--prism-color-selected);
+  color: var(--prism-color-accent-text);
+}
+
+/* The current place carries an accent bar at its start, outside the button, as the mockup draws it. */
+.prism-rail-button[aria-pressed="true"]::before {
+  content: "";
+  position: absolute;
+  top: var(--prism-space-3);
+  bottom: var(--prism-space-3);
+  left: calc(-1 * var(--prism-space-3));
+  width: var(--prism-stroke-strong);
+  border-radius: var(--prism-radius-round);
+  background: var(--prism-color-accent);
+}
+
+.prism-rail-badge {
+  position: absolute;
+  top: calc(-1 * var(--prism-space-1));
+  right: calc(-1 * var(--prism-space-1));
+  pointer-events: none;
+}
+
+.prism-rail-badge[hidden] {
+  display: none;
+}
+
+/* A small item is a top bar icon button: the control height, a small radius, and a small count. */
+prism-rail-item[size="sm"] > .prism-rail-button {
+  width: var(--prism-control-height);
+  height: var(--prism-control-height);
+  border: var(--prism-stroke) solid transparent;
+  border-radius: var(--prism-radius-sm);
+}
+
+prism-rail-item[size="sm"] .prism-rail-badge {
+  right: calc(-1 * var(--prism-space-2));
+}
+
+/* ---------- prism-place-head: a place's title on the tab strip's line and its subtitle on the page bar's line ---------- */
+
+prism-place-head {
+  display: grid;
+  grid-template-rows: calc(var(--prism-stroke) + var(--prism-subtab-height)) var(--prism-pagebar-height);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0 var(--prism-space-3);
+}
+
+.prism-place-head-title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--prism-color-ink);
+  font-size: var(--prism-font-size-lg);
+  font-weight: var(--prism-font-weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-place-head-subtitle {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-place-head-subtitle[hidden] {
+  display: none;
+}
+
+/* ---------- prism-page-sub: a line under a page's title, and a .prism-page-subs group of lines that belong together ---------- */
+
+prism-page-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2) var(--prism-space-3);
+  min-width: 0;
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-md);
+  overflow-wrap: anywhere;
+}
+
+.prism-page-sub-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.prism-page-sub-end {
+  display: contents;
+}
+
+.prism-page-sub-glyph {
+  display: inline-flex;
+  flex: none;
+}
+
+prism-page-sub b {
+  color: var(--prism-color-ink);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+prism-page-sub a {
+  color: var(--prism-color-accent-text);
+  font-weight: var(--prism-font-weight-regular);
+  text-decoration: none;
+}
+
+prism-page-sub a:hover {
+  text-decoration: underline;
+}
+
+prism-page-sub a:focus-visible {
+  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
+  outline-offset: var(--prism-stroke);
+  border-radius: var(--prism-radius-xs);
+}
+
+/* A quieter line, such as the reason of a decision under the line that names it. */
+prism-page-sub[detail] {
+  font-size: var(--prism-font-size-sm);
+}
+
+.prism-page-subs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  max-width: var(--prism-measure);
+  margin: 0 0 var(--prism-space-2);
+}
+
+/* ---------- prism-listbox: options of one row height, the active one ringed ---------- */
+
+prism-listbox {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: var(--prism-space-1);
+  min-width: 0;
+  overflow: auto;
+  border-radius: var(--prism-radius-md);
+  font-size: var(--prism-font-size-md);
+}
+
+prism-list-item {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-4);
+  min-width: 0;
+  height: var(--prism-row-height);
+  padding: 0 var(--prism-space-4);
+  border-radius: var(--prism-radius-sm);
+  color: var(--prism-color-ink);
+  cursor: pointer;
+}
+
+prism-list-item:hover {
+  background: var(--prism-color-hover);
+}
+
+prism-list-item[selected] {
+  background: var(--prism-color-selected);
+  font-weight: var(--prism-font-weight-medium);
+}
+
+prism-list-item[active] {
+  background: var(--prism-color-selected);
+  box-shadow: inset 0 0 0 var(--prism-stroke) var(--prism-color-focus);
+}
+
+.prism-list-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-list-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-regular);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-list-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--prism-color-ink-muted);
+}
+
+.prism-list-icon[hidden],
+.prism-list-detail[hidden] {
+  display: none;
+}
+
+/* A first-current listbox shows its first option as the one Enter chooses until the keys move. */
+prism-list-item[current] {
+  background: var(--prism-color-selected);
+}
+
+prism-list-item:is([active], [current]) .prism-list-icon {
+  color: var(--prism-color-accent-text);
+}
+
+/* A two-line option: the icon beside both lines, the text over its detail, and the meta at the end. */
+prism-list-item[two-line] {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0 var(--prism-space-4);
+  height: auto;
+  padding: var(--prism-space-3) var(--prism-space-4);
+  border-radius: var(--prism-radius-md);
+}
+
+prism-list-item[two-line] > .prism-list-icon {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+
+prism-list-item[two-line] > .prism-list-label {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+prism-list-item[two-line] > .prism-list-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  max-width: 18ch;
+}
+
+prism-list-item[two-line] > .prism-list-detail {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A match inside an option's text. */
+prism-list-item mark {
+  padding: 0 var(--prism-space-1);
+  border-radius: var(--prism-radius-xs);
+  background: var(--prism-color-accent-soft);
+  color: var(--prism-color-accent-text);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+/* ---------- prism-dialog: glass over a blurred scrim, centered, from the start edge, or from the bottom ---------- */
+
+.prism-dialog-surface {
+  position: fixed;
+  inset: 0;
+  width: min(calc(var(--prism-palette-width) * 0.7), calc(100vw - 2 * var(--prism-space-6)));
+  max-width: none;
+  height: fit-content;
+  max-height: calc(100vh - 2 * var(--prism-space-7));
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  font-size: var(--prism-font-size-md);
+  line-height: var(--prism-line-height);
+  overflow-wrap: anywhere;
+}
+
+.prism-dialog-surface[open] {
+  display: flex;
+  flex-direction: column;
+  animation: prism-rise var(--prism-duration-normal) var(--prism-easing-enter);
+}
+
+.prism-dialog-surface::backdrop {
+  background: var(--prism-color-scrim);
+  backdrop-filter: blur(var(--prism-blur-scrim));
+}
+
+.prism-dialog-surface[data-size="sm"] {
+  width: min(var(--prism-menu-width), calc(100vw - 2 * var(--prism-space-6)));
+}
+
+.prism-dialog-surface[data-size="lg"] {
+  width: min(var(--prism-palette-width), calc(100vw - 2 * var(--prism-space-6)));
+}
+
+/* A drawer's surface spans --prism-drawer-width from the left edge between the top bar and the status bar, and draws nothing itself:
+   its frame is the island, --prism-drawer-width wide and inset by the island gap, on the chrome color. */
+.prism-dialog-surface[data-placement="start"] {
+  inset: var(--prism-bar-height) auto var(--prism-status-height) 0;
+  width: min(var(--prism-drawer-width), 100vw);
+  height: auto;
+  max-height: none;
+  margin: 0;
+  padding: 0 0 0 var(--prism-island-gap);
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+/* The island stands at the island gap from the edge and is --prism-drawer-width wide, as wide as the drawer the surface names. */
+.prism-dialog-surface[data-placement="start"][open] > .prism-dialog-frame {
+  position: absolute;
+  inset: 0 auto 0 var(--prism-island-gap);
+  display: flex;
+  flex-direction: column;
+  width: min(var(--prism-drawer-width), calc(100vw - 2 * var(--prism-island-gap)));
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: var(--prism-stroke) solid var(--prism-color-island-edge);
+  border-radius: var(--prism-radius-island);
+  background: var(--prism-color-chrome);
+  box-shadow: var(--prism-shadow-dialog);
+}
+
+.prism-dialog-surface[data-placement="start"] .prism-dialog-body {
+  padding: var(--prism-space-4);
+}
+
+/* A flush dialog's body draws no padding and does not clip, for content that lays itself out to the island's edges and scrolls itself, as the navigation drawer's rail and sidebar do; the rail's accent bar then shows on the island's edge. */
+.prism-dialog-surface[data-flush] .prism-dialog-body {
+  padding: 0;
+  overflow: visible;
+}
+
+.prism-dialog-surface[data-flush][data-placement="start"][open] > .prism-dialog-frame {
+  overflow: visible;
+}
+
+/* A drawer and a sheet fade in where they stand, so they sit on their edge from the first frame. */
+.prism-dialog-surface:is([data-placement="start"], [data-placement="bottom"])[open] {
+  animation-name: prism-fade;
+}
+
+/* An end dialog stands against the right edge between the top bar and the status bar, as a drawer of details beside the page. */
+.prism-dialog-surface[data-placement="end"] {
+  inset: calc(var(--prism-bar-height) + var(--prism-island-gap)) var(--prism-island-gap) calc(var(--prism-status-height) + var(--prism-island-gap)) auto;
+  width: min(var(--prism-panel-width), calc(100vw - 2 * var(--prism-island-gap)));
+  height: auto;
+  max-height: none;
+  margin: 0;
+}
+
+.prism-dialog-surface[data-placement="end"][open] {
+  animation-name: prism-fade;
+}
+
+/* A modeless dialog is not in the top layer, so it stands above the page's own layers. */
+.prism-dialog-surface[data-modeless] {
+  z-index: var(--prism-layer-dialog);
+}
+
+.prism-dialog-surface[data-placement="bottom"] {
+  inset: auto 0 0 0;
+  width: 100vw;
+  max-height: calc(100vh - var(--prism-bar-height));
+  margin: 0;
+  border-radius: var(--prism-radius-overlay) var(--prism-radius-overlay) 0 0;
+}
+
+@keyframes prism-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.prism-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-4);
+  flex: none;
+  min-width: 0;
+  padding: var(--prism-space-5) var(--prism-space-5) var(--prism-space-4);
+}
+
+.prism-dialog-heading {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--prism-font-size-lg);
+  font-weight: var(--prism-font-weight-semibold);
+  letter-spacing: var(--prism-tracking-heading);
+  line-height: var(--prism-line-height-tight);
+  overflow-wrap: anywhere;
+}
+
+/* A long heading wraps rather than squeezing the Close button below its own size. */
+.prism-dialog-close {
+  flex: none;
+}
+
+.prism-dialog-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 var(--prism-space-5) var(--prism-space-5);
+  overscroll-behavior: contain;
+}
+
+.prism-dialog-body > :first-child {
+  margin-top: 0;
+}
+
+.prism-dialog-body > :last-child {
+  margin-bottom: 0;
+}
+
+.prism-dialog-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--prism-space-3);
+  flex: none;
+  min-width: 0;
+  padding: var(--prism-space-4) var(--prism-space-5);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.prism-dialog-frame {
+  display: contents;
+}
+
+/* A bare dialog keeps its heading as its name but shows no header, and its content takes the whole surface. */
+.prism-dialog-surface[data-bare] .prism-dialog-head {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.prism-dialog-surface[data-bare]:not([data-placement="start"]) .prism-dialog-body {
+  padding: 0;
+}
+
+/* A top dialog hangs below the top bar, as the command palette does, with the spectrum on its top edge. */
+.prism-dialog-surface[data-placement="top"] {
+  inset: calc(var(--prism-bar-height) + var(--prism-space-6)) 0 auto 0;
+  max-height: calc(100vh - var(--prism-bar-height) - 2 * var(--prism-space-8));
+  margin: 0 auto;
+  box-shadow: var(--prism-shadow-dialog);
+}
+
+.prism-dialog-surface[data-placement="top"]::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: var(--prism-layer-raised);
+  height: var(--prism-stroke-strong);
+  background: var(--prism-gradient-spectrum);
+  pointer-events: none;
+}
+
+/* On a phone the top dialog spans the window inside small margins, over the top bar. */
+@media (max-width: 720px) {
+  .prism-dialog-surface[data-placement="top"] {
+    inset: var(--prism-space-4) 0 auto 0;
+    width: calc(100vw - 2 * var(--prism-space-3));
+    max-height: calc(100vh - 2 * var(--prism-space-4));
+  }
+}
+
+/* A bare field, such as the command palette's search row: the label names the control without showing, and the control spans the row with only a rule below it,
+   with children of slot="start" and slot="end", such as an icon and a key hint, drawn over its inline padding. */
+prism-field[variant="bare"] {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 0;
+}
+
+prism-field[variant="bare"] > .prism-field-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+prism-field[variant="bare"] > :is(.prism-field-control, [slot="start"], [slot="end"]) {
+  grid-row: 1;
+  grid-column: 1;
+}
+
+prism-field[variant="bare"] > [slot="start"] {
+  justify-self: start;
+  margin-inline-start: var(--prism-space-6);
+  color: var(--prism-color-accent-text);
+  pointer-events: none;
+}
+
+prism-field[variant="bare"] > [slot="end"] {
+  justify-self: end;
+  margin-inline-end: var(--prism-space-6);
+}
+
+prism-field[variant="bare"] > .prism-field-control {
+  min-height: calc(var(--prism-control-height) + 2 * var(--prism-space-5));
+  padding: 0 calc(var(--prism-space-6) + 2 * var(--prism-control-height)) 0 calc(var(--prism-space-6) + var(--prism-icon-size) + var(--prism-space-4));
+  border-width: 0 0 var(--prism-stroke);
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--prism-font-size-lg);
+}
+
+/* Bare and filter fields draw no native search clear button or decoration; Escape clears them instead. */
+prism-field:is([variant="bare"], [variant="filter"]) > .prism-field-control::-webkit-search-cancel-button,
+prism-field:is([variant="bare"], [variant="filter"]) > .prism-field-control::-webkit-search-decoration {
+  appearance: none;
+  display: none;
+}
+
+/* A filter field, such as a sidebar's filter: the label names the control without showing, the placeholder says what it filters,
+   and the control keeps its box at the control height with a start-slot icon drawn over its inline padding. */
+prism-field[variant="filter"] {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 0;
+}
+
+prism-field[variant="filter"] > .prism-field-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+prism-field[variant="filter"] > :is(.prism-field-control, [slot="start"], [slot="end"]) {
+  grid-row: 1;
+  grid-column: 1;
+}
+
+prism-field[variant="filter"] > [slot="start"] {
+  justify-self: start;
+  margin-inline-start: var(--prism-space-3);
+  color: var(--prism-color-ink-muted);
+  pointer-events: none;
+}
+
+prism-field[variant="filter"] > [slot="end"] {
+  justify-self: end;
+  margin-inline-end: var(--prism-space-2);
+}
+
+prism-field[variant="filter"] > .prism-field-control {
+  height: var(--prism-control-height);
+  min-height: var(--prism-control-height);
+  padding: 0 var(--prism-space-2) 0 calc(var(--prism-space-3) + var(--prism-icon-size-sm) + var(--prism-space-3));
+  font-size: var(--prism-font-size-sm);
+}
+
+prism-field[variant="filter"] > .prism-field-control:focus-visible {
+  outline: none;
+  border-color: var(--prism-color-accent);
+  box-shadow: 0 0 0 var(--prism-stroke) var(--prism-color-accent);
+}
+
+/* ---------- prism-popover: glass anchored to its button ---------- */
+
+prism-popover {
+  display: block;
+  width: min(var(--prism-popover-width), calc(100vw - 2 * var(--prism-space-3)));
+  padding: var(--prism-space-4) var(--prism-space-5);
+  overflow: auto;
+  font-size: var(--prism-font-size-md);
+  line-height: var(--prism-line-height);
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
+}
+
+prism-popover[popover] {
+  position: fixed;
+  inset: auto;
+  z-index: var(--prism-layer-popup);
+  max-height: calc(100vh - 2 * var(--prism-space-3));
+  margin: 0;
+}
+
+prism-popover[popover]:not(:popover-open) {
+  display: none;
+}
+
+prism-popover[popover]:popover-open {
+  animation: prism-rise var(--prism-duration-normal) var(--prism-easing-enter);
+}
+
+prism-popover[data-narrow] {
+  width: 100vw;
+}
+
+prism-popover:focus-visible {
+  outline: none;
+}
+
+.prism-popover-heading {
+  min-width: 0;
+  margin: 0 0 var(--prism-space-3);
+  font-size: var(--prism-font-size-lg);
+  font-weight: var(--prism-font-weight-semibold);
+  letter-spacing: var(--prism-tracking-heading);
+  line-height: var(--prism-line-height-tight);
+}
+
+.prism-popover-body {
+  min-width: 0;
+}
+
+.prism-popover-body > :first-child {
+  margin-top: 0;
+}
+
+.prism-popover-body > :last-child {
+  margin-bottom: 0;
+}
+
+/* ---------- prism-disclosure: a quiet toggle and the content it shows ---------- */
+
+prism-disclosure {
+  display: block;
+  min-width: 0;
+}
+
+.prism-disclosure-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  max-width: 100%;
+  min-height: var(--prism-control-height);
+  margin: 0;
+  padding: 0 var(--prism-space-3);
+  border: 0;
+  border-radius: var(--prism-radius-sm);
+  background: none;
+  color: var(--prism-color-ink-muted);
+  font: inherit;
+  font-size: var(--prism-font-size-sm);
+  font-weight: var(--prism-font-weight-medium);
+  letter-spacing: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.prism-disclosure-toggle:hover {
+  background: var(--prism-color-hover);
+  color: var(--prism-color-ink);
+}
+
+.prism-disclosure-summary {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.prism-disclosure-body {
+  min-width: 0;
+  padding: var(--prism-space-3) 0 0 calc(var(--prism-space-3) * 2 + var(--prism-icon-size-xs));
+}
+
+.prism-disclosure-body > :first-child {
+  margin-top: 0;
+}
+
+/* ---------- prism-empty-state and prism-banner ---------- */
+
+prism-empty-state {
+  display: grid;
+  justify-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  padding: var(--prism-space-7) var(--prism-space-6);
+  border: var(--prism-stroke) dashed var(--prism-color-line-strong);
+  border-radius: var(--prism-radius-lg);
+  color: var(--prism-color-ink-muted);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.prism-empty-state-heading {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  color: var(--prism-color-ink);
+  font-size: var(--prism-font-size-lg);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.prism-empty-state-body {
+  display: grid;
+  justify-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  max-width: min(100%, var(--prism-measure));
+}
+
+.prism-empty-state-body:empty {
+  display: none;
+}
+
+.prism-empty-state-body > p {
+  margin: 0;
+}
+
+prism-banner {
+  --prism-banner-tone: var(--prism-color-info);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--prism-space-4);
+  min-width: 0;
+  padding: var(--prism-space-4) var(--prism-space-5);
+  border: var(--prism-stroke) solid var(--prism-banner-tone);
+  border-radius: var(--prism-radius-lg);
+  background: var(--prism-color-info-soft);
+  color: var(--prism-color-ink);
+  overflow-wrap: anywhere;
+}
+
+prism-banner[hidden] {
+  display: none;
+}
+
+prism-banner[tone="warning"] { --prism-banner-tone: var(--prism-color-warning); background: var(--prism-color-warning-soft); }
+prism-banner[tone="danger"] { --prism-banner-tone: var(--prism-color-danger); background: var(--prism-color-danger-soft); }
+prism-banner[tone="success"] { --prism-banner-tone: var(--prism-color-success); background: var(--prism-color-success-soft); }
+
+.prism-banner-icon {
+  margin-top: var(--prism-space-1);
+  color: var(--prism-banner-tone);
+}
+
+.prism-banner-text {
+  display: grid;
+  gap: var(--prism-space-1);
+  min-width: 0;
+}
+
+.prism-banner-heading {
+  margin: 0;
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.prism-banner-body {
+  min-width: 0;
+}
+
+.prism-banner-body:empty {
+  display: none;
+}
+
+.prism-banner-body > p {
+  margin: 0;
+}
+
+/* ---------- prism-toast: glass at the bottom of the window ---------- */
+
+prism-toast {
+  position: fixed;
+  bottom: var(--prism-space-6);
+  left: 50%;
+  z-index: var(--prism-layer-toast);
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  max-width: min(var(--prism-popover-width), calc(100vw - 2 * var(--prism-space-6)));
+  transform: translateX(-50%);
+  font-size: var(--prism-font-size-md);
+  overflow-wrap: anywhere;
+}
+
+prism-toast:not([shown]) {
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+prism-toast[shown] {
+  padding: var(--prism-space-4) var(--prism-space-5);
+  animation: prism-rise var(--prism-duration-normal) var(--prism-easing-enter);
+}
+
+prism-toast[tone="info"] .prism-toast-icon { color: var(--prism-color-info); }
+prism-toast[tone="success"] .prism-toast-icon { color: var(--prism-color-success); }
+prism-toast[tone="warning"] .prism-toast-icon { color: var(--prism-color-warning); }
+prism-toast[tone="danger"] .prism-toast-icon { color: var(--prism-color-danger); }
+
+.prism-toast-message {
+  min-width: 0;
+}
+
+/* ---------- prism-claim: an agent avatar, the holder, the activity with its phase facet, and the time left ---------- */
+
+prism-claim {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  max-width: 100%;
+  color: var(--prism-color-ink);
+  font-size: var(--prism-font-size-sm);
+  line-height: var(--prism-line-height);
+  vertical-align: middle;
+}
+
+.prism-claim-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-claim-name {
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.prism-claim-kind {
+  padding: 0 var(--prism-space-2);
+  border: var(--prism-stroke) solid var(--prism-color-line-strong);
+  border-radius: var(--prism-radius-xs);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-2xs);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.prism-claim-activity {
+  --prism-claim-phase: var(--prism-color-phase-build-fill);
+  white-space: nowrap;
+}
+
+.prism-claim-activity[data-activity="design"] {
+  --prism-claim-phase: var(--prism-color-phase-design-fill);
+}
+
+.prism-claim-facet {
+  display: inline-block;
+  width: var(--prism-glyph-size);
+  height: calc(var(--prism-glyph-size) - var(--prism-stroke));
+  margin-inline-end: var(--prism-space-2);
+  background: var(--prism-claim-phase);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.prism-claim-activity-words {
+  font-weight: var(--prism-font-weight-medium);
+}
+
+.prism-claim-time,
+.prism-claim-since {
+  color: var(--prism-color-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+prism-claim[expired] .prism-claim-time {
+  color: var(--prism-color-warning);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+prism-claim[variant="strip"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-4) var(--prism-space-6);
+  width: 100%;
+  padding: var(--prism-space-4) var(--prism-space-5);
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-lg);
+  background: var(--prism-color-sunken);
+}
+
+.prism-claim-lines {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-4);
+  flex: 1 1 var(--prism-sidebar-width);
+  min-width: 0;
+}
+
+.prism-claim-lines > .prism-claim-avatar {
+  flex: none;
+}
+
+prism-claim[variant="strip"] .prism-claim-lines {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--prism-space-1);
+}
+
+.prism-claim-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2) var(--prism-space-3);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.prism-claim-holder {
+  min-width: 0;
+}
+
+.prism-claim-holds {
+  color: var(--prism-color-ink-muted);
+}
+
+.prism-claim-report {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--prism-space-3);
+  min-width: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.prism-claim-report > * + *::before {
+  content: "·";
+  margin-inline-end: var(--prism-space-3);
+}
+
+.prism-claim-report > [hidden] {
+  display: none;
+}
+
+.prism-claim-lease-words {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0 var(--prism-space-3);
+  min-width: 0;
+}
+
+prism-claim[variant="strip"] .prism-claim-lease-words > .prism-claim-time {
+  color: var(--prism-color-ink);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.prism-claim-ago {
+  color: var(--prism-color-ink-muted);
+}
+
+prism-claim[variant="strip"][expired] .prism-claim-lease-words > .prism-claim-time {
+  color: var(--prism-color-warning);
+}
+
+.prism-claim-lease {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--prism-space-2);
+  flex: 0 1 calc(var(--prism-sidebar-width) * 0.75);
+  min-width: 0;
+  font-size: var(--prism-font-size-xs);
+}
+
+prism-claim[variant="strip"] > .prism-claim-avatar {
+  flex: none;
+}
+
+prism-claim[variant="strip"] > .prism-claim-lines {
+  flex: 1 1 calc(var(--prism-sidebar-width) * 1.2);
+}
+
+/* ---------- prism-stepper: six phase bars in workflow order ---------- */
+
+prism-stepper {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(var(--prism-sidebar-width) / 3)), 1fr));
+  gap: var(--prism-space-4) var(--prism-space-2);
+  min-width: 0;
+}
+
+prism-step {
+  --prism-step-fill: var(--prism-color-line-control);
+  --prism-step-ink: var(--prism-color-ink);
+  display: grid;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+}
+
+prism-step[phase="requirements"] { --prism-step-fill: var(--prism-color-phase-requirements-fill); --prism-step-ink: var(--prism-color-phase-requirements); }
+prism-step[phase="design"] { --prism-step-fill: var(--prism-color-phase-design-fill); --prism-step-ink: var(--prism-color-phase-design); }
+prism-step[phase="frozen"] { --prism-step-fill: var(--prism-color-phase-frozen-fill); --prism-step-ink: var(--prism-color-phase-frozen); }
+prism-step[phase="build"] { --prism-step-fill: var(--prism-color-phase-build-fill); --prism-step-ink: var(--prism-color-phase-build); }
+prism-step[phase="review"] { --prism-step-fill: var(--prism-color-phase-review-fill); --prism-step-ink: var(--prism-color-phase-review); }
+prism-step[phase="shipped"] { --prism-step-fill: var(--prism-color-phase-shipped-fill); --prism-step-ink: var(--prism-color-phase-shipped); }
+
+.prism-step-bar {
+  display: block;
+  height: var(--prism-meter-height);
+  border-radius: var(--prism-radius-round);
+  background: var(--prism-color-line-strong);
+}
+
+prism-step:is([state="done"], [state="current"]) > .prism-step-bar {
+  background: var(--prism-step-fill);
+}
+
+prism-step[state="current"] > .prism-step-bar {
+  box-shadow: 0 0 0 var(--prism-stroke) var(--prism-color-bg), 0 0 0 var(--prism-stroke-strong) var(--prism-step-fill);
+}
+
+.prism-step-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+prism-step[state="done"] .prism-step-name {
+  color: var(--prism-color-ink);
+}
+
+prism-step[state="current"] .prism-step-name {
+  color: var(--prism-step-ink);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+/* A vertical stepper hangs each step on a rail as a dot: a step's piece of rail is as tall as the step and starts at its dot, so the rail runs
+   from the first dot to the last, and each dot centers on its label's first line, an odd-width rail under an odd-width dot sharing its center pixel. */
+prism-stepper[orientation="vertical"] {
+  display: block;
+}
+
+prism-stepper[orientation="vertical"] prism-step {
+  --prism-step-dot-center: calc(var(--prism-space-1) + 0.5lh);
+  position: relative;
+  display: block;
+  padding: var(--prism-space-1) 0 var(--prism-space-3) calc(var(--prism-space-5) + var(--prism-dot-size) / 2);
+  font-size: inherit;
+}
+
+prism-stepper[orientation="vertical"] prism-step:not([phase])[state="done"] { --prism-step-fill: var(--prism-color-success); }
+prism-stepper[orientation="vertical"] prism-step:not([phase])[state="current"] { --prism-step-fill: var(--prism-color-accent); --prism-step-ink: var(--prism-color-ink); }
+
+prism-stepper[orientation="vertical"] prism-step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: var(--prism-step-dot-center);
+  left: calc((var(--prism-dot-size) - var(--prism-stroke)) / 2);
+  width: var(--prism-stroke);
+  height: 100%;
+  background: var(--prism-color-line-strong);
+}
+
+prism-stepper[orientation="vertical"] .prism-step-bar {
+  position: absolute;
+  z-index: var(--prism-layer-raised);
+  top: calc(var(--prism-step-dot-center) - var(--prism-dot-size) / 2);
+  left: 0;
+  width: var(--prism-dot-size);
+  height: var(--prism-dot-size);
+  border: var(--prism-stroke) solid var(--prism-color-line-strong);
+  background: var(--prism-color-raised);
+}
+
+prism-stepper[orientation="vertical"] prism-step:is([state="done"], [state="current"]) > .prism-step-bar {
+  border-color: var(--prism-step-fill);
+  background: var(--prism-step-fill);
+  box-shadow: none;
+}
+
+prism-stepper[orientation="vertical"] .prism-step-name {
+  display: block;
+}
+
+.prism-step-detail {
+  display: grid;
+  gap: var(--prism-space-1);
+  margin-top: var(--prism-space-1);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+}
+
+/* ---------- prism-table: a compact table of figures that becomes blocks of named values in a narrow column ---------- */
+
+prism-table {
+  container: prism-table / inline-size;
+  display: block;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+prism-table table {
+  width: max-content;
+  border-collapse: collapse;
+  font-size: var(--prism-font-size-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+prism-table :is(th, td) {
+  padding: var(--prism-space-1) var(--prism-space-4);
+  text-align: end;
+  vertical-align: baseline;
+}
+
+prism-table :is(th, td):first-child {
+  padding-inline-start: 0;
+  text-align: start;
+}
+
+prism-table thead th {
+  color: var(--prism-color-ink-muted);
+  font-weight: var(--prism-font-weight-medium);
+}
+
+prism-table thead th[scope="colgroup"] {
+  border-bottom: var(--prism-stroke) solid var(--prism-color-line);
+  text-align: center;
+}
+
+prism-table tbody tr {
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+/* Names wrap, so a long row or column name never widens the table past its column; figures stay on one line. */
+prism-table th {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+prism-table tbody th {
+  font-weight: var(--prism-font-weight-medium);
+}
+
+prism-table .prism-table-note {
+  color: var(--prism-color-ink-muted);
+  text-align: start;
+}
+
+.prism-table-mark {
+  margin-inline-end: var(--prism-space-1);
+  color: var(--prism-color-warning);
+}
+
+@container prism-table (max-width: 600px) {
+  prism-table :is(table, tbody, tr, th, td) {
+    display: block;
+  }
+
+  prism-table table {
+    width: 100%;
+  }
+
+  prism-table thead {
+    display: none;
+  }
+
+  prism-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(calc(var(--prism-control-height) * 4.5), 1fr));
+    gap: 0 var(--prism-space-4);
+    padding-block: var(--prism-space-2);
+  }
+
+  prism-table tbody th,
+  prism-table .prism-table-note {
+    grid-column: 1 / -1;
+    padding-inline: 0;
+  }
+
+  prism-table tbody td {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0 var(--prism-space-3);
+    padding-inline: 0;
+  }
+
+  prism-table tbody td[data-label]::before {
+    content: attr(data-label);
+    margin-inline-end: auto;
+    color: var(--prism-color-ink-muted);
+  }
+}
+
+/* ---------- prism-breadcrumbs: crumbs that shorten before the current page does ---------- */
+
+prism-breadcrumbs {
+  display: block;
+  min-width: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+}
+
+.prism-breadcrumbs-list {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  padding: calc(var(--prism-stroke-strong) + var(--prism-stroke));
+  overflow-x: auto;
+  overflow-y: hidden;
+  list-style: none;
+  scrollbar-width: none;
+}
+
+/* Every crumb but the current page keeps a few letters; the current page shortens last, down to its separator. */
+.prism-breadcrumbs-item {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-2);
+  flex: 0 1000 auto;
+  min-width: calc(var(--prism-font-size-sm) * 3);
+}
+
+.prism-breadcrumbs-item + .prism-breadcrumbs-item {
+  min-width: calc(var(--prism-icon-size-xs) + var(--prism-space-2) + var(--prism-font-size-sm) * 3);
+  margin-inline-start: var(--prism-space-2);
+}
+
+.prism-breadcrumbs-item:last-child {
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.prism-breadcrumbs-item:last-child:not(:first-child) {
+  min-width: calc(var(--prism-icon-size-xs) + var(--prism-space-2));
+}
+
+.prism-breadcrumbs-separator {
+  flex: none;
+  color: var(--prism-color-ink-muted);
+}
+
+.prism-breadcrumbs-link {
+  display: block;
+  flex: 0 1 auto;
+  min-width: calc(var(--prism-font-size-sm) * 3);
+  overflow: hidden;
+  border-radius: var(--prism-radius-xs);
+  color: var(--prism-color-ink-muted);
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-breadcrumbs-item:last-child > .prism-breadcrumbs-link {
+  min-width: 0;
+  color: var(--prism-color-ink);
+  font-weight: var(--prism-font-weight-medium);
+}
+
+.prism-breadcrumbs-link:hover {
+  color: var(--prism-color-accent-text);
+  text-decoration: underline;
+}
+
+/* A trail that shows only its current page, as current-only does always and current-only="narrow" does in a phone-width window:
+   the other crumbs leave, and the current page needs no separator before it. */
+prism-breadcrumbs[current-only=""] .prism-breadcrumbs-item:not(:last-child),
+prism-breadcrumbs[current-only=""] .prism-breadcrumbs-item:last-child > .prism-breadcrumbs-separator {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  prism-breadcrumbs[current-only="narrow"] .prism-breadcrumbs-item:not(:last-child),
+  prism-breadcrumbs[current-only="narrow"] .prism-breadcrumbs-item:last-child > .prism-breadcrumbs-separator {
+    display: none;
+  }
+}
+
+/* ---------- prism-doc: rendered Markdown ---------- */
+
+prism-doc {
+  display: block;
+  min-width: 0;
+  color: var(--prism-color-ink);
+  font-size: var(--prism-font-size-md);
+  line-height: var(--prism-line-height);
+  overflow-wrap: anywhere;
+}
+
+prism-doc :is(h1, h2, h3, h4, h5, h6) {
+  margin: var(--prism-space-7) 0 var(--prism-space-3);
+  font-weight: var(--prism-font-weight-semibold);
+  letter-spacing: var(--prism-tracking-heading);
+  line-height: var(--prism-line-height-tight);
+}
+
+prism-doc h1 { font-size: var(--prism-font-size-xxl); }
+prism-doc h2 { font-size: var(--prism-font-size-xl); }
+prism-doc h3 { font-size: var(--prism-font-size-lg); }
+prism-doc :is(h4, h5, h6) { font-size: var(--prism-font-size-md); }
+
+prism-doc :is(p, ul, ol, table, blockquote, pre, dl, figure) {
+  margin: 0 0 var(--prism-space-4);
+}
+
+prism-doc > :first-child {
+  margin-top: 0;
+}
+
+prism-doc > :last-child {
+  margin-bottom: 0;
+}
+
+prism-doc :is(ul, ol) {
+  padding-inline-start: var(--prism-space-7);
+}
+
+prism-doc li + li {
+  margin-top: var(--prism-space-1);
+}
+
+prism-doc a {
+  color: var(--prism-color-accent-text);
+  text-decoration: underline;
+  text-decoration-color: var(--prism-color-line-strong);
+  text-underline-offset: 0.2em;
+}
+
+prism-doc a:hover {
+  text-decoration-color: currentColor;
+}
+
+prism-doc :not(pre) > code {
+  padding: 0 var(--prism-space-2);
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-xs);
+  background: var(--prism-color-sunken);
+  font-size: var(--prism-font-size-code);
+}
+
+prism-doc pre {
+  padding: var(--prism-space-5);
+  overflow-x: auto;
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-md);
+  background: var(--prism-color-sunken);
+  font-size: var(--prism-font-size-sm);
+  line-height: var(--prism-line-height-code);
+  overflow-wrap: normal;
+}
+
+prism-doc pre code {
+  font-size: inherit;
+}
+
+prism-doc table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+prism-doc :is(th, td) {
+  padding: var(--prism-space-2) var(--prism-space-4);
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  text-align: start;
+  vertical-align: top;
+}
+
+prism-doc th {
+  background: var(--prism-color-sunken);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+prism-doc blockquote {
+  padding: var(--prism-space-2) var(--prism-space-5);
+  border-inline-start: var(--prism-stroke-strong) solid var(--prism-color-line-strong);
+  color: var(--prism-color-ink-muted);
+}
+
+prism-doc img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--prism-radius-md);
+}
+
+/* ---------- prism-maximize: the icon button that maximizes a region and restores it ---------- */
+
+prism-maximize {
+  display: inline-flex;
+  flex: none;
+}
+
+/* In a region without a header the button floats at the top end corner, beside the region's first lines, and sticks while the region scrolls. */
+prism-maximize[floating] {
+  position: sticky;
+  top: 0;
+  z-index: var(--prism-layer-raised);
+  float: inline-end;
+  margin: 0 0 var(--prism-space-3) var(--prism-space-4);
+}
+
+/* ---------- prism-contents: a document's contents, beside it on a wide window and above it, folded, on a narrow one ---------- */
+
+/* The box that holds the contents and the document lays them out side by side; the contents column runs the box's full height. */
+:has(> prism-contents) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) calc(var(--prism-sidebar-width) * 0.8);
+  column-gap: var(--prism-space-7);
+  align-items: start;
+}
+
+:has(> prism-contents) > :not(prism-contents) {
+  grid-column: 1;
+}
+
+prism-contents {
+  display: block;
+  grid-column: 2;
+  grid-row: 1 / span 40;
+  align-self: stretch;
+  min-width: 0;
+  margin-block: calc(var(--prism-contents-inset, 0px) * -1);
+  border-inline-start: var(--prism-stroke) solid var(--prism-color-line);
+  font-size: var(--prism-font-size-sm);
+}
+
+/* The header and list stick inside the full-height column and fit the visible part of the scrolling element, which fit() measures. */
+.prism-contents-body {
+  position: sticky;
+  top: var(--prism-contents-top, 0px);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  max-height: var(--prism-contents-fit, 100vh);
+  padding: var(--prism-contents-inset, 0px) 0 var(--prism-contents-inset, 0px) var(--prism-space-5);
+}
+
+.prism-contents-head {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--prism-space-3);
+  min-height: var(--prism-control-height-sm);
+}
+
+.prism-contents-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-inline: var(--prism-space-3);
+  color: var(--prism-color-ink-muted);
+  font-weight: var(--prism-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.prism-contents-toggle {
+  display: none;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.prism-contents-tools {
+  display: flex;
+  flex: none;
+  gap: var(--prism-space-2);
+  margin-inline-start: auto;
+}
+
+.prism-contents-tools:empty {
+  display: none;
+}
+
+/* Only the list scrolls, so the header never scrolls away. */
+.prism-contents-list {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.prism-contents-list ol {
+  display: grid;
+  gap: var(--prism-space-1);
+  margin: var(--prism-space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.prism-contents-list a {
+  display: block;
+  padding: var(--prism-space-1) var(--prism-space-3);
+  border-radius: var(--prism-radius-sm);
+  color: var(--prism-color-ink-muted);
+  line-height: var(--prism-line-height-tight);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.prism-contents-list a:hover {
+  background: var(--prism-color-hover);
+  color: var(--prism-color-ink);
+}
+
+/* The list clips its overflow, so the focus ring is drawn inside the link. */
+.prism-contents-list a:focus-visible {
+  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
+  outline-offset: calc(var(--prism-stroke-strong) * -1);
+}
+
+.prism-contents-list a[aria-current="location"] {
+  background: var(--prism-color-selected);
+  color: var(--prism-color-accent-text);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.prism-contents-list .depth-1 { padding-inline-start: var(--prism-space-6); }
+.prism-contents-list .depth-2 { padding-inline-start: var(--prism-space-8); }
+
+@media (max-width: 1100px) {
+  :has(> prism-contents) {
+    display: block;
+  }
+
+  prism-contents {
+    margin: 0 0 var(--prism-space-5);
+    border: var(--prism-stroke) solid var(--prism-color-line);
+    border-radius: var(--prism-radius-md);
+    background: var(--prism-color-surface);
+  }
+
+  .prism-contents-body {
+    position: static;
+    max-height: none;
+    padding: var(--prism-space-2) var(--prism-space-4);
+  }
+
+  .prism-contents-title {
+    display: none;
+  }
+
+  .prism-contents-toggle {
+    display: inline-flex;
+  }
+
+  prism-contents:not([open]) .prism-contents-list {
+    display: none;
+  }
+
+  prism-contents[pinned] {
+    position: sticky;
+    top: var(--prism-contents-top, 0px);
+    z-index: var(--prism-layer-raised);
+  }
+
+  prism-contents[pinned] .prism-contents-body {
+    max-height: var(--prism-contents-fit, 100vh);
+  }
+}
+
+/* ---------- prism-code: a code block with a line-number gutter ---------- */
+
+prism-code {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  overflow: hidden;
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-md);
+  background: var(--prism-color-sunken);
+  color: var(--prism-color-ink);
+  font-family: var(--prism-font-code);
+  font-size: var(--prism-font-size-sm);
+  line-height: var(--prism-line-height-code);
+}
+
+prism-code[data-numbered] {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+prism-code > pre {
+  min-width: 0;
+  margin: 0;
+  padding: var(--prism-space-5);
+  overflow-x: auto;
+  background: none;
+  font: inherit;
+  tab-size: 2;
+}
+
+prism-code > pre > code {
+  font: inherit;
+}
+
+.prism-code-gutter {
+  padding: var(--prism-space-5) var(--prism-space-4) var(--prism-space-5) var(--prism-space-5);
+  border-inline-end: var(--prism-stroke) solid var(--prism-color-line);
+  color: var(--prism-color-ink-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  white-space: pre;
+  user-select: none;
+}
+
+/* Syntax colors: a tok-<name> span takes --prism-color-syntax-<name>, and the ink color for a name the theme does not define. */
+:is(prism-code, prism-doc) [class*="tok-"] { color: var(--prism-color-ink); }
+:is(prism-code, prism-doc) .tok-comment { color: var(--prism-color-syntax-comment); font-style: italic; }
+:is(prism-code, prism-doc) .tok-keyword { color: var(--prism-color-syntax-keyword); }
+:is(prism-code, prism-doc) .tok-string { color: var(--prism-color-syntax-string); }
+:is(prism-code, prism-doc) .tok-number { color: var(--prism-color-syntax-number); }
+:is(prism-code, prism-doc) .tok-type { color: var(--prism-color-syntax-type); }
+:is(prism-code, prism-doc) .tok-function { color: var(--prism-color-syntax-function); }
+:is(prism-code, prism-doc) .tok-attr { color: var(--prism-color-syntax-attr); }
+
+/* ---------- prism-lib-table: one bordered list of records with a head row, group heads, and rows ---------- */
+
+/* A page sets its columns with --prism-lib-columns on the table; a phone-width window, or a table narrower than its columns need, keeps a record's title on its own line and the rest on the line below. */
+prism-lib-table {
+  container: prism-lib-table / inline-size;
+  display: block;
+  min-width: 0;
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-lg);
+  overflow: hidden;
+}
+
+.prism-lib-row {
+  display: grid;
+  grid-template-columns: var(--prism-lib-columns, minmax(0, 1fr));
+  align-items: center;
+  gap: var(--prism-space-5);
+  min-width: 0;
+  min-height: calc(var(--prism-row-height) + var(--prism-space-5));
+  padding: var(--prism-space-2) var(--prism-space-5);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.prism-lib-row:hover {
+  background: var(--prism-color-hover);
+}
+
+/* The head row names the columns in small capitals on the sunken tone. */
+.prism-lib-row.is-head {
+  min-height: 0;
+  padding-top: var(--prism-space-3);
+  padding-bottom: var(--prism-space-3);
+  border-top: 0;
+  background: var(--prism-color-sunken);
+}
+
+.prism-lib-row.is-head > * {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-semibold);
+  letter-spacing: var(--prism-tracking-caps);
+  text-transform: uppercase;
+}
+
+/* A record's title follows its kind's glyph; a long title wraps rather than ending in an ellipsis, since a plain link has no tooltip to show the rest. */
+.prism-lib-title {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.prism-lib-title > a,
+.prism-lib-title > span {
+  min-width: 0;
+  font-weight: var(--prism-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.prism-lib-kind {
+  flex: none;
+  color: var(--prism-color-ink-muted);
+}
+
+.prism-lib-cell {
+  min-width: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.prism-lib-cell.is-detail {
+  font-size: var(--prism-font-size-xs);
+}
+
+/* A group head names the group with its count, and where the group comes from at its end. */
+.prism-lib-group {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  padding: var(--prism-space-3) var(--prism-space-5);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+  background: var(--prism-color-raised);
+}
+
+.prism-lib-group-name {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  gap: var(--prism-space-3);
+  margin: 0;
+  font-size: var(--prism-font-size-md);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.prism-lib-group-name > prism-badge {
+  flex: none;
+}
+
+.prism-lib-group-source {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A group without records says so in one quiet line. */
+.prism-lib-nothing {
+  margin: 0;
+  padding: var(--prism-space-3) var(--prism-space-5);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+}
+
+@media (max-width: 720px) {
+  .prism-lib-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--prism-space-1) var(--prism-space-4);
+    padding-top: var(--prism-space-3);
+    padding-bottom: var(--prism-space-3);
+  }
+
+  .prism-lib-row > :first-child {
+    flex: 1 0 100%;
+    min-width: 0;
+  }
+
+  .prism-lib-row.is-head {
+    display: none;
+  }
+
+  .prism-lib-row > .prism-lib-cell {
+    flex: 0 1 auto;
+  }
+
+  .prism-lib-group {
+    flex-wrap: wrap;
+  }
+
+  .prism-lib-group-source {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+}
+
+/* The same layout answers the table's own width, so a table in a narrow column of a wide window, such as a catalog stage, still reads; the app's pages are wider than this at every window wider than a phone. */
+@container prism-lib-table (max-width: 600px) {
+  .prism-lib-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--prism-space-1) var(--prism-space-4);
+    padding-top: var(--prism-space-3);
+    padding-bottom: var(--prism-space-3);
+  }
+
+  .prism-lib-row > :first-child {
+    flex: 1 0 100%;
+    min-width: 0;
+  }
+
+  .prism-lib-row.is-head {
+    display: none;
+  }
+
+  .prism-lib-row > .prism-lib-cell {
+    flex: 0 1 auto;
+  }
+
+  .prism-lib-group {
+    flex-wrap: wrap;
+  }
+
+  .prism-lib-group-source {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+}
+
+/* ---------- prism-row in a .prism-rows list: rows that share their columns, so kinds, times, and actions line up down the list ---------- */
+
+/* The kind, time, and action columns fit their content up to a share of the row, so a long kind or action never takes the title's room. */
+.prism-rows {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) fit-content(30%) fit-content(15%) fit-content(25%);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-lg);
+  list-style: none;
+}
+
+prism-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+  gap: var(--prism-space-5);
+  min-width: 0;
+  padding: var(--prism-space-3) var(--prism-space-5);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+prism-row:first-child {
+  border-top: 0;
+}
+
+prism-row .prism-row-tile {
+  width: calc(var(--prism-avatar-size) + var(--prism-space-2));
+  height: calc(var(--prism-avatar-size) + var(--prism-space-2));
+}
+
+.prism-row-tile[data-none] {
+  visibility: hidden;
+}
+
+prism-row[wrap] > .prism-row-tile {
+  align-self: start;
+}
+
+.prism-row-text {
+  display: grid;
+  min-width: 0;
+}
+
+.prism-row-title {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: var(--prism-font-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A title that links to where the row is handled reads as the title and ends with an ellipsis of its own, so the link is never cut off;
+   its focus ring stays inside the title's box. */
+.prism-row-title > a {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+prism-row[wrap] .prism-row-title > a {
+  overflow: visible;
+}
+
+.prism-row-title a {
+  color: var(--prism-color-ink);
+  font-weight: inherit;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.prism-row-title a:hover {
+  color: var(--prism-color-accent-text);
+  text-decoration: underline;
+}
+
+.prism-row-title a:focus-visible {
+  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
+  outline-offset: calc(-1 * var(--prism-stroke-strong));
+  border-radius: var(--prism-radius-xs);
+}
+
+.prism-row-description {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A wrapping row shows its title and its detail in full. */
+prism-row[wrap] .prism-row-title {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.prism-row-detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  margin-top: var(--prism-space-2);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+/* A slotted span of detail lays its pieces out as the detail's own, so a badge and its note keep the detail's gap. */
+.prism-row-detail > span[slot="detail"] {
+  display: contents;
+}
+
+.prism-row-kind,
+.prism-row-action {
+  display: flex;
+  align-items: center;
+  justify-self: start;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.prism-row-kind > *,
+.prism-row-action > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.prism-row-time {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* In a phone-width window a row keeps its tile, its text, and its action. */
+@media (max-width: 720px) {
+  .prism-rows {
+    grid-template-columns: auto minmax(0, 1fr) fit-content(40%);
+  }
+
+  .prism-row-kind,
+  .prism-row-time {
+    display: none;
+  }
+}
+
+/* ---------- prism-inbox: two-line items to pick one from, the picked one raised on the surface ---------- */
+
+:where(prism-inbox, prism-inbox-item),
+:where(prism-inbox, prism-inbox-item) * {
+  box-sizing: border-box;
+}
+
+prism-inbox {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: var(--prism-space-1);
+  min-width: 0;
+  border-radius: var(--prism-radius-md);
+}
+
+prism-inbox:focus-visible {
+  outline: none;
+}
+
+prism-inbox-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--prism-space-2) var(--prism-space-4);
+  min-width: 0;
+  padding: var(--prism-space-4);
+  border: var(--prism-stroke) solid transparent;
+  border-radius: var(--prism-radius-md);
+  color: var(--prism-color-ink);
+  cursor: pointer;
+}
+
+prism-inbox-item:hover {
+  background: var(--prism-color-hover);
+}
+
+prism-inbox-item[selected] {
+  border-color: var(--prism-color-line);
+  background: var(--prism-color-surface);
+  box-shadow: var(--prism-shadow-lift);
+}
+
+/* The list takes focus as a whole, so the keyboard ring sits on the picked item. */
+prism-inbox:focus-visible prism-inbox-item[selected],
+prism-inbox:focus-visible:not(:has(prism-inbox-item[selected])) prism-inbox-item:first-of-type {
+  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
+  outline-offset: calc(-1 * var(--prism-stroke));
+}
+
+:is(.prism-inbox-tile, .prism-row-tile) {
+  display: grid;
+  place-items: center;
+  width: calc(var(--prism-avatar-size) + var(--prism-space-3));
+  height: calc(var(--prism-avatar-size) + var(--prism-space-3));
+  border-radius: var(--prism-radius-sm);
+  background: var(--prism-color-hover);
+  color: var(--prism-color-ink-muted);
+}
+
+:is(.prism-inbox-tile, .prism-row-tile)[data-tone="accent"] { background: var(--prism-color-accent-soft); color: var(--prism-color-accent-text); }
+:is(.prism-inbox-tile, .prism-row-tile)[data-tone="info"] { background: var(--prism-color-info-soft); color: var(--prism-color-info); }
+:is(.prism-inbox-tile, .prism-row-tile)[data-tone="warning"] { background: var(--prism-color-warning-soft); color: var(--prism-color-warning); }
+:is(.prism-inbox-tile, .prism-row-tile)[data-tone="danger"] { background: var(--prism-color-danger-soft); color: var(--prism-color-danger); }
+:is(.prism-inbox-tile, .prism-row-tile)[data-tone="success"] { background: var(--prism-color-success-soft); color: var(--prism-color-success); }
+
+.prism-inbox-start {
+  display: inline-flex;
+  margin: var(--prism-space-1);
+}
+
+.prism-inbox-start > * {
+  flex: none;
+}
+
+/* A row without a tile or leading content keeps its text in the middle column. */
+.prism-inbox-tile[hidden] + .prism-inbox-start[hidden] + .prism-inbox-text {
+  grid-column: 1 / 3;
+}
+
+.prism-inbox-text {
+  display: grid;
+  gap: var(--prism-space-1);
+  min-width: 0;
+}
+
+.prism-inbox-title {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: var(--prism-font-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-inbox-description {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-inbox-end {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--prism-space-2);
+  max-width: calc(var(--prism-space-8) * 2);
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  white-space: nowrap;
+}
+
+prism-inbox-item[unread] > .prism-inbox-end::before {
+  content: "";
+  flex: none;
+  width: var(--prism-space-3);
+  height: var(--prism-space-3);
+  border-radius: var(--prism-radius-round);
+  background: var(--prism-color-accent);
+}

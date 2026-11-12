@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "prism-review": {
+      "command": "node",
+      "args": ["./bin/prism-mcp"],
+      "cwd": ".",
+      "env": { "NODE_USE_ENV_PROXY": "1" },
+      "env_vars": ["PRISM_REVIEW_APP_DIR", "XDG_STATE_HOME", "LOCALAPPDATA"]
+    }
+  }
+}

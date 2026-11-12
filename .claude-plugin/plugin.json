@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin.json",
+  "name": "prism",
+  "displayName": "Prism",
+  "description": "Prism designs each slice as a frozen contract with failing acceptance tests, implements it in fresh sessions, and completes it on a passing run of your tests, with EARS requirements, ADRs, and Gherkin features.",
+  "icon": "./assets/icon.png",
+  "version": "0.23.0",
+  "author": {
+    "name": "Michael Rumyantsev",
+    "url": "https://github.com/RumyantsevMichael"
+  },
+  "homepage": "https://github.com/RumyantsevMichael/Prism#readme",
+  "repository": "https://github.com/RumyantsevMichael/Prism",
+  "license": "Apache-2.0",
+  "keywords": [
+    "workflow",
+    "spec-driven",
+    "requirements",
+    "ears",
+    "adr",
+    "bdd",
+    "gherkin",
+    "planning",
+    "architecture",
+    "tdd"
+  ],
+  "mcpServers": "./.claude-mcp.json"
+}

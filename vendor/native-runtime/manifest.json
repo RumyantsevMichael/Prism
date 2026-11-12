@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "assetVersion": "v0.23.0",
+  "bundles": {
+    "darwin-arm64": {
+      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/v0.23.0/prism-native-darwin-arm64.tar.gz",
+      "bytes": 106952323,
+      "sha256": "7361cf513d5be8d62d1bbc20f3a4eeb1f2e29949a3fdb19b757c5ce4901a2963",
+      "unpackedBytes": 493801716
+    },
+    "darwin-x64": {
+      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/v0.23.0/prism-native-darwin-x64.tar.gz",
+      "bytes": 108901671,
+      "sha256": "ba5715441b4231ae26bea39541292f3d98ede55963224ba8eaf130c9c66b51ce",
+      "unpackedBytes": 500029918
+    },
+    "linux-x64": {
+      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/v0.23.0/prism-native-linux-x64.tar.gz",
+      "bytes": 113984229,
+      "sha256": "90b906c690d6fda14d3200951948e529b7934af763dd94e1bbb923b6c12baed5",
+      "unpackedBytes": 494015265
+    },
+    "linux-arm64": {
+      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/v0.23.0/prism-native-linux-arm64.tar.gz",
+      "bytes": 109153557,
+      "sha256": "4bbf72e877f06ceb75579a27418e0fc0fdbdf855f08f5bb2952699d5eab59c09",
+      "unpackedBytes": 478317555
+    },
+    "win32-x64": {
+      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/v0.23.0/prism-native-win32-x64.tar.gz",
+      "bytes": 118865146,
+      "sha256": "33113e554a4fed2626c7dfcb76315d08be4adaf6b462f3bfeb038e627b45ff1b",
+      "unpackedBytes": 491029254
+    }
+  },
+  "model": {
+    "id": "Xenova/bge-small-en-v1.5",
+    "revision": "ea104dacec62c0de699686887e3f920caeb4f3e3",
+    "dimensions": 384,
+    "pooling": "cls",
+    "normalize": true,
+    "queryPrefix": "Represent this sentence for searching relevant passages: ",
+    "files": [
+      {
+        "path": "config.json",
+        "bytes": 683,
+        "sha256": "fa73f90bf92c8cace1fbcb709626306f2bdbc9ea3e5b5f94b440df9b6aa56350"
+      },
+      {
+        "path": "tokenizer.json",
+        "bytes": 711396,
+        "sha256": "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66"
+      },
+      {
+        "path": "tokenizer_config.json",
+        "bytes": 366,
+        "sha256": "9261e7d79b44c8195c1cada2b453e55b00aeb81e907a6664974b4d7776172ab3"
+      },
+      {
+        "path": "onnx/model_quantized.onnx",
+        "bytes": 34014426,
+        "sha256": "6c9c6101a956d62dfb5e7190c538226c0c5bb9cb27b651234b6df063ee7dbfe4"
+      },
+      {
+        "path": "special_tokens_map.json",
+        "bytes": 125,
+        "sha256": "b6d346be366a7d1d48332dbc9fdf3bf8960b5d879522b7799ddba59e76237ee3"
+      },
+      {
+        "path": "vocab.txt",
+        "bytes": 231508,
+        "sha256": "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3"
+      }
+    ],
+    "license": "MIT"
+  },
+  "modelMirror": "https://github.com/RumyantsevMichael/Prism/releases/download/v0.23.0"
+}

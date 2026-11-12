@@ -1,0 +1,78 @@
+/* prism-state: a round glyph that fills as an initiative moves from envisioned to shipped, and the state's name. */
+
+:host {
+  --tone: var(--prism-color-ink-muted);
+  --glyph-line: var(--prism-color-ink-muted);
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+:host(:is([state="planned"], [state="in-progress"])) {
+  --tone: var(--prism-color-info);
+  --glyph-line: var(--prism-color-info);
+}
+
+:host([state="shipped"]) {
+  --tone: var(--prism-color-success);
+  --glyph-line: var(--prism-color-success);
+}
+
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  max-width: 100%;
+  color: var(--tone);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-semibold);
+  white-space: nowrap;
+}
+
+.glyph {
+  position: relative;
+  flex: none;
+  width: var(--prism-glyph-size);
+  height: var(--prism-glyph-size);
+}
+
+.glyph::before {
+  content: "";
+  position: absolute;
+  inset: var(--prism-stroke);
+  border: var(--prism-stroke-strong) dotted var(--glyph-line);
+  border-radius: var(--prism-radius-round);
+}
+
+:host([state="planned"]) .glyph::before {
+  border-style: dashed;
+}
+
+:host([state="in-progress"]) .glyph::before {
+  border-style: solid;
+  background: conic-gradient(var(--glyph-line) 0 50%, transparent 50% 100%);
+}
+
+:host([state="shipped"]) .glyph::before {
+  border-style: solid;
+  background: var(--glyph-line);
+}
+
+:host([state="superseded"]) .glyph::before {
+  border-style: solid;
+  background: linear-gradient(135deg, transparent calc(50% - var(--prism-stroke)), var(--glyph-line) calc(50% - var(--prism-stroke)) calc(50% + var(--prism-stroke)), transparent calc(50% + var(--prism-stroke)));
+}
+
+.text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A glyph without text, such as in a tree row, takes only the glyph's room. */
+:host(:empty) .text {
+  display: none;
+}

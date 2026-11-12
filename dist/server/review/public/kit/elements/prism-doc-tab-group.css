@@ -1,0 +1,99 @@
+/* prism-doc-tab-group: a group's head in the tab strip, a colored name that the group's tabs underline in the same color. */
+
+:host {
+  --prism-doc-tab-group-color: var(--prism-color-group-1);
+  display: flex;
+  flex: none;
+  min-width: 0;
+  max-width: var(--prism-doc-tab-group-width);
+  height: 100%;
+}
+
+:host([tone="2"]) { --prism-doc-tab-group-color: var(--prism-color-group-2); }
+:host([tone="3"]) { --prism-doc-tab-group-color: var(--prism-color-group-3); }
+:host([tone="4"]) { --prism-doc-tab-group-color: var(--prism-color-group-4); }
+:host([tone="5"]) { --prism-doc-tab-group-color: var(--prism-color-group-5); }
+:host([tone="6"]) { --prism-doc-tab-group-color: var(--prism-color-group-6); }
+
+.group {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-1);
+  width: 100%;
+  min-width: 0;
+  padding: 0 var(--prism-space-1) 0 var(--prism-space-3);
+  border-inline-end: var(--prism-stroke) solid var(--prism-color-line);
+  box-shadow: inset 0 calc(-1 * var(--prism-stroke-strong)) 0 var(--prism-doc-tab-group-color);
+  color: var(--prism-doc-tab-group-color);
+  font-size: var(--prism-font-size-sm);
+  font-weight: var(--prism-font-weight-semibold);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* A collapsed group has no tabs to underline, so its head carries no line and reads as one closed unit. */
+:host([collapsed]) .group {
+  box-shadow: none;
+}
+
+:host(:hover) .group {
+  background: var(--prism-color-hover);
+}
+
+:host([dragging]) .group {
+  background: var(--prism-color-raised);
+  box-shadow: var(--prism-shadow-lift);
+  cursor: grabbing;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--prism-control-height);
+  border-radius: var(--prism-radius-xs);
+}
+
+.dot {
+  flex: none;
+  width: var(--prism-space-2);
+  height: var(--prism-space-2);
+  border-radius: var(--prism-radius-round);
+  background: var(--prism-doc-tab-group-color);
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.count {
+  flex: none;
+  color: var(--prism-color-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.count:empty {
+  display: none;
+}
+
+.close {
+  flex: none;
+  opacity: 0;
+}
+
+:host(:hover) .close,
+:host([current]) .close,
+.close:focus-within {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .close {
+    opacity: 1;
+  }
+}

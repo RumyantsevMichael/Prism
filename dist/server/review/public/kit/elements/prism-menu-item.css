@@ -1,0 +1,186 @@
+/* prism-menu-item: a row of a menu, with a check column for radio and checkbox items. */
+
+:host {
+  display: flex;
+  min-width: 0;
+  height: var(--prism-row-height);
+  border-radius: var(--prism-radius-sm);
+  color: var(--prism-color-ink);
+  cursor: pointer;
+  user-select: none;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  width: 100%;
+  min-width: 0;
+  padding: 0 var(--prism-space-4) 0 var(--prism-space-3);
+  font-size: var(--prism-font-size-md);
+  white-space: nowrap;
+}
+
+.check {
+  display: inline-flex;
+  flex: none;
+  width: var(--prism-icon-size-sm);
+  visibility: hidden;
+  color: var(--prism-color-accent-text);
+}
+
+:host([type="radio"][checked]) .check,
+:host([type="checkbox"][checked]) .check {
+  visibility: visible;
+}
+
+:host(:not([type="radio"]):not([type="checkbox"])) .check {
+  display: none;
+}
+
+/* A row's leading icon stands apart from its text. */
+:host(:not([variant="tile"]):not([variant="segment"])) .text > slot::slotted(prism-icon) {
+  margin-inline-end: var(--prism-space-4);
+  vertical-align: middle;
+}
+
+.body {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detail {
+  display: none;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  text-overflow: ellipsis;
+}
+
+/* An item with a detail line grows to two lines. */
+:host([detailed]) {
+  height: auto;
+  min-height: var(--prism-row-height);
+}
+
+:host([detailed]) .item {
+  padding-block: var(--prism-space-2);
+}
+
+:host([detailed]) .detail {
+  display: block;
+}
+
+/* The hint keeps its own width up to its limit, so a long detail line shortens the item's text rather than the hint. */
+.hint {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+}
+
+/* Slotted detail and hint text stays inside its line and ends with an ellipsis itself, so a long folder path never reaches past the item. */
+.detail > slot::slotted(*),
+.hint > slot::slotted(*) {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:host(:hover),
+:host(:focus) {
+  background: var(--prism-color-hover);
+}
+
+:host([disabled]) {
+  color: var(--prism-color-ink-muted);
+  cursor: default;
+}
+
+:host([disabled]:hover) {
+  background: transparent;
+}
+
+/* tile: a choice drawn as a preview over its name, such as a theme; the checked tile takes the accent ring. */
+:host([variant="tile"]) {
+  height: auto;
+  border: var(--prism-stroke) solid var(--prism-color-line-control);
+  border-radius: var(--prism-radius-md);
+  color: var(--prism-color-ink-muted);
+}
+
+:host([variant="tile"]) .item {
+  display: grid;
+  gap: var(--prism-space-2);
+  padding: var(--prism-space-2);
+  font-size: var(--prism-font-size-xs);
+  text-align: center;
+}
+
+:host([variant="tile"]) .check,
+:host([variant="segment"]) .check,
+:host([variant="tile"]) .hint,
+:host([variant="segment"]) .hint {
+  display: none;
+}
+
+:host([variant="tile"]) .text {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--prism-space-2);
+}
+
+:host([variant="tile"]:hover),
+:host([variant="tile"]:focus) {
+  background: transparent;
+  color: var(--prism-color-ink);
+}
+
+:host([variant="tile"][checked]) {
+  border-color: var(--prism-color-accent);
+  box-shadow: 0 0 0 var(--prism-stroke) var(--prism-color-accent);
+  color: var(--prism-color-ink);
+  font-weight: var(--prism-font-weight-medium);
+}
+
+/* segment: one option of a segmented switch; the checked one stands on the surface. */
+:host([variant="segment"]) {
+  height: calc(var(--prism-control-height) - 2 * var(--prism-space-1) - 2 * var(--prism-stroke));
+  border-radius: var(--prism-radius-xs);
+  color: var(--prism-color-ink-muted);
+}
+
+:host([variant="segment"]) .item {
+  justify-content: center;
+  padding: 0 var(--prism-space-4);
+  font-size: var(--prism-font-size-sm);
+  font-weight: var(--prism-font-weight-medium);
+}
+
+:host([variant="segment"]) .text {
+  flex: 0 1 auto;
+}
+
+:host([variant="segment"]:hover),
+:host([variant="segment"]:focus) {
+  background: transparent;
+  color: var(--prism-color-ink);
+}
+
+:host([variant="segment"][checked]) {
+  background: var(--prism-color-surface);
+  color: var(--prism-color-ink);
+  box-shadow: var(--prism-shadow-lift);
+}

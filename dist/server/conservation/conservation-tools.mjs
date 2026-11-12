@@ -1,0 +1,59 @@
+// Generated from src/server/conservation/conservation-tools.mts by scripts/native-build/compile.mjs.
+import { assertInput } from "../workflow/artifact-schema.mjs";
+import { conservationStore, conservationError } from "./conservation-store.mjs";
+import { compareChangeMap } from "./conservation-analysis.mjs";
+import { GET_REVIEW_SCHEMA, UPDATE_REVIEW_SCHEMA, CHECK_REVIEW_GATE_SCHEMA, getReview, updateReview, checkReviewGate } from "../review/review-ledger.mjs";
+import { objectSchema as obj, textField as str, hashField } from "./conservation-schema.mjs";
+const captureSchema = obj({ projectRoot: str, initiative: str, slice: str }, ["projectRoot"]);
+const evidenceSchema = obj({ projectRoot: str, evidenceId: hashField, section: { enum: ["files", "omissions", "diagnostics", "candidates", "observations", "measurements", "growth", "unitsBefore", "unitsAfter", "units", "requirements", "lines", "groups", "modules", "delegatingClasses", "containers", "shapes"] }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 } }, ["projectRoot", "evidenceId"]);
+const compareSchema = obj({ projectRoot: str, initiative: str, slice: str, expectedRevision: hashField, baselineId: hashField, resultSnapshotId: hashField, startSnapshotId: hashField }, ["projectRoot", "initiative", "slice", "expectedRevision", "baselineId", "resultSnapshotId"]);
+const annotations = (readOnlyHint, openWorldHint = false) => ({ readOnlyHint, destructiveHint: false, idempotentHint: readOnlyHint, openWorldHint });
+const CONSERVATION_TOOLS = [
+  { name: "capture_repository_snapshot", description: "Retain immutable source evidence before edits, including dirty, untracked, opaque and symlink identities. Pass the initiative and slice to register the slice's evidence outputs before creating them. Returns the baseline or result snapshot identity.", inputSchema: captureSchema, annotations: annotations(false) },
+  { name: "get_conservation_evidence", description: "Read an immutable snapshot, search receipt, repository analysis receipt, comparison, or analysis in bounded pages. Evidence IDs bind every page without revision drift.", inputSchema: evidenceSchema, annotations: annotations(true) },
+  { name: "compare_change_map", description: "Compare an exact change map revision with retained B and A/F snapshots. Prepare native extraction automatically and retain immutable observed facts and measurements. Similarity never proves equivalence. Pass startSnapshotId, the task-start snapshot T, when out-of-scope work from others landed after B: an out-of-scope change that T already holds becomes an outside_scope_before_start review check, and every change after T stays an outside_scope failure.", inputSchema: compareSchema, annotations: annotations(false, true) },
+  { name: "get_review", description: "Read the authoritative MCP review ledger and report stale Markdown projections. Page findings, waves, assessments, conflicts, migration history or operation history. Pass wave to keep only the findings that wave raised, that wave, or its assessments and conflicts. A finding's history entry carries evidence only when it differs from the entry before, and a waves page that lists the current wave names it by id. Every page returns deferred: { id, severity, title, gate, followUp, wave } per DEFERRED finding, which the user's decision gate closed with a follow-up, and a findings page shows such a finding with status DEFERRED and its deferral. Also report the slice's run totals and each review wave's and design run's totals, computed from run records. A shipped initiative adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked, to commit apart from the task's changes.", inputSchema: GET_REVIEW_SCHEMA, annotations: { ...annotations(false), idempotentHint: true } },
+  { name: "update_review", description: `Apply typed revision-checked review operations. Enforce finding ownership, independent verification, lane evidence and acceptance prerequisites. revise_finding corrects an unverified finding with a reason its history keeps: the coordinator may change or clear its contract clause, and the coordinator or the lane's reviewer may change its close condition. open_finding warns under warnings when an unverified finding of the same wave has the same affected path and a similar title. accept_wave with gate and deferrals ({ finding, followUp } per unresolved finding, each low) accepts the wave with those findings DEFERRED, when the gate is the slice's current decision gate that chose accept-deferred; otherwise it is refused with deferral_refused and data.problems of gate_invalid, finding_not_unresolved, severity_not_low, or follow_up_missing per finding. A DEFERRED finding counts as resolved and cannot change status or be revised. After two implementation review waves, start_wave without a fresh afterGate is refused with gate_blocked and data.problems review_loop_limit naming the review loop gate that Prism asked with a summary, a recommendation, and the options continue-review, return-to-design, and accept-deferred (only while every unresolved finding is low); start the next wave with afterGate once it chose continue-review. { op: "return_to_design", gate }, the coordinator's only operation of its update, blocks the slice with each unresolved finding as a contract defect when the slice's current decision gate chose return-to-design. A slice that is not in progress, such as one already returned to design, starts no implementation review wave and cannot return again. JSON commits survive Markdown projection failures.`, inputSchema: UPDATE_REVIEW_SCHEMA, annotations: annotations(false) },
+  { name: "check_review_gate", description: "Explain current implementation-entry or completion prerequisites using the same validator as review acceptance and coordination mutations. Verifies live source against accepted evidence. For an unaccepted wave, lists the files each lane must re-review since the previous wave of its mode, assessments that carry_assessments can reuse, and a ready-to-fill assessment skeleton.", inputSchema: CHECK_REVIEW_GATE_SCHEMA, annotations: annotations(false) }
+];
+async function callConservationTool(name, input) {
+  const tool = CONSERVATION_TOOLS.find((tool2) => tool2.name === name);
+  if (!tool) throw conservationError("validation_failed", "Unknown conservation tool.");
+  assertInput(tool.inputSchema, input);
+  if (name === "get_review") return getReview(input);
+  if (name === "update_review") return updateReview(input);
+  if (name === "check_review_gate") return checkReviewGate(input);
+  if (name === "compare_change_map") return compareChangeMap(input);
+  const projectRoot = input.projectRoot;
+  if (name === "capture_repository_snapshot") {
+    if (input.initiative === void 0 !== (input.slice === void 0)) throw conservationError("validation_failed", "Pass both initiative and slice, or neither.");
+    const { snapshotId, snapshot } = await conservationStore.capture(projectRoot, input.slice === void 0 ? void 0 : { initiative: input.initiative, slice: input.slice });
+    return {
+      snapshotId,
+      fingerprint: snapshot.fingerprint,
+      commit: snapshot.commit,
+      capturePolicy: snapshot.capturePolicy,
+      complete: snapshot.complete,
+      counts: { files: snapshot.files.length, bytes: snapshot.files.reduce((sum, file) => sum + file.bytes, 0), omissions: snapshot.omissions.length },
+      diagnostics: snapshot.diagnostics.slice(0, 20),
+      totalDiagnostics: snapshot.diagnostics.length
+    };
+  }
+  const evidence = await conservationStore.get(projectRoot, input.evidenceId);
+  const results = evidence.kind === "repository-analysis" ? { report_module_interfaces: "modules", report_cohesion_clusters: "containers", report_complex_units: "units" }[evidence.tool] || "groups" : void 0;
+  const section = input.section || { snapshot: "files", search: "candidates", comparison: "observations", analysis: "units", migration: "lines", "repository-analysis": results }[evidence.kind];
+  const record = evidence;
+  const paged = (key) => key !== "components" && Array.isArray(record[key]);
+  const values = section === "unitsBefore" || section === "unitsAfter" ? record.units?.[section === "unitsBefore" ? "before" : "after"] : record[section];
+  if (!Array.isArray(values)) {
+    const sections = [...Object.keys(record).filter(paged), ...record.units && !Array.isArray(record.units) ? ["unitsBefore", "unitsAfter"] : []];
+    throw conservationError("validation_failed", `The ${evidence.kind} evidence has no section ${section}. Its sections are ${sections.join(", ") || "none"}.`);
+  }
+  const offset = input.offset || 0, limit = input.limit || 50;
+  const metadata = Object.fromEntries(Object.entries(record).filter(([key]) => !paged(key) && !["units", "fileCoverage", "tokenCounts", "structureCounts", "project"].includes(key)));
+  return { evidenceId: input.evidenceId, ...metadata, section, entries: values.slice(offset, offset + limit), totalCount: values.length, nextOffset: offset + limit < values.length ? offset + limit : null };
+}
+export {
+  CONSERVATION_TOOLS,
+  callConservationTool
+};

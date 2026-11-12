@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "prism-review": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/server/mcp.mjs"],
+      "env": { "NODE_USE_ENV_PROXY": "1" }
+    }
+  }
+}

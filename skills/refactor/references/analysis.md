@@ -1,0 +1,137 @@
+# Refactoring analysis
+
+## Repository discovery
+
+Discovery tools cover the whole scope at once, so they find candidates that reading one file at a time misses.
+Each tool reports facts for investigation, not defects.
+
+| Tool | Finds |
+| --- | --- |
+| `search_repository_concepts` | Units that look alike, for one query that describes a behavior or responsibility. |
+| `find_shared_dependencies` | Units in different files that work alike: repeated sub-steps, copied helpers, and repeated protocols. |
+| `report_module_interfaces` | Exports that no module uses, exports that only tests use, the part of each interface that its importers use, and classes that forward most methods to one field. |
+| `find_shared_literals` | Units and instruction steps in different files that spell the same rare values or names, and key sets that several objects or schemas repeat. |
+| `find_same_name_units` | Functions in different files with one name: identical copies, and diverged variants that differ in throwing or in the dependencies they use. |
+| `report_cohesion_clusters` | Large classes, types, and modules whose members fall into separate clusters of shared state and calls, which can show mixed responsibilities. |
+| `report_complex_units` | Long or branchy functions and methods, with their nesting, parameters, and the value they dispatch on. |
+
+1. If a retained baseline exists, pass its identity as `snapshotId` to every discovery call.
+2. If no baseline exists and the request is analysis only, call the tools on the live project without `snapshotId`.
+3. Call `find_shared_dependencies`, `find_shared_literals`, `find_same_name_units`, `report_module_interfaces`, `report_cohesion_clusters`, and `report_complex_units` for the discovery scope.
+4. If the scope is part of the project, pass its directories as `filters.paths`.
+5. For each responsibility that the scope implements, call `search_repository_concepts` with a query that describes it.
+6. While a call returns `preparing`, wait through bounded `get_repository_intelligence_status` requests and repeat the same call.
+7. If a call returns `partial` while a component that its `components_missing` diagnostic names is waiting or preparing, wait as for `preparing` and repeat the same call.
+8. If a `partial` result still names a component in `components_missing`, report each named component as uncovered in the discovery coverage.
+9. Read the source of the reported units before you rank them.
+10. Cite the `receiptId` of each discovery result in the evidence of the candidates that it supports.
+11. Preserve the same baseline through target edits, retries, and corrections.
+12. If a tool is unavailable, report that limitation with the fallback source identity and coverage.
+
+A `preparing` response supplies neither completed candidates nor successful semantic evidence.
+In a repository that declares components, a `partial` response holds results only from the components it includes, so it is no evidence that a component it left out has no candidates.
+Live files cannot replace the original baseline after target edits.
+A known omission outside the affected scope limits repository coverage without implying missing affected source.
+
+## Candidate signals and ranking
+
+These signals justify investigation without prescribing a solution.
+
+| Signal | Observable evidence |
+| --- | --- |
+| Semantic redundancy | Similar concepts, parallel behavior, repeated constraints, overlapping requirements, or units that share a rare set of dependencies. |
+| Specialization | Repeated special cases, caller-specific interfaces, narrow rules, exceptions, overrides, or variants of one name with different contracts. |
+| Shallow abstraction | An interface exposes most implementation complexity or adds indirection without hiding knowledge, for example a class that forwards most methods to one field, or several entry points that clients use together and that share an input shape. |
+| Overexposure | Exports that no other module uses, or an interface whose importers each need only a small part of it. |
+| Information leakage | Several consumers must understand the same internal fact or domain policy, or spell the same rare set of values. |
+| Tactical accumulation | Historical exceptions, layered fallbacks, compatibility paths, or multiple mechanisms for related needs. |
+| Structural complexity | Excess dependencies, public surface, repeated state, branches, reference chains, fragmented sections, members of one class or module that fall into separate clusters, or long units that dispatch on many literal values. |
+
+1. Prioritize candidates using independent evidence dimensions and the caller's scope.
+2. Keep semantic overlap, duplicated knowledge, specialization, dependency overlap, interface burden, affected consumers, state duplication, and exceptions inspectable.
+3. Record expected impact and confidence separately from measured facts.
+4. Investigate a useful bounded subset before expanding discovery.
+
+No universal score is required, and a similarity score cannot select a transformation.
+Unexamined candidates remain unexamined rather than implicitly accepted or rejected.
+
+## Relationship reasoning
+
+| Relationship | Question to resolve |
+| --- | --- |
+| Duplicate | Do the concepts encode the same knowledge and obligations? |
+| Overlapping | Which responsibilities overlap, and which remain independent? |
+| Subsumed | Can an existing concept satisfy the other's obligations without new exceptions? |
+| Specializations of a shared concept | Is the common policy stable while the domain distinctions remain meaningful? |
+| Accidentally similar or keep distinct | Do similar words or structures hide different contracts, ownership, or lifecycles? |
+| Misplaced responsibility | Which concept should own the knowledge or decision? |
+| Leaking boundary | Which internal detail crosses boundaries and forces coordinated changes? |
+| Shallow abstraction | Does the interface hide enough complexity to justify its consumer cost? |
+
+Relationships explain evidence and need not use these exact labels.
+A candidate can have several relationships.
+
+HTTP, worker, and queue retry handlers can share backoff arithmetic while differing in deadlines, job ownership, and persistent scheduling.
+A shared retry policy helps only if it hides common knowledge while preserving those obligations.
+Other valid outcomes include retaining separate handlers, merging true duplicates, or replacing a handler with an existing sufficient concept.
+
+For text, concise-answer rules can overlap with rules against repeated questions or long introductions.
+Resynthesis can replace these rules with one direct-answer obligation only when their conditions and exceptions survive.
+Text deduplication alone does not establish that preservation.
+
+## Complexity evidence
+
+1. Select dimensions relevant to the candidate and available deterministic tooling.
+2. Reuse Prism comparison measurements where applicable, with project analyzers for additional supported dimensions.
+3. Bind before and after values to the same scope, method, and tool version where available.
+4. Separate observed measurements, estimates, qualitative judgments, and unknown values.
+5. Explain increases as well as decreases against the desired model and preserved behavior.
+
+| Dimension | Possible observations |
+| --- | --- |
+| Structural | Lines, files, functions, classes, branches, nesting, or cyclomatic complexity. |
+| Dependency | Edges, fan-in, fan-out, cycles, or coupling. |
+| Interface | Exports, commands, routes, configuration options, or required caller knowledge. |
+| State | Variables, persistent state, transitions, or duplicated lifecycle state. |
+| Conceptual | Added, removed, merged, or split concepts and semantic redundancy. |
+| Text and declarations | Rules, exceptions, prohibitions, sections, tokens, duplicated statements, reference chains, or contradictory constraints. |
+
+These are possible dimensions, not a claim that Prism implements every measurement.
+Unsupported deterministic dimensions remain unknown rather than estimated counts presented as measurements.
+Semantic concept counts and duplicated knowledge require identified concepts or qualified judgment.
+A Markdown bullet count is not a rule count without obligation classification.
+For analysis without a transformed artifact, after-values remain projections rather than observed results.
+
+A shared policy plus three thin specializations can increase concept count while reducing duplicated knowledge and consumer burden.
+Each tradeoff needs evidence.
+Neither the increase nor the decrease settles the decision alone.
+Managed slices retain their reviewed growth justifications and conservation gates.
+
+## Result fields
+
+| Field | Required content where applicable |
+| --- | --- |
+| Candidate | Every proposed candidate and every investigated similarity kept distinct, each with exact artifact locations, plus discovery coverage. |
+| Evidence | Source, semantic candidates, structural relationships, and relevant red flags. |
+| Relationship | Inferred relationship, meaningful distinctions, and confidence. |
+| Desired model | Knowledge ownership, retained boundaries, hidden details, and the reason this structure is preferable. |
+| Transformation | Selected operation, affected scope, and whether it is proposed or applied. |
+| Behavioral impact | Preserved observable obligations or a specific behavior change requiring a decision. |
+| Equivalence evidence | Checks and results, obligation mappings, review evidence, or planned checks for analysis. |
+| Complexity delta | Independent before/after dimensions, methods, tradeoffs, and unknown or projected values. |
+| Uncertainty | Missing evidence, unresolved distinctions, coverage limits, and deferred candidates. |
+| Escalation | The exact decision, affected authority, and evidence needed by the caller, or none. |
+
+The caller can reuse this evidence in its design, review records, or returned result.
+This table defines content, not a new serialization format or mandatory artifact.
+
+## Review criteria
+
+1. Check that evidence supports the inferred relationships before judging the transformation.
+2. Compare the desired model with the actual result and retained domain distinctions.
+3. Inspect complexity tradeoffs, knowledge ownership, interface depth, and consumer burden.
+4. Check preserved behavior, equivalence evidence, and explicitly reported uncertainty.
+5. For resynthesis, check original obligation coverage and resulting conditions, exceptions, and authority.
+6. Verify that behavior or architecture decisions remain within the caller's authority.
+
+Metric reductions, deduplication, extraction, and smaller units alone cannot establish conceptual improvement.
