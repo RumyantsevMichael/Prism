@@ -16,6 +16,7 @@ Rejecting an idea or recognizing existing coverage is a valid result.
 2. Read the [workflow](../workflow/SKILL.md), glossary, roadmap, product strategy when present, and related requirements, ADRs, and features.
 
 Configured paths override `docs/Glossary.md`, `docs/roadmap.md`, and `docs/requirements/`.
+In a project with a store, ideation reads and writes the glossary and requirements through `get_artifact` and `update_artifact`, as [store artifacts](../workflow/SKILL.md#common-terms).
 
 ## 2. Test the idea
 
@@ -43,7 +44,7 @@ External constraints can be requirements, but internal technology choices are de
 3. Call `update_roadmap` with an `add_initiative` operation that cites each Approved requirement section as `<file>.md§<number>`, the same form initiatives use.
 4. When the requirements amend an existing initiative, link them through the `update_roadmap` operation `update_initiative` instead.
 
-The identifier uses letters, digits, hyphens, or underscores, never changes, and names the initiative's plans folder.
+The identifier is a [portable name](../workflow/SKILL.md#common-terms), never changes, and names the initiative's plans folder.
 
 ## 5. Return the result
 

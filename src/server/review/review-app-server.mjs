@@ -5,8 +5,9 @@ import path from "node:path";
 import { ConservationStore, conservationStore } from "../conservation/conservation-store.mjs";
 import { withFileLock } from "../workflow/artifact-store.mjs";
 import { useManagedStores } from "../workflow/record-store-remote.mjs";
-import { describeRecordStore } from "../workflow/record-store.mjs";
+import { describeRecordStore, outsideToolCall } from "../workflow/record-store.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
+import { appliedArtifactAction, artifactStoreLocation } from "../workflow/store-artifacts.mjs";
 import {
   APP_LOCK_STALE_MS,
   REVIEW_APP_PROTOCOL,
@@ -32,6 +33,7 @@ import { createProjectReview, isTrustedHost, normalizeTabs, readBody, send, send
 import { loadAttention } from "./workspace-model.mjs";
 import { readWorkspaceIdentity, workspaceLabel } from "./workspace-identity.mjs";
 import { createWriteSessions } from "./write-sessions.mjs";
+import { parseStoreJson } from "../workflow/store-json.mjs";
 import { createViewerHub } from "./viewer-hub.mjs";
 import { createCachedValue } from "./cached-value.mjs";
 
@@ -59,7 +61,7 @@ function statusError(status, message) {
 function parseBody(text) {
   if (!text) return {};
   try {
-    return JSON.parse(text);
+    return parseStoreJson(text);
   } catch {
     throw statusError(400, "The request body must be JSON.");
   }
@@ -264,7 +266,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     if (!project) {
       const baseUrl = `http://127.0.0.1:${port}${viewerPrefix()}/p/${id}`;
       const onViewer = (sendNotice) => deliverPendingNotices(id, sendNotice);
-      const onAction = (event, { shared }) => announceAction(project, event, shared);
+      const onAction = (event, { shared, comment = null }) => announceAction(project, event, shared, comment);
       // A new project starts as the most recent, so the recent limit never drops the project being registered.
       project = { id, root, leases: new Map(), lastSeen: ++sequence, evidenceDirectories: [], intelligenceDirectories: [], recordStoreDirectories: [] };
       project.review = createProjectReview({ projectRoot: root, baseUrl, instance, appVersion: pluginVersion, onViewer, onAction, evidenceStore: () => evidenceStoreOf(project),
@@ -302,7 +304,9 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
 
   // An applied action reaches every checkout's page whose records resolve to the same record store, since those pages show the same records;
   // an index rebuild, and any action of a page whose store cannot be resolved, reaches only the applying page.
-  async function announceAction(project, event, shared) {
+  // An action on a store artifact, an approval or a comment, reaches only the checkouts that see that artifact, each naming it by its own path, as its own recent changes list it.
+  // Each such checkout reads only that artifact's status record or the one comment file the action stored, so an action costs about one entry for each open checkout, whatever the store holds.
+  async function announceAction(project, event, shared, comment) {
     project.review.notify("action", event);
     // An answered gate or a rebuild changes what the project list shows, and a shared store's gates count in every checkout of that store.
     if (!shared) project.summary.indexing.invalidate();
@@ -311,8 +315,18 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     const storeOf = (root) => describeRecordStore(root).then((store) => store.location ?? null, () => null);
     const location = await storeOf(project.root);
     if (!location) return;
-    await Promise.all([...projects.values()].filter((other) => other !== project && other.review.viewerCount() > 0).map(async (other) => {
-      if (await storeOf(other.root) === location) other.review.notify("action", event);
+    const others = [...projects.values()].filter((other) => other !== project && other.review.viewerCount() > 0);
+    if (!others.length) return;
+    const artifactLocation = event.artifact ? await artifactStoreLocation(project.root, event.artifact).catch(() => null) : null;
+    if (event.artifact && !artifactLocation) return;
+    await Promise.all(others.map(async (other) => {
+      if (await storeOf(other.root) !== location) return;
+      if (!event.artifact) {
+        other.review.notify("action", event);
+        return;
+      }
+      const seen = await appliedArtifactAction(other.root, { location: artifactLocation, id: event.id, action: event.action, comment }).catch(() => null);
+      if (seen) other.review.notify("action", seen);
     }));
   }
 
@@ -465,7 +479,8 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
     try { pathname = new URL(request.url, "http://127.0.0.1").pathname; } catch { return "<invalid>"; }
     return pathname.startsWith(viewerPrefix()) ? `<viewer>${pathname.slice(viewerPrefix().length)}` : pathname.startsWith("/control/") ? pathname : "<other>";
   };
-  const server = createServer(async (request, response) => {
+  // A request answers a browser, never a tool call, so no store access in it moves a checkout's artifacts, even on a server that a tool call started.
+  const server = createServer((request, response) => outsideToolCall(async () => {
     const started = performance.now();
     response.once("finish", () => {
       const ms = performance.now() - started;
@@ -526,7 +541,7 @@ export async function startReviewApp({ directory, pluginVersion = null, idleMs =
         send(response, error.status ?? 400, error.message);
       }
     }
-  });
+  }));
 
   // A successor keeps the port and viewer credential only from a recent handed-off file and only on that same port, so a tab reconnects
   // after a replacement but a credential that a tab may have sent to another listener after a crash or long ago is never served again.

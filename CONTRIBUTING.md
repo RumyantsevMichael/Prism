@@ -26,7 +26,7 @@ src/                 # editable server, native helper, and hook sources
     session/         # host adapters, session facts, capacity, and tracing
   native-runtime/    # native helper packaged into runtime archives
   hooks/             # session hook entry points
-dist/                # committed executable runtime and browser assets, same layout as src/
+dist/                # generated runtime and browser assets, same layout as src/; built, not committed
 test/                # server and native helper tests
 vendor/plantuml/     # pinned MIT PlantUML browser runtime
 bin/                 # MCP and standalone review launchers
@@ -43,6 +43,14 @@ Claude Code also reads a root `.mcp.json` as project config when a session runs 
 That project server has no `${CLAUDE_PLUGIN_ROOT}` value, so it fails to start.
 
 ## Local development
+
+The plugin runs from `dist/`, which is generated and not committed, so build it after cloning and after every change under `src/`:
+
+```bash
+npm ci --prefix scripts/native-build --ignore-scripts
+npm ci --prefix src/native-runtime --ignore-scripts
+npm run build:native
+```
 
 Load the working tree into Claude Code:
 
@@ -110,14 +118,17 @@ npx playwright install chromium
 PRISM_REQUIRE_BROWSER=1 npm test
 ```
 
-CI splits the server tests into three shards on Linux and three on Windows, each on its own runner, so the browser tests do not hold one runner for half an hour.
+CI splits the server tests into four shards on Linux and four on Windows, each on its own runner, so the browser tests do not hold one runner for half an hour.
+A Windows shard runs two test files at a time with `--test-concurrency=2`, because three browser test files at once on one Windows runner fail with `net::ERR_NO_BUFFER_SPACE`.
 `scripts/test-shard.mjs` balances the shards by the file durations in `test/server/durations.json`, and the `validate` and `windows` checks pass only when every shard passed.
+When Validate fails on main, the `Report main failures` workflow comments on the open issue labelled `ci-main-failure` with each failed test and its error, and opens that issue when none is open.
+Close that issue once main is stable again.
 A test file that the durations do not list counts as a median file, so a new file needs no update to run.
 Run one shard locally the way CI does, or list its files:
 
 ```bash
-PRISM_REQUIRE_BROWSER=1 node scripts/test-shard.mjs --shard 2/3 -- --test-timeout=1200000
-node scripts/test-shard.mjs --shard 2/3 --list
+PRISM_REQUIRE_BROWSER=1 node scripts/test-shard.mjs --shard 2/4 -- --test-timeout=1200000
+node scripts/test-shard.mjs --shard 2/4 --list
 ```
 
 When a shard runs much longer than the others, record the durations again with a full run and commit the rewritten file:
@@ -226,8 +237,8 @@ Older server modules remain JavaScript, and newer modules such as the conservati
 Shared source unit, index, and worker message types live in `src/server/repository-intelligence/repository-unit-types.mts`.
 Edit runtime sources under `src/`, then regenerate the complete runtime tree under `dist/`.
 The build compiles TypeScript and copies handwritten JavaScript, browser assets, and runtime registries.
-Commit both the edited sources and generated output.
-The package ships generated JavaScript, so users do not need a TypeScript compiler.
+`dist/` is ignored, so commit only the sources.
+CI builds `dist/` in every job that runs the plugin, and each release package ships the generated JavaScript, so users do not need a TypeScript compiler.
 
 ```bash
 npm ci --prefix src/native-runtime --ignore-scripts
@@ -242,9 +253,9 @@ node scripts/native-build/smoke.mjs dist/native
 node scripts/native-build/mcp-smoke.mjs dist/native
 ```
 
-The freshness check verifies the complete output file set, contents, and executable permissions.
+The freshness check, `npm run check:native`, verifies the complete output file set, contents, and executable permissions.
 It rejects missing, changed, and obsolete output without changing files.
-CI runs this check before any build that could repair committed output.
+The runtime archive builder runs it, so an archive never packs stale output.
 The dependency staging command copies installed helper dependencies into ignored `dist/native-runtime/node_modules`.
 Run staging after installing or patching helper dependencies.
 The build preserves staged dependencies and the ignored `dist/native` archive directory.

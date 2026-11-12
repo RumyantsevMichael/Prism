@@ -24,13 +24,14 @@ async function fixture() {
   await write(root, "skills/demo/SKILL.md", "---\nname: demo\n---\n");
   await write(root, "dist/server/mcp.mjs", "export {};\n");
   await write(root, "dist/native/prism-native-linux-x64.tar.gz", "ignored archive");
+  await write(root, "dist/native-runtime/node_modules/helper/index.js", "staged dependency");
   await write(root, "bin/prism", "#!/usr/bin/env node\n");
   await chmod(path.join(root, "bin/prism"), 0o755);
   await write(root, "vendor/native-runtime/manifest.json", '{"schemaVersion":1,"assetVersion":"development","bundles":{},"model":{"id":"m","revision":"r","files":[]}}\n');
   await write(root, "src/server.mts", "source\n");
   await write(root, "test/server.test.mjs", "test\n");
   await write(root, "README.md", "# Prism\n");
-  await write(root, ".gitignore", "/dist/native/\n");
+  await write(root, ".gitignore", "/dist/\n");
   git(root, "init", "-q", "-b", "main");
   git(root, "add", ".");
   git(root, "commit", "-q", "-m", "init");
@@ -45,7 +46,7 @@ async function fixture() {
   return { root, metadata, cleanup: () => Promise.all([rm(root, { recursive: true, force: true }), rm(metadata, { recursive: true, force: true })]) };
 }
 
-const files = root => git(root, "ls-files", "--others", "--cached").split("\n");
+const files = root => git(root, "ls-files").split("\n");
 
 test("the package holds the tracked runtime files and a manifest naming the release's assets", async () => {
   const { root, metadata, cleanup } = await fixture();
@@ -55,6 +56,7 @@ test("the package holds the tracked runtime files and a manifest naming the rele
     const listed = execFileSync("find", [".", "-type", "f"], { cwd: out, encoding: "utf8" }).split("\n").filter(Boolean).map(file => file.slice(2)).sort();
     assert.deepEqual(listed, [".agents/plugins/marketplace.json", ".claude-plugin/marketplace.json", ".claude-plugin/plugin.json", "README.md", "bin/prism", "dist/server/mcp.mjs", "skills/demo/SKILL.md", "vendor/native-runtime/manifest.json"]);
     assert.ok(files(root).includes("src/server.mts"));
+    assert.ok(!files(root).includes("dist/server/mcp.mjs"));
     assert.equal((await stat(path.join(out, "bin/prism"))).mode & 0o111, 0o111);
     const manifest = JSON.parse(await readFile(path.join(out, "vendor/native-runtime/manifest.json"), "utf8"));
     assert.equal(manifest.assetVersion, "v1.2.3");
@@ -65,6 +67,15 @@ test("the package holds the tracked runtime files and a manifest naming the rele
     assert.deepEqual(JSON.parse(await readFile(path.join(out, ".agents/plugins/marketplace.json"), "utf8")).plugins[0].source, { source: "local", path: "./" });
     assert.equal(manifest.bundles["win32-x64"].url, `https://github.com/${repository}/releases/download/v1.2.3/prism-native-win32-x64.tar.gz`);
     await rm(out, { recursive: true, force: true });
+  } finally { await cleanup(); }
+});
+
+test("a checkout without built runtime output cannot be packaged", async () => {
+  const { root, metadata, cleanup } = await fixture();
+  try {
+    await rm(path.join(root, "dist"), { recursive: true, force: true });
+    const out = path.join(root, "..", `${path.basename(root)}-package`);
+    await assert.rejects(buildPackage({ checkout: root, out, repository, tag: "v1.2.3", metadata }), /npm run build:native/);
   } finally { await cleanup(); }
 });
 

@@ -805,6 +805,47 @@ a.inspect-tile:focus-visible {
   overflow-wrap: anywhere;
 }
 
+/* An approval gate names its file in full, its scope, and the status an approval records; a long path wraps inside the card. */
+.gate-approval .key-values {
+  margin: 0;
+}
+
+.approval-path {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The status that approving writes holds up to 200 characters, so it is wrapping text, never a one-line label that cuts it off. */
+.approval-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--prism-space-1) var(--prism-space-2);
+  max-width: 100%;
+  min-width: 0;
+  padding-block: var(--prism-space-1);
+  line-height: var(--prism-line-height);
+}
+
+.approval-status-value {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.approval-status-value.is-recorded {
+  color: var(--prism-color-ink-muted);
+}
+
+.approval-status-value.is-approved {
+  color: var(--prism-color-success);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.approval-status-arrow {
+  color: var(--prism-color-ink-muted);
+}
+
 .attention-footnote {
   margin: 0;
   font-size: var(--prism-font-size-xs);
@@ -1398,6 +1439,105 @@ a.inspect-tile:focus-visible {
 .decision-list > li > .muted {
   margin-left: auto;
   font-size: var(--prism-font-size-xs);
+}
+
+/* ---------- Launched sessions: one card per session, its facts, its terminal command, and its actions ---------- */
+
+.launches,
+.launches-list {
+  display: grid;
+  gap: var(--prism-space-5);
+  min-width: 0;
+}
+
+.launches-notice:empty,
+.launches-error[hidden] {
+  display: none;
+}
+
+.launch-info {
+  display: grid;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.launch-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-3) var(--prism-space-4);
+  min-width: 0;
+}
+
+.launch-title {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--prism-font-size-lg);
+  overflow-wrap: anywhere;
+}
+
+.view-section .launch-reason {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.launch-info .key-values {
+  margin: 0;
+}
+
+.launch-running {
+  font-variant-numeric: tabular-nums;
+}
+
+.launch-resume {
+  display: grid;
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+.view-section .launch-resume-lead {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.launch-folder {
+  color: var(--prism-color-ink);
+  font-family: var(--prism-font-code);
+  font-size: var(--prism-font-size-code);
+  overflow-wrap: anywhere;
+}
+
+.launch-command {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+/* The command takes the room its Copy button leaves, so a long command scrolls inside its block and the button keeps its width. */
+.launch-code {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.launch-actions {
+  min-width: 0;
+  margin-top: var(--prism-space-3);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.launch-actions:empty {
+  display: none;
+}
+
+.launch-action-effect {
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  font-weight: var(--prism-font-weight-regular);
 }
 
 /* ---------- Narrow windows ---------- */

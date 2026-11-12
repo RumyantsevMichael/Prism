@@ -1,5 +1,6 @@
 import { lstat, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { parseStoreJson } from "./store-json.mjs";
 
 // A ## Components block proposed from the workspace manifests at a project root: the folders that their workspace patterns match,
 // each named after its own manifest, with a test command from its package.json test script and dependencies on the other proposed folders.
@@ -42,7 +43,7 @@ async function manifestText(root, relative) {
 
 function parseJson(text) {
   let value;
-  try { value = JSON.parse(text); } catch (error) { throw new Unreadable(`is not valid JSON: ${error.message}`); }
+  try { value = parseStoreJson(text); } catch (error) { throw new Unreadable(`is not valid JSON: ${error.message}`); }
   if (!isObject(value)) throw new Unreadable("is not a JSON object.");
   return value;
 }

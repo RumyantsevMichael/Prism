@@ -9,7 +9,10 @@ const CONFIG_KEYS = [
   "model_auto_compact_token_limit_scope"
 ];
 const CAPACITY_KEYS = CONFIG_KEYS.slice(1);
-const CONFIG_TIMEOUT_MS = 1200;
+// A Codex app server answers config/read in about 0.3 s, but on a busy Windows runner about one read in thirty took over 1.2 s, and the slowest of 280 took 2.7 s.
+// The read returns as soon as the answer arrives, so the bound costs time only when the app server is slow, and it stays inside the hook's 5 s budget.
+// A hook that runs past its budget is stopped before it writes, so the session keeps the settings it last read.
+const CONFIG_TIMEOUT_MS = 4000;
 const MAX_APP_SERVER_OUTPUT_BYTES = 1024 * 1024;
 
 export const CODEX_CONFIG_REASON = Object.freeze({

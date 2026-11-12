@@ -5,11 +5,12 @@ import { mkdir, readFile, realpath, rm, lstat } from "node:fs/promises";
 import path from "node:path";
 import { withArtifactLock as withStateLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { locateRecord, moveLegacyRecords, sliceDocumentFolder, writeRecord } from "./record-store.mjs";
+import { inArtifactStore, locateRecord, moveLegacyRecords, oversizedRevision, readArtifactText, readStoreFileBytes, sliceDocumentFolder, STORE_FILE_BOUNDS, writeArtifactText, writeRecord } from "./record-store.mjs";
 import { canonicalJson, mergeOrder, mergeScalars, mergeUnit, MergeConflict, parseVersions } from "./record-merge.mjs";
 import { revisionMismatch } from "./revision.mjs";
 import { refuseShipped } from "./shipped-history.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 const SCHEMA_VERSION = 1;
 
@@ -49,7 +50,7 @@ function keepPersonSettings(before, requested) {
 }
 const ACTIVE_KEYS = new Set(["slice", "activity", "label", "workers", "workspace", "reviewLanes", "findingsPath", "reviewPath"]);
 const GATE_KINDS = new Set(["visual-review", "correctness", "decision", "assistance"]);
-const GATE_KEYS = new Set(["id", "kind", "slice", "question", "context", "artifacts", "options", "recommended", "askedAt", "answer"]);
+const GATE_KEYS = new Set(["id", "kind", "slice", "question", "context", "artifacts", "options", "recommended", "askedAt", "standing", "answer"]);
 const ASK_KEYS = ["op", "kind", "slice", "question", "context", "artifacts", "options", "recommended"];
 const OPTION_KEYS = new Set(["id", "label", "consequence"]);
 const RECOMMENDED_KEYS = new Set(["option", "reason"]);
@@ -132,7 +133,7 @@ async function resolveState(projectRoot, initiative) {
   }
   const located = await locateRecord(projectRoot, { kind: "state", initiative });
   const config = await readWorkflowConfig(located.root);
-  return { root: located.root, initiative, path: located.target, displayPath: located.path, directory: initiativeDirectory(config, initiative) };
+  return { root: located.root, initiative, path: located.target, displayPath: located.path, directory: initiativeDirectory(config, initiative), store: (config.workspace?.store ?? null) !== null };
 }
 
 function revisionOf(contents) {
@@ -403,6 +404,10 @@ function validateGate(entry, entryPath, errors) {
   if (typeof entry.askedAt !== "string" || Number.isNaN(Date.parse(entry.askedAt))) {
     addError(errors, `${entryPath}.askedAt`, "must be an ISO timestamp");
   }
+  if (entry.standing !== undefined) {
+    if (entry.kind !== "correctness") addError(errors, `${entryPath}.standing`, "is recorded only on a correctness gate");
+    else if (!wellFormedStanding(entry.standing)) addError(errors, `${entryPath}.standing`, "must be { runs, slices, repositories, adrs } as the ask operation records it");
+  }
   if (entry.answer !== undefined) {
     if (!isRecord(entry.answer) || Object.keys(entry.answer).some((key) => !ANSWER_KEYS.has(key))) {
       addError(errors, `${entryPath}.answer`, "must contain only choice, note, via, answeredAt, by, and entry");
@@ -415,6 +420,22 @@ function validateGate(entry, entryPath, errors) {
       if (entry.answer.entry !== undefined && (typeof entry.answer.entry !== "string" || !ENTRY_ID.test(entry.answer.entry))) addError(errors, `${entryPath}.answer.entry`, "must be a history entry id of 32 lowercase hexadecimal characters");
     }
   }
+}
+
+const STANDING_ITEMS_MAX = 1000;
+const exactly = (value, keys) => isRecord(value) && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+const shortText = (value, max) => typeof value === "string" && value !== "" && value.length <= max;
+
+// What an initiative stood at when a correctness gate was asked: each leaf's latest passing run id, or null, each slice.md's version,
+// the repositories that each slice's links resolve in, and the version of each ADR that its ship would accept.
+function wellFormedStanding(value) {
+  const listed = (key) => Array.isArray(value[key]) && value[key].length <= STANDING_ITEMS_MAX;
+  const version = (item) => exactly(item, ["scope", "path", "version"]) && shortText(item.scope, 200) && shortText(item.path, 1000) && /^sha256:[0-9a-f]{64}$/.test(item.version);
+  if (!exactly(value, ["runs", "slices", "repositories", "adrs"]) || !["runs", "slices", "repositories", "adrs"].every(listed)) return false;
+  return value.runs.every((item) => exactly(item, ["slice", "run"]) && shortText(item.slice, 200) && (item.run === null || shortText(item.run, 200)))
+    && value.slices.every(version)
+    && value.repositories.every((item) => exactly(item, ["folder", "repositories"]) && shortText(item.folder, 1000) && Array.isArray(item.repositories) && item.repositories.length <= STANDING_ITEMS_MAX && item.repositories.every((name) => shortText(name, 200)))
+    && value.adrs.every(version);
 }
 
 // Each gate kind accepts its own choices; a note carries the reason whenever the answer is not a plain acceptance.
@@ -503,10 +524,11 @@ function droppedGates(before, replacement) {
   return dropped.map((gate) => closedGate(gate, null));
 }
 
-function applyGateOperations(pending, operations) {
+function applyGateOperations(pending, operations, standing = null) {
   const next = [...pending];
   const opened = [];
   const closed = [];
+  const superseded = [];
   operations.forEach((operation, index) => {
     if (!isRecord(operation)) {
       throw error("invalid_changes", `gateOperations[${index}] must be an object.`);
@@ -525,7 +547,9 @@ function applyGateOperations(pending, operations) {
         artifacts: operation.artifacts ?? [],
         ...(operation.options === undefined ? {} : { options: operation.options }),
         ...(operation.recommended === undefined ? {} : { recommended: operation.recommended }),
-        askedAt: new Date().toISOString()
+        askedAt: new Date().toISOString(),
+        // With a record store, a correctness gate records what the initiative stands at, which a ship that it confirms compares with the initiative then.
+        ...(operation.kind === "correctness" && standing !== null ? { standing } : {})
       };
       const errors = [];
       validateGate(gate, `gateOperations[${index}]`, errors);
@@ -535,6 +559,16 @@ function applyGateOperations(pending, operations) {
       }
       if (errors.length) {
         throw error("invalid_changes", `The user gate is invalid: ${errors.join("; ")}.`, { errors });
+      }
+      // A new correctness gate asks the person to confirm the initiative as it stands now, so it supersedes each earlier one the person already answered,
+      // which closes with a reason naming the new gate, and a ship never meets an answered question that no one acts on; an unanswered one stays the person's question.
+      if (gate.kind === "correctness") {
+        const answered = next.filter((earlier) => isRecord(earlier) && earlier.kind === "correctness" && earlier.answer);
+        for (const earlier of answered) {
+          closed.push(closedGate(earlier, `The newer correctness gate ${gate.id} supersedes this answered one.`));
+          superseded.push(earlier.id);
+          next.splice(next.indexOf(earlier), 1);
+        }
       }
       next.push(gate);
       opened.push({ id: gate.id, kind: gate.kind, slice: gate.slice ?? null });
@@ -568,29 +602,37 @@ function applyGateOperations(pending, operations) {
       throw error("invalid_changes", `gateOperations[${index}].op must be ask or resolve.`);
     }
   });
-  return { pending: next, opened, closed };
+  return { pending: next, opened, closed, superseded: superseded.sort() };
 }
 
-// The user answered the question as it was asked, so a replacement pending list keeps an answered gate exactly as it stands:
-// moving it to another slice, refreshing when it was asked, or rewording its question or options would reuse the answer for a question the user never saw.
-function assertAnsweredGatesUnchanged(before, replacement) {
-  if (replacement === undefined) return;
-  const answered = new Map(before.filter((gate) => isRecord(gate) && gate.answer !== undefined).map((gate) => [gate.id, canonicalJson(gate)]));
-  for (const gate of replacement.filter(isRecord)) {
-    if (answered.has(gate.id) && answered.get(gate.id) !== canonicalJson(gate)) {
-      throw error("invalid_changes", `The user gate ${gate.id} has an answer, so the pending list must keep it unchanged; drop it or resolve it instead.`);
-    }
-  }
-}
-
-// Only the review browser records answers, so agent updates may keep an answer but never add or change one.
-function assertAnswersUnchanged(before, after) {
-  const previous = new Map(before.filter(isRecord).map((gate) => [gate.id, JSON.stringify(gate.answer ?? null)]));
+// Only the review browser records answers, so agent updates may keep an answer but never add or change one,
+// and a gate that has an answer stays as the person was shown it: an update may drop it, which closes it, but changes nothing else about it.
+// What a correctness gate records the initiative stood at is Prism's own, so only the ask operation that opens the gate records it.
+function assertAnsweredGatesUnchanged(before, after, opened) {
+  const previous = new Map(before.filter(isRecord).map((gate) => [gate.id, gate]));
+  const asked = new Set(opened.map((gate) => gate.id));
   for (const gate of after.filter(isRecord)) {
-    if (gate.answer !== undefined && previous.get(gate.id) !== JSON.stringify(gate.answer)) {
+    if (asked.has(gate.id)) continue;
+    const earlier = previous.get(gate.id);
+    if (gate.answer !== undefined && JSON.stringify(earlier?.answer ?? null) !== JSON.stringify(gate.answer)) {
       throw error("invalid_changes", `The user gate ${gate.id} has an answer that only the review browser can record.`);
     }
+    if (earlier?.answer !== undefined && canonicalJson(earlier) !== canonicalJson(gate)) {
+      throw error("invalid_changes", `The user gate ${gate.id} has an answer, so it stays as the person was shown it: drop it from pending to close it, or ask a new question with a gateOperations ask.`);
+    }
+    if (canonicalJson(gate.standing ?? null) !== canonicalJson(earlier?.standing ?? null)) {
+      throw error("invalid_changes", `The user gate ${gate.id} would record what the initiative stood at, which only Prism records when a gateOperations ask opens a correctness gate.`);
+    }
   }
+}
+
+// A correctness gate asked in a project with a record store records what the initiative stands at, read before the state lock is taken, so the read never waits on a store sync while holding it.
+async function askedStanding(resolved, changes) {
+  if (!resolved.store || !(changes.gateOperations ?? []).some((operation) => isRecord(operation) && operation.op === "ask" && operation.kind === "correctness")) return null;
+  const { initiativeStanding } = await import("./ship-standing.mjs");
+  // A gate whose standing could not be read, as one asked while the store is unreadable, or that is more than a gate records, is still asked, and confirms no ship: the ship then asks for a new one.
+  const standing = await initiativeStanding(resolved.root, resolved.initiative).catch(() => null);
+  return standing !== null && wellFormedStanding(standing) ? standing : null;
 }
 
 const nullableText = (value) => value === null || (typeof value === "string" && value.length <= 200);
@@ -723,8 +765,12 @@ function validateChanges(changes) {
 async function loadState(statePath) {
   let contents;
   try {
-    contents = await readFile(statePath, "utf8");
+    // The state is read without following a link and only within its kind's bound, so a larger file reads as a damaged one, unread.
+    const bytes = await readStoreFileBytes(statePath, STORE_FILE_BOUNDS.state);
+    if (bytes === null) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    contents = bytes.toString("utf8");
   } catch (caught) {
+    if (caught.tooLarge) return { exists: true, revision: oversizedRevision(caught), contents: "", state: null, valid: false, errors: [`state: ${caught.message}`], warnings: [] };
     if (caught.code === "ENOENT") {
       return {
         exists: false,
@@ -741,7 +787,7 @@ async function loadState(statePath) {
   const revision = revisionOf(contents);
   let raw;
   try {
-    raw = JSON.parse(contents);
+    raw = parseStoreJson(contents);
   } catch (caught) {
     return {
       exists: true,
@@ -963,7 +1009,7 @@ export function mergeCoordinationState(versions) {
     const fitted = fitState(merged);
     if (fitted === null) return { conflict: "The merged coordination state exceeds 1 MiB with its history and closed gates dropped." };
     const { contents } = fitted;
-    const { errors } = validateStateValue(JSON.parse(contents));
+    const { errors } = validateStateValue(parseStoreJson(contents));
     if (errors.length) return { conflict: `The merged coordination state is invalid: ${errors[0]}` };
     return { contents };
   } catch (caught) {
@@ -990,11 +1036,26 @@ export async function updateCoordinationState({ projectRoot, initiative, expecte
   await moveLegacyRecords(projectRoot);
   const resolved = await resolveState(projectRoot, initiative);
   await mkdir(path.dirname(resolved.path), { recursive: true });
-  return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
+  const standing = await askedStanding(resolved, changes);
+  const result = await withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
     // A ship that landed after the first check refuses the change too, so the state never changes after the initiative shipped.
     await refuseShipped(projectRoot, initiative);
-    return applyStateChange(resolved, expectedRevision, changes);
+    return applyStateChange(resolved, expectedRevision, changes, standing);
   }, error, { renew: Boolean(changes.activeOperations?.length) }));
+  await markLaunchedGates(projectRoot, initiative, result.openedGates);
+  return result;
+}
+
+// A gate asked by a launched session of this machine, whose environment names its launch, is marked in that launch folder once the
+// ask is written; the gate record stays as it is, and a mark that cannot be written leaves the ask as it succeeded.
+async function markLaunchedGates(projectRoot, initiative, opened) {
+  if (typeof process.env.PRISM_LAUNCH !== "string" || !process.env.PRISM_LAUNCH || !Array.isArray(opened) || !opened.length) return;
+  try {
+    const { markLaunchGates } = await import("../session/launched-sessions.mjs");
+    await markLaunchGates({ projectRoot, initiative, gates: opened.map((gate) => gate?.id), env: process.env });
+  } catch {
+    // The launched session then shows no wait for the gate, and the person resumes it after answering.
+  }
 }
 
 // Resolving a gate by its id removes only that gate, so it holds after any other change, such as the browser answer that prompted it.
@@ -1003,7 +1064,7 @@ function resolvesGatesOnly(changes) {
   return keys.length === 1 && keys[0] === "gateOperations" && changes.gateOperations.length > 0 && changes.gateOperations.every((operation) => operation?.op === "resolve");
 }
 
-async function applyStateChange(resolved, expectedRevision, changes) {
+async function applyStateChange(resolved, expectedRevision, changes, standing = null) {
     const current = await loadState(resolved.path);
     if (current.revision !== expectedRevision && !(current.exists && resolvesGatesOnly(changes))) {
       throw error(expectedRevision === "null" ? "invalid_revision" : "revision_conflict", revisionMismatch("coordination state", expectedRevision, current.revision), { current: publicStateResult(resolved, current) });
@@ -1015,10 +1076,11 @@ async function applyStateChange(resolved, expectedRevision, changes) {
     if (changes.active !== undefined && JSON.stringify(changes.active) !== JSON.stringify(before.active)) throw error("gate_blocked", "Use typed activeOperations to change active work; array replacement cannot bypass review gates.");
     return withReviewGatesLocked(resolved.root, resolved.initiative, before.active, changes.activeOperations ?? [], async () => {
     const activeResult = await applyActiveOperations(resolved.root, resolved.initiative, before.active, changes.activeOperations ?? []);
-    assertAnsweredGatesUnchanged(before.pending, changes.pending);
+    // A replacement pending list keeps an answered gate as it stands too, so a resolve in the same change cannot close a reworded copy.
+    if (Array.isArray(changes.pending)) assertAnsweredGatesUnchanged(before.pending, changes.pending, []);
     const dropped = droppedGates(before.pending, changes.pending);
-    const gateResult = applyGateOperations(changes.pending ?? before.pending, changes.gateOperations ?? []);
-    assertAnswersUnchanged(before.pending, gateResult.pending);
+    const gateResult = applyGateOperations(changes.pending ?? before.pending, changes.gateOperations ?? [], standing);
+    assertAnsweredGatesUnchanged(before.pending, gateResult.pending, gateResult.opened);
     const closed = [...(before.closed ?? []), ...dropped, ...gateResult.closed].slice(-CLOSED_LIMIT);
     const requested = changes.settings === undefined ? null : keepPersonSettings(before, changes.settings);
     const candidate = normalizeState({
@@ -1046,9 +1108,32 @@ async function applyStateChange(resolved, expectedRevision, changes) {
       previousRevision: current.revision
       ,completions: activeResult.completions,
       openedGates: gateResult.opened,
+      ...(gateResult.superseded.length ? { supersededGates: gateResult.superseded } : {}),
       ...(requested?.kept.length ? { keptSettings: requested.kept } : {})
     };
     });
+}
+
+/**
+ * Close the pending gate that confirmed a ship, which the caller holds the state record's lock for, as update_roadmap does while it ships:
+ * the gate moves to closed with its answer, and a gate that is already closed or gone leaves the state as it is.
+ */
+export async function closeShipGate(projectRoot, initiative, id) {
+  const resolved = await resolveState(projectRoot, initiative);
+  const current = await loadState(resolved.path);
+  if (!current.exists || !current.valid) return false;
+  const position = current.state.pending.findIndex((item) => isRecord(item) && item.id === id);
+  if (position === -1) return false;
+  const pending = [...current.state.pending];
+  const [gate] = pending.splice(position, 1);
+  const closed = [...(current.state.closed ?? []), closedGate(gate, "The initiative shipped with this gate's approval.")].slice(-CLOSED_LIMIT);
+  const candidate = normalizeState({ ...current.state, pending, closed });
+  const validation = validateStateValue(candidate);
+  if (validation.errors.length > 0) {
+    throw error("invalid_state", "The state without the ship's gate is invalid and was not written.", { errors: validation.errors });
+  }
+  await writeRecord(resolved.root, { kind: "state", initiative: resolved.initiative }, stateContents(candidate));
+  return true;
 }
 
 export async function answerUserGate({ projectRoot, initiative, id, choice = null, note = null, write = writeRecord }) {
@@ -1146,7 +1231,7 @@ export async function recordPersonAction({ projectRoot, initiative, prepare }) {
   }, error));
 }
 
-// The recovery note is a human document, so it sits in the slice's plans folder beside slice.md.
+// The recovery note is a human document, so it sits in the slice's plans folder beside slice.md, in the record store when the project names one.
 export async function checkpointPause({ projectRoot, initiative, expectedRevision, activeSlice, recoveryContent, changes }) {
   validateChanges(changes);
   if (typeof activeSlice !== "string" || !SLUG_PATTERN.test(activeSlice) || typeof recoveryContent !== "string" || !recoveryContent.trim() || Buffer.byteLength(recoveryContent) > 65536) {
@@ -1164,9 +1249,12 @@ export async function checkpointPause({ projectRoot, initiative, expectedRevisio
   if (!isInside(resolved.root, recovery)) {
     throw error("invalid_path", "The recovery note must be inside the project root.");
   }
-  await assertNearestExistingPathInside(resolved.root, path.dirname(recovery));
+  const recoveryRelative = path.relative(resolved.root, recovery).split(path.sep).join("/");
+  const inStore = await inArtifactStore(resolved.root, recoveryRelative);
+  if (!inStore) await assertNearestExistingPathInside(resolved.root, path.dirname(recovery));
   await mkdir(path.dirname(resolved.path), { recursive: true });
-  return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
+  const standing = await askedStanding(resolved, changes);
+  const paused = await withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
     // A ship that landed after the first check refuses the pause too, before the recovery note is written.
     await refuseShipped(projectRoot, initiative);
     const current = await loadState(resolved.path);
@@ -1176,31 +1264,36 @@ export async function checkpointPause({ projectRoot, initiative, expectedRevisio
     if (!current.valid || !current.state?.active.some((item) => item.slice === activeSlice)) {
       throw error("invalid_pause", "The slice is not active in the current coordination state.");
     }
-    const recoveryRelative = path.relative(resolved.root, recovery).split(path.sep).join("/");
     const stateRelativeRecovery = path.relative(path.resolve(resolved.root, resolved.directory), recovery).split(path.sep).join("/");
     const remainingActive = current.state.active.filter((item) => item.slice !== activeSlice);
     if (changes.active !== undefined && JSON.stringify(changes.active) !== JSON.stringify(remainingActive)) {
       throw error("invalid_pause", "The pause must preserve every other active slice.");
     }
     if (changes.activeOperations !== undefined) throw error("invalid_pause", "A pause releases only its named slice; other active operations are not allowed.");
-    const existing = await lstat(recovery).catch((caught) => caught.code === "ENOENT" ? null : Promise.reject(caught));
-    if (existing?.isSymbolicLink() || (existing && !existing.isFile())) throw error("invalid_path", "The recovery note must be a regular file.");
-    const previous = existing ? await readFile(recovery, "utf8") : null;
+    let previous;
+    if (inStore) previous = await readArtifactText(resolved.root, recoveryRelative);
+    else {
+      const existing = await lstat(recovery).catch((caught) => caught.code === "ENOENT" ? null : Promise.reject(caught));
+      if (existing?.isSymbolicLink() || (existing && !existing.isFile())) throw error("invalid_path", "The recovery note must be a regular file.");
+      previous = existing ? await readFile(recovery, "utf8") : null;
+    }
     try {
-      await conservationStore.registerCoordinationOutputs(resolved.root, [recoveryRelative]);
-      await mkdir(path.dirname(recovery), { recursive: true });
-      await conservationStore.writeManaged(resolved.root, recovery, recoveryContent.endsWith("\n") ? recoveryContent : `${recoveryContent}\n`);
+      if (!inStore) await conservationStore.registerCoordinationOutputs(resolved.root, [recoveryRelative]);
+      await writeArtifactText(resolved.root, recoveryRelative, recoveryContent.endsWith("\n") ? recoveryContent : `${recoveryContent}\n`, { write: (target, text) => conservationStore.writeManaged(resolved.root, target, text) });
       const result = await applyStateChange(resolved, expectedRevision, {
         ...changes,
         active: undefined,
         activeOperations: [{ op: "release", slice: activeSlice }],
         evidence: [...new Set([...current.state.evidence, ...(changes.evidence ?? []), stateRelativeRecovery])]
-      });
+      }, standing);
       return { ...result, recoveryPath: recoveryRelative, recoveryDigest: createHash("sha256").update(recoveryContent.endsWith("\n") ? recoveryContent : `${recoveryContent}\n`).digest("hex"), pausedSlice: activeSlice };
     } catch (caught) {
-      if (previous === null) await rm(recovery, { force: true }).catch(() => {});
+      if (inStore) await writeArtifactText(resolved.root, recoveryRelative, previous).catch(() => {});
+      else if (previous === null) await rm(recovery, { force: true }).catch(() => {});
       else await writeAtomically(recovery, previous).catch(() => {});
       throw caught;
     }
   }, error));
+  await markLaunchedGates(projectRoot, initiative, paused.openedGates);
+  return paused;
 }

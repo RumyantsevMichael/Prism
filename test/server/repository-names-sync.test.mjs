@@ -100,7 +100,8 @@ test("a name the store already registered needs no remote, and a moved remote is
   const api = await repository(value.parent, "api", { remote: "https://github.com/acme/api.git", ...config(value.a, { repository: "api" }) });
   ok(await (await on(context, value.a, api)).call("get_roadmap"));
   git(value.storeA, "remote", "set-url", "origin", path.join(value.parent, "missing-remote.git"));
-  ok(await createInitiative(await on(context, value.a, api), "offline-work"));
+  // The remote is unreachable, so the initiative is created without a claim, which a sync would have to confirm.
+  ok(await createInitiative(await on(context, value.a, api), "offline-work", { claim: false }));
   const moved = await cloneOf(api, value.parent, "moved", { remote: "https://github.com/acme/platform-api.git" });
   ok(await (await on(context, value.a, moved)).call("get_roadmap"));
   assert.deepEqual((await registration(value.storeA, "api")).remotes, ["https://github.com/acme/api.git", "https://github.com/acme/platform-api.git"]);

@@ -7,9 +7,9 @@ import { assertInput } from "./workflow/artifact-schema.mjs";
 import { CONSERVATION_TOOLS, callConservationTool } from "./conservation/conservation-tools.mjs";
 import { conservationStore } from "./conservation/conservation-store.mjs";
 import { ChangeMapError, GET_CHANGE_MAP_SCHEMA, UPDATE_CHANGE_MAP_SCHEMA, getChangeMap, updateChangeMap } from "./conservation/change-map.mjs";
-import { readFile, realpath } from "node:fs/promises";
+import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { recordStoreOf, restoreMigrationReports, takeMigrationReports } from "./workflow/record-store.mjs";
+import { COMMENTS_PER_ARTIFACT_MAX, finishUnfinishedMoves, nameToolCallRoot, outsideToolCall, recordStoreOf, restoreMigrationReports, takeMigrationReports, toolCallContext, withToolCall } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
 import { confirmSavedConflicts, releaseSavedConflicts, takeSavedConflicts } from "./workflow/record-store-sync.mjs";
 import { callSessionId, withCallSession } from "./workflow/slice-claims.mjs";
@@ -38,6 +38,11 @@ import { checkpointPause, readCoordinationState, updateCoordinationState, valida
 import { historyMarksText, shippedHistory } from "./workflow/shipped-history.mjs";
 import { INITIATIVE_TOOLS, InitiativeError, claimedByUpdate, getInitiative, initiativeAcknowledgement, initiativeWork, readInitiative, requireClaimedWork, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
+import { ARTIFACT_TOOLS, artifactAtLocation, getArtifact, updateArtifact } from "./workflow/store-artifacts.mjs";
+import { savedComment } from "./workflow/artifact-comments.mjs";
+import { keptExplanation, shownPath } from "./workflow/artifact-migration.mjs";
+import { ARTIFACT_MIGRATIONS, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX } from "./workflow/artifact-paths.mjs";
+import { forgetAskedGates, recordAskedGates } from "./workflow/approval-deliveries.mjs";
 import { VERIFY_SLICE_SCHEMA, cancelVerifications, verificationBrief, verifySlice } from "./workflow/verification.mjs";
 import { cancelRecordSyncs } from "./workflow/record-store-sync.mjs";
 import { stopClaimRenewals } from "./workflow/slice-claims.mjs";
@@ -45,7 +50,7 @@ import { managedStoresDirectory } from "./workflow/remote-url.mjs";
 import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
 import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, waitForUserGates } from "./workflow/gate-wait.mjs";
-import { endGateWait, keptSettingsText, personChangesText, startGateWait, takePersonChanges } from "./workflow/change-notices.mjs";
+import { endGateWait, keptSettingsText, personChangesText, rememberAskedGates, startGateWait, takePersonChanges } from "./workflow/change-notices.mjs";
 import { callAgent, currentCallAgent, withCallAgent } from "./workflow/call-agent.mjs";
 import { recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
@@ -134,10 +139,12 @@ async function requestedProjectRoot(argumentsValue) {
       throw new Error(`The projectRoot argument does not match the host project root ${resolvedRoot}. Pass that path, which is the directory where the session started.`);
     }
   }
+  // The tool call's project root is the checkout whose first store access in this call may move its existing artifacts into the store, since this call's result reports the move.
+  nameToolCallRoot(resolvedRoot);
   // A host that names no project at start, such as Codex, lists its project in the review app from its first Prism tool call.
-  reviewServers.register(resolvedRoot);
-  // The native index starts building once the project is known, so a later search finds it ready; this never waits for the build.
-  void startBackgroundPreparation(resolvedRoot);
+  outsideToolCall(() => reviewServers.register(resolvedRoot));
+  // The native index starts building once the project is known, so a later search finds it ready; this never waits for the build, and the build moves no artifact.
+  void outsideToolCall(() => startBackgroundPreparation(resolvedRoot));
   return resolvedRoot;
 }
 
@@ -186,20 +193,20 @@ function reviewContent(url, review) {
 function stateContent(result) {
   const validity = result.valid ? "valid" : "invalid";
   const revision = result.revision ?? "none";
-  const opened = result.openedGates?.length ? `\nOpened user gates: ${result.openedGates.map((gate) => gate.id).join(", ")}` : "";
+  const opened = `${result.openedGates?.length ? `\nOpened user gates: ${result.openedGates.map((gate) => gate.id).join(", ")}` : ""}${result.supersededGates?.length ? `\nAnswered correctness gates superseded and closed: ${result.supersededGates.join(", ")}` : ""}`;
   const answered = (result.state?.pending ?? []).filter((gate) => gate?.answer);
   const gates = `${opened}${answered.length ? `\nUser gates answered in the review browser: ${answered.map((gate) => gate.id).join(", ")}` : ""}`;
   return `Coordination state ${validity}: ${result.initiative}\nRevision: ${revision}${gates}`;
 }
 
-// A read of a shipped initiative that marked its slice documents asks to commit them apart from the task's changes.
-function historyMarksContent(history) {
-  return history?.marked?.length ? [{ type: "text", text: historyMarksText(history.initiative, history.marked) }] : [];
+// A read of a shipped initiative that marked its slice documents asks to commit those in the checkout apart from the task's changes, and says that the record store shares its own.
+async function historyMarksContent(projectRoot, history) {
+  return history?.marked?.length ? [{ type: "text", text: await historyMarksText(projectRoot, history.initiative, history.marked) }] : [];
 }
 
 // The coordination state text of a shipped initiative carries the history message as a line of its own.
-function shippedHistoryContent(history) {
-  return history ? [{ type: "text", text: history.message }, ...historyMarksContent(history)] : [];
+async function shippedHistoryContent(projectRoot, history) {
+  return history ? [{ type: "text", text: history.message }, ...await historyMarksContent(projectRoot, history)] : [];
 }
 
 function contextPlanContent(plan) {
@@ -336,6 +343,14 @@ function stateErrorData(error) {
   if (error?.name === "RecordStoreError" && REPOSITORY_REFUSALS.includes(error.code)) {
     return { code: error.code, proposed: error.proposed ?? null };
   }
+  // A configured artifact folder that would take the source tree names its key, the folder as resolved, and the component whose folder it is or holds.
+  if (error?.code === "artifact_folder_invalid" && ["RecordStoreError", "ArtifactError"].includes(error?.name)) {
+    return { code: error.code, key: error.key, folder: error.folder, ...(error.component === undefined ? {} : { component: error.component }) };
+  }
+  // A refused artifact read or update names the current version, the scopes that hold a path, the scope that already holds it, the edit that did not apply, the name that breaks the artifact name form, or the declared components.
+  if (error?.name === "ArtifactError") {
+    return { code: error.code, ...Object.fromEntries(["version", "scopes", "scope", "edit", "invalidName", "path", "location", "limit", "component", "components", "proposed"].filter(key => error[key] !== undefined).map(key => [key, error[key]])) };
+  }
   if (error instanceof RepositoryIntelligenceSelectionError) {
     return { code: error.code, provider: error.provider, recoverable: error.recoverable };
   }
@@ -343,10 +358,10 @@ function stateErrorData(error) {
     return { code: error.code, ...(error.errors ? { errors: error.errors } : {}), ...(error.currentRevision === undefined ? {} : { currentRevision: error.currentRevision }) };
   }
   // A refused component declaration or design names the entry, components, dependency, cycle, slice, or crossing paths it is about,
-  // an unfinished scope names the leaves it waits on, a blocked ship names each scope and its blocked dependents,
+  // an unfinished scope names the leaves it waits on, a blocked ship names each scope and its blocked dependents, an unconfirmed ship its gate and what changed after it was asked, a ship that an open approval stops each ADR and its gates,
   // a ship with open work names its gates, claims, and proposals, and a refused change to a shipped initiative names it and its ship time.
   if (error instanceof InitiativeError || error instanceof RoadmapError || ["ShippedHistoryError", "UnreadableRoadmapError", "InitiativeGraphError", "VerificationError", "SliceDesignError", "DesignViewError", "ComponentError"].includes(error?.name)) {
-    return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "state", "progress", "diagnostics", "claim", "syncState", "entry", "components", "component", "dependency", "cycle", "slice", "paths", "folder", "scope", "waiting", "scopes", "gates", "claims", "proposals", "fixes", "initiative", "shippedAt"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
+    return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "state", "progress", "diagnostics", "claim", "syncState", "entry", "components", "component", "dependency", "cycle", "slice", "paths", "folder", "scope", "waiting", "scopes", "afterGate", "changed", "adrs", "gates", "claims", "proposals", "fixes", "initiative", "shippedAt"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
   }
   if (error?.name !== "CoordinationStateError") {
     // A refused deferral keeps every problem, because the caller needs each finding's reason to correct the request.
@@ -426,6 +441,7 @@ const sessionInputSchema = { oneOf: [explicitSessionInputSchema, activeSessionIn
 const tools = [
   ...ROADMAP_TOOLS,
   ...INITIATIVE_TOOLS,
+  ...ARTIFACT_TOOLS,
   {
     name: "verify_slice",
     description: "Run the project's test command from .prism/workflow.md for a slice with an accepted design, after checking that its frozen acceptance tests are unchanged, and record the run as the slice's completion evidence. A slice that records a component runs that component's Test command in the component's folder, or the repository's Test command under ## Stack in the project root when the component declares none; the root component and a slice without a component run the repository's command in the project root. Before asking for approval it refuses an invalid ## Components declaration, a recorded component the repository no longer declares with component_unknown, a missing command with test_command_missing, a working folder that does not exist with component_folder_missing, and a component folder that leads outside the project through a symbolic link with component_folder_outside. Before the command runs, a slice with a component compares the project with its content when the slice started, kept under this checkout's local ref refs/prism/<initiative>/<slice>/<checkout>/start, where <checkout> is the first 16 hexadecimal digits of the SHA-256 of the project root's real path: a change outside the component and every shared path, by the declaration recorded when the slice started, fails the run with reason component_boundary, listing the crossing paths, and the command does not run. Another slice's frozen test at its frozen content, and a path that another slice's latest passing run changed after this slice started and that still holds the content it tested, do not count, while this slice's own changes do. A slice without start content runs with boundary unchecked, and a run whose start content Git can no longer read, or was recorded while the ## Components declaration was invalid or lacked the slice's component, fails with reason start_content_missing without running the command: ask the user to fix the ## Components declaration first when the message says so, then set the slice back to not-started and start it again. Results name the command, the folder it runs in with links followed and project-relative, and the slice's component. A passing run completes a slice whose design marks no review and returns the initiative revision that write produced. The result is brief: the verdict, failing test names, the run record, and the path of the full output log. The first run of a command text in a working folder asks the user to allow it in the review browser and returns approval_needed with a gate id: wait for that gate, then call again with approvalGate. In a cloud session, where the user cannot open the review browser, approval_needed says so: ask the user in chat to allow the exact command in the folder it names, then call again with approvalGate and chatApproval quoting their answer word for word; the approval and the gate's history keep the quote, and any other session refuses chatApproval. An answer with a note and no choice returns approval_unclear and runs nothing. A host that cannot keep a long call open gets status running; calling again with the same arguments keeps waiting for the same run. An implementer that finds the contract wrong calls it with contractDefects instead: nothing runs, the defects are kept as a run entry and on the slice, and the slice is blocked until design revises the contract. With dependents true, slice names a finished fit scope (a slice whose design accepted a slice plan, or a leaf that is a scope of its own) and the call runs its dependents' run instead: the test command of every component of this repository that depends, directly or through others, on a component of the scope's leaves, each distinct command and folder once in dependency order, never a component of another repository. It refuses a slice that is not a fit scope, and contractDefects, with validation_failed, and a scope with a leaf that is not done with scope_unfinished, listing waiting; it applies the same refusals as above to each dependent, and returns no_dependents when nothing depends on the scope. One approval gate lists every command and folder not yet allowed, with the components each tests: allowing it allows each listed pair, and declining it marks their components declined while the allowed pairs still run. The run is recorded on the scope, and its result lists each dependent with its status, the blocked dependents, and each command's log; a run whose commands change project files fails with reason tracked_files_changed and blocks every dependent. update_roadmap ship refuses with dependents_blocked while a finished scope's dependents have no passing run of every one of them, or while that run started before a leaf of the scope last passed verification.",
@@ -696,7 +712,7 @@ const tools = [
   },
   {
     name: "get_coordination_state",
-    description: "Read an initiative's coordination state record with its revision. Reads never create the record. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked, to commit apart from the task's changes. The text carries its message as a line.",
+    description: "Read an initiative's coordination state record with its revision. Reads never create the record. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked; a document in the checkout is to be committed apart from the task's changes, while one in the record store is shared by its sync and needs no commit. The text carries its message as a line.",
     inputSchema: {
       type: "object",
       properties: {
@@ -724,17 +740,19 @@ const tools = [
   },
   {
     name: "wait_for_user_gate",
-    description: "Wait until the user answers recorded user gates in the review browser, then return the answers. Call it once right after asking the user and recording the gates, with every gate id just recorded; after the first answer it waits briefly for answers to the others. The call can last hours; Claude Code moves it to the background after about two minutes, and its result wakes the session when the user answers. On Codex it returns deferred at once, and a Stop hook continues the session with the answer after the turn ends. It returns answered with the recorded answer, changed with the person's new history entries when the person changes the initiative in the review app, whether here or through a store sync, resolved when the gate was removed (answered in the conversation or withdrawn), timeout, unknown_gate, deferred, or unsupported_host when this host can wait neither in the background nor after the turn.",
+    description: "Wait until the user answers recorded user gates in the review browser, then return the answers. Call it once right after asking the user and recording the gates, with every gate id just recorded; after the first answer it waits briefly for answers to the others. The call can last hours; Claude Code moves it to the background after about two minutes, and its result wakes the session when the user answers. On Codex it returns deferred at once, and a Stop hook continues the session with the answer after the turn ends. It returns answered with the recorded answer, changed with the person's new history entries when the person changes the initiative in the review app, whether here or through a store sync, resolved when the gate was removed (answered in the conversation or withdrawn), timeout, unknown_gate, deferred, or unsupported_host when this host can wait neither in the background nor after the turn. For the approval gates that update_artifact ask_approval records on a requirement or ADR, pass artifact, its project-relative path, and scope when two scopes hold it, in place of initiative; an answered approval gate needs no resolve.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
         initiative: { type: "string", description: "The initiative whose coordination state holds the gates." },
+        artifact: { type: "string", minLength: 1, description: "In place of initiative: the project-relative path of the requirement or ADR whose approval gates to wait on." },
+        scope: { type: "string", minLength: 1, description: "With artifact, when two scopes hold its path: workspace, repository, or a scope label such as <repository>/<component>." },
         gateIds: { type: "array", minItems: 1, maxItems: MAX_WAIT_GATES, items: { type: "string", minLength: 1 }, description: "The gate ids that the ask operations returned." },
         gateId: { type: "string", minLength: 1, description: "One gate id; use gateIds for several." },
         maxWaitMinutes: { type: "number", exclusiveMinimum: 0, maximum: MAX_WAIT_MINUTES, description: `How long to wait before returning timeout. Defaults to ${DEFAULT_WAIT_MINUTES}.` }
       },
-      required: ["projectRoot", "initiative"],
+      required: ["projectRoot"],
       additionalProperties: false
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false }
@@ -800,7 +818,7 @@ const tools = [
             },
             gateOperations: {
               type: "array",
-              description: "Record a user gate with ask before asking the user, and remove it with resolve after acting on the user's answer, giving a reason when the gate has no browser answer and, for a decision gate answered in the conversation, the chosen option's id as choice. The user may answer in the conversation or in the review browser, which records the answer on the gate in state.pending. The result lists the ids of opened gates.",
+              description: "Record a user gate with ask before asking the user, and remove it with resolve after acting on the user's answer, giving a reason when the gate has no browser answer and, for a decision gate answered in the conversation, the chosen option's id as choice. The user may answer in the conversation or in the review browser, which records the answer on the gate in state.pending. Asking a correctness gate supersedes each earlier correctness gate of the initiative that the person already answered: it closes with a reason naming the new gate, which the review browser shows with the closed question, while an unanswered one stays pending. The result lists the ids of opened gates, and of superseded gates under supersededGates.",
               items: {
                 oneOf: [
                   {
@@ -889,18 +907,36 @@ function progress(progressToken, value, message) {
   process.stdout.write(jsonLine({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken, progress: value, message } }));
 }
 
+// An approval answer reaches only the checkout whose ask_approval recorded its gate, which this machine remembers; a get_artifact read that returns the answer
+// as latestAnswer is one way that checkout receives it. Failing to remember never fails the call, whose store change already happened.
+async function noteApprovalDelivery(name, projectRoot, value) {
+  try {
+    if (name === "update_artifact") await recordAskedGates(projectRoot, (value.artifacts ?? []).map((entry) => entry.gate).filter((gate) => typeof gate === "string"));
+    else if (typeof value.latestAnswer?.gate === "string") await forgetAskedGates(projectRoot, [value.latestAnswer.gate]);
+  } catch {
+  }
+}
+
 async function callGateWait(argumentsValue, metadata, requestId) {
   const projectRoot = await requestedProjectRoot(argumentsValue);
   const gateIds = argumentsValue.gateIds ?? (argumentsValue.gateId === undefined ? undefined : [argumentsValue.gateId]);
   if (!Array.isArray(gateIds) || !gateIds.length) {
     throw new Error("Pass the recorded gate ids in gateIds.");
   }
+  // A wait names the initiative whose coordination state holds the gates, or the artifact whose status record holds them.
+  const source = typeof argumentsValue.artifact === "string" && argumentsValue.artifact
+    ? { artifact: argumentsValue.artifact, ...(argumentsValue.scope === undefined ? {} : { scope: argumentsValue.scope }) }
+    : { initiative: argumentsValue.initiative };
+  if (source.artifact === undefined && (typeof source.initiative !== "string" || !source.initiative)) {
+    throw new Error("Pass initiative, the initiative whose coordination state holds the gates, or artifact, the requirement or ADR whose approval gates to wait on.");
+  }
   let value;
   const unsupported = waitUnsupportedReason();
   const hookSession = callSessionId(metadata);
   // Only the initiative's coordinator when the wait starts has it end on the person's changes; one step of the session tells whether it coordinates and which entries it holds at its start.
   // Every wait that names an initiative holds its gates in the session's notice record while it runs, so their answers reach the agent once, in its result, whichever agent waited.
-  const initiative = argumentsValue.initiative;
+  // An artifact wait holds no gates there, since its gates live in the artifact's status record.
+  const initiative = source.initiative;
   const notices = typeof initiative === "string" ? {} : null;
   const start = notices && !(unsupported && !hookSession)
     ? await startGateWait({ projectRoot, initiative, agent: currentCallAgent() }).catch(() => ({ coordinates: false, known: null }))
@@ -912,10 +948,10 @@ async function callGateWait(argumentsValue, metadata, requestId) {
     // The gates stay held for a short lease, which the polls of the hook's wait, under the same wait id, renew.
     const waitId = randomBytes(16).toString("hex");
     const held = notices && { ...notices, waitId, hold: Date.now() + DEFERRED_HOLD_MS };
-    value = await waitForUserGates({ projectRoot, initiative, gateIds, maxWaitMinutes: 0.0001, settleMs: 0, knownEntries, notices: held, watchChanges: coordinates });
+    value = await waitForUserGates({ projectRoot, ...source, gateIds, maxWaitMinutes: 0.0001, settleMs: 0, knownEntries, notices: held, watchChanges: coordinates });
     if (value.status === "timeout") {
       const maxWaitMinutes = Math.min(argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES, HOOK_WAIT_MINUTES);
-      const { replaced } = await recordWaitRequest({ sessionId: hookSession, projectRoot, initiative, gateIds: value.gateIds, maxWaitMinutes, knownEntries, coordinates, waitId });
+      const { replaced } = await recordWaitRequest({ sessionId: hookSession, projectRoot, ...source, gateIds: value.gateIds, maxWaitMinutes, knownEntries, coordinates, ...(held ? { waitId } : {}) });
       // The request this one replaced never reaches the hook, so its wait lets go of its gates.
       if (replaced) await endGateWait({ ...replaced, cancelled: true }).catch(() => {});
       value = { status: "deferred", gateIds: value.gateIds, client: clientName, maxWaitMinutes };
@@ -929,7 +965,7 @@ async function callGateWait(argumentsValue, metadata, requestId) {
     try {
       const running = waitForUserGates({
         projectRoot,
-        initiative: argumentsValue.initiative,
+        ...source,
         gateIds,
         maxWaitMinutes: argumentsValue.maxWaitMinutes ?? DEFAULT_WAIT_MINUTES,
         signal: controller.signal,
@@ -954,7 +990,7 @@ async function callGateWait(argumentsValue, metadata, requestId) {
   const text = {
     changed: () => changedText(value),
     answered: () => [...value.answered.map(answerText), value.waiting.length ? `Still waiting on: ${value.waiting.join(", ")}.` : ""].filter(Boolean).join("\n"),
-    resolved: () => `User gates ${list} were resolved without a browser answer; they were answered in the conversation or withdrawn.`,
+    resolved: () => source.artifact ? `Approval gates ${list} of ${source.artifact} closed without an answer: a later ask_approval replaced them, or the artifact was removed or left the scopes this checkout sees.` : `User gates ${list} were resolved without a browser answer; they were answered in the conversation or withdrawn.`,
     timeout: () => `No answer arrived for user gates ${list} before the wait ended.`,
     unknown_gate: () => `No pending user gate has any of the ids ${list}.`,
     deferred: () => `This host cannot wait during a tool call, so Prism waits after this turn ends: end your turn now, and the session continues with the answer when the user answers user gates ${list} in the review browser within ${value.maxWaitMinutes} minutes. If it does not continue, the user's next message delivers any browser answer.`,
@@ -977,6 +1013,9 @@ async function callStateTool(name, argumentsValue) {
     resultValue = await validateCoordinationState(input);
   } else if (name === "update_coordination_state") {
     resultValue = await updateCoordinationState(input);
+    // The prompt hooks deliver a gate's answer only to the session that asked it; a gate the session cannot remember is still answered through its wait or a read of the state.
+    const opened = (resultValue?.openedGates ?? []).map((gate) => gate?.id).filter((id) => typeof id === "string");
+    await rememberAskedGates({ projectRoot, initiative: argumentsValue.initiative, gateIds: opened }).catch((error) => log.warn("asked_gates_unrecorded", errorFields(error)));
   } else if (name === "checkpoint_pause") {
     resultValue = await checkpointPause(input);
     const dataDirectory = decisionDataDirectory(argumentsValue);
@@ -994,7 +1033,7 @@ async function callStateTool(name, argumentsValue) {
     const { closed, ...state } = resultValue.state;
     resultValue = { ...resultValue, state };
   }
-  const content = [{ type: "text", text: stateContent(resultValue) }, ...shippedHistoryContent(resultValue?.shippedHistory)];
+  const content = [{ type: "text", text: stateContent(resultValue) }, ...await shippedHistoryContent(projectRoot, resultValue?.shippedHistory)];
   if (Array.isArray(resultValue?.keptSettings) && resultValue.keptSettings.length) content.push({ type: "text", text: keptSettingsText(resultValue.keptSettings) });
   return { content, structuredContent: resultValue };
 }
@@ -1171,19 +1210,223 @@ async function callVerifySlice(argumentsValue, metadata, requestId) {
 // The first write after an upgrade moves files in the user's work tree, so its result says which, to commit on their own.
 const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
-// A sync that found the same record changed upstream kept the upstream version, so the agent whose change lost hears it on its next tool result.
+// A saved artifact named as the checkout names it, by its path and scope label, or by its store location when the checkout gives it no path.
+async function savedArtifactLine(item, argumentsValue) {
+  return `- ${await savedArtifactWhere(item.store, item.location, argumentsValue)} (this machine's version: ${item.savedAs})`;
+}
+
+async function savedArtifactWhere(store, location, argumentsValue) {
+  const projectRoot = await requestedProjectRoot(argumentsValue ?? {}).catch(() => null);
+  const named = projectRoot ? await artifactAtLocation(projectRoot, store, location).catch(() => null) : null;
+  return named?.path ? `${named.path} in scope ${named.scope.label}` : `artifacts/${location} in the record store at ${store}${named ? `, scope ${named.scope.label}` : ""}`;
+}
+
+// A local move that a store sync sent elsewhere, named by the path and scope label that the store keeps the artifact at and the scope label this machine moved it to.
+async function undoneMoveLine(item, argumentsValue) {
+  const projectRoot = await requestedProjectRoot(argumentsValue ?? {}).catch(() => null);
+  const movedTo = projectRoot ? await artifactAtLocation(projectRoot, item.store, item.movedTo).catch(() => null) : null;
+  return `- ${await savedArtifactWhere(item.store, item.undoneMove, argumentsValue)}, which this machine moved to scope ${movedTo?.scope.label ?? `artifacts/${item.movedTo}`}`;
+}
+
+// Whether the store at storeBase holds an artifact at a location below artifacts/, told from the file's entry alone, so no byte of a file above its kind's bound is read.
+const holdsArtifact = (storeBase, location) => lstat(path.join(storeBase, "artifacts", ...location.split("/"))).then((stats) => stats.isFile(), () => false);
+
+// A saved status record or comment named by the artifact it belongs to, and a comment also by its line and text, quoted only from a comment of the exact form Prism writes,
+// since the saved copy may be any file that another machine's store brought, and any other file is named by its path, scope, and saved copy alone.
+// where, when given, is the location at which the store keeps the artifact, as for a file whose path there would be too long, while the saved file names the location it was made at, and copy names whose copy it is.
+async function savedDerivedLine(item, argumentsValue, where = null, copy = "saved copy") {
+  const line = await savedArtifactWhere(item.store, where ?? item.statusOf ?? item.commentOn, argumentsValue);
+  if (item.statusOf) return `${line}, its status record (${copy}: ${item.savedAs})`;
+  const comment = await savedComment(item.savedAs, item.commentOn).catch(() => null);
+  const said = comment ? `, a comment on line ${comment.line}: ${JSON.stringify(comment.text)}` : ", a file in its comment folder that is no comment of the form Prism writes, so its bytes are not shown";
+  return `${line}${said} (${copy}: ${item.savedAs})`;
+}
+
+// The notes of one tool result that name the files a store sync saved hold at most SAVED_NOTE_MAX bytes, whatever a sync brings:
+// each list's first line, which says what was saved and why, always stays, the entries past the bound are left out from the end unread,
+// and a last line counts them and names the store's sync folder, which holds every saved copy. Returns the lines.
+const SAVED_NOTE_MAX = 32 * 1024;
+const SAVED_FOLDER = `${path.sep}.prism-sync${path.sep}conflicts${path.sep}`;
+async function savedFilesNote(sections) {
+  if (!sections.length) return [];
+  const bytes = (line) => Buffer.byteLength(line, "utf8") + 1;
+  // A local change that a sync undid has no saved copy, so it names the store's sync folder for its saved copies as it is.
+  const folders = [...new Set(sections.flatMap((section) => section.items).map((item) => {
+    if (!item.savedAs) return item.folder;
+    const at = item.savedAs.lastIndexOf(SAVED_FOLDER);
+    return at < 0 ? path.dirname(item.savedAs) : item.savedAs.slice(0, at + SAVED_FOLDER.length - 1);
+  }))];
+  const where = folders.length === 1 ? `the store's sync folder ${folders[0]} holds` : `the stores' sync folders ${folders.join(", ")} hold`;
+  const closing = (count) => `Prism left ${count} more saved ${count === 1 ? "file" : "files"} out of this note to keep it short; ${where} every saved copy.`;
+  let budget = SAVED_NOTE_MAX - bytes(closing(Number.MAX_SAFE_INTEGER)) - sections.reduce((sum, section) => sum + bytes(section.header), 0);
+  const lines = [];
+  let omitted = 0;
+  for (const section of sections) {
+    lines.push(section.header);
+    for (const [index, item] of section.items.entries()) {
+      if (omitted) { omitted += section.items.length - index; break; }
+      const entry = await section.line(item);
+      if (bytes(entry) > budget) { omitted += section.items.length - index; break; }
+      lines.push(entry);
+      budget -= bytes(entry);
+    }
+  }
+  if (omitted) lines.push(closing(omitted));
+  return lines;
+}
+
+// The move of a checkout's existing artifacts into its repository's scope says which files left the checkout, which stayed and why, and which tracked files still name them.
+// Its text holds at most ARTIFACT_MOVE_NOTE_MAX bytes: every section's header, which gives its count, always stays, list entries past that are left out from the end, and its last line counts them and names the ledger, which lists every move and kept file.
+// Every path it prints goes through shownPath, so no file name begins or ends a line of Prism's text.
+const ARTIFACT_MOVE_NOTE_MAX = 32 * 1024;
+function artifactMoveNote(move) {
+  const store = shownPath(move.store);
+  if (move.unlisted) return `Git could not list this checkout's files, so Prism moved none of the files under its artifact paths into the record store at ${store}; they stay in the checkout until a later first access in a checkout that Git lists.`;
+  if (move.operation) {
+    const named = `${/^[aeiou]/.test(move.operation) ? "an" : "a"} ${shownPath(move.operation)}`;
+    if (move.finishing) return `Git has ${named} in progress in this checkout, so the checkout's descriptive files that Prism already copied into the record store at ${store} wait until it is finished or aborted: the operation's next commit would take every staged change, so Prism removed none of them from the checkout, and the first later tool call of this checkout that finds no operation in progress removes them and reports the whole move.`;
+    return `Git has ${named} in progress in this checkout, so the checkout's descriptive files wait until it is finished or aborted before they move into the record store at ${store}: the work tree holds bytes that no commit holds yet and the operation's next commit would take every staged change, so Prism moved, removed, and recorded nothing, the files stay in the checkout, and each later tool call of this checkout looks again.`;
+  }
+  if (move.deferred) return `This checkout's descriptive files wait for a pull from the record store's remote before they move into the record store at ${store}: the store's sync could not complete the pull (sync state ${move.deferred.state}), so Prism moved, removed, and recorded nothing, the files stay in the checkout, and a later tool call of this checkout tries again.`;
+  const them = (count) => count === 1 ? "it" : "them";
+  const sections = [];
+  // Kept and untracked files come first, since each waits for a person, and a long move's list of moves is what the closing line leaves to the ledger.
+  if (move.kept.length) sections.push({ header: `Prism kept ${plural(move.kept.length, "tracked file")} under the artifact paths in the checkout, where ${move.kept.length === 1 ? "it stays" : "they stay"} until a person settles ${move.kept.length === 1 ? "it" : "each"}:`, entries: move.kept.map((item) => `- ${shownPath(item.path)} (${item.reason}): ${keptExplanation(item)}.`) });
+  const passed = move.passed ?? [];
+  if (passed.length) sections.push({ header: `Git's index does not let Prism take ${plural(passed.length, "tracked file")} under the artifact paths, so ${passed.length === 1 ? "it stays" : "they stay"} in the checkout; a later session's move decides each once Git sees its changes again:`, entries: passed.map((item) => `- ${shownPath(item.path)} (${item.reason}): ${keptExplanation(item)}.`) });
+  if (move.untracked.length) sections.push({ header: `${plural(move.untracked.length, "file")} under the artifact paths ${move.untracked.length === 1 ? "is" : "are"} not tracked by Git, so ${move.untracked.length === 1 ? "it stays" : "they stay"} in the checkout and no ledger names ${them(move.untracked.length)}; a person commits such a file for a later first access to move it, or writes it into the store with update_artifact:`, entries: move.untracked.map((file) => `- ${shownPath(file)} (untracked)`) });
+  if (move.moved.length) sections.push({ header: `Prism moved ${plural(move.moved.length, "descriptive file")} of this checkout into the record store at ${store}, scope ${shownPath(move.repository)}, and removed ${them(move.moved.length)} from the checkout; read and change ${them(move.moved.length)} with get_artifact and update_artifact by the same paths, and commit the removal on its own, apart from the task's changes.`, entries: move.moved.map((item) => `- ${shownPath(item.from)} -> ${shownPath(`artifacts/${item.to}`)}`) });
+  const earlier = move.earlier ?? [];
+  if (earlier.length) sections.push({ header: `Prism moved ${plural(earlier.length, "descriptive file")} of this checkout into the record store at ${store}, scope ${shownPath(move.repository)}, earlier and removed ${them(earlier.length)} from the checkout, and Git's index still lists ${them(earlier.length)}; read and change ${them(earlier.length)} with get_artifact and update_artifact by the same paths, and commit the removal on its own, apart from the task's changes, since each later session reports ${them(earlier.length)} again until a person stages or commits the removal.`, entries: earlier.map((item) => `- ${shownPath(item.from)} -> ${shownPath(`artifacts/${item.to}`)}`) });
+  const fixed = move.ignored ? [`${plural(move.ignored, "ignored file")} under the artifact paths ${move.ignored === 1 ? "stays" : "stay"} in the checkout: Git ignores ${them(move.ignored)}, so Prism neither moves nor names ${them(move.ignored)}.`] : [];
+  if (move.references.length) {
+    const total = move.references.length + move.moreReferences;
+    const entries = move.references.map((item) => `- ${shownPath(item.file)}:${item.lines.join(",")}${item.more ? ` and ${item.more} more ${item.more === 1 ? "line" : "lines"}` : ""}`);
+    if (move.moreReferences) entries.push(`- and ${plural(move.moreReferences, "more file")}`);
+    sections.push({ header: `${plural(total, "tracked file")} in the checkout still ${total === 1 ? "names" : "name"} the former path of a file moved now or earlier, or a configured folder that lost files, by line; the configured paths stay the artifacts' addresses, so update only text that tells readers to open these files in the checkout:`, entries });
+  }
+  if (!sections.length && !fixed.length) return null;
+  // A long move writes its ledger as several files, and the closing line names each, which together list every move and kept file.
+  const ledgers = (Array.isArray(move.ledger) ? move.ledger : move.ledger ? [move.ledger] : []).map((name) => shownPath(`${ARTIFACT_MIGRATIONS}/${name}`));
+  const ledger = ledgers.length === 1 ? ` and the ledger ${ledgers[0]} in the record store at ${store} lists every move and kept file`
+    : ledgers.length ? ` and the ledger files ${ledgers.slice(0, -1).join(", ")} and ${ledgers.at(-1)} in the record store at ${store} together list every move and kept file` : "";
+  const closing = (count) => `Prism left ${count} more ${count === 1 ? "entry" : "entries"} out of this report to keep it short${ledger}.`;
+  const bytes = (line) => Buffer.byteLength(line, "utf8") + 1;
+  // Room for the closing line, which names the ledger and counts what was left out, and for every header and fixed line, which say what moved and what stayed and how many.
+  let budget = ARTIFACT_MOVE_NOTE_MAX - bytes(closing(Number.MAX_SAFE_INTEGER)) - [...fixed, ...sections.map((section) => section.header)].reduce((sum, line) => sum + bytes(line), 0);
+  const lines = [...fixed];
+  let omitted = 0;
+  for (const section of sections) {
+    lines.push(section.header);
+    for (const [index, entry] of section.entries.entries()) {
+      if (omitted || bytes(entry) > budget) { omitted += section.entries.length - index; break; }
+      lines.push(entry);
+      budget -= bytes(entry);
+    }
+  }
+  if (omitted) lines.push(closing(omitted));
+  return lines.join("\n");
+}
+
+// A sync that found the same record, or the same lines of an artifact, changed upstream kept the upstream version, so the agent whose change lost hears it on its next tool result.
 // A saved version stays pending until a tool result carries it, so a server that stopped before naming it leaves it to the next one.
 // Returns the result with the notes, and what to do once it was written or was not: a written result confirms the saved versions it names, and one never written leaves them for the next result.
-async function withRecordNotes(value) {
+// proceed() says whether the result is still to be written, such as while the host has not cancelled the call.
+async function withRecordNotes(value, argumentsValue, call, proceed = () => true) {
   const none = { value, written: async () => {}, unwritten: () => {} };
   if (!Array.isArray(value?.content)) return none;
-  const reports = takeMigrationReports();
+  // The other notes are taken first, so the move's removals come as close as they can before the result is written.
   const taken = await takeSavedConflicts().catch(() => []);
-  const saved = taken.filter((item) => item.record);
-  const files = taken.filter((item) => item.file);
+  // A file that this machine's sync held back because it was above its kind's bound, and that another machine then changed or removed, is named for that cause alone, from its path, never its bytes.
+  const overBound = taken.filter((item) => item.overBound);
+  const saved = taken.filter((item) => item.record && !item.overBound);
+  const removals = taken.filter((item) => item.undoneRemoval);
+  const fileRemovals = taken.filter((item) => item.undoneFile);
+  const moves = taken.filter((item) => item.undoneMove);
+  // A file of either machine's that a sync took out because its path at its artifact's new location would be too long is named with that location, for that cause alone.
+  const tooLong = taken.filter((item) => item.tooLongAt && !item.overBound);
+  // Another machine's change that a sync took out where this machine's removal stood is named apart, since it is no change of this machine's.
+  const theirs = taken.filter((item) => item.theirs && !item.tooLongAt);
+  const artifacts = taken.filter((item) => item.location && !item.theirs && !item.tooLongAt && !item.overBound);
+  // A file at the store's root, such as its README, is saved when both machines changed it, and a store file is also saved when the other machine changed the version that this machine's sync withheld.
+  const files = taken.filter((item) => item.file && !item.bothChanged && !item.overBound);
+  const bothChanged = taken.filter((item) => item.file && item.bothChanged);
+  // A comment of this machine's that its folder's bound left out belongs to an artifact that the store still holds, with the comments that reached the store first.
+  const surplus = taken.filter((item) => item.commentOn && item.surplus && !item.theirs && !item.tooLongAt);
+  // A status record that changed on both sides keeps the upstream one while its artifact stays; one, or a comment, whose artifact the store no longer holds left the store.
+  const derived = [];
+  for (const item of taken.filter((item) => (item.statusOf || item.commentOn) && !item.theirs && !item.surplus && !item.tooLongAt && !item.overBound)) derived.push({ item, kept: Boolean(item.statusOf) && await holdsArtifact(item.store, item.statusOf) });
+  const sections = [];
+  // The local removals and moves that a sync undid come first, since each is a deliberate change of this machine that the store no longer shows.
+  if (removals.length) {
+    sections.push({ header: `Store sync undid this machine's removal of ${plural(removals.length, "artifact")}, because another machine edited ${removals.length === 1 ? "its" : "their"} text, as approving a file does, before this machine's removal reached the store; the store holds ${removals.length === 1 ? "it" : "them"} again with the other machine's changes. Read each one again with get_artifact and remove it again with update_artifact if the removal still matters.`, items: removals, line: async (item) => `- ${await savedArtifactWhere(item.store, item.undoneRemoval, argumentsValue)}` });
+  }
+  if (fileRemovals.length) {
+    const them = fileRemovals.length === 1 ? "it" : "them";
+    sections.push({ header: `Store sync undid this machine's removal of ${plural(fileRemovals.length, "store file")} at the store's root, such as its README, because another machine changed ${them} before this machine's removal reached the store; the store holds ${them} again with the other machine's version. Remove ${them} from the store again if the removal still matters.`, items: fileRemovals, line: async (item) => `- ${item.undoneFile} in the record store at ${item.store}` });
+  }
+  if (moves.length) {
+    sections.push({ header: `Store sync undid this machine's move of ${plural(moves.length, "artifact")} to another scope, because another machine moved ${moves.length === 1 ? "it" : "them"} elsewhere, or kept its own file at the path this machine moved ${moves.length === 1 ? "it" : "them"} to, before this machine's move reached the store; the store keeps each in the first scope named below, with this machine's other changes to it. Read each one again with get_artifact and move it again with move_scope if the move still matters.`, items: moves, line: (item) => undoneMoveLine(item, argumentsValue) });
+  }
+  if (theirs.length) {
+    sections.push({ header: `Store sync saved ${plural(theirs.length, "change")} that another machine made to an artifact that this machine had removed, which left the file's text as it was, such as a comment or an approval asked; this machine's removal stands, so the store holds no such artifact, or holds the file that this machine wrote or moved to its path, and saved ${theirs.length === 1 ? "that change" : "those changes"} beside the store. Tell the person, and redo what still matters on an artifact the store holds.`, items: theirs, line: async (item) => `- ${item.location ? await savedArtifactWhere(item.store, item.location, argumentsValue) + ` (the other machine's version: ${item.savedAs})` : await savedDerivedLine(item, argumentsValue)}` });
+  }
+  if (tooLong.length) {
+    const one = tooLong.length === 1;
+    const line = async (item) => {
+      const whose = item.theirs ? "the other machine's version" : "this machine's version";
+      if (item.location) return `- ${await savedArtifactWhere(item.store, item.tooLongAt, argumentsValue)} (${whose}: ${item.savedAs})`;
+      return `- ${await savedDerivedLine(item, argumentsValue, item.tooLongAt, whose)}`;
+    };
+    sections.push({ header: `Store sync saved ${plural(tooLong.length, "file")}, such as a comment or a status record, that one machine changed on an artifact while the other machine moved the artifact, because ${one ? "its path" : "their paths"} at the artifact's new location would hold a name of more than ${STORE_NAME_BYTES_MAX} bytes or more than ${STORE_PATH_BYTES_MAX} bytes in all, too long for a store to share; the store keeps the artifact at the new location named below without ${one ? "that file" : "those files"}, and saved ${one ? "it" : "them"} beside the store. Tell the person, and redo what still matters on the artifact there, after moving it to a shorter location if the change needs a file of its own.`, items: tooLong, line });
+  }
+  if (saved.length) {
+    sections.push({ header: `Store sync found ${plural(saved.length, "record")} that someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each record again and redo the change through Prism's tools if it still matters.`, items: saved, line: async (item) => `- ${item.record} (this machine's version: ${item.savedAs})` });
+  }
+  if (artifacts.length) {
+    sections.push({ header: `Store sync found ${plural(artifacts.length, "artifact")} that this machine changed while another machine changed the same lines, or removed the file and wrote or moved another one to its path; the store kept the other machine's version and saved this machine's version. Read each artifact again with get_artifact and redo the change with update_artifact if it still matters.`, items: artifacts, line: (item) => savedArtifactLine(item, argumentsValue) });
+  }
+  if (overBound.length) {
+    const one = overBound.length === 1;
+    const line = async (item) => {
+      const copy = `this machine's copy: ${item.savedAs}`;
+      if (item.location) return `- ${await savedArtifactWhere(item.store, item.location, argumentsValue)} (${copy})`;
+      if (item.statusOf) return `- ${await savedArtifactWhere(item.store, item.statusOf, argumentsValue)}, its status record (${copy})`;
+      if (item.commentOn) return `- ${await savedArtifactWhere(item.store, item.commentOn, argumentsValue)}, a file in its comment folder (${copy})`;
+      return item.record ? `- ${item.record} (${copy})` : `- ${item.file} in the record store at ${item.store} (${copy})`;
+    };
+    sections.push({ header: `Store sync saved ${plural(overBound.length, "file")} of this machine's that ${one ? "was" : "were"} above the bound that a store file of ${one ? "its" : "their"} kind may hold, so this machine's sync held ${one ? "it" : "them"} back from the store, and that another machine then changed or removed; the store keeps the other machine's version, and this machine's copy is saved at the path named below. Tell the person, and redo what still matters in fewer bytes than that bound.`, items: overBound, line });
+  }
+  const records = derived.filter((entry) => entry.kept).map((entry) => entry.item);
+  if (records.length) {
+    sections.push({ header: `Store sync found ${plural(records.length, "status record")} of an artifact that this machine changed while another machine changed the same record, or removed the artifact and wrote or moved another one to its path; the store kept the other machine's record and saved this machine's. Read each artifact again with get_artifact, and ask its approval again with ask_approval if this machine's answer still matters for the file the store now holds.`, items: records, line: async (item) => `- ${await savedDerivedLine(item, argumentsValue)}` });
+  }
+  if (surplus.length) {
+    sections.push({ header: `Store sync saved ${plural(surplus.length, "comment")} that this machine made on a file that already holds the ${COMMENTS_PER_ARTIFACT_MAX} comments that a file may hold, because other machines' comments on it reached the store first; the store keeps the file and those comments, and saved ${surplus.length === 1 ? "this comment" : "these comments"} beside the store, where no page shows ${surplus.length === 1 ? "it" : "them"}. Tell the person what ${surplus.length === 1 ? "it says" : "they say"}, since the file takes no further comment.`, items: surplus, line: async (item) => `- ${await savedDerivedLine(item, argumentsValue)}` });
+  }
+  const stranded = derived.filter((entry) => !entry.kept).map((entry) => entry.item);
+  if (stranded.length) {
+    const counted = [[stranded.filter((item) => item.statusOf).length, "status record"], [stranded.filter((item) => item.commentOn).length, "comment"]].filter(([count]) => count).map(([count, noun]) => plural(count, noun)).join(" and ");
+    sections.push({ header: `Store sync took ${counted} out of the store because the store no longer holds the artifact ${stranded.length === 1 ? "it was" : "they were"} made on, as when one machine changed an artifact while another removed it, also when that machine then wrote another file at its path, and saved ${stranded.length === 1 ? "it" : "them"} beside the store. Tell the person, and redo what still matters on an artifact the store holds.`, items: stranded, line: async (item) => `- ${await savedDerivedLine(item, argumentsValue)}` });
+  }
+  if (bothChanged.length) {
+    const them = bothChanged.length === 1 ? "that file" : "those files";
+    sections.push({ header: `Store sync found ${plural(bothChanged.length, "store file")} at the store's root, such as its README, that this machine changed while another machine also changed ${them}; the store keeps the other machine's version, and this machine's copy is saved at the path named below. Fix the file from the saved copy if the change still matters.`, items: bothChanged, line: async (item) => `- ${item.file} in the record store at ${item.store} (this machine's copy: ${item.savedAs})` });
+  }
+  if (files.length) {
+    sections.push({ header: `Store sync took the upstream's version of ${plural(files.length, "store file")} whose local version this machine's sync had withheld, because another machine could not take it; the store kept the upstream's version and saved this machine's version. Fix the file from the saved copy if the change still matters.`, items: files, line: async (item) => `- ${item.file} in the record store at ${item.store} (this machine's version: ${item.savedAs})` });
+  }
+  const conflictLines = await savedFilesNote(sections);
+  // A decided move, the call's own or one that a refused, cancelled, or background call left, removes the checkout's files only here, right before a result of a tool call of the checkout is written,
+  // so the result that follows names every file it removed; a refused or cancelled call never gets here and removes nothing.
+  await finishUnfinishedMoves(call.roots, { proceed, writes: call.writes }).catch(() => {});
+  const reports = takeMigrationReports(call.roots);
   if (!reports.length && !taken.length) return none;
   const lines = [];
+  // Each move of a checkout's artifacts is a text item of its own, after the other notes, so its bound and its closing line are its own.
+  const moveNotes = [];
   for (const report of reports) {
+    if (report.artifacts) { const note = artifactMoveNote(report.artifacts); if (note) moveNotes.push(note); continue; }
     const into = report.store ? `the record store at ${report.store}` : ".prism";
     const kept = report.store ? "the record store" : ".prism";
     if (report.moved.length) {
@@ -1192,14 +1435,9 @@ async function withRecordNotes(value) {
     }
     if (report.conflicts.length) lines.push(`${report.conflicts.length} old files were kept because ${kept} already holds a different record: ${report.conflicts.map((move) => move.from).join(", ")}.`);
   }
-  if (saved.length) {
-    lines.push(`Store sync found ${plural(saved.length, "record")} that someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each record again and redo the change through Prism's tools if it still matters.`, ...saved.map((item) => `- ${item.record} (this machine's version: ${item.savedAs})`));
-  }
-  if (files.length) {
-    lines.push(`Store sync took the upstream's version of ${plural(files.length, "store file")} whose local version this machine's sync had withheld, because another machine could not take it; the store kept the upstream's version and saved this machine's version. Fix the file from the saved copy if the change still matters.`, ...files.map((item) => `- ${item.file} in the record store at ${item.store} (this machine's version: ${item.savedAs})`));
-  }
+  lines.push(...conflictLines);
   return {
-    value: { ...value, content: [...value.content, { type: "text", text: lines.join("\n") }] },
+    value: { ...value, content: [...value.content, ...(lines.length ? [{ type: "text", text: lines.join("\n") }] : []), ...moveNotes.map((text) => ({ type: "text", text }))] },
     written: () => confirmSavedConflicts(taken).catch(() => {}),
     unwritten: () => { restoreMigrationReports(reports); releaseSavedConflicts(taken); }
   };
@@ -1256,7 +1494,7 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
     if (name === "get_review") value = { ...value, runTotals: await readReviewRunTotals(projectRoot, argumentsValue) };
     const history = name === "get_review" && typeof argumentsValue.initiative === "string" ? await shippedHistory(projectRoot, argumentsValue.initiative) : null;
     if (history) value = { ...value, shippedHistory: history };
-    return { content: [{ type: "text", text: JSON.stringify(value) }, ...historyMarksContent(history)], structuredContent: value };
+    return { content: [{ type: "text", text: JSON.stringify(value) }, ...await historyMarksContent(projectRoot, history)], structuredContent: value };
   }
   if (name === "update_design_view") {
     const value = await updateDesignView({ ...argumentsValue, projectRoot: await requestedProjectRoot(argumentsValue) });
@@ -1279,10 +1517,16 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
       : name === "get_initiative" ? await getInitiative(input)
       : initiativeAcknowledgement(await updateInitiative(input), input.operations);
     if (name === "get_initiative") value = { ...value, runTotals: await readInitiativeRecordRunTotals(projectRoot, value.initiative, value) };
-    const marks = name === "get_initiative" ? historyMarksContent(value.shippedHistory)
-      : name === "get_roadmap" ? (value.markedHistory ?? []).map((item) => ({ type: "text", text: historyMarksText(item.initiative, item.marked) }))
+    const marks = name === "get_initiative" ? await historyMarksContent(projectRoot, value.shippedHistory)
+      : name === "get_roadmap" ? await Promise.all((value.markedHistory ?? []).map(async (item) => ({ type: "text", text: await historyMarksText(projectRoot, item.initiative, item.marked) })))
       : [];
     return { content: [{ type: "text", text: JSON.stringify(value) }, ...marks], structuredContent: value };
+  }
+  if (name === "get_artifact" || name === "update_artifact") {
+    const input = { ...argumentsValue, projectRoot: await requestedProjectRoot(argumentsValue) };
+    const value = name === "get_artifact" ? await getArtifact(input) : await updateArtifact(input);
+    await noteApprovalDelivery(name, input.projectRoot, value);
+    return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
   if (repositoryTools.has(name)) {
     return callRepositoryTool(name, argumentsValue);
@@ -1350,15 +1594,16 @@ input.on("line", async (line) => {
       const { name, arguments: argumentsValue } = request.params ?? {};
       callNames.set(request.id, name);
       const started = performance.now(), done = log.doing(`call:${request.id}`, String(name));
-      const value = await withCallSession(meta, async () => {
+      const call = toolCallContext();
+      const value = await withToolCall(call, () => withCallSession(meta, async () => {
         const agent = await callAgent(meta).catch(() => undefined);
         return withCallAgent(agent, async () => withPersonChanges(name, argumentsValue, await callTool(name, argumentsValue, meta, request.id)));
-      }).finally(done);
+      })).finally(done);
       log.debug("tool_call", { tool: name, ms: Math.round(performance.now() - started), ...(value?.isError ? { isError: true } : {}) });
       // A cancelled request gets no response, so it carries no notes either; nor does a result made once the host closed input, which ends the session.
       if (value.structuredContent?.status === "cancelled" || cancelledCalls.has(request.id)) return;
       if (closing) { await result(request.id, value); return; }
-      const noted = await withRecordNotes(value);
+      const noted = await withRecordNotes(value, argumentsValue, call, () => !closing && !cancelledCalls.has(request.id));
       // A cancel that arrived while the notes were taken still stops the result, and nothing runs between this check and the write.
       if (cancelledCalls.has(request.id)) { noted.unwritten(); return; }
       if (await result(request.id, noted.value) && !closing) await noted.written();

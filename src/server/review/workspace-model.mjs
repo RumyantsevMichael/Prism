@@ -7,12 +7,14 @@ import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
 import { historyOrder, readCoordinationState } from "../workflow/state.mjs";
 import { readIndexHistory } from "../workflow/index-history.mjs";
-import { keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, locateRecord, recordPath, recordsUnavailable, resolveRecordFile } from "../workflow/record-store.mjs";
+import { inArtifactStore, keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, listStoreArtifacts, locateRecord, readArtifactText, recordPath, recordsUnavailable, resolveRecordFile } from "../workflow/record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
 import { contractClauses, loadDesignView } from "../workflow/design-view.mjs";
+import { appliedArtifactActions, pendingApprovalGates, storeArtifactStatuses } from "../workflow/store-artifacts.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
+import { parseStoreJson } from "../workflow/store-json.mjs";
 import { recordChanges } from "./record-changes.mjs";
 import { shippedActionReason, shippedDecision, shippedHistory, shippedHistoryLabel } from "../workflow/shipped-history.mjs";
 
@@ -38,8 +40,8 @@ export function forgetWorkspace() {
   memo.clear();
 }
 
-export const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary"]);
-const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary" });
+export const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary", "launches"]);
+const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary", launches: "Launched sessions" });
 
 // A record is read where it lives: under .prism, or beside its Markdown until the first write moves it there.
 async function recordFile(root, key) {
@@ -48,16 +50,42 @@ async function recordFile(root, key) {
   return located.legacy ?? located.path;
 }
 
+// With a record store, a descriptive artifact such as a requirement, an ADR, the glossary, or a plan file is read from the store, and a record where it lives.
 async function readText(root, relative) {
   try {
+    // An unavailable store or a refused repository name shows the artifact as missing, never the checkout's file in its place.
+    if (await inArtifactStore(root, relative)) return await readArtifactText(root, relative);
     return await readFile((await resolveRecordFile(root, relative)).target, "utf8");
   } catch (error) {
-    if (["ENOENT", "ENOTDIR", "EISDIR"].includes(error.code)) return null;
+    // An unavailable store, or a store artifact that cannot be read, shows as missing.
+    if (["ENOENT", "ENOTDIR", "EISDIR"].includes(error.code) || recordsUnavailable(error) || error?.name === "ArtifactError") return null;
     throw error;
   }
 }
 
+// The store artifacts below a folder, up to depth folders down, in the order a walk of the folder lists them, or null when the project names no store.
+async function storeWalk(root, relative, depth, accept, limit) {
+  // An unavailable store or a refused repository name lists no artifact, and never the checkout's documents in their place.
+  const stored = await listStoreArtifacts(root, relative).catch((error) => { if (recordsUnavailable(error) || error?.name === "ArtifactError") return []; throw error; });
+  if (stored === null) return null;
+  const prefix = relative ? `${relative}/` : "";
+  const files = [...new Set(stored.map((entry) => entry.path))].filter((file) => {
+    const parts = file.slice(prefix.length).split("/");
+    return parts.length <= depth + 1 && accept(parts.at(-1));
+  });
+  const order = (file) => file.slice(prefix.length).split("/").map((name) => name.toLowerCase());
+  return files.sort((left, right) => {
+    const a = order(left), b = order(right);
+    for (let index = 0; index < Math.min(a.length, b.length); index += 1) if (a[index] !== b[index]) return a[index].localeCompare(b[index]);
+    return a.length - b.length;
+  }).slice(0, limit);
+}
+
 async function walk(root, relative, depth, accept, results, limit) {
+  if (await inArtifactStore(root, `${relative}/x`).catch(() => false)) {
+    const stored = await storeWalk(root, relative, depth, accept, limit - results.length);
+    if (stored !== null) { results.push(...stored); return; }
+  }
   let entries;
   try {
     entries = await readdir((await resolveRecordFile(root, relative)).target, { withFileTypes: true });
@@ -112,7 +140,7 @@ async function sliceArtifacts(root, directory, slices, slug, id) {
   let review = null;
   if (reviewSource !== null) {
     try {
-      review = { path: reviewPath, ...reviewSummary(JSON.parse(reviewSource)) };
+      review = { path: reviewPath, ...reviewSummary(parseStoreJson(reviewSource)) };
     } catch {
       review = { path: reviewPath, invalid: true };
     }
@@ -145,7 +173,7 @@ async function initiativeFindings(root, config, id) {
     const source = await readText(root, ledger);
     if (source === null) continue;
     try {
-      const summary = reviewSummary(JSON.parse(source));
+      const summary = reviewSummary(parseStoreJson(source));
       totals.unresolved += summary.unresolved;
       totals.blocking += summary.blocking;
     } catch {
@@ -347,7 +375,7 @@ async function derivedChangeMapState(projectRoot, id, slug, design, verification
   if (!design?.baselineId || !verification?.passed || !verification.snapshotId || verification.designAcceptedAt !== design.acceptedAt) return null;
   const source = await readText(projectRoot, await recordFile(projectRoot, { kind: "change-map", initiative: id, slice: slug }));
   let document = null;
-  try { document = source === null ? null : JSON.parse(source); }
+  try { document = source === null ? null : parseStoreJson(source); }
   catch { return { derived: false }; }
   if (document && !document.derived) return { derived: false };
   if (document?.derived?.runId === verification.id) return { derived: true, runId: verification.id, document };
@@ -430,6 +458,7 @@ async function computeLibrary(projectRoot, kind) {
   const files = [];
   await walk(projectRoot, directory, 4, (name) => name.endsWith(".md") && name.toLowerCase() !== "readme.md", files, LIBRARY_LIMIT);
   const references = kind === "requirements" ? await initiativeReferences(projectRoot, config) : new Map();
+  const recorded = await recordedStatuses(projectRoot, directory);
   const entries = [];
   for (const file of files) {
     const source = await readText(projectRoot, file);
@@ -438,7 +467,8 @@ async function computeLibrary(projectRoot, kind) {
     entries.push({
       path: file,
       title: fields.title ?? path.posix.basename(file, ".md"),
-      status: fields.status,
+      // With a store, the status a gate recorded is the artifact's status, whatever its Status: line says.
+      status: recorded?.has(file) ? recorded.get(file) : fields.status,
       created: fields.created,
       approved: fields.approved,
       topic: relative.includes("/") ? relative.split("/")[0] : null,
@@ -446,6 +476,16 @@ async function computeLibrary(projectRoot, kind) {
     });
   }
   return { kind, directory, entries };
+}
+
+// The recorded statuses of a store's requirements or ADRs by path, or null when the project names no store or the store cannot be read.
+async function recordedStatuses(projectRoot, directory) {
+  if (!(await inArtifactStore(projectRoot, `${directory}/x.md`).catch(() => false))) return null;
+  const statuses = await storeArtifactStatuses(projectRoot, directory).catch(() => null);
+  if (statuses === null) return null;
+  const byPath = new Map();
+  for (const entry of statuses) if (!byPath.has(entry.path)) byPath.set(entry.path, entry.status);
+  return byPath;
 }
 
 export async function loadGlossary(projectRoot) {
@@ -458,6 +498,7 @@ export async function loadGlossary(projectRoot) {
 
 async function isFile(root, relative) {
   try {
+    if (await inArtifactStore(root, relative)) return (await readArtifactText(root, relative)) !== null;
     return (await stat((await resolveRecordFile(root, relative)).target)).isFile();
   } catch {
     return false;
@@ -501,6 +542,16 @@ export function loadAttention(projectRoot) {
   return remember(`attention:${projectRoot}`, () => computeAttention(projectRoot));
 }
 
+/**
+ * Attention as its page shows it, with recentChanges: the shared Attention above, and the applied actions on store artifacts read again at each request,
+ * because a store sync changes or removes their files at any time, so a file that a reader now leaves out never lingers in the list for the cache window.
+ */
+export async function loadAttentionView(projectRoot) {
+  const { changes, ...attention } = await loadAttention(projectRoot);
+  const recentChanges = [...changes, ...await artifactChanges(projectRoot)].sort((left, right) => historyOrder(right, left)).slice(0, RECENT_CHANGES_LIMIT);
+  return { ...attention, recentChanges };
+}
+
 async function computeAttention(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   const roadmap = await loadRoadmapView(projectRoot);
@@ -513,7 +564,8 @@ async function computeAttention(projectRoot) {
   const earlier = [];
   const watch = [];
   const claims = [];
-  // The person's applied actions: every initiative history of these records, and this checkout's own index history, which no other checkout shares.
+  // The person's applied actions: every initiative history of these records, this checkout's own index history, which no other checkout shares,
+  // and the status records and comment files of the store artifacts the checkout sees, read below.
   const changes = (await readIndexHistory(projectRoot).catch(() => ({ history: [] }))).history.map((entry) => ({ ...entry, initiative: null }));
   const titles = new Map();
   for (const id of ids) {
@@ -568,7 +620,7 @@ async function computeAttention(projectRoot) {
       const source = await readText(projectRoot, ledger);
       if (source === null) continue;
       try {
-        const summary = reviewSummary(JSON.parse(source));
+        const summary = reviewSummary(parseStoreJson(source));
         if (summary.unresolved || summary.blocking) watch.push({ type: "findings", initiative, slice: { slug, title: slices[slug].title }, unresolved: summary.unresolved, blocking: summary.blocking, path: ledger });
       } catch {
         watch.push({ type: "record-problem", initiative, path: ledger, message: "The review ledger is not valid JSON." });
@@ -580,6 +632,7 @@ async function computeAttention(projectRoot) {
     const item = items.get(id);
     if (item?.readyToShip && item.state !== "shipped") watch.push({ type: "ready-to-ship", initiative });
   }
+  needsYou.push(...await approvalGates(projectRoot));
   needsYou.sort((left, right) => (left.type === "gate") === (right.type === "gate") ? gateOrder(left, right) : left.type === "gate" ? -1 : 1);
   if (roadmap.error) needsYou.push({ type: "roadmap-problem", path: config.paths.roadmap, message: roadmap.error });
   else if (!roadmap.exists && config.paths.roadmap) needsYou.push({ type: "roadmap-missing", path: roadmap.recordPath });
@@ -593,12 +646,38 @@ async function computeAttention(projectRoot) {
   // The newest closed questions come first, across initiatives, so the list stays short.
   earlier.sort((left, right) => newestFirst(left.closedAt, right.closedAt));
   const answeredThisWeek = recentlyAnswered(answered, earlier);
-  const recentChanges = changes.sort((left, right) => historyOrder(right, left)).slice(0, RECENT_CHANGES_LIMIT);
+  // The shared part keeps the newest changes of initiatives and the index; loadAttentionView adds the store artifacts' applied actions to them.
+  const recent = changes.sort((left, right) => historyOrder(right, left)).slice(0, RECENT_CHANGES_LIMIT);
   // Live claims lapse first first, then expired ones, the most recently lapsed first.
   const ends = (claim) => Date.parse(claim.expiresAt ?? "") || 0;
   claims.sort((left, right) => Number(left.expired) - Number(right.expired) || (left.expired ? ends(right) - ends(left) : ends(left) - ends(right)));
   shippedGates.sort(gateOrder);
-  return { needsYou, shippedGates, answered, earlier: earlier.slice(0, 20), watch, claims, recentChanges, gateCount: needsYou.filter((item) => item.type === "gate").length, answeredThisWeek };
+  return { needsYou, shippedGates, answered, earlier: earlier.slice(0, 20), watch, claims, changes: recent, gateCount: needsYou.filter((item) => item.type === "gate").length, answeredThisWeek };
+}
+
+/**
+ * The pending approval gates of the requirements and ADRs the checkout sees, as Attention items of kind approval with the artifact's path and scope,
+ * or none when the project names no store or the store cannot be read.
+ */
+async function approvalGates(projectRoot) {
+  const config = await readWorkflowConfig(projectRoot);
+  if ((config.workspace?.store ?? null) === null) return [];
+  const gates = await pendingApprovalGates(projectRoot).catch(() => []);
+  // An id that another pending gate holds too names no single gate, so the card says why its answer is refused.
+  const holders = new Map();
+  for (const gate of gates) holders.set(gate.id, (holders.get(gate.id) ?? 0) + 1);
+  return gates.map((gate) => ({
+    type: "gate", id: gate.id, kind: "approval", status: gate.status, recorded: gate.recorded, question: gate.question, context: gate.context ?? null, options: null, recommended: null,
+    askedAt: gate.askedAt, answer: null, initiative: null, slice: null, artifacts: [], artifact: { path: gate.artifact.path, scope: gate.artifact.scope }, changed: gate.changed,
+    ...(holders.get(gate.id) > 1 ? { ambiguous: true } : {})
+  }));
+}
+
+// The applied actions on the store artifacts the checkout sees, approvals from their status records and comments from their own files, which belong to no initiative's history.
+async function artifactChanges(projectRoot) {
+  const config = await readWorkflowConfig(projectRoot);
+  if ((config.workspace?.store ?? null) === null) return [];
+  return appliedArtifactActions(projectRoot, { latest: RECENT_CHANGES_LIMIT }).catch(() => []);
 }
 
 // A slice's latest verification run when it failed, so Attention lists it until a later run passes or the slice is done.
@@ -666,7 +745,7 @@ async function attentionPage(projectRoot, page) {
 // What a gate's attached record is, so the page names it by title and kind with the counts that matter for the answer.
 async function describeRecord(projectRoot, config, artifactPath, key, snapshot) {
   const json = async () => {
-    try { return JSON.parse(await readText(projectRoot, artifactPath) ?? "null"); }
+    try { return parseStoreJson(await readText(projectRoot, artifactPath) ?? "null"); }
     catch { return null; }
   };
   if (key?.kind === "change-map") {
@@ -1069,6 +1148,8 @@ export async function entityContext(projectRoot, ref) {
   if (ref === "attention" || ref === "roadmap") return { trail: [placeCrumb(ref, ref)], scope: { kind: "global" }, place: ref };
   if (parsed?.kind === "requirements" || parsed?.kind === "decisions") return { trail: [placeCrumb("knowledge"), { ref, label: SECTION_LABELS[parsed.kind] }], scope: await libraryScope(projectRoot, parsed.kind), place: "knowledge" };
   if (parsed?.kind === "glossary") return { trail: [placeCrumb("knowledge"), { ref, label: "Glossary" }], scope: { kind: "global" }, place: "knowledge" };
+  // The Launched sessions place belongs to no place of the rail, so its trail is its own name.
+  if (parsed?.kind === "launches") return { trail: [{ ref, label: SECTION_LABELS.launches }], scope: { kind: "global" }, place: null };
   if (parsed?.kind === "initiative" || parsed?.kind === "slice") return initiativeContext(projectRoot, parsed.id, { slug: parsed.kind === "slice" ? parsed.slug : null });
   if (typeof ref !== "string" || !ref) throw new Error("A tab reference is required.");
   const prefixed = /^(attention|knowledge):(.+)$/.exec(ref);
@@ -1152,13 +1233,23 @@ async function initiativeCode(projectRoot, view) {
   return code;
 }
 
+// Each initiative's title by its id: the roadmap's titles, and the id itself for an initiative that has only a record.
+async function initiativeTitles(projectRoot) {
+  const roadmap = await loadRoadmapView(projectRoot).catch(() => ({ items: [], unlisted: [] }));
+  const titles = Object.fromEntries((roadmap.unlisted ?? []).map((id) => [id, id]));
+  for (const item of roadmap.items ?? []) titles[item.id] = item.title;
+  return titles;
+}
+
 export async function loadEntity(projectRoot, ref, options = {}) {
   const parsed = parseEntityRef(ref);
   if (!parsed) throw new Error(`Unknown entity reference: ${ref}`);
-  if (parsed.kind === "attention") return { ref, kind: "attention", data: parsed.page ? await attentionPage(projectRoot, parsed.page) : await loadAttention(projectRoot) };
+  if (parsed.kind === "attention") return { ref, kind: "attention", data: parsed.page ? await attentionPage(projectRoot, parsed.page) : await loadAttentionView(projectRoot) };
   if (parsed.kind === "roadmap") return { ref, kind: "roadmap", data: await loadRoadmapView(projectRoot) };
   if (parsed.kind === "requirements" || parsed.kind === "decisions") return { ref, kind: parsed.kind, data: await loadLibrary(projectRoot, parsed.kind) };
   if (parsed.kind === "glossary") return { ref, kind: "glossary", data: await loadGlossary(projectRoot) };
+  // The place reads its sessions from api/launches itself; the page carries only the initiatives' titles, so a running time never redraws it.
+  if (parsed.kind === "launches") return { ref, kind: "launches", data: { titles: await initiativeTitles(projectRoot) } };
   if (parsed.kind === "knowledge" && parsed.page === "diagrams") return { ref, kind: "diagrams", data: { diagrams: (await loadDiagrams(projectRoot)).map(({ path: file, name, owner }) => ({ path: file, name, owner })) } };
   if (parsed.kind === "knowledge" && parsed.page === "touched") return { ref, kind: "touched", data: { inProgress: await slicesInProgress(projectRoot) } };
   if (parsed.kind === "knowledge") return { ref, kind: "changed", data: await loadRecordChanges(projectRoot) };

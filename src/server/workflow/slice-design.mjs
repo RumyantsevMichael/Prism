@@ -3,7 +3,8 @@ import { constants } from "node:fs";
 import { mkdir, open, readFile, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { writeAtomically } from "./artifact-store.mjs";
-import { listRecordEntries, listSliceRecords, locateRecord, readRecord, writeRecord } from "./record-store.mjs";
+import { inArtifactStore, listRecordEntries, listSliceRecords, locateRecord, readArtifactBytes, readRecord, readStoreFileBytes, STORE_FILE_BOUNDS, writeRecord } from "./record-store.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 const FROZEN_TEST_MAX_BYTES = 4 * 1024 * 1024;
 export const REVIEW_MARKS = Object.freeze(["required", "none"]);
@@ -68,13 +69,16 @@ export async function digestFrozenTests(projectRoot, paths) {
 export const CONTRACT_TOKEN_BUDGET = 150000;
 const BYTES_PER_TOKEN = 4;
 
-/** Estimate from file sizes how many tokens the named contract files hold, and which of them are missing. */
+/**
+ * Estimate from file sizes how many tokens the named contract files hold, and which of them are missing.
+ * With a store, a contract file at an artifact path, such as slice.md, is measured in the store, and a test in the checkout.
+ */
 export async function measureContract(projectRoot, paths) {
   const root = await realpath(projectRoot);
   let bytes = 0;
   const missing = [];
   for (const relative of [...new Set(paths)].sort()) {
-    const content = await frozenBytes(root, relative);
+    const content = await inArtifactStore(root, relative) ? await readArtifactBytes(root, relative) : await frozenBytes(root, relative);
     if (content === null) missing.push(relative);
     else bytes += content.length;
   }
@@ -130,7 +134,7 @@ export async function latestVerification(projectRoot, initiative, slice) {
 export async function unfinishedFrozenTestsOfOthers(projectRoot, initiative, slice) {
   const located = await locateRecord(projectRoot, { kind: "initiative", initiative });
   let raw;
-  try { raw = JSON.parse(await readFile(located.target, "utf8")); }
+  try { raw = parseStoreJson((await readStoreFileBytes(located.target, STORE_FILE_BOUNDS.initiative))?.toString("utf8") ?? "null"); }
   catch { return []; }
   const paths = new Set();
   for (const [key, other] of Object.entries(raw?.slices ?? {})) {
@@ -140,10 +144,15 @@ export async function unfinishedFrozenTestsOfOthers(projectRoot, initiative, sli
   return [...paths].sort();
 }
 
+/** The latest passing verification run of a slice as { id, entry }, or null when it has none. */
+export async function latestPassingRun(projectRoot, initiative, slice) {
+  const entries = await listRecordEntries(projectRoot, { kind: "runs", initiative, slice });
+  return entries.filter((item) => item.entry?.kind === "verification" && item.entry.passed === true).at(-1) ?? null;
+}
+
 /** Where the latest passing verification run of a slice ran: its checkout, or null when no passing run recorded one. */
 export async function verifiedCode(projectRoot, initiative, slice) {
-  const entries = await listRecordEntries(projectRoot, { kind: "runs", initiative, slice });
-  return entries.filter((item) => item.entry?.kind === "verification" && item.entry.passed === true).at(-1)?.entry.checkout ?? null;
+  return (await latestPassingRun(projectRoot, initiative, slice))?.entry.checkout ?? null;
 }
 
 /** When the latest passing verification run of a slice finished, in milliseconds, or null when no passing run records a finish time. */
@@ -165,7 +174,7 @@ export async function latestDependentsRun(projectRoot, initiative, scope) {
 export async function acceptedDesign(projectRoot, initiative, slice) {
   const located = await locateRecord(projectRoot, { kind: "initiative", initiative });
   let raw;
-  try { raw = JSON.parse(await readFile(located.target, "utf8")); }
+  try { raw = parseStoreJson((await readStoreFileBytes(located.target, STORE_FILE_BOUNDS.initiative))?.toString("utf8") ?? "null"); }
   catch { return null; }
   const design = raw?.slices?.[slice]?.design;
   return design && designProblems(design).length === 0 ? design : null;
@@ -210,7 +219,7 @@ export async function restageFrozenTests(projectRoot, initiative, slice, frozenT
   const root = await realpath(projectRoot);
   const { bytes } = await readRecord(root, { kind: "frozen-tests", initiative, slice }).catch(() => ({ bytes: null }));
   let stored = [];
-  try { stored = bytes === null ? [] : JSON.parse(bytes.toString("utf8")).tests ?? []; }
+  try { stored = bytes === null ? [] : parseStoreJson(bytes.toString("utf8")).tests ?? []; }
   catch { stored = []; }
   const byPath = new Map(stored.map((item) => [item.path, item]));
   const tests = [];
@@ -228,8 +237,11 @@ export async function restageFrozenTests(projectRoot, initiative, slice, frozenT
 /** Put a staged slice's frozen tests in place when the slice starts. */
 export async function installFrozenTests(projectRoot, initiative, slice, frozenTests) {
   const root = await realpath(projectRoot);
-  const { bytes } = await readRecord(root, { kind: "frozen-tests", initiative, slice });
-  const stored = bytes === null ? null : JSON.parse(bytes.toString("utf8"));
+  // Kept frozen tests above their bound read as damaged ones, which hold none of the tests.
+  const { bytes } = await readRecord(root, { kind: "frozen-tests", initiative, slice }).catch((error) => { if (error.tooLarge) return { bytes: null }; throw error; });
+  let stored = null;
+  try { stored = bytes === null ? null : parseStoreJson(bytes.toString("utf8")); }
+  catch { stored = null; }
   const byPath = new Map((stored?.tests ?? []).map((item) => [item.path, item]));
   const contents = frozenTests.map((item) => {
     const entry = byPath.get(item.path);
@@ -249,7 +261,7 @@ export async function readFrozenTestOf(projectRoot, initiative, relative) {
   for (const slice of await listSliceRecords(root, initiative)) {
     const stored = await readRecord(root, { kind: "frozen-tests", initiative, slice }).catch(() => ({ bytes: null }));
     if (stored.bytes === null) continue;
-    const entry = JSON.parse(stored.bytes.toString("utf8")).tests?.find((item) => item.path === relative);
+    const entry = parseStoreJson(stored.bytes.toString("utf8")).tests?.find((item) => item.path === relative);
     if (entry) return Buffer.from(entry.content, "base64");
   }
   return null;
