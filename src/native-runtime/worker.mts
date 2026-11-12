@@ -1,18 +1,19 @@
 import readline from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { create, insertMultiple, search } from "@orama/orama";
 import { AutoTokenizer, AutoModel, env } from "@huggingface/transformers";
 import { Tokenizer } from "@huggingface/tokenizers";
 import { CHUNKER_VERSION, CODE_EXTENSIONS, extractTextUnits, resolveTextLinks, bgeSourceBoundaries } from "./units.mjs";
 import { assignContainers, planFragments } from "./fragments.mjs";
+import type { FragmentCache } from "./fragments.mjs";
 import { searchExclusion } from "./domains.mjs";
 import { extractGraph } from "./graph.mjs";
 import { embedFragments, embeddingKey } from "./embeddings.mjs";
 import { FUSION_OFFSET, fusionWeights } from "./fusion.mjs";
-import type { UnitIndex, Fragment, BuildArguments, SearchArguments, SearchResult, Progress, WorkerRequest } from "../server/repository-intelligence/repository-unit-types.mjs";
+import type { UnitIndex, Fragment, SourceUnit, BuildArguments, SearchArguments, SearchResult, Progress, WorkerRequest } from "../server/repository-intelligence/repository-unit-types.mjs";
 
 const runtimeDirectory = path.dirname(fileURLToPath(import.meta.url));
 const CONTEXT_BOOST = 0.5;
@@ -108,6 +109,36 @@ async function build(args: BuildArguments, progress: (value: Progress) => void):
   return index;
 }
 
+// What a build derived from each file, kept in the runtime's state folder so a later build of the same file reuses it: its text units before
+// links between files were resolved, its token count, and its fragments by the units they were planned from. Each entry is keyed by the file's hash,
+// and the whole record by the chunker version and the model whose tokenizer counted the tokens, so a stale entry is never reused.
+type Group = ReturnType<typeof extractTextUnits>;
+interface DerivedFile { hash: string; group?: Group; tokens?: number; fragments?: { key: string; planned: [string, Fragment[]][] } }
+interface Derived { schemaVersion: 1; chunkerVersion: string; modelIdentity: string; files: Record<string, DerivedFile> }
+const DERIVED_STATE = "derived.json";
+
+// A mirror named `mirror` keeps the runtime's state in `runtime-state` beside it, which Prism empties whenever it cannot trust the mirror.
+export const stateDirectory = (mirror: string) => path.basename(mirror) === "mirror" ? path.join(path.dirname(mirror), "runtime-state") : undefined;
+
+async function readDerived(directory: string, modelIdentity: string): Promise<Derived["files"]> {
+  try {
+    const derived: Derived = JSON.parse(await readFile(path.join(directory, DERIVED_STATE), "utf8"));
+    return derived?.schemaVersion === 1 && derived.chunkerVersion === CHUNKER_VERSION && derived.modelIdentity === modelIdentity && derived.files && typeof derived.files === "object" ? derived.files : {};
+  } catch { return {}; }
+}
+
+async function writeDerived(directory: string, modelIdentity: string, files: Derived["files"]) {
+  try {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const temporary = path.join(directory, `${DERIVED_STATE}.${process.pid}.tmp`);
+    await writeFile(temporary, JSON.stringify({ schemaVersion: 1, chunkerVersion: CHUNKER_VERSION, modelIdentity, files } satisfies Derived), { mode: 0o600 });
+    await rename(temporary, path.join(directory, DERIVED_STATE));
+  } catch { /* A state that cannot be written costs only the next build's reuse. */ }
+}
+
+// The units a file's fragments are planned from, with their containers, decide its fragments, together with whether its structure is complete.
+const fragmentKey = (hash: string, structured: boolean, units: SourceUnit[]) => sha(JSON.stringify([hash, structured, units]));
+
 /** The complete index of a build's files except that no fragment carries an embedding. */
 export async function structure(args: BuildArguments, progress: (value: Progress) => void, tools: StructureTools): Promise<UnitIndex> {
   const files = [];
@@ -116,8 +147,20 @@ export async function structure(args: BuildArguments, progress: (value: Progress
     if (sha(text) !== meta.hash) throw Object.assign(new Error("The snapshot mirror changed."), { code: "stale_snapshot" });
     files.push({ ...meta, content: text });
   }
-  const graph = await extractGraph(args.mirror, files, runtimeDirectory, progress);
-  const groups = files.map(extractTextUnits);
+  // A build with change lists reuses what earlier builds derived from unchanged files; a full build derives everything and keeps it for the next build.
+  const state = stateDirectory(args.mirror);
+  const changes = args.changedFiles && args.removedFiles ? { changedFiles: args.changedFiles, removedFiles: args.removedFiles } : undefined;
+  const previous = state && changes ? await readDerived(state, args.modelIdentity) : {};
+  const derived: Derived["files"] = {};
+  const reusable = (file: { file: string; hash: string }) => previous[file.file]?.hash === file.hash ? previous[file.file] : undefined;
+  const graph = await extractGraph(args.mirror, files, runtimeDirectory, progress, state ? { directory: state, ...(changes ? { changes } : {}) } : undefined);
+  const groups = files.map(file => {
+    const kept = reusable(file)?.group;
+    const group = kept ? structuredClone(kept) : extractTextUnits(file);
+    // Resolving links changes a group, so the state keeps the group as its file alone gave it.
+    derived[file.file] = { hash: file.hash, group: kept ?? structuredClone(group) };
+    return group;
+  });
   resolveTextLinks(groups);
   const units = [...graph.nodes];
   const edges = [...graph.edges];
@@ -140,16 +183,28 @@ export async function structure(args: BuildArguments, progress: (value: Progress
   const excluded = new Set(files.filter(file => searchExclusion(file.file, file.content)).map(file => file.file));
   assignContainers(units, edges, byFile);
   // Unresolved references clear file coverage, but parsed symbols still represent the file.
+  const cache: FragmentCache = {
+    get(file, list) {
+      const kept = reusable(byFile.get(file)!)?.fragments;
+      if (!kept || kept.key !== fragmentKey(byFile.get(file)!.hash, Boolean(syntaxCoverage[file]), list)) return undefined;
+      derived[file].fragments = kept;
+      return new Map(structuredClone(kept.planned));
+    },
+    set(file, list, planned) {
+      derived[file].fragments = { key: fragmentKey(byFile.get(file)!.hash, Boolean(syntaxCoverage[file]), list), planned: structuredClone([...planned]) };
+    }
+  };
   const chunks: Fragment[] = planFragments(units, byFile, { countTokens: tools.countTokens, boundaries: tools.boundaries, limit: 512,
-    isCandidate: unit => !excluded.has(unit.file) && unit.kind !== "import", isStructured: file => Boolean(syntaxCoverage[file]) });
+    isCandidate: unit => !excluded.has(unit.file) && unit.kind !== "import", isStructured: file => Boolean(syntaxCoverage[file]), ...(state ? { cache } : {}) });
   if (chunks.length > 100000) throw Object.assign(new Error("The semantic index exceeds 100,000 fragments."), { code: "resource_limit" });
   // The structure names each fragment's embedding key as the complete index does, and only the embeddings are missing.
   for (const chunk of chunks) chunk.embeddingKey = embeddingKey(args.modelIdentity, chunk.embeddingText);
   const index: UnitIndex = { schemaVersion: 1, chunkerVersion: CHUNKER_VERSION, modelIdentity: args.modelIdentity, snapshot: args.snapshot, units, edges, unresolvedReferences: graph.references, unresolvedByFile: graph.unresolvedByFile, chunks, fileCoverage, diagnostics,
     syntaxCoverage, structureCounts: Object.fromEntries(groups.map(group => [group.units[0].file, group.counts])),
-    tokenCounts: Object.fromEntries(files.map(file => [file.file, tools.fileTokens(file.content)])),
+    tokenCounts: Object.fromEntries(files.map(file => [file.file, derived[file.file].tokens = reusable(file)?.tokens ?? tools.fileTokens(file.content)])),
     counts: { files: files.length, units: units.length, fragments: chunks.length, searchExcludedFiles: excluded.size, reusedEmbeddings: 0, newEmbeddings: 0 },
     structureComplete: !diagnostics.some(item => !item.file), resources: { rssBytes: process.memoryUsage().rss, peakRssBytes: process.resourceUsage().maxRSS * 1024 } };
+  if (state) await writeDerived(state, args.modelIdentity, derived);
   return index;
 }
 

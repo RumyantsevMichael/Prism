@@ -2,7 +2,7 @@
 import readline from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { create, insertMultiple, search } from "@orama/orama";
 import { AutoTokenizer, AutoModel, env } from "@huggingface/transformers";
@@ -102,6 +102,26 @@ async function build(args, progress) {
   index.resources = { rssBytes: process.memoryUsage().rss, peakRssBytes: process.resourceUsage().maxRSS * 1024 };
   return index;
 }
+const DERIVED_STATE = "derived.json";
+const stateDirectory = (mirror) => path.basename(mirror) === "mirror" ? path.join(path.dirname(mirror), "runtime-state") : void 0;
+async function readDerived(directory, modelIdentity2) {
+  try {
+    const derived = JSON.parse(await readFile(path.join(directory, DERIVED_STATE), "utf8"));
+    return derived?.schemaVersion === 1 && derived.chunkerVersion === CHUNKER_VERSION && derived.modelIdentity === modelIdentity2 && derived.files && typeof derived.files === "object" ? derived.files : {};
+  } catch {
+    return {};
+  }
+}
+async function writeDerived(directory, modelIdentity2, files) {
+  try {
+    await mkdir(directory, { recursive: true, mode: 448 });
+    const temporary = path.join(directory, `${DERIVED_STATE}.${process.pid}.tmp`);
+    await writeFile(temporary, JSON.stringify({ schemaVersion: 1, chunkerVersion: CHUNKER_VERSION, modelIdentity: modelIdentity2, files }), { mode: 384 });
+    await rename(temporary, path.join(directory, DERIVED_STATE));
+  } catch {
+  }
+}
+const fragmentKey = (hash, structured, units) => sha(JSON.stringify([hash, structured, units]));
 async function structure(args, progress, tools) {
   const files = [];
   for (const meta of args.files) {
@@ -109,8 +129,18 @@ async function structure(args, progress, tools) {
     if (sha(text) !== meta.hash) throw Object.assign(new Error("The snapshot mirror changed."), { code: "stale_snapshot" });
     files.push({ ...meta, content: text });
   }
-  const graph = await extractGraph(args.mirror, files, runtimeDirectory, progress);
-  const groups = files.map(extractTextUnits);
+  const state = stateDirectory(args.mirror);
+  const changes = args.changedFiles && args.removedFiles ? { changedFiles: args.changedFiles, removedFiles: args.removedFiles } : void 0;
+  const previous = state && changes ? await readDerived(state, args.modelIdentity) : {};
+  const derived = {};
+  const reusable = (file) => previous[file.file]?.hash === file.hash ? previous[file.file] : void 0;
+  const graph = await extractGraph(args.mirror, files, runtimeDirectory, progress, state ? { directory: state, ...changes ? { changes } : {} } : void 0);
+  const groups = files.map((file) => {
+    const kept = reusable(file)?.group;
+    const group = kept ? structuredClone(kept) : extractTextUnits(file);
+    derived[file.file] = { hash: file.hash, group: kept ?? structuredClone(group) };
+    return group;
+  });
   resolveTextLinks(groups);
   const units = [...graph.nodes];
   const edges = [...graph.edges];
@@ -135,12 +165,24 @@ async function structure(args, progress, tools) {
   const byFile = new Map(files.map((file) => [file.file, file]));
   const excluded = new Set(files.filter((file) => searchExclusion(file.file, file.content)).map((file) => file.file));
   assignContainers(units, edges, byFile);
+  const cache = {
+    get(file, list) {
+      const kept = reusable(byFile.get(file))?.fragments;
+      if (!kept || kept.key !== fragmentKey(byFile.get(file).hash, Boolean(syntaxCoverage[file]), list)) return void 0;
+      derived[file].fragments = kept;
+      return new Map(structuredClone(kept.planned));
+    },
+    set(file, list, planned) {
+      derived[file].fragments = { key: fragmentKey(byFile.get(file).hash, Boolean(syntaxCoverage[file]), list), planned: structuredClone([...planned]) };
+    }
+  };
   const chunks = planFragments(units, byFile, {
     countTokens: tools.countTokens,
     boundaries: tools.boundaries,
     limit: 512,
     isCandidate: (unit) => !excluded.has(unit.file) && unit.kind !== "import",
-    isStructured: (file) => Boolean(syntaxCoverage[file])
+    isStructured: (file) => Boolean(syntaxCoverage[file]),
+    ...state ? { cache } : {}
   });
   if (chunks.length > 1e5) throw Object.assign(new Error("The semantic index exceeds 100,000 fragments."), { code: "resource_limit" });
   for (const chunk of chunks) chunk.embeddingKey = embeddingKey(args.modelIdentity, chunk.embeddingText);
@@ -158,11 +200,12 @@ async function structure(args, progress, tools) {
     diagnostics,
     syntaxCoverage,
     structureCounts: Object.fromEntries(groups.map((group) => [group.units[0].file, group.counts])),
-    tokenCounts: Object.fromEntries(files.map((file) => [file.file, tools.fileTokens(file.content)])),
+    tokenCounts: Object.fromEntries(files.map((file) => [file.file, derived[file.file].tokens = reusable(file)?.tokens ?? tools.fileTokens(file.content)])),
     counts: { files: files.length, units: units.length, fragments: chunks.length, searchExcludedFiles: excluded.size, reusedEmbeddings: 0, newEmbeddings: 0 },
     structureComplete: !diagnostics.some((item) => !item.file),
     resources: { rssBytes: process.memoryUsage().rss, peakRssBytes: process.resourceUsage().maxRSS * 1024 }
   };
+  if (state) await writeDerived(state, args.modelIdentity, derived);
   return index;
 }
 async function query(args) {
@@ -270,5 +313,6 @@ function serve() {
 export {
   hasEmbeddings,
   query,
+  stateDirectory,
   structure
 };
