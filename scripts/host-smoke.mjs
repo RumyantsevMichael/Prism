@@ -316,9 +316,9 @@ async function codexTurn() {
   const reported = results.map((text) => text.match(/\{"capacity".*\}/s)?.[0]).find(Boolean);
   if (!reported) throw new Error(`the script returned no result: ${results.join("\n").slice(0, 1000)}`);
   const { capacity, consumption } = JSON.parse(reported);
-  if (capacity?.status !== "SUPPORTED") {
-    throw new Error(`the first call's capacity is ${capacity?.status} (${capacity?.reasonCode}); ${await configReadDiagnosis(project, turnEnv)}`);
-  }
+  const diagnosis = await configReadDiagnosis(project, turnEnv);
+  console.log(`# codex-turn: ${diagnosis}`);
+  if (capacity?.status !== "SUPPORTED") throw new Error(`the first call's capacity is ${capacity?.status} (${capacity?.reasonCode}); ${diagnosis}`);
   const targets = consumption?.runMeasures?.attribution?.targets ?? [];
   if (!targets.some((entry) => entry.target?.initiative === "demo")) {
     throw new Error(`the get_initiative call was not linked to initiative demo: ${JSON.stringify(consumption?.runMeasures?.attribution).slice(0, 1000)}`);
@@ -326,7 +326,7 @@ async function codexTurn() {
 }
 
 // Capacity needs Codex's effective settings, which the server reads from a Codex app server within a short bound.
-// When capacity is unavailable, the same read is repeated here with that bound and with a long one, so the log says whether it was too slow or failed.
+// The same read is repeated here with that bound and with a long one and the times are logged, so the log shows how close the read comes to its bound and, when capacity is unavailable, whether the read was too slow or failed.
 async function configReadDiagnosis(project, environment) {
   const { inspectCodexEffectiveConfig } = await import(pathToFileURL(path.join(checkout, "src/server/session/host-adapters/codex-config.mjs")).href);
   const attempt = async (timeoutMs) => {
