@@ -1444,3 +1444,35 @@ a.code-link:hover {
   gap: var(--prism-space-2);
   max-width: 100%;
 }
+
+/* ---------- Code content from code clones ---------- */
+
+/* A repository's code state and its switch share one row that wraps on a narrow page. */
+.code-repository-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--prism-space-2);
+  margin-bottom: var(--prism-space-3);
+}
+
+/* Each folder entry names its file or folder and then the branches that hold it, wrapping long names and many branches. */
+.code-entries > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.code-file {
+  display: grid;
+  gap: var(--prism-space-3);
+  margin-top: var(--prism-space-3);
+}
+
+.code-branches {
+  margin-bottom: var(--prism-space-2);
+}

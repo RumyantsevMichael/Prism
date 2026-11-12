@@ -110,9 +110,13 @@ async function walkArtifacts(projectRoot, relativeRoot, results) {
   }
 }
 
-const SOURCE_SIZE_LIMIT = 512 * 1024;
+export const SOURCE_SIZE_LIMIT = 512 * 1024;
 const SOURCE_CACHE_MS = 2000;
 const SECRET_NAME = /^(\.env(\..*)?|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.npmrc|\.pypirc|\.netrc|credentials(\.json)?)$|\.(pem|key|p12|pfx|jks|keystore|kdbx|gpg|asc)$/i;
+/** Whether review sources leave a path out as a secret by its file name, such as .env or a private key. */
+export const secretPath = (file) => SECRET_NAME.test(path.posix.basename(String(file)));
+/** Whether review sources leave a path out as a binary file by its extension. */
+export const binaryPath = (file) => BINARY_EXTENSION.test(path.posix.basename(String(file)));
 const BINARY_EXTENSION = /\.(png|jpe?g|gif|webp|ico|bmp|pdf|zip|gz|tgz|bz2|xz|7z|rar|jar|war|class|pyc|so|dylib|dll|exe|wasm|woff2?|ttf|otf|eot|mp3|mp4|mov|avi|sqlite|db)$/i;
 const sourceCache = new Map();
 
@@ -840,10 +844,14 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     return sources;
   }
 
-  // A workspace page opens a code file that a store artifact links to by its ref, code:<repository>:<path>, as a tab like any other file.
+  // A workspace page opens a code file that a store artifact links to by its ref, code:<repository>:<path>, as a tab like any other file,
+  // whether a registered checkout lists it or the repository's code clone holds it at the remote's default branch.
   async function codeRefs() {
     const refs = [];
     for (const [repository, files] of await codeSources()) for (const file of files) refs.push(codeRefOf(repository, file));
+    if (workspace?.code) {
+      for (const repository of await storeRepositories()) for (const file of await workspace.code.defaultFiles(repository) ?? []) refs.push(codeRefOf(repository, file));
+    }
     return refs;
   }
 
@@ -859,7 +867,41 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       send(response, 200, JSON.stringify({ ...loaded, diagrams, ref, path: ref, file: code.path, repository: code.repository }), "application/json; charset=utf-8");
       return;
     }
-    send(response, 404, "No registered checkout of that repository holds the file for review.");
+    // A path that no registered checkout lists is read from the repository's code clone at the remote's default branch, with the clone's own checks.
+    const cloned = workspace?.code && (await storeRepositories()).includes(code.repository) ? await workspace.code.defaultFile(code.repository, code.path) : null;
+    if (cloned) {
+      send(response, 200, JSON.stringify({ ref, ...cloned }), "application/json; charset=utf-8");
+      return;
+    }
+    send(response, 404, "No registered checkout of that repository and no code clone of it on this machine holds the file for review.");
+  }
+
+  // The code routes of a workspace's page, which read the code clones Prism keeps and never answer a URL of a Git host.
+  async function serveCode(response, route, url) {
+    const repository = url.searchParams.get("repository");
+    if (!workspace?.code || !repository || !(await storeRepositories()).includes(repository)) {
+      sendJson(response, 404, { code: "repository_unknown", message: "The workspace has no repository of that name." });
+      return;
+    }
+    const off = () => sendJson(response, 404, { code: "code_off", message: `The code content of ${repository} is off or not fetched yet, so this machine keeps no clone of it.` });
+    if (route === "/api/code/tree") {
+      const folder = workspace.code.folder(url.searchParams.get("folder") ?? "");
+      if (folder === null) {
+        sendJson(response, 400, { code: "invalid_request", message: "The folder must be a path below the repository's root." });
+        return;
+      }
+      const entries = await workspace.code.tree(repository, folder);
+      if (entries === null) off();
+      else sendJson(response, 200, { repository, folder, entries });
+    } else if (route === "/api/code/file") {
+      const read = await workspace.code.file(repository, { branch: url.searchParams.get("branch"), commit: url.searchParams.get("commit"), path: url.searchParams.get("path") });
+      if (read) sendJson(response, 200, read);
+      else sendJson(response, 404, { code: "file_unavailable", message: "The clone holds no such file to show: the branch or commit is unknown, the path is no file there, or the file is a secret, binary, or over 512 KiB." });
+    } else {
+      const components = await workspace.code.components(repository);
+      if (components === null) off();
+      else sendJson(response, 200, { repository, ...components });
+    }
   }
 
   // The repositories a workspace's store registers, with those its registered checkouts name, by name.
@@ -871,6 +913,11 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     return [...names].sort();
   }
 
+  // Each repository of the workspace with its code content state.
+  async function codeRepositories() {
+    return Promise.all((await storeRepositories()).map(async (name) => ({ name, code: workspace?.code ? await workspace.code.state(name) : { state: "off" } })));
+  }
+
   // What resolves the links of a scope's artifacts: the configured artifact kinds of a registered checkout of its repository, of the checkout the page reads through for the workspace scope, or else Prism's default paths,
   // the code repository its links to files name, that of the checkout the page reads through for the workspace scope or null without one, and the review sources registered checkouts of that repository list, or null with none.
   async function linkContext(scope) {
@@ -880,7 +927,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     const root = scope.repository ? members.find((member) => member.repository === scope.repository)?.root ?? null : projectRoot;
     const config = root ? await readWorkflowConfig(root).catch(() => null) : null;
     const sources = repository === null ? null : (await codeSources()).get(repository) ?? null;
-    return { kinds: artifactKinds(config ?? parseWorkflowConfig("")), repository, sources };
+    const cloned = repository === null || !workspace?.code ? null : await workspace.code.defaultFiles(repository);
+    return { kinds: artifactKinds(config ?? parseWorkflowConfig("")), repository, sources, cloned };
   }
 
   // A workspace page's read of a store artifact by its ref, answered as a checkout's artifact read is, with its location, scope, links, and the count of links that resolve to nothing.
@@ -1083,9 +1131,11 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref) => entityExists(projectRoot, ref));
       // A workspace read through its store's clone alone has no checkout to name.
       const checkout = workspace && await isStoreWithoutCheckout(projectRoot) ? null : await readWorkspaceIdentity(projectRoot);
-      const named = workspace ? { workspace: await workspace.describe(), checkout, storeRefs: await storeArtifactRefs(projectRoot), sync: await workspace.sync?.() ?? null } : { workspace: checkout };
+      const named = workspace ? { workspace: await workspace.describe(), checkout, storeRefs: await storeArtifactRefs(projectRoot), sync: await workspace.sync?.() ?? null, repositories: await codeRepositories() } : { workspace: checkout };
       const scoped = storeIndex ? { artifactScopes: storeIndex.artifactScopes, scopes: storeIndex.scopes, ...(storeIndex.scopeFilter ? { scopeFilter: storeIndex.scopeFilter, unknownScopes: storeIndex.unknownScopes } : {}), notes: storeIndex.notes } : { artifactScopes: await listArtifactScopes(projectRoot) };
       send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, ...scoped, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
+    } else if (["/api/code/tree", "/api/code/file", "/api/code/components"].includes(route) && request.method === "GET") {
+      await serveCode(response, route, url);
     } else if (route === "/api/store/conflicts" && request.method === "GET") {
       // Saved local record versions are read-only here; a person redoes a lost change through an agent.
       send(response, 200, JSON.stringify({ conflicts: await listRecordStoreConflicts(projectRoot).catch(() => []) }), "application/json; charset=utf-8");
@@ -1147,6 +1197,10 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const ref = url.searchParams.get("ref");
       if (["initiative", "slice"].includes(parseEntityRef(ref)?.kind) && !(await entityExists(projectRoot, ref))) {
         send(response, 404, "The item no longer exists in this project.");
+        return;
+      }
+      if (ref === "code" && workspace) {
+        sendJson(response, 200, { ref, kind: "code", data: { repositories: await codeRepositories() } });
         return;
       }
       send(response, 200, JSON.stringify(await loadEntity(projectRoot, ref, { intelligenceDirectories: intelligenceDirectories() })), "application/json; charset=utf-8");

@@ -36,6 +36,7 @@ import { checkoutWorkspace, listWorkspaces, nameOfWorkspace, storeFolder, storeW
 import { listMachineCheckouts } from "../workflow/machine-checkouts.mjs";
 import { createWriteSessions } from "./write-sessions.mjs";
 import { watchWorkspace, WORKSPACE_FETCH_MAX_MS, WORKSPACE_FETCH_MS } from "./workspace-sync.mjs";
+import { codeFolder, createCodeClones, registeredRemotes } from "./code-clones.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
 
 const LEASE_MS = 3 * 60 * 1000;
@@ -123,6 +124,8 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
   const stores = new Map();
   // The workspaces a person added from a store URL, which stay listed until the person removes them, and when each one's own page was last opened.
   const added = await createAddedWorkspaces({ directory });
+  // The repositories whose code content a person turned on, each with a blobless clone in the app folder's code/, which every workspace fetch also fetches.
+  const code = await createCodeClones({ directory });
   const addedUsage = new Map();
   let openGrantedAt = -Infinity;
   // Recency is a counter rather than a clock, so projects touched within one millisecond keep their order.
@@ -290,7 +293,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
   // The one review of a workspace, read through root, with the fetch timer that its connected pages drive.
   function makeView({ id, kind, identity, urls, root }) {
     const view = { id, kind, identity, urls, usedAt: addedUsage.get(id) ?? 0, review: null, watch: null, storeRoot: null, get root() { return this.review.projectRoot; } };
-    view.watch = watchWorkspace({ base: () => syncedClone(view), label: () => remoteLabel(view.urls[0]) ?? view.identity, intervalMs: workspaceFetchMs, maxMs: workspaceFetchMaxMs });
+    view.watch = watchWorkspace({ base: () => syncedClone(view), label: () => remoteLabel(view.urls[0]) ?? view.identity, intervalMs: workspaceFetchMs, maxMs: workspaceFetchMaxMs, fetchCode: () => code.fetchAll(view.id) });
     view.review = createProjectReview({ projectRoot: root, baseUrl: `http://127.0.0.1:${port}${viewerPrefix()}/w/${view.id}`, instance, appVersion: pluginVersion,
       onViewer: (sendNotice) => {
         view.usedAt = ++sequence;
@@ -300,7 +303,16 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
       onAction: (event) => view.review.notify("action", event),
       evidenceStore: () => evidenceStoreOf(currentProject(view)), intelligenceDirectories: () => intelligenceDirectoriesOf(currentProject(view)), writeSessions,
       workspace: { id: view.id, describe: () => describeWorkspace(view), sync: async () => await syncedClone(view) ? view.watch.state() : null, viewers: (count) => view.watch.viewers(count),
-        checkouts: () => membersOf(view).map(({ root: member, repository }) => ({ root: member, repository: repository ?? null })) } });
+        checkouts: () => membersOf(view).map(({ root: member, repository }) => ({ root: member, repository: repository ?? null })),
+        code: {
+          folder: codeFolder,
+          state: (repository) => code.state(view.id, repository),
+          tree: (repository, folder) => code.tree(view.id, repository, folder),
+          file: (repository, at) => code.file(view.id, repository, at),
+          defaultFile: (repository, file) => code.defaultFile(view.id, repository, file),
+          defaultFiles: (repository) => code.defaultFiles(view.id, repository),
+          components: (repository) => code.components(view.id, repository)
+        } } });
     workspaces.set(view.id, view);
     return view;
   }
@@ -464,6 +476,43 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
   }
 
   const workspaceList = () => listWorkspaces(workspaceViews(), { urlOf: workspaceUrl });
+
+  // The remotes that the store of a workspace registers for each repository, with an empty list for a repository that only a registered checkout names.
+  async function repositoryRemotes(view) {
+    const remotes = view.kind === "store" ? await registeredRemotes(await storeFolder(view.identity)) : new Map();
+    for (const member of membersOf(view)) if (member.repository && !remotes.has(member.repository)) remotes.set(member.repository, []);
+    return remotes;
+  }
+
+  // Turning a repository's code content on clones its first registered remote, and turning it off deletes the clone; both change only the app's own state on this machine.
+  async function setCode(request, response, view, repository) {
+    if (refuseChange(request, response)) return;
+    let body;
+    try { body = await readJson(request); } catch (error) { sendJson(response, 400, { code: "invalid_request", message: error.message }); return; }
+    if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.enabled !== "boolean") {
+      sendJson(response, 400, { code: "invalid_request", message: "The request must be a JSON object of enabled true or false." });
+      return;
+    }
+    const remotes = (await repositoryRemotes(view)).get(repository);
+    if (!remotes) {
+      sendJson(response, 404, { code: "repository_unknown", message: "The workspace has no repository of that name." });
+      return;
+    }
+    if (!body.enabled) {
+      sendJson(response, 200, { repository, code: await code.disable(view.id, repository) });
+      return;
+    }
+    if (!remotes.length) {
+      sendJson(response, 409, { code: "no_remote", message: `The store's registration of ${repository} lists no remote, so Prism has nothing to clone its code from.` });
+      return;
+    }
+    try {
+      sendJson(response, 200, { repository, code: await code.enable(view.id, repository, remotes[0]) });
+    } catch (error) {
+      if (!error.status || !error.code) throw error;
+      sendJson(response, error.status, { code: error.code, message: error.message });
+    }
+  }
 
   // The index names its workspace on every poll, so it reads only the name, never the gate counts and checkouts of the list.
   async function describeWorkspace(view) {
@@ -706,6 +755,11 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
         if (!inWorkspace[2]) {
           response.writeHead(308, { Location: `${prefix}${route}/${url.search}`, "Cache-Control": "no-store" });
           response.end();
+          return;
+        }
+        const codeSwitch = /^\/api\/code\/([^/]+)$/.exec(inWorkspace[2]);
+        if (codeSwitch && request.method === "PUT") {
+          await setCode(request, response, view, decodeURIComponent(codeSwitch[1]));
           return;
         }
         if (inWorkspace[2] === "/api/projects" && request.method === "GET") {

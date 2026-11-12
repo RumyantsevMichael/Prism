@@ -67,13 +67,16 @@ let storeScopes = [];
 let refScopes = new Map();
 let storeNotes = [];
 let storeSignature = "";
+let codeRepositories = [];
 
 function useStoreRefs(data) {
   pathRefs = new Map(Object.entries(data.storeRefs ?? {}));
   storeScopes = Array.isArray(data.scopes) ? data.scopes : [];
   refScopes = new Map(Object.entries(data.artifactScopes ?? {}).filter(([ref]) => isStoreRef(ref)));
   storeNotes = Array.isArray(data.notes) ? data.notes : [];
-  storeSignature = JSON.stringify([storeScopes, storeNotes, [...refScopes.keys()].join("\n")]);
+  // A workspace's code repositories, which the Library's Code page lists while there is one.
+  codeRepositories = Array.isArray(data.repositories) ? data.repositories.map((repository) => repository.name) : [];
+  storeSignature = JSON.stringify([storeScopes, storeNotes, [...refScopes.keys()].join("\n"), codeRepositories]);
 }
 
 // The scope filter narrows the store's artifacts to the chosen scope labels, or shows every scope while null, and the page keeps it in its URL's scopes parameter.
@@ -1267,7 +1270,8 @@ function renderNavigation() {
   const glossary = navigation.glossary ?? {};
   navLibrary.replaceChildren(section("Library"), tree("Library", [
     ...["requirements", "decisions"].map((ref) => treeItem(ref, ENTITY_LABELS[ref], { selected: selectedPath === ref })),
-    treeItem("glossary", "Glossary", { selected: selectedPath === "glossary" || (glossary.path && selectedPath === glossary.path), end: glossary.exists ? [] : [element("span", "nav-state", "missing")] })
+    treeItem("glossary", "Glossary", { selected: selectedPath === "glossary" || (glossary.path && selectedPath === glossary.path), end: glossary.exists ? [] : [element("span", "nav-state", "missing")] }),
+    ...(codeRepositories.length ? [treeItem("code", ENTITY_LABELS.code, { selected: selectedPath === "code" })] : [])
   ]), ...storeNavigation());
   if (refocus) [...navRoot.querySelectorAll("prism-tree-item")].find((item) => item.getAttribute("value") === refocus)?.focus();
   navRoot.querySelector("prism-tree-item[selected]")?.scrollIntoView?.({ block: "nearest" });
@@ -1544,7 +1548,14 @@ async function showEntity(path) {
   const container = document.createElement("div");
   container.className = "structured-view";
   artifact.appendChild(container);
-  await renderEntity(container, entity, { ...viewContext(path, state), renderMarkdown: (source, basePath = null) => renderText("document.md", source, markdownOptions(basePath)) });
+  await renderEntity(container, entity, { ...viewContext(path, state), renderMarkdown: (source, basePath = null) => renderText("document.md", source, markdownOptions(basePath)),
+    // The Code page turns a repository's code content on or off with the tab's write session, and then reads the page again.
+    canWrite: () => Boolean(writeSession()),
+    setCode: (repository, enabled) => setCodeContent(repository, enabled),
+    refresh: () => {
+      lastSnapshot = "";
+      if (path === selectedPath) void showArtifact(path);
+    } });
   endRebuild(memory);
 }
 
@@ -1566,7 +1577,7 @@ async function showArtifact(path) {
     await showError(response);
     return;
   }
-  const data = await response.json();
+  const data = codeCloneRead(await response.json());
   const state = viewState(data.path);
   // A Review card that lists further comment reads reads them all again with the first, so its list stays the file's first comments as they now are.
   const readPage = (commentOffset) => fetchJson(`./api/artifact?${artifactQuery(data.path)}&commentOffset=${commentOffset}`);
@@ -1609,6 +1620,7 @@ async function showArtifact(path) {
         ${data.scope ? `<prism-chip tone="accent" data-scope-label tip="The scope that holds this artifact in the record store">${escapeHtml(data.scope.label)}</prism-chip>` : ""}
         ${data.unresolvedLinks ? `<prism-chip tone="warning" tip="Links in this file that name no artifact in the record store and no file">${escapeHtml(countText(data.unresolvedLinks, "link not found", "links not found"))}</prism-chip>` : ""}
         ${unavailableLinks(data) ? `<prism-chip tip="Links to code files that no checkout of their repository on this machine holds">${escapeHtml(countText(unavailableLinks(data), "code link not available on this machine", "code links not available on this machine"))}</prism-chip>` : ""}
+        ${data.branch ? `<prism-chip data-branch-label tip="The branch of the repository's code clone that this file is read from">${escapeHtml(data.branch)}</prism-chip>` : ""}
         ${named.code || structured ? `<prism-chip>${escapeHtml(kind)}</prism-chip>` : ""}
         ${source ? "<prism-chip>Read-only</prism-chip>" : structured ? "" : `<prism-chip>${diagramLabel}</prism-chip>`}
       </div>
@@ -1633,6 +1645,21 @@ async function showArtifact(path) {
     await renderDiagram(diagram.source, section.querySelector(".diagram-output"), section);
   }
   endRebuild(memory);
+}
+
+// Turn a repository's code content on or off, answering { message } when the app refused it.
+async function setCodeContent(repository, enabled) {
+  if (!requireApp()) return null;
+  const response = await fetch(`./api/code/${encodeURIComponent(repository)}`, { method: "PUT", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ enabled }) });
+  const answer = await response.json().catch(() => ({ message: "The review app returned an unreadable answer." }));
+  if (!response.ok) return { message: answer.message ?? "The review app could not change the code content." };
+  return answer.code?.state === "unreachable" ? { message: answer.code.message } : null;
+}
+
+// A code file read from a repository's code clone names its path below the repository and its branch, so the page shows it as a read-only source file by its ref.
+function codeCloneRead(data) {
+  if (!isCodeRef(data?.ref) || data.kind !== undefined || typeof data.content !== "string") return data;
+  return { ...data, path: data.ref, file: data.path, kind: "source", diagrams: [] };
 }
 
 const KIND_LABELS = {

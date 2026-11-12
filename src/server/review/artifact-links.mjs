@@ -64,19 +64,21 @@ export function parseCodeRef(ref) {
 /**
  * The links of a store artifact's text as { line, href, target, resolved }, with target store:<location> of the artifact the link names, code:<repository>:<path> of the code file it names, or null:
  * location is the artifact's location below artifacts/, kinds the configured artifact kinds of a checkout of its repository, or Prism's default paths, and has(location) whether the store holds an artifact there;
- * repository is the code repository of the artifact's scope, or null when the page reads through no checkout for the workspace scope, and sources the review sources that registered checkouts of it list, or null when none is registered.
+ * repository is the code repository of the artifact's scope, or null when the page reads through no checkout for the workspace scope, sources the review sources that registered checkouts of it list, or null when none is registered,
+ * and cloned the files that the repository's code clone holds at the remote's default branch, without secrets, or null while its code content is off or it has no clone.
  * A link resolves against the location first, and then through the artifact's checkout path, to a location of the artifact's own scope or else the workspace scope,
- * or, for a path the kinds give no artifact kind, to a code file: resolved when a checkout lists it, and resolved null with reason code_not_available when no checkout of the repository is registered.
+ * or, for a path the kinds give no artifact kind, to a code file: resolved when a checkout lists it or the clone holds it,
+ * and otherwise resolved null with reason code_not_available when no checkout of the repository is registered.
  */
-export function resolveLinks({ content, location, kinds, has, repository = null, sources = null }) {
+export function resolveLinks({ content, location, kinds, has, repository = null, sources = null, cloned = null }) {
   const artifact = locationArtifact(location);
   const own = artifact ? checkoutPathOf(kinds, artifact) : null;
   return markdownLinks(content).map(({ line, href }) => {
     const found = resolveLink(href, { location, artifact, own, kinds, has });
     if (found?.store) return { line, href, target: found.store, resolved: true };
     if (found?.code) {
+      if (repository !== null && (sources?.has(found.code) || cloned?.has(found.code))) return { line, href, target: codeRefOf(repository, found.code), resolved: true };
       if (sources === null) return { line, href, target: repository === null ? null : codeRefOf(repository, found.code), resolved: null, reason: "code_not_available" };
-      if (sources.has(found.code)) return { line, href, target: codeRefOf(repository, found.code), resolved: true };
     }
     return { line, href, target: null, resolved: false };
   });

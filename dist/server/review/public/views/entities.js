@@ -5,7 +5,8 @@ export const ENTITY_LABELS = Object.freeze({
   roadmap: "Roadmap",
   requirements: "Requirements",
   decisions: "Decisions",
-  glossary: "Glossary"
+  glossary: "Glossary",
+  code: "Code"
 });
 
 const SECTIONS = Object.keys(ENTITY_LABELS);
@@ -16,7 +17,8 @@ const VIEWS = {
   slice: () => import("./slice.js"),
   requirements: () => import("./library.js"),
   decisions: () => import("./library.js"),
-  glossary: () => import("./library.js")
+  glossary: () => import("./library.js"),
+  code: () => import("./code.js")
 };
 
 // Mirrors the server's entity references: sections, initiative:<id>, and slice:<id>/<slug>.
@@ -89,6 +91,7 @@ export function entityLabel(entity) {
   if (entity.kind === "initiative") return { eyebrow: "Initiative", title: data.roadmapItem?.title ?? data.id, subtitle: data.recordPath };
   if (entity.kind === "slice") return { eyebrow: `Slice · ${data.initiativeTitle}`, title: data.slice.title, subtitle: data.artifacts?.folder ?? null };
   if (entity.kind === "glossary") return { eyebrow: "Library", title: "Glossary", subtitle: data.path };
+  if (entity.kind === "code") return { eyebrow: "Library", title: "Code", subtitle: null };
   return { eyebrow: "Library", title: ENTITY_LABELS[entity.kind], subtitle: data.directory };
 }
 

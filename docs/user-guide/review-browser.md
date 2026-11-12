@@ -311,12 +311,31 @@ The filter stays in the page's address as `scopes=<label>,<label>`, so it surviv
 A relative Markdown link in a store artifact opens the artifact it names, looked for first beside the artifact's place in the store, and then at the path the link names from the file's checkout path, as a checkout of its repository on this machine configures its folders, or as Prism's default folders do without one, in the file's own scope or else the workspace scope.
 A link whose path falls outside every artifact folder names a code file of the artifact's repository, or, for a workspace artifact, of the checkout the page reads through.
 It opens that file from a checkout of the repository on this machine that offers it for review, in a tab named `code:<repository>:<path>`.
-When no checkout of that repository is registered on this machine, the link keeps its text and shows **not available on this machine** beside it, and the page's heading counts such links apart.
+A file that no registered checkout offers opens from the repository's code clone, while its code content is on, at the remote's default branch, the branch that the remote's `HEAD` named at the clone's last fetch; the tab shows that branch's label, and a checkout that offers the file always wins over the clone.
+A link to a secret by its file name, such as `.env` or a private key, never opens from the clone.
+A binary file or a file over 512 KiB still shows as a link, and opening it says the file is not available.
+When no checkout of that repository is registered on this machine and its code clone does not hold the file, the link keeps its text and shows **not available on this machine** beside it, and the page's heading counts such links apart.
 A link that names no artifact and no file keeps its text and shows **link not found** beside it, and the page's heading counts such links.
 An image, a link inside a fenced code block of backticks or tildes, and a link inside inline code are not links.
 The Jump palette lists each store artifact once, names its scope in its row, and finds only the artifacts of the scopes the filter shows.
 
 A store that holds no artifacts yet, because no Prism session moved a checkout's files into it, shows a note in the **Store** section that names its repositories and says that each keeps its artifacts in its checkouts until a Prism session there moves them into the store.
+
+### Code content
+
+The **Code** page in the sidebar's **Library** lists each repository of the workspace with its code content state: **Off**, **On**, or **Unreachable**.
+Choose **Turn code content on** for a repository to have Prism keep a clone of its code on this machine, also when this machine has no checkout of it.
+Prism clones the first remote that the store's registration of the repository lists, with the machine's Git configuration and credential helpers and without asking for a password on a terminal, into `code/` of its state directory, one clone per remote.
+The clone is bare and blobless: it holds every branch of the remote with its commits and folders, and it fetches a file's contents only when someone opens the file, so it uses little disk.
+A repository whose registration lists no remote cannot take code content.
+Only a tab that can make changes turns code content on or off; see [Which tabs can make changes](#which-tabs-can-make-changes).
+Which repositories have code content on survives a restart of the app.
+
+While a page of the workspace is open, each fetch of the workspace also fetches every repository with code content on, bringing new branches and dropping branches that left the remote.
+When a repository's remote cannot be reached, the Code page shows it as **Unreachable** with Git's reason, and the clone keeps what it fetched last; when the first clone fails, Prism keeps no folder.
+For a repository with code content on, the Code page lists the files and folders of every branch, each with the labels of the branches that hold it, and opens a file to show each version of it with the labels of the branches that hold that version, so it never asks you to choose a branch.
+It shows no secret, binary file, or file over 512 KiB, and it never names the Git host's address.
+Choose **Turn code content off** to delete the repository's clone from this machine.
 
 ### Add a workspace from its store
 

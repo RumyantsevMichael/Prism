@@ -44,8 +44,8 @@ export function forgetWorkspace() {
   memo.clear();
 }
 
-export const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary"]);
-const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary" });
+export const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary", "code"]);
+const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary", code: "Code" });
 
 // A record is read where it lives: under .prism, or beside its Markdown until the first write moves it there.
 async function recordFile(root, key) {
@@ -752,6 +752,7 @@ export async function entityContext(projectRoot, ref) {
   if (parsed?.kind === "attention" || parsed?.kind === "roadmap") return { trail: [{ ref, label: SECTION_LABELS[parsed.kind] }], scope: { kind: "global" } };
   if (parsed?.kind === "requirements" || parsed?.kind === "decisions") return { trail: [libraryCrumb, { ref, label: SECTION_LABELS[parsed.kind] }], scope: await libraryScope(projectRoot, parsed.kind) };
   if (parsed?.kind === "glossary") return { trail: [libraryCrumb, { ref, label: "Glossary" }], scope: { kind: "global" } };
+  if (parsed?.kind === "code") return { trail: [libraryCrumb, { ref, label: "Code" }], scope: { kind: "global" } };
   if (parsed?.kind === "initiative" || parsed?.kind === "slice") {
     const { scope, view } = await initiativeTree(projectRoot, parsed.id);
     const trail = [roadmapCrumb, { ref: `initiative:${parsed.id}`, label: scope.title }];
@@ -834,6 +835,8 @@ export async function loadEntity(projectRoot, ref, options = {}) {
   if (parsed.kind === "roadmap") return { ref, kind: "roadmap", data: await loadRoadmapView(projectRoot) };
   if (parsed.kind === "requirements" || parsed.kind === "decisions") return { ref, kind: parsed.kind, data: await loadLibrary(projectRoot, parsed.kind) };
   if (parsed.kind === "glossary") return { ref, kind: "glossary", data: await loadGlossary(projectRoot) };
+  // A workspace's page lists its code repositories itself; a checkout's own page has none.
+  if (parsed.kind === "code") return { ref, kind: "code", data: { repositories: [] } };
   if (parsed.kind === "initiative") {
     const view = await loadInitiativeView(projectRoot, parsed.id);
     return { ref, kind: "initiative", data: { ...view, runTotals: await loadInitiativeRunTotals(projectRoot, view), code: await initiativeCode(projectRoot, view) } };
