@@ -294,12 +294,12 @@ async function codexTurn() {
     response.end();
   });
   await new Promise((resolve) => model.listen(0, "127.0.0.1", resolve));
+  const turnEnv = { ...env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" };
   try {
     const base = `http://127.0.0.1:${model.address().port}/v1`;
     const config = path.join(env.CODEX_HOME, "config.toml");
     const existing = existsSync(config) ? await readFile(config, "utf8") : "";
     await writeFile(config, `model = "gpt-6-luna"\nopenai_base_url = ${JSON.stringify(base)}\n${existing}${trust}`);
-    const turnEnv = { ...env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" };
     run(bin, ["login", "--with-api-key"], { env: turnEnv, input: "sk-prism-smoke", stdio: ["pipe", "pipe", "pipe"] });
     await new Promise((resolve, reject) => {
       const child = start(bin, ["exec", "--skip-git-repo-check", "-s", "read-only", "-c", "approval_policy=\"never\"", "Run the Prism checks."], { cwd: project, env: turnEnv, stdio: ["ignore", "pipe", "pipe"] });
@@ -316,11 +316,25 @@ async function codexTurn() {
   const reported = results.map((text) => text.match(/\{"capacity".*\}/s)?.[0]).find(Boolean);
   if (!reported) throw new Error(`the script returned no result: ${results.join("\n").slice(0, 1000)}`);
   const { capacity, consumption } = JSON.parse(reported);
-  if (capacity?.status !== "SUPPORTED") throw new Error(`the first call's capacity is ${capacity?.status} (${capacity?.reasonCode})`);
+  const diagnosis = await configReadDiagnosis(project, turnEnv);
+  console.log(`# codex-turn: ${diagnosis}`);
+  if (capacity?.status !== "SUPPORTED") throw new Error(`the first call's capacity is ${capacity?.status} (${capacity?.reasonCode}); ${diagnosis}`);
   const targets = consumption?.runMeasures?.attribution?.targets ?? [];
   if (!targets.some((entry) => entry.target?.initiative === "demo")) {
     throw new Error(`the get_initiative call was not linked to initiative demo: ${JSON.stringify(consumption?.runMeasures?.attribution).slice(0, 1000)}`);
   }
+}
+
+// Capacity needs Codex's effective settings, which the server reads from a Codex app server within a short bound.
+// The same read is repeated here with that bound and with a long one and the times are logged, so the log shows how close the read comes to its bound and, when capacity is unavailable, whether the read was too slow or failed.
+async function configReadDiagnosis(project, environment) {
+  const { inspectCodexEffectiveConfig } = await import(pathToFileURL(path.join(checkout, "src/server/session/host-adapters/codex-config.mjs")).href);
+  const attempt = async (timeoutMs) => {
+    const started = Date.now();
+    const result = timeoutMs ? await inspectCodexEffectiveConfig({ cwd: project, environment, timeoutMs }) : await inspectCodexEffectiveConfig({ cwd: project, environment });
+    return `${result.status}${result.reasonCode ? ` (${result.reasonCode})` : ""} in ${Date.now() - started} ms`;
+  };
+  return `a direct config read gave ${await attempt()} with the server's bound and ${await attempt(30000)} with 30 s`;
 }
 
 const runners = { claude, codex, "codex-turn": codexTurn };

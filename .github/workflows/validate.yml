@@ -38,16 +38,17 @@ jobs:
           npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
           npm test
 
-  # The server tests, browser tests included, run in three shards on Linux and on Windows, since one runner takes about half an hour for them.
+  # The server tests, browser tests included, run in four shards on Linux and on Windows, since one runner takes about half an hour for them.
+  # A Windows shard runs two test files at a time instead of three, because three browser files at once on one runner fail with net::ERR_NO_BUFFER_SPACE.
   # Windows users install the same plugin, and its hooks, MCP server, and Git calls behave differently there.
   # scripts/test-shard.mjs balances the shards by the file durations in test/server/durations.json.
   server-tests:
-    name: server tests (${{ matrix.os }}, ${{ matrix.shard }}/3)
+    name: server tests (${{ matrix.os }}, ${{ matrix.shard }}/4)
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-2025]
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     defaults:
@@ -81,7 +82,7 @@ jobs:
         run: |
           npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
           npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
-          node scripts/test-shard.mjs --shard ${{ matrix.shard }}/3 -- --test-timeout=1200000
+          node scripts/test-shard.mjs --shard ${{ matrix.shard }}/4 -- --test-timeout=1200000 ${{ runner.os == 'Windows' && '--test-concurrency=2' || '' }}
 
   checks:
     runs-on: ubuntu-latest
