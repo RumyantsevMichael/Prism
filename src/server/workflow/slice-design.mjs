@@ -48,6 +48,10 @@ async function frozenBytes(root, relative) {
 export { frozenBytes as readFrozenTest };
 
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+// Git on Windows checks text out with CRLF line endings by default, so another checkout of the same commit holds the same frozen test with
+// other line endings. A text file is digested with CRLF read as LF, so a test changes only when its content does; a file holding a NUL byte
+// is binary and digested as it is.
+const frozenDigest = (bytes) => sha256(bytes.includes(0) ? bytes : Buffer.from(bytes.toString("latin1").replaceAll("\r\n", "\n"), "latin1"));
 
 /** Digest each frozen test at design acceptance; a missing file cannot be frozen. */
 export async function digestFrozenTests(projectRoot, paths) {
@@ -56,7 +60,7 @@ export async function digestFrozenTests(projectRoot, paths) {
   for (const relative of [...new Set(paths)].sort()) {
     const bytes = await frozenBytes(root, relative);
     if (bytes === null) throw fail("validation_failed", `The frozen test ${relative} does not exist.`);
-    result.push({ path: relative, sha256: sha256(bytes) });
+    result.push({ path: relative, sha256: frozenDigest(bytes) });
   }
   return result;
 }
@@ -88,7 +92,7 @@ export async function checkFrozenTests(projectRoot, frozenTests) {
   for (const item of frozenTests) {
     const bytes = await frozenBytes(root, item.path).catch(() => null);
     if (bytes === null) missing.push(item.path);
-    else if (sha256(bytes) !== item.sha256) changed.push(item.path);
+    else if (frozenDigest(bytes) !== item.sha256) changed.push(item.path);
   }
   return { checked: frozenTests.length, changed, missing };
 }
@@ -140,10 +144,22 @@ export async function unfinishedFrozenTestsOfOthers(projectRoot, initiative, sli
   return [...paths].sort();
 }
 
+/** The latest passing verification run of a slice as { id, entry }, or null when it has none. */
+export async function latestPassingRun(projectRoot, initiative, slice) {
+  const entries = await listRecordEntries(projectRoot, { kind: "runs", initiative, slice });
+  return entries.filter((item) => item.entry?.kind === "verification" && item.entry.passed === true).at(-1) ?? null;
+}
+
 /** Where the latest passing verification run of a slice ran: its checkout, or null when no passing run recorded one. */
 export async function verifiedCode(projectRoot, initiative, slice) {
+  return (await latestPassingRun(projectRoot, initiative, slice))?.entry.checkout ?? null;
+}
+
+/** When the latest passing verification run of a slice finished, in milliseconds, or null when no passing run records a finish time. */
+export async function verifiedAt(projectRoot, initiative, slice) {
   const entries = await listRecordEntries(projectRoot, { kind: "runs", initiative, slice });
-  return entries.filter((item) => item.entry?.kind === "verification" && item.entry.passed === true).at(-1)?.entry.checkout ?? null;
+  const finished = Date.parse(entries.filter((item) => item.entry?.kind === "verification" && item.entry.passed === true).at(-1)?.entry.finishedAt ?? "");
+  return Number.isNaN(finished) ? null : finished;
 }
 
 /** The latest dependents' run recorded on a scope, as { entry, path } with the run's project-relative record path, or null when none is recorded. */
@@ -177,7 +193,7 @@ export async function stageFrozenTests(projectRoot, slice, frozenTests) {
   const tests = [];
   for (const item of frozenTests) {
     const bytes = await frozenBytes(root, item.path);
-    if (bytes === null || sha256(bytes) !== item.sha256) throw fail("validation_failed", `The frozen test ${item.path} changed while the design was accepted.`);
+    if (bytes === null || frozenDigest(bytes) !== item.sha256) throw fail("validation_failed", `The frozen test ${item.path} changed while the design was accepted.`);
     tests.push({ path: item.path, content: bytes.toString("base64") });
   }
   return { slice, tests };
@@ -209,9 +225,9 @@ export async function restageFrozenTests(projectRoot, initiative, slice, frozenT
   const tests = [];
   for (const item of frozenTests) {
     const current = await frozenBytes(root, item.path);
-    if (current !== null && sha256(current) !== item.sha256) throw fail("frozen_tests_changed", `The frozen test ${item.path} of ${slice} changed, so the slice cannot return to not-started and stage it. Restore the file first.`);
+    if (current !== null && frozenDigest(current) !== item.sha256) throw fail("frozen_tests_changed", `The frozen test ${item.path} of ${slice} changed, so the slice cannot return to not-started and stage it. Restore the file first.`);
     const kept = byPath.get(item.path);
-    const content = kept && sha256(Buffer.from(kept.content, "base64")) === item.sha256 ? Buffer.from(kept.content, "base64") : current;
+    const content = kept && frozenDigest(Buffer.from(kept.content, "base64")) === item.sha256 ? Buffer.from(kept.content, "base64") : current;
     if (content === null) throw fail("frozen_tests_missing", `The frozen test ${item.path} of ${slice} is missing from the work tree and its records, so the slice cannot return to not-started. Restore the file first.`);
     tests.push({ path: item.path, content: content.toString("base64") });
   }
@@ -230,7 +246,7 @@ export async function installFrozenTests(projectRoot, initiative, slice, frozenT
   const contents = frozenTests.map((item) => {
     const entry = byPath.get(item.path);
     const content = entry && Buffer.from(entry.content, "base64");
-    if (!content || sha256(content) !== item.sha256) throw fail("frozen_tests_missing", `The staged frozen test ${item.path} of ${slice} is missing from its records. Accept the design again.`);
+    if (!content || frozenDigest(content) !== item.sha256) throw fail("frozen_tests_missing", `The staged frozen test ${item.path} of ${slice} is missing from its records. Accept the design again.`);
     return [item.path, content];
   });
   for (const [relative, content] of contents) await restore(root, relative, content);

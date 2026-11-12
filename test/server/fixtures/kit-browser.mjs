@@ -6,13 +6,15 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { defer } from "./teardown.mjs";
 
 export const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
 function loadPlaywright() {
   const bases = [ROOT];
   try {
-    bases.push(execFileSync("npm", ["root", "-g"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
+    // npm is a .cmd shim on Windows, which starts only through the shell.
+    bases.push(execFileSync("npm", ["root", "-g"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], shell: process.platform === "win32", windowsHide: true }).trim());
   } catch {
   }
   for (const base of bases) {
@@ -31,7 +33,8 @@ export const skip = playwright ? false : "Playwright is not installed; run npm i
 
 async function temporary(context, prefix) {
   const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), prefix)));
-  context.after(() => rm(directory, { recursive: true, force: true }));
+  // A Git command that the review server started for a page may still be ending in the folder, which Windows reports as busy for a moment.
+  defer(context, () => rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
   return directory;
 }
 
@@ -40,7 +43,7 @@ export async function useAppDirectory(context) {
   const directory = await temporary(context, "prism-kit-app-");
   const previous = process.env.PRISM_REVIEW_APP_DIR;
   process.env.PRISM_REVIEW_APP_DIR = directory;
-  context.after(() => {
+  defer(context, () => {
     if (previous === undefined) delete process.env.PRISM_REVIEW_APP_DIR;
     else process.env.PRISM_REVIEW_APP_DIR = previous;
   });
@@ -73,13 +76,13 @@ export async function serveProject(context, projectRoot) {
       await review.close();
     }
   };
-  context.after(close);
+  defer(context, close);
   return { base: review.baseUrl.replace(/\/$/, ""), close };
 }
 
 export async function launch(context) {
   const browser = await playwright.chromium.launch();
-  context.after(() => browser.close());
+  defer(context, () => browser.close());
   return browser;
 }
 
@@ -90,6 +93,11 @@ export async function openPage(browser, url, { colorScheme = "light", reducedMot
   const page = await context.newPage();
   page.errors = [];
   page.on("pageerror", (error) => page.errors.push(error.message));
+  // A failed load other than one a navigation cancelled is named in the test's output, with its resource and the browser's reason.
+  page.on("requestfailed", (request) => {
+    const reason = request.failure()?.errorText ?? "";
+    if (reason !== "net::ERR_ABORTED") console.log(`# request failed: ${new URL(request.url()).pathname.replace(/^\/session\/[^/]+/, "")} ${reason}`);
+  });
   await page.goto(url);
   await settle(page);
   return page;
@@ -117,11 +125,11 @@ export function reviewUrl(base, ref) {
  * Writes a claim record for a slice of a project, as a Prism server writes one: live for `minutesLeft`, or lapsed `minutesLeft` minutes ago when it is negative.
  * Write it before the project's review server starts, since the server caches what it read.
  */
-export async function writeClaim(projectRoot, initiative, slug, { label = "Claude on build-2", activity = "implementation", minutesLeft = 41, minutesClaimed = 20 } = {}) {
+export async function writeClaim(projectRoot, initiative, slug, { label = "Claude on build-2", host = null, activity = "implementation", minutesLeft = 41, minutesClaimed = 20 } = {}) {
   const { mkdir, writeFile } = await import("node:fs/promises");
   const now = Date.now();
   const at = (minutes) => new Date(now + minutes * 60000).toISOString();
-  const claim = { schemaVersion: 1, slug, holder: `session-${slug.replace(/[^a-z0-9]/g, "").padEnd(16, "0").slice(0, 16)}`, label, activity, claimedAt: at(-minutesClaimed), renewedAt: at(minutesLeft - 30), expiresAt: at(minutesLeft), nonce: "0123456789abcdef01234567" };
+  const claim = { schemaVersion: 1, slug, holder: `session-${slug.replace(/[^a-z0-9]/g, "").padEnd(16, "0").slice(0, 16)}`, label, ...(host ? { host } : {}), activity, claimedAt: at(-minutesClaimed), renewedAt: at(minutesLeft - 30), expiresAt: at(minutesLeft), nonce: "0123456789abcdef01234567" };
   const folder = path.join(projectRoot, ".prism", "initiatives", initiative, "claims");
   await mkdir(folder, { recursive: true });
   await writeFile(path.join(folder, `${slug}.json`), `${JSON.stringify(claim, null, 2)}\n`);

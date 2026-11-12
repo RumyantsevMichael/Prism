@@ -5,55 +5,17 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Runs queue rather than overlap, so a push during a release is planned only after that release is stable.
 concurrency:
   group: release-main
   cancel-in-progress: false
 
 permissions:
   contents: read
-  pull-requests: read
-  issues: read
 
 jobs:
-  plan:
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    outputs:
-      current: ${{ steps.plan.outputs.current }}
-      release_ref: ${{ steps.plan.outputs.release_ref }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-      - uses: actions/github-script@v7
-        id: plan
-        with:
-          script: |
-            const { mainIsCurrent, pendingRelease } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/release-automation.mjs`);
-            const current = await mainIsCurrent(github, context, context.sha);
-            core.setOutput('current', current);
-            core.setOutput('release_ref', current ? await pendingRelease(github, context) : '');
-
-  verify-release:
-    needs: plan
-    if: needs.plan.outputs.release_ref != ''
-    uses: ./.github/workflows/native-default.yml
-    with:
-      source_ref: ${{ needs.plan.outputs.release_ref }}
-
-  validate-release:
-    needs: plan
-    if: needs.plan.outputs.release_ref != ''
-    uses: ./.github/workflows/validate.yml
-    with:
-      source_ref: ${{ needs.plan.outputs.release_ref }}
-
   release-please:
-    needs: [plan, verify-release, validate-release]
-    if: >-
-      always() && !cancelled() && needs.plan.outputs.current == 'true' &&
-      (needs.plan.outputs.release_ref == '' ||
-      (needs.verify-release.result == 'success' && needs.validate-release.result == 'success'))
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -61,28 +23,24 @@ jobs:
       issues: write
       statuses: write
     outputs:
-      pr_number: ${{ steps.pr.outputs.number }}
+      created: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+      sha: ${{ steps.release.outputs.sha }}
       pr_sha: ${{ steps.pr.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-      - name: Reject stale release plans
-        uses: actions/github-script@v7
-        env:
-          RELEASE_REF: ${{ needs.plan.outputs.release_ref }}
-        with:
-          script: |
-            const { assertReleasePlan } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/release-automation.mjs`);
-            await assertReleasePlan(github, context, context.sha, process.env.RELEASE_REF);
+      # The configuration creates each Release as a draft with its tag, so nothing is public until the package is verified.
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
-          # The PAT lets promotion commits trigger ordinary pull request checks.
+          # The token lets the release pull request trigger ordinary pull request checks, and its pushes trigger this workflow.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           target-branch: main
-          skip-github-release: ${{ needs.plan.outputs.release_ref == '' }}
       - name: Select the release pull request
         uses: actions/github-script@v7
         id: pr
@@ -91,68 +49,84 @@ jobs:
             const { releasePullRequest } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/release-automation.mjs`);
             const pr = await releasePullRequest(github, context);
             if (!pr) return;
-            core.setOutput('number', pr.number);
             core.setOutput('sha', pr.sha);
             await github.rest.repos.createCommitStatus({
               ...context.repo, sha: pr.sha, state: 'pending', context: 'Release readiness',
-              description: 'Build and verify the native runtime before merging.',
+              description: 'Build the runtime and package, and install the package in both hosts.',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
             });
 
-  runtime:
+  # Readiness checks the open release pull request and publishes nothing.
+  readiness-guard:
     needs: release-please
-    if: always() && !cancelled() && needs.release-please.result == 'success' && needs.release-please.outputs.pr_sha != ''
-    permissions:
-      contents: write
-    uses: ./.github/workflows/native-runtime.yml
-    with:
-      source_ref: ${{ needs.release-please.outputs.pr_sha }}
-      publish: true
-
-  promote:
-    needs: [release-please, runtime]
-    if: always() && !cancelled() && needs.release-please.result == 'success' && needs.runtime.result == 'success'
+    if: needs.release-please.outputs.pr_sha != ''
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: read
-      issues: read
     outputs:
-      sha: ${{ steps.promote.outputs.sha }}
+      version: ${{ steps.guard.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
-      - uses: actions/download-artifact@v4
-        with:
-          name: verified-native-manifest
-          path: verified
-      - name: Add the verified manifest to the release pull request
-        id: promote
-        uses: actions/github-script@v7
-        env:
-          PR_NUMBER: ${{ needs.release-please.outputs.pr_number }}
-          PR_SHA: ${{ needs.release-please.outputs.pr_sha }}
-        with:
-          github-token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-          script: |
-            const { readFile } = await import('node:fs/promises');
-            const { promoteManifest } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/release-automation.mjs`);
-            const sha = await promoteManifest(github, context, {
-              number: Number(process.env.PR_NUMBER), sha: process.env.PR_SHA, mainSha: context.sha,
-              manifest: await readFile('verified/manifest.json', 'utf8')
-            });
-            core.setOutput('sha', sha);
+          ref: ${{ needs.release-please.outputs.pr_sha }}
+          fetch-depth: 0
+      - name: Refuse a version that exists or a branch behind main
+        id: guard
+        run: |
+          version=$(node -p 'require("./.release-please-manifest.json")["."]')
+          for tag in "v$version" "prism--v$version"; do
+            if git ls-remote --exit-code origin "refs/tags/$tag" >/dev/null; then echo "::error::$tag already exists, so this version was released or is being released."; exit 1; fi
+          done
+          git fetch -q origin main
+          git merge-base --is-ancestor origin/main HEAD || { echo "::error::The release pull request does not contain main's tip."; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
-  validate-prepared:
-    needs: promote
-    if: always() && !cancelled() && needs.promote.result == 'success'
+  readiness-runtime:
+    needs: [release-please, readiness-guard]
+    uses: ./.github/workflows/native-runtime.yml
+    with:
+      source_ref: ${{ needs.release-please.outputs.pr_sha }}
+      release_tag: v${{ needs.readiness-guard.outputs.version }}
+
+  readiness-validate:
+    needs: [release-please, readiness-guard]
     uses: ./.github/workflows/validate.yml
     with:
-      source_ref: ${{ needs.promote.outputs.sha }}
+      source_ref: ${{ needs.release-please.outputs.pr_sha }}
+
+  # The package is served from a local repository in place of GitHub and installed through a catalog pinned to it,
+  # with the same check the release runs after the merge, so a broken package or check fails here instead.
+  readiness-package:
+    needs: [release-please, readiness-guard, readiness-runtime]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.pr_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.16.0'
+      - name: Build the runtime
+        run: |
+          npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          npm run build:native
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: ${{ runner.temp }}/natives
+          merge-multiple: true
+      - name: Install Claude Code and Codex
+        run: npm install -g @anthropic-ai/claude-code @openai/codex@0.147.0
+      - name: Build the package and install it in both hosts
+        env:
+          VERSION: ${{ needs.readiness-guard.outputs.version }}
+        run: |
+          node scripts/release-package.mjs build "$RUNNER_TEMP/package" "$GITHUB_REPOSITORY" "v$VERSION" "$RUNNER_TEMP/natives"
+          node scripts/release-package.mjs serve "$RUNNER_TEMP/package" "$GITHUB_REPOSITORY" "prism--v$VERSION" "$RUNNER_TEMP/served" > "$RUNNER_TEMP/served.env"
+          . "$RUNNER_TEMP/served.env"
+          GIT_CONFIG_GLOBAL="$gitconfig" node scripts/host-smoke.mjs --marketplace "$catalog" claude codex
 
   readiness:
-    needs: [release-please, runtime, promote, validate-prepared]
+    needs: [release-please, readiness-guard, readiness-runtime, readiness-validate, readiness-package]
     if: always() && needs.release-please.outputs.pr_sha != ''
     runs-on: ubuntu-latest
     permissions:
@@ -160,13 +134,189 @@ jobs:
     steps:
       - uses: actions/github-script@v7
         env:
-          PR_SHA: ${{ needs.promote.outputs.sha || needs.release-please.outputs.pr_sha }}
-          READY: ${{ needs.runtime.result == 'success' && needs.promote.result == 'success' && needs.validate-prepared.result == 'success' }}
+          PR_SHA: ${{ needs.release-please.outputs.pr_sha }}
+          READY: ${{ needs.readiness-guard.result == 'success' && needs.readiness-runtime.result == 'success' && needs.readiness-validate.result == 'success' && needs.readiness-package.result == 'success' }}
         with:
           script: |
             const ready = process.env.READY === 'true';
             await github.rest.repos.createCommitStatus({
               ...context.repo, sha: process.env.PR_SHA, state: ready ? 'success' : 'failure', context: 'Release readiness',
-              description: ready ? 'The package and all five runtime platforms passed.' : 'Release preparation failed. Check the workflow run.',
+              description: ready ? 'The runtime on all five platforms, validation, and the package install passed.' : 'Release readiness failed. Check the workflow run.',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
             });
+
+  # After the merge: build from the tag, verify, and publish. Until the last job pins the catalog, nobody installs this version.
+  release-validate:
+    needs: release-please
+    if: needs.release-please.outputs.created == 'true'
+    uses: ./.github/workflows/validate.yml
+    with:
+      source_ref: ${{ needs.release-please.outputs.tag }}
+
+  release-runtime:
+    needs: release-please
+    if: needs.release-please.outputs.created == 'true'
+    uses: ./.github/workflows/native-runtime.yml
+    with:
+      source_ref: ${{ needs.release-please.outputs.tag }}
+      release_tag: ${{ needs.release-please.outputs.tag }}
+
+  release-assets:
+    needs: [release-please, release-runtime]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.release-please.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.16.0'
+      - name: Build the runtime
+        run: |
+          npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          npm run build:native
+      - name: Check the draft and its tag
+        run: |
+          [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true ] || { echo "::error::$TAG is not a draft."; exit 1; }
+          [ "$(git rev-parse HEAD)" = "${{ needs.release-please.outputs.sha }}" ] || { echo "::error::$TAG does not name the release commit."; exit 1; }
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: assets
+          merge-multiple: true
+      - name: Mirror the pinned model files
+        run: node scripts/native-build/model-mirror.mjs assets
+      - name: Upload the runtime and model to the draft
+        run: gh release upload "$TAG" assets/* --clobber
+
+  release-package:
+    needs: [release-please, release-validate, release-assets]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.commit.outputs.tag }}
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag }}
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.16.0'
+      - name: Build the runtime
+        run: |
+          npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          npm run build:native
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: ${{ runner.temp }}/natives
+          merge-multiple: true
+      - name: Build the package
+        run: node scripts/release-package.mjs build "$RUNNER_TEMP/package" "$GITHUB_REPOSITORY" "${{ needs.release-please.outputs.tag }}" "$RUNNER_TEMP/natives"
+      # The package line is a history of packages only, each commit's parent the previous package.
+      # A rerun finds the tag already pushed and accepts it only when it holds the same tree.
+      - name: Commit the package to the package line and tag it
+        id: commit
+        env:
+          VERSION: ${{ needs.release-please.outputs.version }}
+          TAG: ${{ needs.release-please.outputs.tag }}
+        run: |
+          package_tag="prism--v$VERSION"
+          parent=$(git ls-remote origin refs/heads/package | cut -f1)
+          sha=$(node scripts/release-package.mjs commit "$RUNNER_TEMP/package" "$parent" "chore: package $VERSION
+
+          Built from $TAG ($(git rev-parse HEAD)).")
+          existing=$(git ls-remote origin "refs/tags/$package_tag" | cut -f1)
+          if [ -n "$existing" ]; then
+            git fetch -q origin "refs/tags/$package_tag"
+            [ "$(git rev-parse "$existing^{tree}")" = "$(git rev-parse "$sha^{tree}")" ] || { echo "::error::$package_tag exists with different contents."; exit 1; }
+            sha=$existing
+          else
+            git push --atomic origin "$sha:refs/heads/package" "$sha:refs/tags/$package_tag"
+          fi
+          echo "tag=$package_tag" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  release-verify:
+    needs: [release-please, release-package]
+    uses: ./.github/workflows/verify-package.yml
+    with:
+      source_ref: ${{ needs.release-please.outputs.tag }}
+      package_ref: ${{ needs.release-package.outputs.tag }}
+      package_sha: ${{ needs.release-package.outputs.sha }}
+      phase: draft
+
+  # A prerelease makes the assets public without making the Release latest, so the default runtime can be checked as users download it.
+  release-prerelease:
+    needs: [release-please, release-verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.release-please.outputs.tag }}
+    steps:
+      - run: gh release edit "$TAG" --draft=false --prerelease --latest=false
+
+  release-verify-public:
+    needs: [release-please, release-package, release-prerelease]
+    uses: ./.github/workflows/verify-package.yml
+    with:
+      source_ref: ${{ needs.release-please.outputs.tag }}
+      package_ref: ${{ needs.release-package.outputs.tag }}
+      package_sha: ${{ needs.release-package.outputs.sha }}
+      phase: public
+
+  # The Release becomes stable before the pin commit, because that commit starts release-please, which reads a prerelease as no release.
+  release-publish:
+    needs: [release-please, release-package, release-verify-public]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.release-please.outputs.tag }}
+      VERSION: ${{ needs.release-please.outputs.version }}
+      PACKAGE_TAG: ${{ needs.release-package.outputs.tag }}
+      PACKAGE_SHA: ${{ needs.release-package.outputs.sha }}
+    steps:
+      - name: Make the Release stable and latest
+        run: |
+          gh release edit "$TAG" --draft=false --prerelease=false --latest
+          [ "$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)" = "$TAG" ] || { echo "::error::$TAG is not the latest Release."; exit 1; }
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: Pin both catalog entries to the package on main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch -q origin "refs/tags/$PACKAGE_TAG"
+          git worktree add -q --detach "$RUNNER_TEMP/package" "$PACKAGE_SHA"
+          for attempt in 1 2 3 4; do
+            git fetch -q origin main
+            git checkout -q -B main origin/main
+            node scripts/release-package.mjs pin "$GH_REPO" "$PACKAGE_TAG" "$PACKAGE_SHA" "$RUNNER_TEMP/package"
+            if git diff --quiet; then echo "main already pins $PACKAGE_TAG."; exit 0; fi
+            git commit -q -a -m "chore: install $VERSION" -m "Both catalog entries now pin $PACKAGE_TAG, and development uses the runtime of $TAG."
+            if git push origin main; then exit 0; fi
+            sleep $((attempt * 5))
+          done
+          echo "::error::Could not push the pin to main."
+          exit 1

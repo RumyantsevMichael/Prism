@@ -1,5 +1,5 @@
 import { chipState, currentIndexStatus } from "./indexing.js";
-import { artifactChip, badge, bindLinks, card, chip, emptyNote, emptyState, escapeHtml, formatTime, keyValues, plural, requirementLinks, stat, summaryPanel } from "./util.js";
+import { artifactChip, badge, bindLinks, card, chip, emptyNote, emptyState, escapeHtml, formatTime, keyValues, plural, requirementLinks, stat } from "./util.js";
 import { recordKind } from "./entities.js";
 import { statusBadge } from "./initiative.js";
 import { sliceRunTotalsHtml } from "./run-totals.js";
@@ -8,11 +8,20 @@ import { claimChip } from "./claims.js";
 import { componentChip } from "./components.js";
 import { mountInitiativeSettings } from "./actions.js";
 import { mountSliceFiles, presenceChips } from "./slice-files.js";
+import { shippedHistoryHtml } from "./shipped-history.js";
 
 function sliceChip(data, slug, ctx) {
   return artifactChip(`slice:${data.id}/${slug}`, ctx, data.titles[slug] ?? slug);
 }
 
+
+// Each deferred finding stays on record with the decision gate that accepted it and its follow-up in the tracker.
+function deferredList(findings) {
+  return `<p class="label-caps">Deferred findings</p><ul class="deferred-list">${findings.map((finding) => `<li>
+    <span class="deferred-head">${badge(finding.severity)}<span class="deferred-title">${escapeHtml(finding.title)}</span></span>
+    <span class="deferred-meta muted">${finding.gate ? `gate <code>${escapeHtml(finding.gate)}</code>` : "no gate recorded"} · follow-up ${finding.followUp ? escapeHtml(finding.followUp) : "none recorded"}</span>
+  </li>`).join("")}</ul>`;
+}
 
 function reviewCard(review, ctx) {
   // A card names a record by its kind, never by its file name.
@@ -24,9 +33,11 @@ function reviewCard(review, ctx) {
       ${stat(review.waves === 1 ? "wave" : "waves", String(review.waves))}
       ${stat("unresolved", String(review.unresolved), { tone: review.unresolved ? "warning" : "success" })}
       ${stat("blocker / high not verified", String(review.blocking), { tone: review.blocking ? "danger" : "" })}
+      ${review.deferred ? stat("deferred", String(review.deferred), { hint: "accepted with a follow-up" }) : ""}
     </div>
     ${review.currentWave ? `<p>Current wave <code>${escapeHtml(review.currentWave.id)}</code> (${escapeHtml(review.currentWave.mode)}) is ${review.currentWave.accepted ? "accepted" : "not accepted"}.</p>` : ""}
     ${statuses ? `<p class="chip-row">${statuses}</p>` : ""}
+    ${review.deferredFindings?.length ? deferredList(review.deferredFindings) : ""}
     <p>${artifactChip(review.path, ctx, "Open the findings board")}</p>`);
 }
 
@@ -328,7 +339,30 @@ function stepper(slice, data) {
   return `<prism-stepper class="slice-lifecycle" label="Lifecycle">${PHASES.map(([phase, label], index) => `<prism-step phase="${phase}" state="${index < current ? "done" : index === current ? "current" : "upcoming"}">${label}</prism-step>`).join("")}</prism-stepper>`;
 }
 
-const TABS = [["design", "Design"], ["diagram", "Diagram"], ["verification", "Verification"], ["review", "Review ledger"], ["change-map", "Change map"], ["files", "Files"]];
+const TABS = [["design", "Design", "document"], ["diagram", "Diagram", "diagram"], ["verification", "Verification", "flask"], ["review", "Review ledger", "eye"], ["change-map", "Change map", "grid"], ["files", "Files", "file"]];
+
+// The count a sub-tab carries: the review ledger's open findings and the slice folder's files.
+function tabCount(value, artifacts) {
+  if (value === "review" && artifacts.review && !artifacts.review.invalid && artifacts.review.unresolved) return artifacts.review.unresolved;
+  if (value === "files" && artifacts.files.length) return artifacts.files.length;
+  return 0;
+}
+
+function tabHtml([value, label, icon], selected, artifacts) {
+  const count = tabCount(value, artifacts);
+  return `<prism-tab value="${value}"${selected ? " selected" : ""}><prism-icon slot="start" name="${icon}" size="sm"></prism-icon>${label}${count ? ` <prism-badge slot="end" variant="count">${count}</prism-badge>` : ""}</prism-tab>`;
+}
+
+const STATUS_WORDS = { "not-started": "not started", "in-progress": "in progress", blocked: "blocked", split: "split", done: "done" };
+
+// The head's phase tag: the phase the slice is in, with its gate or status, such as "Design · design gate open" or "Build · in progress".
+function phaseTag(slice, data) {
+  const index = currentPhase(slice, { verification: data.verification, review: data.artifacts?.review ?? null });
+  const [phase, label] = PHASES[Math.min(index, PHASES.length - 1)];
+  const state = data.designReview === "waiting" ? "design gate open" : data.designReview === "answered" ? "design gate answered" : index >= PHASES.length ? null : STATUS_WORDS[slice.status] ?? slice.status;
+  const words = index >= PHASES.length ? "Shipped" : [label, state].filter(Boolean).join(" · ");
+  return `<prism-phase variant="tag" phase="${phase}">${escapeHtml(words)}</prism-phase>`;
+}
 
 function changeMapPanel(slice, artifacts, data, ctx) {
   const line = slice.design ? changeMapLine(artifacts.changeMap, data.changeMap, ctx) : legacyChangeMapCard(artifacts.changeMap, ctx);
@@ -346,8 +380,8 @@ function filesPanel(artifacts, ctx) {
   }).join("")}</ul>`, { eyebrow: plural(artifacts.files.length, "file") });
 }
 
-// The page bar's actions for the slice: copy the page's address, and open or close the side panel with the slice's diagram.
-function pageActions(diagrams, ctx) {
+// The page bar's actions for the slice: copy the page's address, open or close the side panel with the slice's diagram, and show the slice's details and its initiative's settings.
+function pageActions(diagrams, ctx, details) {
   if (!ctx.setPageActions || typeof document === "undefined") return;
   const button = (text) => {
     const element = document.createElement("prism-button");
@@ -380,7 +414,11 @@ function pageActions(diagrams, ctx) {
     side.setAttribute("pressed", String(Boolean(event.detail?.open)));
   };
   document.addEventListener("prism:side-panel", follow);
-  ctx.setPageActions([copy, side]);
+  const more = button("Details and settings");
+  more.toggleAttribute("disabled", !details);
+  more.setAttribute("aria-haspopup", "dialog");
+  more.addEventListener("click", () => details?.show());
+  ctx.setPageActions([copy, side, more]);
 }
 
 export async function render(container, entity, ctx) {
@@ -394,7 +432,7 @@ export async function render(container, entity, ctx) {
   const tab = TABS.some(([value]) => value === ctx.state.tab) ? ctx.state.tab : "design";
   const panels = {
     design: artifacts.narrative
-      ? `<prism-panel class="view-section design-document" heading="Design">${designNotices(view)}${servedClauses(view, ctx, data.titles)}<prism-doc class="document-content" data-narrative><prism-spinner label="Loading the design"></prism-spinner></prism-doc></prism-panel>${unplannedCard(view, ctx)}`
+      ? `<section class="view-section design-document" aria-label="Design">${designNotices(view)}${servedClauses(view, ctx, data.titles)}<prism-doc class="document-content" data-narrative><prism-spinner label="Loading the design"></prism-spinner></prism-doc></section>${unplannedCard(view, ctx)}`
       : `${emptyState("No design yet", "The slice has no design document yet.")}${unplannedCard(view, ctx)}`,
     diagram: diagramsCard(diagrams, ctx),
     verification: verificationCard(slice.design, data.verification, data.code) + sliceRunTotalsHtml(data.runTotals, data.children.length > 0) || emptyState("No verification yet", "The slice has no accepted design or verification run yet."),
@@ -402,32 +440,40 @@ export async function render(container, entity, ctx) {
     "change-map": changeMapPanel(slice, artifacts, data, ctx),
     files: filesPanel(artifacts, ctx)
   };
-  container.innerHTML = `
-    ${summaryPanel(`<div class="summary-row">
-        <div class="chip-row">${data.designReview ? `${statusBadge("design-review")}<span class="muted">${data.designReview === "answered" ? "You answered the design question; the agent accepts or revises the design next." : "The design waits for your answer on the Attention page."}</span>` : statusBadge(slice.status)}${data.complete && slice.status === "split" ? badge("all descendants done", "success") : ""}</div>
-        <div class="view-controls">${artifactChip(`initiative:${data.id}`, ctx, data.initiativeTitle)}</div>
-      </div>
-      ${slice.outcome ? `<p class="item-intent is-large">${escapeHtml(slice.outcome)}</p>` : '<p class="muted">No outcome is recorded for this slice.</p>'}
-      ${keyValues([
-        ["Slug", `<code>${escapeHtml(data.slug)}</code>`],
-        ["Component", componentChip(slice.component) || null],
-        ["Requirements", `<span class="chip-row">${requirementLinks(slice.requirements, ctx)}</span>`],
-        ["Parent", slice.parent ? sliceChip(data, slice.parent, ctx) : '<span class="muted">root slice</span>'],
-        ["Children", data.children.length ? `<span class="chip-row">${data.children.map((slug) => sliceChip(data, slug, ctx)).join("")}</span>` : null],
-        ["Depends on", data.effectiveDependencies?.length ? `<span class="chip-row">${data.effectiveDependencies.map((slug) => sliceChip(data, slug, ctx)).join("")}</span>` : null],
-        ["Needed by", data.dependents.length ? `<span class="chip-row">${data.dependents.map((slug) => sliceChip(data, slug, ctx)).join("")}</span>` : null],
-        ["Work in progress", presenceChips(entity.presence) || null],
-        ["Active work", data.active.length ? `<span class="chip-row">${data.active.map((entry) => badge(`${entry.activity} · ${(entry.workers ?? []).join(", ")}${entry.label ? ` · ${entry.label}` : ""}`, "info")).join("")}</span>` : null]
-      ])}`)}
+  const designNote = data.designReview ? `<p class="muted">${data.designReview === "answered" ? "You answered the design question; the agent accepts or revises the design next." : "The design waits for your answer on the Attention page."}</p>` : "";
+  container.innerHTML = `${shippedHistoryHtml(data.shippedHistory)}
+    <div class="slice-head-tags chip-row">${phaseTag(slice, data)}${requirementLinks(slice.requirements, ctx, { icon: "list" })}${componentChip(slice.component)}${data.complete && slice.status === "split" ? badge("all descendants done", "success") : ""}</div>
     ${stepper(slice, data)}
     ${held ? `<div class="slice-claim-strip">${claimChip(held, "strip")}</div>` : ""}
-    <prism-tabs class="slice-tabs" label="Slice" data-slice-tabs>${TABS.map(([value, label]) => `<prism-tab value="${value}"${value === tab ? " selected" : ""}>${label}</prism-tab>`).join("")}</prism-tabs>
+    <prism-tabs class="slice-tabs" label="Slice" data-slice-tabs>${TABS.map((entry) => tabHtml(entry, entry[0] === tab, artifacts)).join("")}</prism-tabs>
     ${TABS.map(([value, label]) => `<div class="slice-tab-pane" role="tabpanel" aria-label="${label}" data-tab-panel="${value}"${value === tab ? "" : " hidden"}>${panels[value]}</div>`).join("")}
-    <div data-initiative-settings></div>`;
+    <prism-dialog class="slice-details" heading="Details and settings" size="lg" data-slice-details>
+      <section class="slice-details-facts" aria-label="Details">
+        <div class="chip-row">${data.designReview ? statusBadge("design-review") : statusBadge(slice.status)}${artifactChip(`initiative:${data.id}`, ctx, data.initiativeTitle)}</div>
+        ${designNote}
+        ${slice.outcome ? `<p class="item-intent is-large">${escapeHtml(slice.outcome)}</p>` : '<p class="muted">No outcome is recorded for this slice.</p>'}
+        ${keyValues([
+          ["Slug", `<code>${escapeHtml(data.slug)}</code>`],
+          ["Requirements", `<span class="chip-row">${requirementLinks(slice.requirements, ctx)}</span>`],
+          ["Parent", slice.parent ? sliceChip(data, slice.parent, ctx) : '<span class="muted">root slice</span>'],
+          ["Children", data.children.length ? `<span class="chip-row">${data.children.map((slug) => sliceChip(data, slug, ctx)).join("")}</span>` : null],
+          ["Depends on", data.effectiveDependencies?.length ? `<span class="chip-row">${data.effectiveDependencies.map((slug) => sliceChip(data, slug, ctx)).join("")}</span>` : null],
+          ["Needed by", data.dependents.length ? `<span class="chip-row">${data.dependents.map((slug) => sliceChip(data, slug, ctx)).join("")}</span>` : null],
+          ["Work in progress", presenceChips(entity.presence) || null],
+          ["Active work", data.active.length ? `<span class="chip-row">${data.active.map((entry) => badge(`${entry.activity} · ${(entry.workers ?? []).join(", ")}${entry.label ? ` · ${entry.label}` : ""}`, "info")).join("")}</span>` : null]
+        ])}
+      </section>
+      <div data-initiative-settings></div>
+    </prism-dialog>`;
   // A slice page changes its initiative's settings, so the card names the initiative they belong to.
   mountInitiativeSettings(container.querySelector("[data-initiative-settings]"), { target: `slice:${data.id}/${data.slug}`, eyebrow: `Initiative: ${data.initiativeTitle}`, ctx });
+  const details = container.querySelector("[data-slice-details]");
+  // A link in the dialog opens its page, so the dialog closes first.
+  details.addEventListener("click", (event) => {
+    if (event.target.closest?.("prism-chip[data-artifact], a[data-artifact]")) details.close();
+  });
   bindLinks(container, ctx);
-  pageActions(diagrams, ctx);
+  pageActions(diagrams, ctx, details);
   void mountSliceFiles(container.querySelector("[data-slice-files]"), data);
   const showTab = (value) => {
     ctx.state.tab = value;
@@ -449,6 +495,9 @@ export async function render(container, entity, ctx) {
     try {
       const narrative = await ctx.fetchArtifact(artifacts.narrative);
       narrativeTarget.innerHTML = ctx.renderMarkdown(narrative.content, artifacts.narrative);
+      // The page's title already names the slice, so the design's own title does not repeat it.
+      const titles = narrativeTarget.querySelectorAll("h1");
+      if (titles.length === 1) titles[0].remove();
       if (view) decorateDesign(narrativeTarget, view, ctx);
     } catch (error) {
       narrativeTarget.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;

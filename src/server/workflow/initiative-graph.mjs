@@ -26,7 +26,8 @@ function copySlices(input) {
       status: slice.status,
       parent: slice.parent ?? null,
       requirements: [...(slice.requirements ?? [])],
-      dependencies: [...(slice.dependencies ?? [])]
+      dependencies: [...(slice.dependencies ?? [])],
+      ...(slice.fixes === undefined ? {} : { fixes: { slice: slice.fixes?.slice, defects: Array.isArray(slice.fixes?.defects) ? [...slice.fixes.defects] : slice.fixes?.defects } })
     };
   }
   return slices;
@@ -44,6 +45,12 @@ export function analyzeInitiative(input) {
     requireCondition(SLICE_STATUSES.includes(slice.status), "Invalid slice status");
     requireCondition(slice.parent === null || Object.hasOwn(slices, slice.parent), "Unknown parent slice");
     requireCondition(slice.parent !== slug, "A slice cannot be its own parent");
+    // A fix slice sits below the done slice it fixes and names that slice and the defects it fixes.
+    if (slice.fixes !== undefined) {
+      requireCondition(slice.parent !== null && slice.fixes.slice === slice.parent, "A fix slice must sit below the slice it fixes");
+      requireCondition(Array.isArray(slice.fixes.defects) && slice.fixes.defects.length > 0 && slice.fixes.defects.every((id) => typeof id === "string" && id.length > 0), "A fix slice must name the defects it fixes");
+      requireCondition(slice.status !== "split", "A fix slice cannot split");
+    }
   }
   const roots = slugs.filter((slug) => slices[slug].parent === null);
   requireCondition(roots.length === 1, "Expected exactly one root");
@@ -55,9 +62,14 @@ export function analyzeInitiative(input) {
     requireCondition(new Set(slice.dependencies).size === slice.dependencies.length, "Duplicate dependency");
     for (const target of slice.dependencies) requireCondition(typeof target === "string" && Object.hasOwn(slices, target), "Unknown dependency target");
   }
+  // A slice's parts split it, while its fix slices sit beside it as leaves of its ancestors and never split it.
   const childrenOf = Object.create(null);
-  for (const slug of slugs) childrenOf[slug] = [];
-  for (const slug of slugs) if (slices[slug].parent !== null) childrenOf[slices[slug].parent].push(slug);
+  const fixesOf = Object.create(null);
+  for (const slug of slugs) {
+    childrenOf[slug] = [];
+    fixesOf[slug] = [];
+  }
+  for (const slug of slugs) if (slices[slug].parent !== null) (slices[slug].fixes ? fixesOf : childrenOf)[slices[slug].parent].push(slug);
   // A parent chain that never reaches the root is a cycle, which a single-root check alone cannot see.
   for (const slug of slugs) {
     const seen = new Set();
@@ -66,7 +78,7 @@ export function analyzeInitiative(input) {
       seen.add(owner);
     }
   }
-  const leaves = (slug) => childrenOf[slug].length ? childrenOf[slug].flatMap(leaves) : [slug];
+  const leaves = (slug) => [...(childrenOf[slug].length ? childrenOf[slug].flatMap(leaves) : [slug]), ...fixesOf[slug].flatMap(leaves)];
   for (const slug of slugs) {
     const slice = slices[slug];
     const children = childrenOf[slug];
@@ -105,13 +117,14 @@ export function analyzeInitiative(input) {
   return {
     root,
     slices,
-    children: Object.fromEntries(slugs.map((slug) => [slug, [...childrenOf[slug]].sort()])),
+    children: Object.fromEntries(slugs.map((slug) => [slug, [...childrenOf[slug], ...fixesOf[slug]].sort()])),
     leaves: leafSlugs,
     counts,
     effectiveDependencies,
     complete,
     designCandidates: leafSlugs.filter((slug) => slices[slug].status === "not-started"),
-    dependenciesComplete: Object.keys(effectiveDependencies).filter((slug) => effectiveDependencies[slug].every((target) => complete[target])).sort()
+    dependenciesComplete: Object.keys(effectiveDependencies).filter((slug) => effectiveDependencies[slug].every((target) => complete[target])).sort(),
+    fixes: Object.fromEntries(slugs.filter((slug) => fixesOf[slug].length).sort().map((slug) => [slug, [...fixesOf[slug]].sort()]))
   };
 }
 

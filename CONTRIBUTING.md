@@ -14,6 +14,7 @@ A change to Markdown changes agent behavior at task time.
   plugin.json        # Codex plugin manifest
 .agents/plugins/
   marketplace.json   # Codex marketplace
+.agents/skills/      # skills for developing Prism itself, linked from .claude/skills/
 skills/
   <name>/SKILL.md    # one directory per skill; the directory name is the skill name
 src/                 # editable server, native helper, and hook sources
@@ -25,7 +26,7 @@ src/                 # editable server, native helper, and hook sources
     session/         # host adapters, session facts, capacity, and tracing
   native-runtime/    # native helper packaged into runtime archives
   hooks/             # session hook entry points
-dist/                # committed executable runtime and browser assets, same layout as src/
+dist/                # generated runtime and browser assets, same layout as src/; built, not committed
 test/                # server and native helper tests
 vendor/plantuml/     # pinned MIT PlantUML browser runtime
 bin/                 # MCP and standalone review launchers
@@ -43,6 +44,14 @@ That project server has no `${CLAUDE_PLUGIN_ROOT}` value, so it fails to start.
 
 ## Local development
 
+The plugin runs from `dist/`, which is generated and not committed, so build it after cloning and after every change under `src/`:
+
+```bash
+npm ci --prefix scripts/native-build --ignore-scripts
+npm ci --prefix src/native-runtime --ignore-scripts
+npm run build:native
+```
+
 Load the working tree into Claude Code:
 
 ```bash
@@ -54,15 +63,18 @@ A `--plugin-dir` plugin shadows an installed one of the same name for that sessi
 
 After editing a skill, run `/reload-plugins` to pick it up without restarting.
 
-Load the native Codex package through the repository marketplace:
+Load the native Codex package through a development marketplace that serves a copy of the working tree:
 
 ```bash
-codex plugin marketplace add .
+codex plugin marketplace add "$(node scripts/dev-marketplace.mjs)"
 codex plugin add prism@prism
 ```
 
+The repository's own marketplace files describe what users install, so they are not the way to load a working tree.
+The script copies the working tree without `.git`, `node_modules`, or built runtime archives into a temporary directory and prints its path.
+It copies rather than links, because Claude Code does not run the hooks of a plugin whose directory is a link.
+After package changes, run it again, then run `codex plugin add prism@prism` again and restart Codex.
 Codex `0.147.0` or later is required.
-Restart Codex after package changes when the installed copy does not refresh.
 
 ## Validation
 
@@ -74,7 +86,7 @@ npm run validate:sdm
 The Claude validator checks the manifests and parses every skill frontmatter block.
 `--strict` promotes unrecognized-field warnings to errors, which catches typos in field names.
 The SDM validator checks the supported version and selected structural conventions.
-CI also installs the native Codex package from an isolated temporary marketplace.
+CI also installs the native Codex package from an isolated development marketplace.
 Run both checks before opening a pull request.
 
 CI then calls a Prism record tool through real Claude Code and Codex CLIs, with a remote record store, and needs no model or API key:
@@ -104,6 +116,23 @@ Set the same variable locally to make sure the browser tests ran:
 npm install -g playwright@1.63.0
 npx playwright install chromium
 PRISM_REQUIRE_BROWSER=1 npm test
+```
+
+CI splits the server tests into four shards on Linux and four on Windows, each on its own runner, so the browser tests do not hold one runner for half an hour.
+A Windows shard runs two test files at a time with `--test-concurrency=2`, because three browser test files at once on one Windows runner fail with `net::ERR_NO_BUFFER_SPACE`.
+`scripts/test-shard.mjs` balances the shards by the file durations in `test/server/durations.json`, and the `validate` and `windows` checks pass only when every shard passed.
+A test file that the durations do not list counts as a median file, so a new file needs no update to run.
+Run one shard locally the way CI does, or list its files:
+
+```bash
+PRISM_REQUIRE_BROWSER=1 node scripts/test-shard.mjs --shard 2/4 -- --test-timeout=1200000
+node scripts/test-shard.mjs --shard 2/4 --list
+```
+
+When a shard runs much longer than the others, record the durations again with a full run and commit the rewritten file:
+
+```bash
+PRISM_REQUIRE_BROWSER=1 node scripts/test-shard.mjs --record
 ```
 
 ### Review app design values
@@ -148,7 +177,7 @@ Run a local human review from the repository root:
 To try the entity-first review browser, run `node scripts/review-demo/seed.mjs` and start the review command it prints.
 The seed builds a temporary project whose roadmap, initiative records, change map, review ledger, coordination state, recorded user gates, and evidence come from the real MCP tools.
 The project is a Git repository, so the browser also lists its source files.
-The browser opens on Attention, which lists the recorded user gates, and its sidebar expands only the path to the open initiative, slice, or library section.
+The browser opens on Attention, which lists the recorded user gates, and the rail's Work place groups the initiatives being worked on by state, lists a few unfinished slices of each, and expands an initiative whose page or slice is open or that has a slice in progress or claimed.
 Answering a gate on Attention records the answer in the initiative's coordination state, and the `deliver-gate-answers` prompt hook passes answered gates to the agent with the next user message until the agent resolves them.
 The same hook runs when a session resumes and lists every open gate, so the resumed agent waits on its unanswered gates again.
 In Claude Code the `wait_for_user_gate` tool also returns the answer: Claude Code moves the call to the background after about two minutes (`CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS`), its result wakes the idle session, and progress notifications every minute keep the stdio idle window (`CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`) from cancelling it.
@@ -171,6 +200,31 @@ It also checks the component catalog of the empty project at each viewport and t
 `--viewports`, `--themes`, and `--screenshots <directory>` widen the run or keep screenshots for a visual pass.
 Playwright is not a repository dependency, so the check uses an installed copy and is not part of CI.
 
+A change to a screen that the UI kit mockup shows is done only when the rendered screen matches the mockup, so compare them side by side:
+
+```bash
+node scripts/review-demo/mockup-compare.mjs --out /tmp/mockup-compare
+```
+
+It puts the demo app into the state of each mockup scene (Attention with a gate and the Appearance menu, the roadmap with Who's working, a slice with its diagram beside it, the command palette, and the navigation drawer) and writes one picture per scene, width, theme, and density, the mockup on the left and the app on the right, with an `index.html` that shows them in pairs.
+`--scenes`, `--widths`, `--themes`, and `--densities` narrow the run.
+Read every pair: the layout check finds broken layouts, but only this comparison shows a screen that works and still looks nothing like the design.
+Differences that come from the demo's data, or from mockup content that is deliberately out of scope, are expected; name them in the pull request.
+
+The places mockup in `docs/plans/review-app-places/mockup/mockup.html` has its own comparison, which measures each scene instead of only picturing it:
+
+```bash
+node scripts/review-demo/places-compare.mjs --out /tmp/places-compare
+```
+
+It renders each scene of the mockup and the demo app put into the same state, at the same window width and theme, in the compact density: Work on a slice, Attention, Attention filtered to review findings, Knowledge's Touched by my work, History on a superseded initiative, the Roadmap, the collapsed sidebar at 1440, 820, and 390 pixels, and the open drawer at 820 and 390 pixels.
+For each scene, width, and theme it writes `<scene>-<width>-<theme>.png` with the mockup on the left, the app on the right, and the differences below them, `<scene>-<width>-<theme>.json` with both outlines and their differences, a `report.json` of every pair, and an `index.html` that shows each pair with its differences.
+An outline reads the rail, the place head, the sidebar's groups with their fixed rows and the parts of their first row, the top bar's buttons, the trail's first crumb, the geometry of the rail, the heads, the sidebar, and the main island, and the colors of the rail, the sidebar, the current rail button, and the selected row.
+A geometry value that differs by more than 2 pixels is a difference, and so is any other value that differs, except that the app may leave out a sidebar group that the mockup marks `data-optional`.
+`--scenes`, `--widths`, `--themes`, and `--parts` narrow the run to comma-separated values, `--mockup <file>` reads another mockup, and `--app-mockup <file>` renders that mockup in place of the app, so the comparison can check itself.
+It exits 0 when no pair differs, 1 when one does, after printing each difference, and 2 with a message for a missing `--out`, an unknown scene, part, width, or theme, an unreadable mockup, or no Playwright.
+A slice that changes a screen that a scene shows is done only when its frozen tests run this comparison for its scenes and parts at 390, 820, and 1440 pixels in both themes, it passes, and the implementer has looked at every pair it wrote and names in the pull request each difference that the outline does not measure.
+
 With both manifests present the CLI validates the marketplace one.
 To validate `plugin.json` in isolation, copy the plugin into a scratch directory without `marketplace.json` and validate that.
 
@@ -181,8 +235,8 @@ Older server modules remain JavaScript, and newer modules such as the conservati
 Shared source unit, index, and worker message types live in `src/server/repository-intelligence/repository-unit-types.mts`.
 Edit runtime sources under `src/`, then regenerate the complete runtime tree under `dist/`.
 The build compiles TypeScript and copies handwritten JavaScript, browser assets, and runtime registries.
-Commit both the edited sources and generated output.
-The package ships generated JavaScript, so users do not need a TypeScript compiler.
+`dist/` is ignored, so commit only the sources.
+CI builds `dist/` in every job that runs the plugin, and each release package ships the generated JavaScript, so users do not need a TypeScript compiler.
 
 ```bash
 npm ci --prefix src/native-runtime --ignore-scripts
@@ -197,32 +251,55 @@ node scripts/native-build/smoke.mjs dist/native
 node scripts/native-build/mcp-smoke.mjs dist/native
 ```
 
-The freshness check verifies the complete output file set, contents, and executable permissions.
+The freshness check, `npm run check:native`, verifies the complete output file set, contents, and executable permissions.
 It rejects missing, changed, and obsolete output without changing files.
-CI runs this check before any build that could repair committed output.
+The runtime archive builder runs it, so an archive never packs stale output.
 The dependency staging command copies installed helper dependencies into ignored `dist/native-runtime/node_modules`.
 Run staging after installing or patching helper dependencies.
 The build preserves staged dependencies and the ignored `dist/native` archive directory.
 Tests and plugin launchers run the generated output.
 The archive builder verifies generated files and copies pinned source dependencies without running installation scripts.
 ONNX Runtime stays pinned to `1.22.0` because the `1.30.0` package omits the Intel macOS binding.
+`sharp` is replaced by the stub in `src/native-runtime/stubs/sharp`, because Hugging Face Transformers requires it at load time but Prism never processes images, and the real package ships an LGPL image library.
+`src/native-runtime/.npmrc` sets `install-links=true`, so npm copies the stub into `node_modules` instead of linking it, and the runtime archive contains a real directory.
 The smoke tests run the packaged Node helper without external executables.
 The MCP smoke test also checks native estimates, offline reuse, responsive discovery, and source changes.
-The release workflow builds and tests all five target platforms for the release pull request.
-It publishes immutable runtime bundles, verifies the default manifest, and commits that manifest to the release pull request.
-The same release mirrors the pinned model files, and the manifest's `modelMirror` points the runtime at them before it falls back to Hugging Face.
-No separate publication branch or manual manifest copy is required for a plugin release.
-The standalone runtime workflow still supports `codex/native-runtime-assets` and manual publication for diagnostics.
+The release workflow builds and tests all five target platforms for the release pull request, and publishes nothing then.
+After the merge it rebuilds the bundles from the release tag and uploads them, with the pinned model files, as assets of that release.
+Each release's package carries a manifest that names those assets, and its `modelMirror` points the runtime at the model files before it falls back to Hugging Face.
+No separate runtime release, publication branch, or manual manifest copy is involved.
+On `main`, `vendor/native-runtime/manifest.json` names the assets of the latest release, so development uses the latest released runtime.
 An empty bundle manifest leaves semantic preparation unavailable and preserves lexical results.
 Use a host-owned `PRISM_NATIVE_ASSET_MANIFEST` path for local archive tests.
 Project files cannot select that manifest.
 
-The runtime publication workflow also tests the default manifest on all five platforms after publication.
+Before a release becomes stable, CI runs the package's default manifest on all five platforms against the public assets.
 Those checks include semantic discovery, retained receipts, and managed-addition readiness without a manifest override.
-Only a successful run produces the `verified-native-manifest` artifact.
-The release workflow promotes that artifact only when the release pull request and `main` still match the tested source.
-It changes only `vendor/native-runtime/manifest.json` during promotion.
-Run `node scripts/native-build/mcp-smoke.mjs --default` to verify the promoted manifest locally.
+Run `node scripts/native-build/mcp-smoke.mjs --default` to verify the manifest on `main` locally.
+
+## Dependencies
+
+Prism is licensed under Apache 2.0, and its code must stay combinable with closed-source code.
+Agents follow the [`add-dependency`](.agents/skills/add-dependency/SKILL.md) skill before adding or upgrading any dependency, and people follow the same procedure.
+
+A dependency ships when it reaches users: a runtime dependency of `src/` or `dist/`, anything under `vendor/`, anything in a native runtime archive, a model, a font, or copied code.
+A development-only dependency, used only by tests, build scripts, linters, or CI, may carry any license that lets the project use it, except the ones marked not allowed.
+
+| License | Shipped dependency |
+|---|---|
+| MIT, BSD-2-Clause, BSD-3-Clause, ISC, Apache-2.0, 0BSD, Unlicense, CC0-1.0, Zlib, BlueOak-1.0.0, Python-2.0 | Allowed |
+| OFL-1.1 for fonts, CC-BY-4.0 for data and models | Allowed |
+| LGPL-2.1, LGPL-3.0, MPL-2.0, EPL-2.0 | Only with the maintainer's approval, kept as a separate unmodified library that users can replace, never bundled or inlined |
+| GPL, AGPL, SSPL, EUPL, CC-BY-SA, CC-BY-NC | Not allowed |
+| BSL, Elastic License, Commons Clause, other source-available or non-commercial licenses | Not allowed |
+| No license, unknown, or custom terms | Not allowed until the maintainer approves it |
+
+A package with a choice of licenses, such as `(MIT OR GPL-3.0)`, is used under the allowed one.
+`npm run check:licenses` enforces this table on every package in the npm lockfiles, and CI runs it.
+It treats every package that is not development-only as shipped, including optional platform packages.
+[`scripts/dependency-licenses.json`](scripts/dependency-licenses.json) holds the exact lists the check uses, so change it together with this table.
+An exception the maintainer approves goes under `approved` in that file, keyed by package name with the reason as its value.
+Every shipped dependency keeps its license text and copyright notice in `THIRD_PARTY_NOTICES.md`, under `vendor/`, or in the license files the native runtime build collects.
 
 ## Writing skills
 
@@ -243,13 +320,14 @@ Run `node scripts/native-build/mcp-smoke.mjs --default` to verify the promoted m
 
 ## Benchmarking a change
 
-`bench/` holds a benchmark that compares plugin versions by the code their agents produce.
+The benchmark that compares plugin versions by the code their agents produce lives in the private `prism-research` repository, with the evidence behind Prism's design.
+It stays out of this repository because every plugin install clones this repository onto the user's machine.
 Hidden acceptance tests score each run, and a paired bootstrap over tasks decides whether a delta is real.
-The methodology, the commands, and the threats to validity live in [bench/README.md](bench/README.md).
+The harness loads a Prism checkout from `PRISM_REPO`, or from a sibling folder named `Prism` or `prism`.
 
 Before you trust or publish a result:
 
-1. Run `python3 bench/harness/bench.py selfcheck`.
+1. Run `python3 bench/harness/bench.py selfcheck` in the research repository.
 2. Compare arms with the same pinned model and at least 3 repetitions.
 3. Quote the confidence interval, never the point delta alone.
 
@@ -307,40 +385,60 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
 On each push to `main`, it opens or updates a release pull request.
 The pull request updates both native manifest versions and writes the `CHANGELOG.md` section.
 Release-please computes the next version from commits since the last release.
-CI prepares the runtime bundles and adds their verified manifest to that pull request.
-The `Release readiness` status reports the result of runtime preparation and package validation.
+It rebuilds the pull request on every push, so the pull request always contains `main`'s tip.
 
 `CHANGELOG.md` is generated from commit messages, so do not edit it by hand.
 Anything you want to appear there belongs in a commit subject.
 
+The `Release readiness` status checks the pull request and publishes nothing.
+It refuses a version that is already tagged and a branch that does not contain `main`'s tip.
+It builds and tests the runtime on all five platforms and runs package validation.
+It builds the release package and installs it in Claude Code and Codex through a catalog pinned to it, served from a local repository in place of GitHub.
 Wait for `Release readiness` to pass before you merge the release pull request.
-CI checks the merged package and its default runtime on all five platforms before it tags the commit and publishes a GitHub Release.
-The runtime source check permits version and manifest updates but rejects changes to runtime, server, build, or pinned model inputs.
-Failed checks prevent plugin publication.
-Plugin versions are published only after that merge.
 Release-please computes the version from commit prefixes, so the proposed version needs a review.
 Check that the proposed bump matches the actual behavior change before merging.
-Native asset prereleases can exist before the plugin release because CI must test their public download URLs.
 
-Release preparation never writes directly to `main` or merges the release pull request.
-Concurrent changes invalidate the older preparation run instead of overwriting newer source.
-To retry a failed preparation, dispatch the `Release` workflow on `main` or rerun all jobs in the failed run.
+Users install a package, not this repository.
+A package holds only what runs: both manifests, the marketplace files, the MCP definitions, `skills/`, `hooks/`, `dist/`, `bin/`, `vendor/`, `assets/`, the README, the license and notices, and the changelog.
+Each package is one commit on the `package` line, whose history holds only packages, and its tag is `prism--v<version>`.
+Both catalog entries on `main` pin the package tag and its commit, so a push to `main` changes nothing that users install.
+
+After the merge, the release workflow publishes in this order, and each step runs only when the steps before it passed:
+
+1. Release-please tags the merge commit `v<version>` and creates a draft GitHub Release.
+2. CI validates the tagged commit, rebuilds the runtime bundles from it on all five platforms, and uploads them and the model files to the draft.
+3. CI builds the package with a runtime manifest that names those assets, commits it to the `package` line, and tags it.
+4. On all five platforms, CI installs the package from GitHub in Claude Code and Codex through a catalog pinned to it and calls a Prism tool through each host.
+5. CI makes the Release a prerelease, which makes its assets public without making it the latest Release, and runs the package's default runtime from them on all five platforms.
+6. CI makes the Release stable and latest.
+7. CI commits `chore: install <version>` to `main`, which pins both catalog entries to the package and sets `main`'s runtime manifest to the release's.
+
+The Release becomes stable before the pin commit, because that commit starts release-please, which does not count a prerelease as a release.
+Release runs queue rather than overlap, so a push during a release is planned only after the release is stable.
+Users receive the version only at step 7: Claude Code because the version string changes, and Codex at its next `codex plugin marketplace upgrade`, because the catalog changes.
+
+If a step fails because of a flaky runner, rerun the failed jobs.
+A rerun uses the workflow and scripts of the tagged commit, so it cannot pick up a fix.
+To ship a fix, recover the version instead:
+
+1. Delete the draft or prerelease and its `v<version>` tag, and delete the `prism--v<version>` tag if step 3 created it.
+2. Revert the release commit on `main`.
+3. Merge the fix, and release-please opens the release pull request again for the same version.
+
+Nobody has the version until step 7, so recovery affects no user.
+A failed attempt can leave an untagged commit on the `package` line, which is harmless.
 
 To override the computed version, add a `Release-As: 1.0.0` footer to a commit on `main`.
 
 ### Release workflow setup
 
 The release workflow authenticates with a `RELEASE_PLEASE_TOKEN` repository secret, a fine-grained personal access token scoped to this repository with **Contents** and **Pull requests** set to read/write.
-It lets release pull requests and manifest promotion commits trigger normal pull request workflows.
+It lets the release pull request trigger normal pull request workflows, and it pushes the package line, the package tag, and the pin commit.
+A push with the token also starts the release workflow, so release-please runs after the pin commit and finds nothing to release.
 
 If that secret is missing, the workflow falls back to `GITHUB_TOKEN`.
 That fallback only works when **Allow GitHub Actions to create and approve pull requests** is enabled under Settings, Actions, General, Workflow permissions.
 With neither in place the job fails with `GitHub Actions is not permitted to create or approve pull requests`.
+A pin commit pushed with `GITHUB_TOKEN` starts no workflow, so the release pull request for later commits appears at the next push.
 The release workflow also invokes package validation directly, so token fallback does not bypass those checks.
-The workflow uses its scoped `GITHUB_TOKEN` to report the `Release readiness` status.
-
-Run the Claude validator and the Codex installation smoke test before merging a release pull request.
-CI runs both checks on every push.
-
-Users on the default install track `main` and pick up the change on their next marketplace update.
-Users who pinned a tag stay put until they re-add at the new one.
+The workflow uses its scoped `GITHUB_TOKEN` to report the `Release readiness` status and to change the Release.

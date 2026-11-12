@@ -347,6 +347,16 @@ const LONG_STATUSES = [
 const pageUrl = (review, ref) => `${review.baseUrl.replace(/\/$/, "")}/review?artifact=${encodeURIComponent(ref)}`;
 
 // Whether a text shows whole on the page: some text node of the card that names the file is exactly it, visible, and inside every box above it that clips its content.
+// Pick the Attention list item of a file as the person does: back to the list where the list and the card take turns, then the item.
+const pick = async (page, filePath) => {
+  await page.evaluate((filePath) => {
+    const back = document.querySelector("[data-attention-back]");
+    if (back && back.offsetParent !== null) back.click();
+    [...document.querySelectorAll("prism-inbox-item")].find((item) => item.textContent.includes(filePath))?.click();
+  }, filePath);
+  await page.waitForFunction((filePath) => [...document.querySelectorAll("[data-detail]")].some((sheet) => !sheet.hidden && sheet.textContent.includes(filePath)), filePath, { timeout: 5000 }).catch(() => {});
+};
+
 const shownWhole = (page, filePath, wanted) => page.evaluate(({ filePath, wanted }) => {
   const parentOf = (node) => node.assignedSlot ?? node.parentElement ?? (node.parentNode instanceof ShadowRoot ? node.parentNode.host : null);
   const texts = function* (root) {
@@ -400,6 +410,8 @@ test("clause 34: the approval card shows the whole status that approving writes 
     const page = await openPage(browser, pageUrl(review, "attention"), { viewport: { width, height: 900 } });
     await page.waitForFunction((file) => document.body.textContent.includes(file) || [...document.querySelectorAll("*")].some((node) => node.shadowRoot?.textContent.includes(file)), files[0], { timeout: 10000 }).catch(() => {});
     for (const [index, status] of LONG_STATUSES.entries()) {
+      // Attention shows one item's card at a time, so the person picks the approval from the list first.
+      await pick(page, files[index]);
       if (!(await shownWhole(page, files[index], status))) cut.push(`${width}px: the ${status.length}-character status of ${files[index]}`);
       if (!(await shownWhole(page, files[index], "Draft"))) cut.push(`${width}px: the recorded status of ${files[index]}`);
     }

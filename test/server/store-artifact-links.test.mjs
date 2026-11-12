@@ -99,8 +99,8 @@ test("the palette lists each store artifact once, follows the scope filter, and 
     await palette.getByRole("option").first().waitFor();
     await settle(page);
     const found = [];
-    // A full-text match is its own group, Text in documents; every other row names something the palette jumps to.
-    for (const option of await palette.locator('[role="group"]:not([aria-label="Text in documents"])').getByRole("option").all()) {
+    // A full-text match is its own group, Text matches; every other row names something the palette jumps to.
+    for (const option of await palette.locator('[role="group"]:not([aria-label="Text matches"])').getByRole("option").all()) {
       const text = await option.innerText();
       if (!/shared/i.test(text)) continue;
       found.push(await option.locator("[data-scope-label]").allTextContents());

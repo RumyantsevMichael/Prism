@@ -1,5 +1,8 @@
 # Refuse a checkout that names a store but no repository
 
+> Shipped history: initiative `components` shipped on 2026-11-07, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 A checkout that names a store but no repository is refused, while a checkout without a store works as before.

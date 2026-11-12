@@ -10,11 +10,17 @@ on:
     branches: [main]
   pull_request:
 
+# A newer commit on a pull request makes its older run moot, so that run stops and frees its runners; every other run is its own group.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('validate-pr-{0}', github.event.pull_request.number) || format('validate-{0}-{1}-{2}', github.run_id, github.run_attempt, inputs.source_ref || github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # The plugin runs on whatever Node the user has, and a Node 24 minor release changed how readline ends lines.
   # Testing the server on the newest Node 24 catches such changes before users meet them.
   server-latest-node:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,10 +36,25 @@ jobs:
           node --version
           npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
           npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          npm run build:native
           npm test
 
-  validate:
-    runs-on: ubuntu-latest
+  # The server tests, browser tests included, run in four shards on Linux and on Windows, since one runner takes about half an hour for them.
+  # A Windows shard runs two test files at a time instead of three, because three browser files at once on one runner fail with net::ERR_NO_BUFFER_SPACE.
+  # Windows users install the same plugin, and its hooks, MCP server, and Git calls behave differently there.
+  # scripts/test-shard.mjs balances the shards by the file durations in test/server/durations.json.
+  server-tests:
+    name: server tests (${{ matrix.os }}, ${{ matrix.shard }}/4)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-2025]
+        shard: [1, 2, 3, 4]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,6 +63,47 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      # The review app's browser tests run in Chromium through a global Playwright, which is not a repository dependency.
+      - name: Install Playwright for the browser tests
+        run: npm install -g playwright@1.63.0
+
+      - name: Install Chromium with its system dependencies
+        if: runner.os == 'Linux'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Chromium
+        if: runner.os != 'Linux'
+        run: npx playwright install chromium
+
+      # A test or test file that hangs fails after twenty minutes instead of holding the runner; the bound covers a whole file, whose tests run one after another.
+      - name: Test the server
+        env:
+          PRISM_REQUIRE_BROWSER: "1"
+        run: |
+          npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          npm run build:native
+          node scripts/test-shard.mjs --shard ${{ matrix.shard }}/4 -- --test-timeout=1200000 ${{ runner.os == 'Windows' && '--test-concurrency=2' || '' }}
+
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # dist/ is generated from src/ and not committed, so every job that runs the plugin builds it first.
+      - name: Build the runtime
+        run: |
+          npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          npm run build:native
 
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
@@ -55,25 +117,29 @@ jobs:
       - name: Validate Skill Definition Markdown
         run: npm run validate:sdm
 
-      # The review app's browser tests run in Chromium through a global Playwright, which is not a repository dependency.
-      - name: Install Playwright and Chromium for the browser tests
-        run: |
-          npm install -g playwright@1.63.0
-          npx playwright install --with-deps chromium
+      - name: Check dependency licenses
+        run: npm run check:licenses
 
-      - name: Test the server and release automation
-        env:
-          PRISM_REQUIRE_BROWSER: "1"
+      - name: Test the native build and release automation
         run: |
-          npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
-          npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
-          npm run check:native
-          npm test
-          node --test scripts/native-build/*.test.mjs scripts/release-automation.test.mjs
+          node --test scripts/native-build/*.test.mjs scripts/*.test.mjs
 
       - name: Check manifest versions
         run: |
           node -e "const fs=require('fs'); const a=JSON.parse(fs.readFileSync('.claude-plugin/plugin.json')); const b=JSON.parse(fs.readFileSync('.codex-plugin/plugin.json')); if(a.version!==b.version) process.exit(1)"
+
+      # main holds no built runtime, so a catalog entry that installs this repository would install a plugin that cannot start.
+      - name: Check that both catalog entries pin a release package
+        run: |
+          node -e '
+            const fs = require("fs");
+            for (const file of [".claude-plugin/marketplace.json", ".agents/plugins/marketplace.json"]) {
+              const { source } = JSON.parse(fs.readFileSync(file, "utf8")).plugins[0];
+              if (typeof source !== "object" || !/^prism--v\d+\.\d+\.\d+$/.test(source.ref || "") || !/^[0-9a-f]{40}$/.test(source.sha || "")) {
+                console.error(file + " must pin a prism--v<version> package tag and its commit, not " + JSON.stringify(source));
+                process.exit(1);
+              }
+            }'
 
       - name: Check explicit-only skill policies
         run: |
@@ -84,7 +150,7 @@ jobs:
           CODEX_HOME: ${{ runner.temp }}/codex-home
         run: |
           mkdir -p "$CODEX_HOME"
-          codex plugin marketplace add .
+          codex plugin marketplace add "$(node scripts/dev-marketplace.mjs "$RUNNER_TEMP/prism-dev-marketplace")"
           codex plugin add prism@prism
           codex plugin list
 
@@ -102,3 +168,69 @@ jobs:
         env:
           CODEX_BIN: ${{ runner.temp }}/codex-current/node_modules/.bin/codex
         run: node scripts/host-smoke.mjs codex-turn
+
+  # The smoke tests start Prism's tools and hooks in real Claude Code and Codex on Windows.
+  windows-smoke:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Claude Code and Codex
+        run: npm install -g @anthropic-ai/claude-code @openai/codex@0.147.0
+
+      - name: Build the runtime
+        run: |
+          npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          npm run build:native
+
+      # npm starts both CLIs through .cmd shims, which Node cannot spawn without a shell, so the smoke test runs their real entry points.
+      - name: Smoke-test Prism tools and hooks in real Claude Code and Codex on Windows
+        run: |
+          root="$(npm root -g)"
+          export CLAUDE_BIN="$root/@anthropic-ai/claude-code/bin/claude.exe"
+          export CODEX_BIN="$root/@openai/codex/bin/codex.js"
+          node scripts/host-smoke.mjs claude codex
+
+      # As on Linux, the oldest supported Codex installs the plugin above and the model turn runs on the latest Codex.
+      - name: Smoke-test a Codex model turn with Prism hooks on the latest Codex on Windows
+        run: |
+          npm install --prefix "$RUNNER_TEMP/codex-current" @openai/codex@latest
+          export CODEX_BIN="$RUNNER_TEMP/codex-current/node_modules/@openai/codex/bin/codex.js"
+          node "$CODEX_BIN" --version
+          node scripts/host-smoke.mjs codex-turn
+
+  # validate and windows are the checks a pull request waits for; each passes only when every job it names passed.
+  validate:
+    needs: [checks, server-tests, server-latest-node, windows-smoke]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every check, test shard, and smoke test
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for result in $RESULTS; do [ "$result" = success ] || exit 1; done
+
+  windows:
+    needs: [server-tests, windows-smoke]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the test shards and the Windows smoke tests
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for result in $RESULTS; do [ "$result" = success ] || exit 1; done

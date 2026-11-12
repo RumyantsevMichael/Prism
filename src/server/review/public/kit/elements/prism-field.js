@@ -18,9 +18,10 @@ export class PrismField extends Base {
       { name: "required", values: ["boolean"], default: "false", description: "The control must hold a value." },
       { name: "disabled", values: ["boolean"], default: "false", description: "The control takes no input." },
       { name: "invalid", values: ["boolean"], default: "false", description: "Marks the value as wrong, exposed as aria-invalid." },
-      { name: "error", values: ["text"], default: "", description: "The message an invalid field shows, linked as its description." }
+      { name: "error", values: ["text"], default: "", description: "The message an invalid field shows, linked as its description." },
+      { name: "variant", values: ["default", "bare", "filter"], default: "default", description: "bare hides the label, which still names the control, and draws no box, for a search row that its surface frames, such as the command palette's; a bare field places a start-slot icon before the control and an end-slot key hint after it. filter hides the label in the same way and keeps the box at the control height with a start-slot icon inside it, for a list's filter, such as a sidebar's." }
     ],
-    states: ["text", "search", "textarea", "select", "hint", "invalid", "disabled"],
+    states: ["text", "search", "textarea", "select", "hint", "invalid", "disabled", "bare", "filter"],
     keyboard: ["The native control takes the keyboard as it always does; Tab reaches it and the label names it."]
   };
 

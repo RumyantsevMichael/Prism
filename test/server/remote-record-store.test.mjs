@@ -6,7 +6,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Git runs with a private home and configuration, a fixed identity, local repositories only, and no proxy; the app folder and plugin data directory are private too.
 const environment = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-remote-env-")));
@@ -25,6 +25,9 @@ const { cancelRecordSyncs, configureRecordSync, readSyncStatus, syncRecordStore,
 const { forgetMigrations, listInitiatives, listRecordStoreConflicts, readRecord, recordStoreOf, recordSyncStatus, writeRecord } = await import(RECORD_STORE);
 const { parseWorkflowConfig } = await import("../../dist/server/workflow/workflow-config.mjs");
 const { getInitiative, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
+const { answerUserGate, updateCoordinationState } = await import("../../dist/server/workflow/state.mjs");
+const { rememberAskedGates } = await import("../../dist/server/workflow/change-notices.mjs");
+const { sessionHolder } = await import("../../dist/server/workflow/slice-claims.mjs");
 const { startReviewServer } = await import("../../dist/server/review/review-server.mjs");
 const { startReviewApp } = await import("../../dist/server/review/review-app-server.mjs");
 const { createReviewAppClient } = await import("../../dist/server/review/review-app-client.mjs");
@@ -220,7 +223,8 @@ test("a managed clone checks the objects it receives, so a tree with a .. entry 
 
 // A remote whose branch holds an entry that no store shares, pushed by a teammate: the first clone refuses it as a whole, writes no file, and leaves no folder.
 // Add a file to a seed's index by its contents alone, so the commit holds a name that the host's file system could not.
-const stage = (seed, file, contents) => git(seed, "update-index", "--add", "--cacheinfo", `100644,${execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: seed, input: contents }).toString().trim()},${file}`);
+// Git for Windows refuses a name Windows cannot hold unless core.protectNTFS is off, which a seed on another system never needs.
+const stage = (seed, file, contents) => git(seed, "-c", "core.protectNTFS=false", "update-index", "--add", "--cacheinfo", `100644,${execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: seed, input: contents }).toString().trim()},${file}`);
 
 async function refusedClone(context, plant) {
   const parent = await folder(context);
@@ -426,6 +430,36 @@ test("a remote store syncs by default and Store sync off never commits", async (
   assert.equal(await recordSyncStatus(off), null);
   assert.equal(await exists(path.join(quiet.clone, ".prism-sync")), false);
   assert.equal(git(quiet.remote, "rev-parse", "main"), head);
+});
+
+// Hooks run under a host time limit of a few seconds, so a hook reads the clone as it is and leaves fetching to the session's server.
+test("the gate hooks read a synced store without fetching it", async (context) => {
+  const parent = await folder(context);
+  const { remote, url, clone } = bareRemote(parent);
+  const root = await project(parent, "project", remoteConfig(url, "on"));
+  await create(root);
+  const asked = await updateCoordinationState({ projectRoot: root, initiative: "reports", expectedRevision: null, changes: { gateOperations: [{ op: "ask", kind: "visual-review", question: "Review the design.", artifacts: [] }] } });
+  const [gate] = asked.openedGates.map((opened) => opened.id);
+  await rememberAskedGates({ projectRoot: root, initiative: "reports", gateIds: [gate], session: sessionHolder({ CLAUDE_CODE_SESSION_ID: "asking-session" }) });
+  await answerUserGate({ projectRoot: root, initiative: "reports", id: gate, choice: "approve", note: "Looks right." });
+  assert.equal((await syncRecordStore(clone)).state, "ok");
+  const fetched = git(clone, "rev-parse", "origin/main");
+  // Another machine pushes after this clone last fetched.
+  const other = path.join(parent, "other");
+  git(parent, "clone", "-q", remote, other);
+  await writeFile(path.join(other, "NOTES.md"), "From another machine.\n");
+  git(other, "add", "NOTES.md");
+  git(other, "commit", "-q", "-m", "other machine");
+  git(other, "push", "-q", "origin", "HEAD:main");
+  const hook = (name, payload) => new Promise((resolve, reject) => {
+    const child = execFile(process.execPath, [fileURLToPath(new URL(`../../dist/hooks/${name}.mjs`, import.meta.url))], (error, stdout) => (error ? reject(error) : resolve(stdout)));
+    child.stdin.end(JSON.stringify(payload));
+  });
+  assert.match(await hook("deliver-gate-answers", { hook_event_name: "UserPromptSubmit", session_id: "asking-session", cwd: root, prompt: "go" }), new RegExp(`Gate ${gate} .*Note: Looks right\\.`));
+  assert.match(await hook("deliver-gate-answers", { hook_event_name: "SessionStart", source: "resume", session_id: "asking-session", cwd: root }), new RegExp(`Gate ${gate}`));
+  assert.match(await hook("offer-prism", { hook_event_name: "SessionStart", source: "startup", cwd: root }), /additionalContext/);
+  assert.equal(git(clone, "rev-parse", "origin/main"), fetched, "no hook fetched the store");
+  assert.equal(await exists(path.join(clone, "NOTES.md")), false, "no hook merged the other machine's commit");
 });
 
 test("a remote with user information never puts it in a message, status, or record", async (context) => {

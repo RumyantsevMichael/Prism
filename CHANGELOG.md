@@ -1,5 +1,78 @@
 # Changelog
 
+## [0.23.0](https://github.com/RumyantsevMichael/Prism/compare/v0.22.1...v0.23.0) (2026-11-12)
+
+
+### Added
+
+* **review:** accept low findings with follow-ups and ask the review loop decision from the findings ([#189](https://github.com/RumyantsevMichael/Prism/issues/189)) ([1ddd03d](https://github.com/RumyantsevMichael/Prism/commit/1ddd03d9ced45a1989208d1915cc913eb8f176f2))
+
+
+### Fixed
+
+* let only one review app reclaim an abandoned lock, and name failed page loads on Windows ([#191](https://github.com/RumyantsevMichael/Prism/issues/191)) ([77cf710](https://github.com/RumyantsevMichael/Prism/commit/77cf71053fb271497245d8daec7ff114291d62ff)), closes [#85](https://github.com/RumyantsevMichael/Prism/issues/85)
+* **review:** keep sessions on a slow shared review app ([#203](https://github.com/RumyantsevMichael/Prism/issues/203)) ([1f044a8](https://github.com/RumyantsevMichael/Prism/commit/1f044a84135960db08b605366e4e14739e4b3f8a)), closes [#195](https://github.com/RumyantsevMichael/Prism/issues/195)
+* stop hooks from syncing the record store on every prompt ([#197](https://github.com/RumyantsevMichael/Prism/issues/197)) ([e07da63](https://github.com/RumyantsevMichael/Prism/commit/e07da639ca2cd3572e37dd1d3a470610694b0967)), closes [#196](https://github.com/RumyantsevMichael/Prism/issues/196)
+
+## [0.22.1](https://github.com/RumyantsevMichael/Prism/compare/v0.22.0...v0.22.1) (2026-11-11)
+
+
+### Fixed
+
+* make Prism work on Windows ([#166](https://github.com/RumyantsevMichael/Prism/issues/166)) ([41decde](https://github.com/RumyantsevMichael/Prism/commit/41decdef06f157b29891a1f743d4d896ab5f008d)), closes [#85](https://github.com/RumyantsevMichael/Prism/issues/85)
+
+
+### Documentation
+
+* add requirements for index preparation, record search, and reference search ([#186](https://github.com/RumyantsevMichael/Prism/issues/186)) ([aa58d44](https://github.com/RumyantsevMichael/Prism/commit/aa58d4422dcd28ae17c18829cb77b2acccb0a1a9)), closes [#14](https://github.com/RumyantsevMichael/Prism/issues/14) [#119](https://github.com/RumyantsevMichael/Prism/issues/119) [#120](https://github.com/RumyantsevMichael/Prism/issues/120)
+
+## [0.22.0](https://github.com/RumyantsevMichael/Prism/compare/v0.21.0...v0.22.0) (2026-11-11)
+
+
+### Added
+
+* refuse work on a slice without its holder's claim ([#173](https://github.com/RumyantsevMichael/Prism/issues/173)) ([c631ea1](https://github.com/RumyantsevMichael/Prism/commit/c631ea14fd10caef86e6b0b6103cad98cee82cb4))
+* relicense Prism under the Apache License 2.0 ([#182](https://github.com/RumyantsevMichael/Prism/issues/182)) ([95ac431](https://github.com/RumyantsevMichael/Prism/commit/95ac4310b55f08fb954e8980d0e42d97d8722d68))
+* **review:** group, rearrange and navigate tabs; keep preferences ([#171](https://github.com/RumyantsevMichael/Prism/issues/171)) ([593fc27](https://github.com/RumyantsevMichael/Prism/commit/593fc27c5419143ba3f98dc4d3adb40b57fca04a))
+* **review:** navigate the review app by places ([#177](https://github.com/RumyantsevMichael/Prism/issues/177)) ([10e2ef1](https://github.com/RumyantsevMichael/Prism/commit/10e2ef1d5b6bfb414cda92d63886d8f9b1925374))
+
+
+### Fixed
+
+* keep session-end hook timeouts within Codex's 3-second limit ([#172](https://github.com/RumyantsevMichael/Prism/issues/172)) ([7b67a01](https://github.com/RumyantsevMichael/Prism/commit/7b67a01f2416f17447b0147a7bef07c54dc8418b))
+* **review:** fit the contents panel and join markdown paragraphs ([#167](https://github.com/RumyantsevMichael/Prism/issues/167)) ([fb516bc](https://github.com/RumyantsevMichael/Prism/commit/fb516bc2ebd6aeccbafd9c68dcb49d0bce3056f5))
+* **review:** line up single-slice initiatives with multi-slice ones in the sidebar ([#180](https://github.com/RumyantsevMichael/Prism/issues/180)) ([96195fd](https://github.com/RumyantsevMichael/Prism/commit/96195fd733211a1058c36705148ba34e04b0db12))
+* **review:** never show Attention before the current place is known ([#183](https://github.com/RumyantsevMichael/Prism/issues/183)) ([49d58be](https://github.com/RumyantsevMichael/Prism/commit/49d58bec80bc8dfc740fc0e4461151097818cff6))
+* **review:** stop a tab drop from swallowing the next click ([#179](https://github.com/RumyantsevMichael/Prism/issues/179)) ([ddf4e94](https://github.com/RumyantsevMichael/Prism/commit/ddf4e94d8eb08fead31f396b170b84d39c3732cb))
+* settle a component's progress record before its job reports the end ([#175](https://github.com/RumyantsevMichael/Prism/issues/175)) ([2ea1f95](https://github.com/RumyantsevMichael/Prism/commit/2ea1f95e9d71b261d65525d7d6a99e3854c62e95)), closes [#132](https://github.com/RumyantsevMichael/Prism/issues/132)
+* stop shipping sharp's LGPL library and check dependency licenses ([#184](https://github.com/RumyantsevMichael/Prism/issues/184)) ([be1c842](https://github.com/RumyantsevMichael/Prism/commit/be1c84284bbd6a9f502e3f59d8fbdf349c05b8d1))
+
+
+### Documentation
+
+* add approved requirements for artifact formats and migration ([#185](https://github.com/RumyantsevMichael/Prism/issues/185)) ([29a5d79](https://github.com/RumyantsevMichael/Prism/commit/29a5d79db458ea943d8b7d150b4a9701f1ef893a)), closes [#59](https://github.com/RumyantsevMichael/Prism/issues/59)
+* ship navigating the review app by places on the roadmap ([#181](https://github.com/RumyantsevMichael/Prism/issues/181)) ([990c97a](https://github.com/RumyantsevMichael/Prism/commit/990c97a0bab9d9694d782604230ceec7dcea3b93)), closes [#178](https://github.com/RumyantsevMichael/Prism/issues/178)
+
+## [0.21.0](https://github.com/RumyantsevMichael/Prism/compare/v0.20.0...v0.21.0) (2026-11-10)
+
+
+### Added
+
+* give the plugin an icon in Claude Code and Codex ([#158](https://github.com/RumyantsevMichael/Prism/issues/158)) ([dc649e7](https://github.com/RumyantsevMichael/Prism/commit/dc649e7a1f226ea748b98fa5b894e5a6bd9edb65))
+* keep shipped work as history and fix done work inside its initiative ([#163](https://github.com/RumyantsevMichael/Prism/issues/163)) ([9328e29](https://github.com/RumyantsevMichael/Prism/commit/9328e29835b1ba190a05c9b286fdf4e7eb0b2594)), closes [#156](https://github.com/RumyantsevMichael/Prism/issues/156)
+
+
+### Fixed
+
+* keep servers responsive while indexes build, and log what they do ([#168](https://github.com/RumyantsevMichael/Prism/issues/168)) ([4a0fda7](https://github.com/RumyantsevMichael/Prism/commit/4a0fda776225a8373f041c68fbbe49b32d9bfe68))
+* **review:** match the approved mockup, restore tabs, and stop the multi-tab freeze ([#157](https://github.com/RumyantsevMichael/Prism/issues/157)) ([049aa9c](https://github.com/RumyantsevMichael/Prism/commit/049aa9ce09d404d0b8d43313a4e05bceb94d4fc4))
+* **review:** open stale links in the app, keep previews reachable ([#161](https://github.com/RumyantsevMichael/Prism/issues/161)) ([a28f334](https://github.com/RumyantsevMichael/Prism/commit/a28f334558d37addd02826a29569c8aaa7934887)), closes [#160](https://github.com/RumyantsevMichael/Prism/issues/160)
+
+
+### Documentation
+
+* ship shipped work history on the roadmap ([#164](https://github.com/RumyantsevMichael/Prism/issues/164)) ([0abcf42](https://github.com/RumyantsevMichael/Prism/commit/0abcf42de1e0fadd31e4d58a5004c3f7521d757d)), closes [#156](https://github.com/RumyantsevMichael/Prism/issues/156)
+
 ## [0.20.0](https://github.com/RumyantsevMichael/Prism/compare/v0.19.0...v0.20.0) (2026-11-09)
 
 

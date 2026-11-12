@@ -22,6 +22,8 @@ const git = (cwd, args, input) => execFileSync("git", ["-C", cwd, ...args], { in
 // A git that runs the real one, then kills the process that called it right after the step that STOP_AT names, once the merge commit exists, or right before its push.
 const realGit = execFileSync("sh", ["-c", "command -v git"]).toString().trim();
 const wrapper = path.join(environment, "bin", "git");
+// Node finds only an .exe for "git" on Windows and Git Bash cannot kill a Windows process by its parent id, so this bash wrapper stops a sync only on POSIX.
+const POSIX_ONLY = { skip: process.platform === "win32" && "the crash harness is a bash git wrapper that kills its caller by POSIX parent process id" };
 await mkdir(path.dirname(wrapper), { recursive: true });
 await writeFile(wrapper, `#!/bin/bash
 [[ "$STOP_AT" == "push" && "$*" == *" push "* && -f "$STOP_FLAG" ]] && { rm -f "$STOP_FLAG"; kill -9 $PPID; exit 1; }
@@ -88,7 +90,7 @@ function syncStopped(store, stopAt) {
 }
 
 for (const kind of KINDS) for (const stopAt of ["first-ls-tree", "read-tree", "update-ref"]) {
-  test(`a sync that stops at the conflicting merge's ${stopAt} step keeps the local version of a(n) ${kind.label} saved once, and the next sync and tool result name it`, async (context) => {
+  test(`a sync that stops at the conflicting merge's ${stopAt} step keeps the local version of a(n) ${kind.label} saved once, and the next sync and tool result name it`, POSIX_ONLY, async (context) => {
     const { storeA, storeB } = await stores(context);
     await writeFile(path.join(storeA, ...kind.parts), kind.a);
     git(storeA, ["commit", "-q", "-am", "a's edit"]);
@@ -142,7 +144,7 @@ const ageLocks = async (store, kind) => {
 };
 
 for (const kind of KINDS) {
-  test(`a sync that stops after it saved a conflict of a(n) ${kind.label} and before its status leaves the saved version to the next server's tool result, which names it once`, async (context) => {
+  test(`a sync that stops after it saved a conflict of a(n) ${kind.label} and before its status leaves the saved version to the next server's tool result, which names it once`, POSIX_ONLY, async (context) => {
     const { storeB } = await conflictingEdits(context, kind);
     syncStopped(storeB, "push");
     await ageLocks(storeB, kind);
@@ -155,7 +157,7 @@ for (const kind of KINDS) {
     assert.deepEqual(await savedTexts(storeB), [kind.b], "the local version is saved exactly once");
   });
 
-  test(`a sync that stops before it replaced any file, followed by an edit of that ${kind.label}, saves the local version once`, async (context) => {
+  test(`a sync that stops before it replaced any file, followed by an edit of that ${kind.label}, saves the local version once`, POSIX_ONLY, async (context) => {
     const { storeB } = await conflictingEdits(context, kind);
     syncStopped(storeB, "first-ls-tree");
     await ageLocks(storeB, kind);

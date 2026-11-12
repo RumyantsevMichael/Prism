@@ -1,4 +1,4 @@
-/* The review page's shell: a top bar, one sidebar on a tinted canvas, the main island with its page bar, a side panel island, and the status bar.
+/* The review page's shell: a top bar, the rail of places and the current place's sidebar on a tinted canvas, the main island with its page bar, a side panel island, and the status bar.
    Every value comes from kit/tokens.css; the kit draws every control. */
 
 html,
@@ -69,12 +69,17 @@ body {
   max-width: 32%;
 }
 
+.project-tile {
+  margin-inline-end: var(--prism-space-3);
+}
+
 .project-label {
   min-width: 0;
 }
 
 .project-workspace,
 .project-repository {
+  color: var(--prism-color-ink);
   font-weight: var(--prism-font-weight-semibold);
 }
 
@@ -94,19 +99,7 @@ body {
 }
 
 .topbar-search-label {
-  color: var(--prism-color-ink-muted);
-  font-weight: var(--prism-font-weight-regular);
-}
-
-.topbar kbd {
-  margin-inline-start: var(--prism-space-4);
-  padding: 0 var(--prism-space-3);
-  border: var(--prism-stroke) solid var(--prism-color-line-strong);
-  border-radius: var(--prism-radius-xs);
-  background: var(--prism-color-sunken);
-  color: var(--prism-color-ink-muted);
-  font-family: var(--prism-font-code);
-  font-size: var(--prism-font-size-2xs);
+  min-width: 0;
 }
 
 .topbar-end {
@@ -118,8 +111,9 @@ body {
   margin-inline-start: auto;
 }
 
-.topbar-presence {
-  flex: 0 1 auto;
+.topbar-presence,
+.topbar-attention {
+  flex: none;
 }
 
 /* The DOM lists the stack first to last, and each avatar after the first tucks under the one before it. */
@@ -258,12 +252,13 @@ body {
   display: none;
 }
 
-/* ---------- Body: the sidebar on the canvas beside the islands ---------- */
+/* ---------- Body: the rail and the current place's sidebar on the canvas beside the islands ---------- */
 
+/* The rail stands at the window's start edge and sizes its own column; the sidebar's head lines up with the main island's tab strip and page bar. */
 .shell-body {
   position: relative;
   display: grid;
-  grid-template-columns: var(--prism-sidebar-width) minmax(0, 1fr);
+  grid-template-columns: auto var(--prism-sidebar-width) minmax(0, 1fr);
   gap: var(--prism-island-gap);
   min-width: 0;
   min-height: 0;
@@ -271,14 +266,24 @@ body {
 }
 
 .shell-body.side-panel-open {
-  grid-template-columns: var(--prism-sidebar-width) minmax(0, 1fr) var(--side-panel-width, var(--prism-panel-width));
+  grid-template-columns: auto var(--prism-sidebar-width) minmax(0, 1fr) var(--side-panel-width, var(--prism-panel-width));
+}
+
+.rail-dock {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 }
 
 .sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--prism-space-2);
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: var(--prism-space-2) var(--prism-space-4) var(--prism-space-4);
+  padding: 0 var(--prism-space-4) var(--prism-space-4);
 }
 
 .nav {
@@ -286,48 +291,21 @@ body {
   flex-direction: column;
   gap: var(--prism-space-2);
   min-width: 0;
-  min-height: 100%;
 }
 
-.nav-scope {
-  display: grid;
-  gap: var(--prism-space-2);
-  min-width: 0;
-}
-
-.nav-library {
-  display: grid;
-  gap: var(--prism-space-2);
-  min-width: 0;
-  margin-top: auto;
-  padding-top: var(--prism-space-4);
-  border-top: var(--prism-stroke) solid var(--prism-color-line);
-}
-
-.nav-section {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--prism-space-3);
-  min-width: 0;
-  margin: var(--prism-space-5) 0 0;
-  padding: 0 var(--prism-space-3);
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-2xs);
-  font-weight: var(--prism-font-weight-semibold);
-  letter-spacing: var(--prism-tracking-caps);
-  text-transform: uppercase;
-}
-
-.nav-section > span {
-  min-width: 0;
+/* A count at the end of a row, such as an initiative's shipped slices out of all, stays short and lines up. */
+.nav-meta {
+  flex: none;
+  max-width: 6ch;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-variant-numeric: tabular-nums;
 }
 
-.nav-library > .nav-section {
-  margin-top: 0;
+.nav-blocked {
+  color: var(--prism-color-danger);
 }
 
 .nav-note {
@@ -346,9 +324,34 @@ body {
   overflow-wrap: anywhere;
 }
 
-/* A drawer holds the same navigation, moved into it while it is open. */
-#nav-drawer .nav {
+/* A place's filter field sits below the place's head, above its groups. */
+.nav-filter {
+  flex: none;
+  margin: var(--prism-space-2) 0;
+}
+
+/* Knowledge's records search leaves more room below the place's head, since it leads the place rather than filtering a list. */
+.nav-search {
+  margin-top: var(--prism-space-3);
+}
+
+/* A place's view switch, such as the Roadmap's Board, List, and Graph, lines up with the rows' text below its heading. */
+.nav-views {
+  flex: none;
+  margin: 0 var(--prism-space-3);
+}
+
+/* The drawer holds a rail of its own beside the sidebar, which moves into it while it is open. */
+.drawer-places {
+  display: flex;
+  height: 100%;
+  min-width: 0;
   min-height: 0;
+}
+
+.drawer-places > .sidebar {
+  flex: 1 1 auto;
+  padding-top: var(--prism-space-4);
 }
 
 /* ---------- The main island: the page bar over the scrolling page ---------- */
@@ -558,6 +561,19 @@ body {
   min-width: 0;
 }
 
+/* The store button's sync state follows the store's name after a gap, so the one control reads as name, then state. */
+.store-sync {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  margin-inline-start: var(--prism-space-4);
+  white-space: nowrap;
+}
+
+.store-sync[hidden] {
+  display: none;
+}
+
 .status-dot {
   display: inline-block;
   width: var(--prism-dot-size);
@@ -628,61 +644,24 @@ body {
 }
 
 .indexing-panel-note,
-.indexing-step-detail,
 .indexing-facts dt,
 .indexing-diagnostics span,
-.indexing-component-state,
-.indexing-step.pending .indexing-step-label {
+.indexing-component-state {
   color: var(--prism-color-ink-muted);
 }
 
-.indexing-panel-note,
-.indexing-step-detail {
+.indexing-panel-note {
   font-size: var(--prism-font-size-xs);
 }
 
-.indexing-steps,
+.indexing-steps {
+  margin: 0 0 var(--prism-space-5);
+}
+
 .indexing-components {
   list-style: none;
   margin: 0 0 var(--prism-space-5);
   padding: 0;
-}
-
-/* Each build step hangs on a rail, and its dot fills once the step is done or under way. */
-.indexing-step {
-  position: relative;
-  padding: var(--prism-space-1) 0 var(--prism-space-3) var(--prism-space-5);
-  border-inline-start: var(--prism-stroke-strong) solid var(--prism-color-line);
-}
-
-.indexing-step::before {
-  content: "";
-  position: absolute;
-  top: var(--prism-space-3);
-  left: calc(var(--prism-dot-size) / -2 - var(--prism-stroke));
-  width: var(--prism-dot-size);
-  height: var(--prism-dot-size);
-  border: var(--prism-stroke-strong) solid var(--prism-color-line-strong);
-  border-radius: var(--prism-radius-round);
-  background: var(--prism-color-raised);
-}
-
-.indexing-step.done::before {
-  border-color: var(--prism-color-success);
-  background: var(--prism-color-success);
-}
-
-.indexing-step.current::before {
-  border-color: var(--prism-color-accent);
-  background: var(--prism-color-accent);
-}
-
-.indexing-step.current .indexing-step-label {
-  font-weight: var(--prism-font-weight-semibold);
-}
-
-.indexing-step-detail {
-  display: block;
 }
 
 .indexing-facts {
@@ -803,27 +782,38 @@ body {
 
 /* ---------- Command palette ---------- */
 
+/* The search row is the bare field; the filters, the results beside their preview, and the keys follow it, each part ruled off from the next. */
+.palette-scopes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  padding: var(--prism-space-3) var(--prism-space-6);
+  border-bottom: var(--prism-stroke) solid var(--prism-color-line);
+}
+
 .palette-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--prism-preview-width);
-  gap: var(--prism-space-4);
   min-width: 0;
-  margin-top: var(--prism-space-4);
+  min-height: 0;
 }
 
 .palette-results {
   min-width: 0;
-  max-height: 50vh;
+  max-height: calc(100vh - 4 * var(--prism-bar-height) - 2 * var(--prism-space-8));
+  padding: var(--prism-space-3);
   overflow: auto;
 }
 
 .palette-group {
   display: grid;
+  gap: var(--prism-space-1);
   min-width: 0;
 }
 
 .palette-group-label {
-  margin: var(--prism-space-4) var(--prism-space-3) var(--prism-space-2);
+  margin: var(--prism-space-4) var(--prism-space-4) var(--prism-space-2);
   color: var(--prism-color-ink-muted);
   font-size: var(--prism-font-size-2xs);
   font-weight: var(--prism-font-weight-semibold);
@@ -833,11 +823,17 @@ body {
 }
 
 .palette-group:first-child > .palette-group-label {
-  margin-top: 0;
+  margin-top: var(--prism-space-2);
 }
 
-.palette-result.is-code {
+.palette-result.is-code,
+.palette-quote[data-code-subject] {
   font-family: var(--prism-font-code);
+  font-size: var(--prism-font-size-sm);
+}
+
+.palette-quote {
+  min-width: 0;
 }
 
 .palette-meta {
@@ -855,19 +851,26 @@ body {
   margin: 0 var(--prism-space-3) var(--prism-space-3);
 }
 
+.palette-kind {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .palette-status {
-  margin: var(--prism-space-4) var(--prism-space-3);
+  margin: var(--prism-space-3) var(--prism-space-4);
   color: var(--prism-color-ink-muted);
   font-size: var(--prism-font-size-xs);
 }
 
 .palette-preview {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
-  gap: var(--prism-space-3);
+  gap: var(--prism-space-4);
   min-width: 0;
-  padding: var(--prism-space-5);
-  border-radius: var(--prism-radius-md);
+  padding: var(--prism-space-6);
+  border-left: var(--prism-stroke) solid var(--prism-color-line);
   background: var(--prism-color-sunken);
 }
 
@@ -877,11 +880,16 @@ body {
   overflow-wrap: anywhere;
 }
 
-.palette-preview-kind,
+.palette-preview-kind {
+  color: var(--prism-color-accent-text);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-medium);
+}
+
 .palette-preview-hint,
 .palette-preview-detail {
   color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-xs);
+  font-size: var(--prism-font-size-sm);
 }
 
 .palette-preview-title {
@@ -890,16 +898,68 @@ body {
   line-height: var(--prism-line-height-tight);
 }
 
-.palette-hint {
-  margin: var(--prism-space-4) 0 0;
+.palette-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--prism-space-2) var(--prism-space-4);
+  font-size: var(--prism-font-size-xs);
+}
+
+.palette-facts dt {
+  color: var(--prism-color-ink-muted);
+}
+
+.palette-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.palette-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2) var(--prism-space-5);
+  min-width: 0;
+  padding: var(--prism-space-3) var(--prism-space-6);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
   color: var(--prism-color-ink-muted);
   font-size: var(--prism-font-size-xs);
 }
 
-/* ---------- Above 1100px: no Navigation button, the sidebar is always there ---------- */
+.palette-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.palette-count {
+  min-width: 0;
+  margin-inline-start: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- Above 1100px: the rail and the sidebar stand beside the page; the rail carries the Attention count, and the sidebar can hide ---------- */
 
 @media (min-width: 1101px) {
-  .topbar-navigation {
+  .topbar-navigation,
+  .topbar-attention {
+    display: none;
+  }
+
+  .shell.sidebar-collapsed .shell-body {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .shell.sidebar-collapsed .shell-body.side-panel-open {
+    grid-template-columns: auto minmax(0, 1fr) var(--side-panel-width, var(--prism-panel-width));
+  }
+
+  .shell.sidebar-collapsed .shell-body > .sidebar {
     display: none;
   }
 }
@@ -913,12 +973,28 @@ body {
     padding: 0 var(--prism-island-gap);
   }
 
-  .sidebar {
+  /* The rail and the sidebar wait in the drawer behind the Navigation button. */
+  .rail-dock,
+  .shell-body > .sidebar {
     display: none;
   }
 
   .topbar {
     padding-inline-start: var(--prism-space-3);
+  }
+
+  .topbar-search {
+    flex-basis: 160px;
+  }
+
+  /* Who's working shows its avatars alone; its count still names it. */
+  .topbar-presence .presence-count {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   .shell-body > .side {
@@ -946,7 +1022,8 @@ body {
 
   .wordmark,
   .topbar-search-label,
-  .topbar kbd {
+  .topbar-search-keys,
+  .palette-keys-wide {
     display: none;
   }
 
@@ -965,15 +1042,32 @@ body {
     margin: 0;
   }
 
+  .topbar-end {
+    flex: none;
+  }
+
   .page-bar {
     padding: 0 var(--prism-space-3) 0 var(--prism-space-2);
   }
 
-  .page-bar-trail .prism-breadcrumbs-item:not(:last-child) {
-    display: none;
+  /* Appearance shows its icon alone, and a synced store its icon and sync state; their labels still name them. */
+  .statusbar .appearance-label,
+  #store-status:has(.store-sync:not([hidden])) #store-status-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
-  .statusbar .status-label {
+  .palette-scopes,
+  .palette-foot {
+    padding-inline: var(--prism-space-4);
+  }
+
+  /* A result's kind and holder leave the row on a phone, as its group and second line name them. */
+  .palette-meta {
     display: none;
   }
 
@@ -985,4 +1079,12 @@ body {
   .palette-preview {
     display: none;
   }
+}
+
+/* ---------- Document tabs: the strip of open pages at the top of the main island, above the page bar ---------- */
+
+/* The strip keeps its own height and scrolls inside itself, so the page bar and the page keep their places below it at every width. */
+.open-documents {
+  flex: none;
+  width: 100%;
 }

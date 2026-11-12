@@ -9,20 +9,35 @@ import { normalizeTabs, openBrowser, startReviewServer } from "./review-server.m
 import { withWriteGrant } from "./write-sessions.mjs";
 
 const REVIEW_SERVER_IDLE_MS = 30 * 60 * 1000;
+const RETRY_APP_MS = 60 * 1000;
 
 function tabUrl(baseUrl, tabs) {
   const [activeTab] = normalizeTabs(tabs);
   return activeTab ? `${baseUrl}review?artifact=${encodeURIComponent(activeTab)}` : baseUrl;
 }
 
-// A project served by the shared review app until the app cannot be reached, then by its own session server for the rest of the session.
+// A project served by the shared review app until the app cannot be reached, then by its own session server until the app answers again.
 // The fallback is recorded with its reason, and both its page and the agent's review links say that this session alone serves it.
-async function appBackedReview(client, projectRoot, { startSession, openBrowser: browserOpener, onFallback = recordFallback }) {
+// While it falls back, a use of the review at most once a minute tries the app in the background; once the app answers, new links lead to the app,
+// and the session server keeps serving the tabs it has open until the project's review closes.
+async function appBackedReview(client, projectRoot, { startSession, openBrowser: browserOpener, onFallback = recordFallback, retryMs = RETRY_APP_MS }) {
   let session = null;
   let privateServer = null;
+  let fellBackAt = 0;
+  let retrying = null;
+  const former = [];
+  const tryApp = () => {
+    if (retrying || Date.now() - fellBackAt < retryMs) return;
+    retrying = client.register(projectRoot).then(() => {
+      if (session) former.push(session);
+      session = null;
+      privateServer = null;
+    }, () => { fellBackAt = Date.now(); }).finally(() => { retrying = null; });
+  };
   const fallBack = async (error) => {
     if (!session) {
       client.release(projectRoot);
+      fellBackAt = Date.now();
       privateServer = { reason: error?.message || "The review app could not be reached." };
       void onFallback(client.directory, { projectRoot, reason: privateServer.reason, pluginVersion: pluginVersion() });
       session = startSession({ projectRoot, openBrowser: browserOpener, privateServer });
@@ -30,7 +45,11 @@ async function appBackedReview(client, projectRoot, { startSession, openBrowser:
     return session;
   };
   async function viaApp(action, fallback) {
-    if (session) return fallback(await session);
+    if (session) {
+      const serving = session;
+      tryApp();
+      return fallback(await serving);
+    }
     try {
       return await action();
     } catch (error) {
@@ -50,16 +69,23 @@ async function appBackedReview(client, projectRoot, { startSession, openBrowser:
     reviewUrl: (tabs) => viaApp(async () => tabUrl((await client.present(projectRoot, { open: false })).url, tabs), (review) => review.reviewUrl(tabs)),
     getSession: () => viaApp(async () => (await client.present(projectRoot, { open: false })).session, (review) => review.getSession()),
     setOpenTabs: (tabs) => viaApp(async () => (await client.present(projectRoot, { tabs, open: false })).session.openTabs, (review) => review.setOpenTabs(tabs)),
-    open: (tabs) => viaApp(async () => {
-      const answer = await client.present(projectRoot, { tabs: normalizeTabs(tabs), open: true });
+    open: (tabs, { group } = {}) => viaApp(async () => {
+      const answer = await client.present(projectRoot, { tabs: normalizeTabs(tabs), ...(group === undefined ? {} : { group }), open: true });
       // The app never opens a browser; this session opens it in its own environment, with the app's grant in the fragment of only the URL it opens.
       const opened = answer.open ? Boolean(await browserOpener(withWriteGrant(answer.url, answer.writeGrant))) : false;
       return { url: answer.url, opened, ...answer.session };
-    }, (review) => review.open(tabs)),
-    viewerCount: () => session ? session.then((review) => review.viewerCount()) : 1,
+    }, (review) => review.open(tabs, group === undefined ? {} : { group })),
+    viewerCount: async () => {
+      if (!session && !former.length) return 1;
+      const counts = await Promise.all([...former, ...(session ? [session] : [])].map((held) => held.then((review) => review.viewerCount())));
+      return (session ? 0 : 1) + counts.reduce((sum, count) => sum + count, 0);
+    },
     privateServer: () => privateServer,
     heldServer: async () => session && await session,
-    close: async () => session && (await session).close()
+    close: async () => {
+      await retrying;
+      await Promise.allSettled([...former, ...(session ? [session] : [])].map(async (held) => (await held).close()));
+    }
   };
 }
 
@@ -67,7 +93,7 @@ export function createReviewServerPool({ start = startReviewServer, app } = {}) 
   const reviewServers = new Map();
   const taskRoots = new Map();
   const client = app ? createReviewAppClient(app) : null;
-  const startReview = client ? (options) => appBackedReview(client, options.projectRoot, { startSession: start, openBrowser: app.openBrowser ?? openBrowser, ...(app.onFallback ? { onFallback: app.onFallback } : {}) }) : start;
+  const startReview = client ? (options) => appBackedReview(client, options.projectRoot, { startSession: start, openBrowser: app.openBrowser ?? openBrowser, ...(app.onFallback ? { onFallback: app.onFallback } : {}), ...(app.retryMs === undefined ? {} : { retryMs: app.retryMs }) }) : start;
 
   function refreshIdleTimeout(projectRoot, binding) {
     clearTimeout(binding.idleTimeout);

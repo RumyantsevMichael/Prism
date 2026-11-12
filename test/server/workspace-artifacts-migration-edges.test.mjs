@@ -74,6 +74,9 @@ test("with store sync on, the moved files and their ledger reach the remote in o
   assert.ok(commit.some((file) => file.startsWith("artifact-status/repositories/api/requirements/billing.md/")), "its status record is in the same commit");
 });
 
+// A move makes a fixed number of file-system calls for each file it takes, which Windows answers several times slower, while a move that listed the store again for each file would take minutes there.
+const MOVE_BOUND = process.platform === "win32" ? 90000 : 30000;
+
 test("one write that the store refuses keeps only its file, and the rest of a long move goes on without listing the store again for each file", async (context) => {
   const place = await workspace(context);
   const files = { "docs/plans/odd/a.md": "# Odd\n" };
@@ -84,7 +87,7 @@ test("one write that the store refuses keeps only its file, and the rest of a lo
   const started = Date.now();
   const access = await (await server(context, place, api)).call("get_artifact", { path: "docs/plans/p0/s0.md" });
   assert.equal(ok(access).content, "# S0\n");
-  assert.ok(Date.now() - started < 30000, `the move took ${Date.now() - started} ms`);
+  assert.ok(Date.now() - started < MOVE_BOUND, `the move took ${Date.now() - started} ms`);
   assert.match(notes(access), /docs\/plans\/odd\/a\.md \(name_conflict\)/);
   assert.equal(await readFile(path.join(api, "docs/plans/odd/a.md"), "utf8"), "# Odd\n", "the refused file stays in the checkout");
   assert.equal(await exists(path.join(api, "docs/plans/p49/s999.md")), false, "every other file moved");
@@ -228,8 +231,10 @@ test("with store sync on, a file whose location is too long stays in the checkou
   assert.equal(await text(path.join(api, file)), "# Long\n", "the file is still in the checkout once the store copy is gone");
 });
 
-// A slow network: every SSH connection to the store's remote waits this long, then runs the remote's command locally, so a retry's pull outlasts its access's wait.
-const slowRemote = (seconds) => ({ env: { GIT_SSH_COMMAND: `sh -c 'sleep ${seconds}; for last; do :; done; exec sh -c "$last"' x`, GIT_SSH_VARIANT: "simple" } });
+// A slow network: every SSH connection to the store's remote waits this long, then runs the remote's command locally in remote, so a retry's pull outlasts its access's wait.
+// The command runs in remote whatever path the URL names, so the URL holds no path of this machine, which on Windows starts with a drive letter, and Git names remote with forward slashes there.
+const slowRemote = (seconds, remote) => ({ env: { GIT_SSH_COMMAND: `sh -c 'sleep ${seconds}; for last; do :; done; exec "\${last%% *}" "$0"' '${remote.replaceAll("\\", "/")}'`, GIT_SSH_VARIANT: "simple" } });
+const slowUrl = "ssh://git@store.example.invalid/store.git";
 const plansIn = (store) => (file) => scoped(store, file.slice("docs/".length));
 
 // A deferred move whose retry completes its pull only after the access stopped waiting, so the move runs in the background: it returns once the move's ledger is in the store.
@@ -242,9 +247,9 @@ async function backgroundMove(context, files) {
   await eventually(() => remoteFile(place.remote, "repositories/api.json"), 30000, "the registration on the remote");
   await commitFiles(api, files);
   git(place.storeA, "remote", "set-url", "origin", path.join(place.parent, "unreachable.git"));
-  const prism = await server(context, place.a, api, slowRemote(3));
+  const prism = await server(context, place.a, api, slowRemote(3, place.remote));
   assert.match(notes(await prism.call("get_artifact", {})), /wait for a pull/);
-  git(place.storeA, "remote", "set-url", "origin", `ssh://git@store.example.invalid${place.remote}`);
+  git(place.storeA, "remote", "set-url", "origin", slowUrl);
   await pastMigrationCache();
   assert.match(notes(await prism.call("get_artifact", {})), /wait for a pull/, "the retry outlasts the access's wait");
   await eventually(async () => (await ledgerNames(place.storeA)).length > 0, 60000, "the background move's ledger");
@@ -346,7 +351,8 @@ test("a socket at a tracked path under the artifact paths is passed over as a FI
   ok(await prism.call("get_artifact", {}));
 });
 
-test("a checkout root swapped for a link to a copy while a long move runs makes the move remove no file of the copy and report no removal", async (context) => {
+// Windows refuses to rename a folder that a running process works in, and the server runs in the checkout's root, so no root is swapped there while it runs.
+test("a checkout root swapped for a link to a copy while a long move runs makes the move remove no file of the copy and report no removal", { skip: process.platform === "win32" && "Windows refuses to rename the folder that the running server works in" }, async (context) => {
   const place = await workspace(context);
   const files = {};
   for (let index = 0; index < 1000; index += 1) files[`docs/plans/aa/f${String(index).padStart(4, "0")}.md`] = `# ${index}\n`;

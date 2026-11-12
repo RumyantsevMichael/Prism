@@ -1,5 +1,8 @@
 # Design values, fonts, and stored appearance
 
+> Shipped history: initiative `review-app-ui-kit` shipped on 2026-11-09, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Changes
 - add `src/server/review/public/kit/tokens.css`: every design value, copied from the mockup's values, with the light and dark themes as two value sets of the same semantic tokens, the island and glass values, and the phase, claim, and diagram colors (clauses 6, 7, 8, 9, 10, 24).
 - add `src/server/review/public/kit/fonts/geist-latin-wght-normal.woff2`, `src/server/review/public/kit/fonts/geist-mono-latin-wght-normal.woff2`, `src/server/review/public/kit/fonts/OFL-Geist.txt`, `src/server/review/public/kit/fonts/OFL-Geist-Mono.txt`: the shipped fonts and their licenses, copied from the mockup's `fonts/` folder (clauses 11, 12).

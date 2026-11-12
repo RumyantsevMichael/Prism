@@ -4,10 +4,12 @@ import { access } from "node:fs/promises";
 import http from "node:http";
 import { homedir } from "node:os";
 import { pluginPath, pluginVersion as installedVersion } from "../plugin-root.mjs";
-import { REVIEW_APP_PROTOCOL, lockPath, olderVersion, readDiscovery, reviewAppDirectory, signRequest, trustedDirectory, verifyResponse } from "./review-app-discovery.mjs";
+import { REVIEW_APP_PROTOCOL, appAlive, lockPath, olderVersion, readDiscovery, reviewAppDirectory, signRequest, trustedDirectory, verifyResponse } from "./review-app-discovery.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
 
 const REQUEST_TIMEOUT_MS = 2000;
+// A running app that misses the usual deadline is busy, not gone, so a request to it waits this much longer before the session gives up on it.
+const BUSY_TIMEOUT_MS = 30 * 1000;
 const RESPONSE_LIMIT = 4 * 1024 * 1024;
 const START_TIMEOUT_MS = 5000;
 const POLL_MS = 50;
@@ -17,17 +19,18 @@ const RECONNECT_GRACE_MS = 5000;
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-function failure(message, reachable) {
-  return Object.assign(new Error(message), { reachable });
+function failure(message, reachable, fields = {}) {
+  return Object.assign(new Error(message), { reachable, ...fields });
 }
 
 // A request the app did not prove it answered counts as unreachable, so the client never acts on another listener's reply.
 // The whole exchange has one deadline and a size limit, so a listener that trickles or floods bytes cannot hold a tool call.
-function controlRequest(discovery, method, route, body, timeoutMs = REQUEST_TIMEOUT_MS) {
+// With `alive`, a request past its deadline asks whether the app is still running, and waits up to busyMs more for a running one.
+function controlRequest(discovery, method, route, body, timeoutMs = REQUEST_TIMEOUT_MS, { alive = null, busyMs = BUSY_TIMEOUT_MS } = {}) {
   return new Promise((settle, fail) => {
-    let deadline = null;
-    const resolve = (value) => { clearTimeout(deadline); settle(value); };
-    const reject = (error) => { clearTimeout(deadline); fail(error); };
+    let deadline = null, done = false;
+    const resolve = (value) => { done = true; clearTimeout(deadline); settle(value); };
+    const reject = (error) => { done = true; clearTimeout(deadline); fail(error); };
     const text = body === undefined ? "" : JSON.stringify(body);
     const signed = signRequest(discovery.controlToken, method, route, text);
     const request = http.request({
@@ -63,11 +66,19 @@ function controlRequest(discovery, method, route, body, timeoutMs = REQUEST_TIME
       });
     });
     // Destroying a request whose response already started does not always surface an error, so the promise settles first.
-    function abandon(message) {
-      reject(failure(message, false));
+    function abandon(message, fields = {}) {
+      reject(Object.assign(failure(message, false), fields));
       request.destroy();
     }
-    deadline = setTimeout(() => abandon("The review app did not answer."), Math.max(0, timeoutMs));
+    const late = () => {
+      if (!alive) { abandon("The review app did not answer."); return; }
+      Promise.resolve(alive()).catch(() => false).then((running) => {
+        if (done) return;
+        if (!running) abandon("The review app did not answer, and it is no longer running.");
+        else deadline = setTimeout(() => abandon(`The review app is running but did not answer within ${Math.round((timeoutMs + busyMs) / 1000)} seconds.`, { busy: true }), Math.max(0, busyMs));
+      });
+    };
+    deadline = setTimeout(late, Math.max(0, timeoutMs));
     request.once("error", (error) => reject(Object.assign(error, { reachable: false })));
     request.end(text || undefined);
   });
@@ -107,7 +118,7 @@ async function lockCleared(directory, deadline) {
 // It never replaces a newer app, so sessions of two installed versions settle on the newer one instead of replacing each other.
 // Every registration and presentation names the evidence store, index storage, and managed record-store clones this process uses, so the app reads each project's
 // evidence, indexing state, and remote record store from them.
-export function createReviewAppClient({ directory = reviewAppDirectory(), launch = launchReviewApp, startTimeoutMs = START_TIMEOUT_MS, reconnectGraceMs = RECONNECT_GRACE_MS, pluginVersion = installedVersion(), evidenceDirectory, intelligenceDirectory, recordStoreDirectory } = {}) {
+export function createReviewAppClient({ directory = reviewAppDirectory(), launch = launchReviewApp, startTimeoutMs = START_TIMEOUT_MS, busyTimeoutMs = BUSY_TIMEOUT_MS, reconnectGraceMs = RECONNECT_GRACE_MS, pluginVersion = installedVersion(), evidenceDirectory, intelligenceDirectory, recordStoreDirectory } = {}) {
   const storage = Object.fromEntries(Object.entries({ evidenceDirectory, intelligenceDirectory, recordStoreDirectory }).filter(([, value]) => value !== undefined));
   let current = null;
   let connecting = null;
@@ -116,10 +127,13 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
 
   const remaining = (deadline) => Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now());
 
-  async function proven(candidate, deadline) {
+  const alive = (discovery) => () => appAlive(directory, discovery);
+
+  // With patience, a running app that answers late is still found, instead of being taken for a missing one.
+  async function proven(candidate, deadline, { patient = false } = {}) {
     if (!candidate || remaining(deadline) <= 0) return null;
     try {
-      const health = await controlRequest(candidate, "GET", "/control/health", undefined, remaining(deadline));
+      const health = await controlRequest(candidate, "GET", "/control/health", undefined, remaining(deadline), patient ? { alive: alive(candidate), busyMs: busyTimeoutMs } : {});
       if (!Number.isSafeInteger(health.protocol)) return null;
       return { ...candidate, protocol: health.protocol, pluginVersion: typeof health.pluginVersion === "string" ? health.pluginVersion : null };
     } catch {
@@ -130,8 +144,11 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
   async function connect() {
     if (!(await trustedDirectory(directory))) throw failure("The review app state directory is not private to this user.", false);
     const deadline = Date.now() + startTimeoutMs;
-    const found = await proven(await readDiscovery(directory), deadline);
+    const discovery = await readDiscovery(directory);
+    const found = await proven(discovery, deadline, { patient: true });
     if (found && found.protocol >= REVIEW_APP_PROTOCOL && !olderVersion(found.pluginVersion, pluginVersion)) return found;
+    // A running app that did not answer is busy; another app would only lose the start race to it and add load.
+    if (!found && await appAlive(directory, discovery)) throw failure("The review app is running but too busy to answer.", false, { busy: true });
     if (found) {
       replaced = true;
       await controlRequest(found, "POST", "/control/shutdown", { handoff: true }, remaining(deadline)).catch(() => {});
@@ -156,13 +173,14 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
     return current;
   }
 
-  // One retry covers an app that exited or was replaced since this client last reached it; a reachable app's refusal is final.
+  // One retry covers an app that exited or was replaced since this client last reached it; a reachable app's refusal is final,
+  // and so is a running app that stayed busy past the longer wait, which a new connection would only wait for again.
   async function call(method, route, body) {
     const target = await app();
     try {
-      return await controlRequest(target, method, route, body);
+      return await controlRequest(target, method, route, body, REQUEST_TIMEOUT_MS, { alive: alive(target), busyMs: busyTimeoutMs });
     } catch (error) {
-      if (error.reachable && error.status !== 403) throw error;
+      if (error.busy || (error.reachable && error.status !== 403)) throw error;
       current = null;
       return controlRequest(await app(), method, route, body);
     }
@@ -200,8 +218,8 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
     if (current) void controlRequest(current, "DELETE", `/control/projects/${lease.id}`).catch(() => {});
   }
 
-  function present(projectRoot, { tabs, open }) {
-    return call("POST", "/control/present", { projectRoot, ...(tabs === undefined ? {} : { tabs }), open, acceptsGrant: true, ...storage });
+  function present(projectRoot, { tabs, group, open }) {
+    return call("POST", "/control/present", { projectRoot, ...(tabs === undefined ? {} : { tabs }), ...(group === undefined ? {} : { group }), open, acceptsGrant: true, ...storage });
   }
 
   // Opens a browser at session start only while no tab of any project is connected, so many sessions open at most one window.

@@ -69,8 +69,8 @@ In Codex, pick the same skills from the skill picker or mention them in your req
 
 ## Learn more
 
-- [Workflow](docs/user-guide/workflow.md): stages, slices, records, autonomy, and project files.
-- [Shared records](docs/user-guide/shared-records.md): one record store for every worktree, clone, and machine, synced through Git.
+- [Workflow](docs/user-guide/workflow.md): stages, slices, records, shipping, autonomy, and project files.
+- [Shared records](docs/user-guide/shared-records.md): one record store for every worktree, clone, and machine, synced through Git, that also holds requirements, ADRs, and plans.
 - [Review browser](docs/user-guide/review-browser.md): navigation, search, answering questions, and several projects.
 - [Repository intelligence](docs/user-guide/repository-intelligence.md): search, analysis tools, providers, and fit checks.
 - [Artifact conservation](docs/user-guide/artifact-conservation.md): how review checks planned changes against the source.
@@ -85,8 +85,23 @@ In Codex, pick the same skills from the skill picker or mention them in your req
 
 In Codex, run `codex plugin marketplace upgrade prism`, review changed hooks through `/hooks`, and start a new task.
 
+Both commands install the latest release, and an update moves you only when a new release is published.
 Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 Before 1.0, a minor release can include a breaking migration, and [Upgrading to managed records](docs/user-guide/upgrading-to-managed-records.md) covers the one in 0.10.0.
+
+## Pin a version
+
+Each release is also tagged `prism--v<version>`, such as `prism--v0.23.0`, and a marketplace added at that tag installs exactly that release:
+
+```text
+/plugin marketplace add RumyantsevMichael/Prism@prism--v<version>
+```
+
+```bash
+codex plugin marketplace add RumyantsevMichael/Prism --ref prism--v<version>
+```
+
+A pinned marketplace receives no updates, so add it again at a newer tag to move.
 
 ## Enable Prism for a team
 
@@ -109,5 +124,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-[MIT](LICENSE).
+[Apache License 2.0](LICENSE); see [NOTICE](NOTICE).
+Releases up to and including 0.21.0 were published under the MIT License, and those releases remain available under it.
 Prism bundles the MIT build of PlantUML, described in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

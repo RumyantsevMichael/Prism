@@ -43,7 +43,7 @@ test("a source anchor names one line or a line range", async () => {
 test("ordered lists keep counting across blank lines and start at their first number", () => {
   const html = renderText("doc.md", "1. one\n2. two\n\n3. three\n   continued\n\nBetween.\n\n7. seven\n8. eight\n");
   assert.equal(html.match(/<ol/g).length, 2);
-  assert.match(html, /<ol>\n<li>one\n<\/li>\n<li>two\n<\/li>\n<li>three\n<br>continued/);
+  assert.match(html, /<ol>\n<li>one\n<\/li>\n<li>two\n<\/li>\n<li>three\ncontinued/);
   assert.match(html, /<ol start="7">\n<li>seven/);
   assert.doesNotMatch(html, /<ol start="1">/);
 });
@@ -51,4 +51,24 @@ test("ordered lists keep counting across blank lines and start at their first nu
 test("indented list items nest inside the item above them", () => {
   const html = renderText("doc.md", "- a\n  - a.1\n    1. deep\n- b\n").replace(/\n/g, "");
   assert.equal(html, "<ul><li>a<ul><li>a.1<ol><li>deep</li></ol></li></ul></li><li>b</li></ul>");
+});
+
+test("consecutive text lines form one paragraph and a single line break is a space", () => {
+  const html = renderText("doc.md", "One sentence.\nTwo **bold\nacross** lines.\nHard break  \nand a backslash\\\nend.\n\nNext paragraph.\n- item\n");
+  assert.equal(html.match(/<p>/g).length, 2);
+  assert.match(html, /<p>One sentence\.\nTwo <strong>bold\nacross<\/strong> lines\.\nHard break<br>\nand a backslash<br>\nend\.<\/p>/);
+  assert.match(html, /<p>Next paragraph\.<\/p>\n<ul>/);
+});
+
+test("a heading, fence, table, quote, or list item ends a paragraph, and a list that does not start at 1 does not", () => {
+  const html = renderText("doc.md", "Text\n2. not a list\n# Heading\nText\n```\ncode\n```\nText\n| a |\n|---|\nText\n> quote\n");
+  assert.match(html, /<p>Text\n2\. not a list<\/p>\n<h1/);
+  assert.equal(html.match(/<p>/g).length, 5);
+  assert.doesNotMatch(html, /<ol/);
+});
+
+test("consecutive quoted lines form one quote whose blank quoted lines separate paragraphs", () => {
+  const html = renderText("doc.md", "> one\n> two\nlazy\n>\n> second\n\nafter\n");
+  assert.equal(html.match(/<blockquote>/g).length, 1);
+  assert.match(html, /<blockquote><p>one\ntwo\nlazy<\/p>\n<p>second<\/p><\/blockquote>\n<p>after<\/p>/);
 });

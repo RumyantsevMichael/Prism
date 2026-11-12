@@ -23,7 +23,7 @@ Every question that waits on the user MUST be recorded as a typed user gate in t
 A gate MUST carry its kind, the slice when one applies, the question, the artifacts to inspect, and optional choices for decisions.
 Only the review browser MAY record an answer on a gate, and agent writes MUST NOT add or change an answer.
 A gate MUST accept one answer, and an answer to a resolved or withdrawn gate MUST be refused.
-A recorded answer MUST reach the agent with the user's next message until the agent resolves the gate.
+A recorded answer MUST reach the host session that asked the gate with the user's next message until the agent resolves the gate, and MUST NOT reach any other session.
 Where the host moves a long tool call to the background before its tool timeout, the agent SHOULD wait for answers in such a call so that an answer resumes the run without a message.
 The wait MUST return at once on hosts where it cannot run in the background.
 A browser answer MUST be an action of the [review app action registry](review-app-actions.md), so it requires the write session that Prism gives only to a tab it opened, and it MUST accept only JSON from the page's own origin.
@@ -52,7 +52,11 @@ Browser answers change the coordination state revision, so an agent's next state
 
 The orchestrator records gates with a typed operation that returns their identifiers, then calls the waiting tool once with every gate it just recorded.
 The waiting tool polls the coordination state, sends progress notifications that keep the host's idle window open, and returns the answered gates after a short pause for answers given in the same visit.
-The review browser records an answer by applying the gate answer action, and a prompt hook adds every answered but unresolved gate to the user's next message.
+The review browser records an answer by applying the gate answer action.
+The server remembers the gates each host session asked in that session's private notice record, and the prompt hook adds to the user's next message every answered but unresolved gate that the session asked, and on resume lists only those gates.
+The gate record itself names no session, so releases that do not know such a field never refuse it, and a gate asked before this release is still answered through its wait or the agent's own read of the coordination state.
 The agent acts on each answer and then resolves its gate.
 
 ## Decision Log
+
+2026-11-12: Two sessions in one project each received the other's gate answers through the prompt hook, which read every open gate of every initiative, and acted on them; delivery is now limited to the gates the session asked.

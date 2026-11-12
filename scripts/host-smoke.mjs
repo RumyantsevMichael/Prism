@@ -3,7 +3,9 @@
 // No model or API key is needed: Codex calls the tool through its app server, and Claude Code talks to a scripted local Messages API.
 // The project names a remote record store, so the call proves the server starts the way the host starts it and can clone that store.
 // A third check, codex-turn, runs one real Codex model turn against a scripted local Responses API, so the hooks run too.
-// Usage: node scripts/host-smoke.mjs [claude|codex|codex-turn]...  (all by default; CLAUDE_BIN and CODEX_BIN override the executables)
+// Usage: node scripts/host-smoke.mjs [--marketplace <dir>] [claude|codex|codex-turn]...  (all by default; CLAUDE_BIN and CODEX_BIN override the executables)
+// --marketplace installs prism@prism from that marketplace instead of this checkout, which is how a release checks its package.
+// A CLAUDE_BIN or CODEX_BIN that names a JavaScript file runs under this Node, which is how Windows starts an npm launcher without its .cmd shim.
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -12,14 +14,24 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { writeDevMarketplace } from "./dev-marketplace.mjs";
 
 const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const hosts = process.argv.slice(2).length ? process.argv.slice(2) : ["claude", "codex", "codex-turn"];
+const args = process.argv.slice(2);
+const option = args.indexOf("--marketplace");
+const [, givenPath] = option === -1 ? [] : args.splice(option, 2);
+if (option !== -1 && !givenPath) throw new Error("--marketplace needs a directory.");
+const given = givenPath ? path.resolve(givenPath) : null;
+const hosts = args.length ? args : ["claude", "codex", "codex-turn"];
 const TOOL = "get_roadmap";
 const TIMEOUT_MS = 180000;
 
 const work = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-host-smoke-")));
-const run = (command, args, options = {}) => execFileSync(command, args, { stdio: "pipe", encoding: "utf8", ...options });
+// The repository's own marketplace files describe the published package, so both hosts install the checkout through a generated one.
+const marketplace = given ?? await writeDevMarketplace(path.join(work, "marketplace"), checkout);
+const launcher = (bin, args) => /\.[cm]?js$/i.test(bin) ? [process.execPath, [bin, ...args]] : [bin, args];
+const run = (command, args, options = {}) => execFileSync(...launcher(command, args), { stdio: "pipe", encoding: "utf8", ...options });
+const start = (command, args, options) => spawn(...launcher(command, args), options);
 const git = (cwd, ...args) => run("git", ["-c", "user.name=Prism Smoke", "-c", "user.email=smoke@example.invalid", ...args], { cwd });
 
 // A bare remote with one commit, and a project whose workflow config names it as the record store.
@@ -66,22 +78,25 @@ function checkClone(name, appFolder, id) {
   if (!existsSync(path.join(clone, ".git"))) throw new Error(`${name}: the remote store was not cloned to ${clone}`);
 }
 
-// Claude Code: install from the checkout's marketplace, then run one print-mode turn against a scripted model that calls the tool once.
+// Claude Code: install the checkout, then run one print-mode turn against a scripted model that calls the tool once.
 async function claude({ project, id }) {
   const bin = process.env.CLAUDE_BIN || "claude";
   const { root, appFolder, env } = hostEnvironment("claude");
   env.CLAUDE_CONFIG_DIR = path.join(root, "config");
   await mkdir(env.HOME, { recursive: true });
-  run(bin, ["plugin", "marketplace", "add", checkout], { env });
+  run(bin, ["plugin", "marketplace", "add", marketplace], { env });
   run(bin, ["plugin", "install", "prism@prism"], { env });
   const tool = `mcp__plugin_prism_prism-review__${TOOL}`;
   let result = null;
   let offered = false;
+  let announced = false;
   const model = http.createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += chunk;
     let json = {};
     try { json = JSON.parse(body); } catch {}
+    // The SessionStart hook adds the session key to the context, so seeing it here proves the plugin's hooks ran.
+    announced ||= /Prism session correlation key: [0-9a-f]{64}/.test(body);
     if (!request.url.startsWith("/v1/messages") || request.url.includes("count_tokens")) {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ input_tokens: 1 }));
@@ -119,7 +134,7 @@ async function claude({ project, id }) {
   try {
     const base = `http://127.0.0.1:${model.address().port}`;
     await new Promise((resolve, reject) => {
-      const child = spawn(bin, ["-p", "Call the Prism roadmap tool.", "--allowedTools", tool, "--output-format", "json"], {
+      const child = start(bin, ["-p", "Call the Prism roadmap tool.", "--allowedTools", tool, "--output-format", "json"], {
         cwd: project, stdio: ["ignore", "pipe", "pipe"],
         env: { ...env, ANTHROPIC_BASE_URL: base, ANTHROPIC_API_KEY: "sk-ant-prism-smoke", ENABLE_TOOL_SEARCH: "false", NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" }
       });
@@ -132,6 +147,7 @@ async function claude({ project, id }) {
   } finally {
     model.close();
   }
+  if (!announced) throw new Error("claude: no Prism hook announced the session key, so the hooks did not run");
   if (!offered) throw new Error(`claude: the model was never offered ${tool}, so the plugin's MCP server did not load`);
   if (!result) throw new Error(`claude: ${tool} was offered but no tool result came back`);
   const text = typeof result.content === "string" ? result.content : firstText(result.content);
@@ -142,7 +158,7 @@ async function claude({ project, id }) {
 
 // Starts `codex app-server` in a folder and returns a JSON-RPC `request` and a `close`.
 async function appServer(bin, cwd, env) {
-  const child = spawn(bin, ["app-server"], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+  const child = start(bin, ["app-server"], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
   let stderr = "";
   child.stderr.on("data", (chunk) => { stderr = (stderr + chunk).slice(-4000); });
   const pending = new Map();
@@ -184,7 +200,7 @@ async function appServer(bin, cwd, env) {
   return { request, close: () => child.kill() };
 }
 
-// Codex: install from the checkout's marketplace into a private home.
+// Codex: install the checkout into a private home.
 function installCodex(name) {
   const bin = process.env.CODEX_BIN || "codex";
   const host = hostEnvironment(name);
@@ -195,7 +211,7 @@ function installCodex(name) {
 async function addCodexPlugin({ bin, env }) {
   await mkdir(env.HOME, { recursive: true });
   await mkdir(env.CODEX_HOME, { recursive: true });
-  run(bin, ["plugin", "marketplace", "add", checkout], { env });
+  run(bin, ["plugin", "marketplace", "add", marketplace], { env });
   run(bin, ["plugin", "add", "prism@prism"], { env });
 }
 
@@ -278,15 +294,15 @@ async function codexTurn() {
     response.end();
   });
   await new Promise((resolve) => model.listen(0, "127.0.0.1", resolve));
+  const turnEnv = { ...env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" };
   try {
     const base = `http://127.0.0.1:${model.address().port}/v1`;
     const config = path.join(env.CODEX_HOME, "config.toml");
     const existing = existsSync(config) ? await readFile(config, "utf8") : "";
     await writeFile(config, `model = "gpt-6-luna"\nopenai_base_url = ${JSON.stringify(base)}\n${existing}${trust}`);
-    const turnEnv = { ...env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" };
-    execFileSync(bin, ["login", "--with-api-key"], { env: turnEnv, input: "sk-prism-smoke", stdio: ["pipe", "pipe", "pipe"] });
+    run(bin, ["login", "--with-api-key"], { env: turnEnv, input: "sk-prism-smoke", stdio: ["pipe", "pipe", "pipe"] });
     await new Promise((resolve, reject) => {
-      const child = spawn(bin, ["exec", "--skip-git-repo-check", "-s", "read-only", "-c", "approval_policy=\"never\"", "Run the Prism checks."], { cwd: project, env: turnEnv, stdio: ["ignore", "pipe", "pipe"] });
+      const child = start(bin, ["exec", "--skip-git-repo-check", "-s", "read-only", "-c", "approval_policy=\"never\"", "Run the Prism checks."], { cwd: project, env: turnEnv, stdio: ["ignore", "pipe", "pipe"] });
       let log = "";
       child.stdout.on("data", (chunk) => { log = (log + chunk).slice(-4000); });
       child.stderr.on("data", (chunk) => { log = (log + chunk).slice(-4000); });
@@ -300,11 +316,25 @@ async function codexTurn() {
   const reported = results.map((text) => text.match(/\{"capacity".*\}/s)?.[0]).find(Boolean);
   if (!reported) throw new Error(`the script returned no result: ${results.join("\n").slice(0, 1000)}`);
   const { capacity, consumption } = JSON.parse(reported);
-  if (capacity?.status !== "SUPPORTED") throw new Error(`the first call's capacity is ${capacity?.status} (${capacity?.reasonCode})`);
+  const diagnosis = await configReadDiagnosis(project, turnEnv);
+  console.log(`# codex-turn: ${diagnosis}`);
+  if (capacity?.status !== "SUPPORTED") throw new Error(`the first call's capacity is ${capacity?.status} (${capacity?.reasonCode}); ${diagnosis}`);
   const targets = consumption?.runMeasures?.attribution?.targets ?? [];
   if (!targets.some((entry) => entry.target?.initiative === "demo")) {
     throw new Error(`the get_initiative call was not linked to initiative demo: ${JSON.stringify(consumption?.runMeasures?.attribution).slice(0, 1000)}`);
   }
+}
+
+// Capacity needs Codex's effective settings, which the server reads from a Codex app server within a short bound.
+// The same read is repeated here with that bound and with a long one and the times are logged, so the log shows how close the read comes to its bound and, when capacity is unavailable, whether the read was too slow or failed.
+async function configReadDiagnosis(project, environment) {
+  const { inspectCodexEffectiveConfig } = await import(pathToFileURL(path.join(checkout, "src/server/session/host-adapters/codex-config.mjs")).href);
+  const attempt = async (timeoutMs) => {
+    const started = Date.now();
+    const result = timeoutMs ? await inspectCodexEffectiveConfig({ cwd: project, environment, timeoutMs }) : await inspectCodexEffectiveConfig({ cwd: project, environment });
+    return `${result.status}${result.reasonCode ? ` (${result.reasonCode})` : ""} in ${Date.now() - started} ms`;
+  };
+  return `a direct config read gave ${await attempt()} with the server's bound and ${await attempt(30000)} with 30 s`;
 }
 
 const runners = { claude, codex, "codex-turn": codexTurn };

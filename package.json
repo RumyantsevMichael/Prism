@@ -12,6 +12,7 @@
     "test:store-sync": "node scripts/test-store-sync.mjs",
     "validate:sdm": "node scripts/validate-sdm.mjs",
     "render": "bun scripts/render-diagrams.ts",
-    "stage:native": "node scripts/native-build/stage.mjs"
+    "stage:native": "node scripts/native-build/stage.mjs",
+    "check:licenses": "node scripts/check-dependency-licenses.mjs"
   }
 }

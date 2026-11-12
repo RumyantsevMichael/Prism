@@ -241,3 +241,28 @@ Requirement: The review app shall give text and the boundaries of fields and cho
 Rationale: A frosted overlay shows whatever lies behind it, so only a worst-case measure keeps its text readable on every screen.
 
 Related: [review-app-ui-kit.md§8](#8)
+
+<a id="17"></a>
+## 17. Keep the person's preferences everywhere
+
+Pattern: Event-driven
+
+Disposition: Active
+
+Requirement: When the person chooses how a part of the review app shows, such as the theme, the density, the roadmap, initiative, or change map view, the archive toggle, the collapsed roadmap lanes, the collapsed sidebar, or the side panel's width, the review app shall keep that choice for every project, port, window, and restart of that person's review app on the machine, while the folds, filters, and drafts of one page stay with that page's open tab.
+
+Rationale: The review app runs on a port that changes, and browser storage is separate for every port, so a choice kept only in the browser or the page is lost on the next start, which Michael reported for the roadmap view on 10 November 2026.
+
+Related: [review-app-ui-kit.md§3](#3), [review-app-ui-kit.md§5](#5)
+
+## 18. Group the tabs that belong to one piece of work
+
+Pattern: Event-driven
+
+Disposition: Active
+
+Requirement: When an agent presents tabs under a group name, the review app shall show those tabs side by side in one named tab group of the tab strip that every window shares, add later tabs presented under the same name to that group, and let the person collapse the group, close it with its tabs, and move a tab into, out of, or within a group, or a whole group, by dragging or with the keyboard.
+
+Rationale: An agent working on one initiative or task opens several tabs over a session, and among the person's own tabs they read as unrelated, which Michael reported on 10 November 2026 and answered by letting agents name the group.
+
+Related: [review-app-ui-kit.md§2](#2), [single-review-app.md§1](single-review-app.md#1)

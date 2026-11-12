@@ -95,6 +95,36 @@ function inlineMarkdown(value, options) {
     .replace(/\u0000(\d+)\u0000/g, (_, index) => `<code>${codes[Number(index)]}</code>`);
 }
 
+// Renders the lines of one paragraph; a line that ends in two spaces or a backslash keeps its line break, as in CommonMark.
+function inlineLines(lines, options) {
+  const HARD_BREAK = /(?: {2,}|\\)$/;
+  const marked = lines.map((line, index) => {
+    const text = line.trim();
+    return index < lines.length - 1 && HARD_BREAK.test(line) ? `${text.replace(/\\$/, "")}\u0001` : text;
+  });
+  return inlineMarkdown(marked.join("\n"), options).replace(/\u0001\n/g, "<br>\n");
+}
+
+// Splits the lines of a quote into its paragraphs at its blank lines.
+function quoteParagraphs(lines) {
+  const paragraphs = [[]];
+  for (const line of lines) {
+    if (line.trim()) paragraphs.at(-1).push(line);
+    else if (paragraphs.at(-1).length) paragraphs.push([]);
+  }
+  return paragraphs.filter((paragraph) => paragraph.length);
+}
+
+// A line that starts a block of its own, so it ends an open paragraph instead of continuing it.
+function startsBlock(line, next = "") {
+  return FENCE.test(line.trim())
+    || /^#{1,6}\s/.test(line)
+    || /^\s{0,3}&gt;/.test(line)
+    || /^\s*([-*+]|1[.)])\s+\S/.test(line)
+    || EXPLICIT_ANCHOR.test(line)
+    || (line.trim().startsWith("|") && /^\s*\|?\s*:?-+/.test(next));
+}
+
 function tableCells(line, options) {
   return line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => inlineMarkdown(cell.trim(), options));
 }
@@ -138,15 +168,32 @@ export function renderText(path, content, options = {}) {
     if (next >= lines.length || !lists.length) return false;
     return LIST_ITEM.test(lines[next]) || /^\s{2,}\S/.test(lines[next]);
   };
+  // Consecutive text lines form one paragraph, and consecutive quoted lines one quote, as in CommonMark: a single line break inside them is a space.
+  let paragraph = null;
+  let quote = null;
+  const flush = () => {
+    if (paragraph) output.push(`<p>${inlineLines(paragraph, options)}</p>`);
+    if (quote) output.push(`<blockquote>${quoteParagraphs(quote).map((lines) => `<p>${inlineLines(lines, options)}</p>`).join("\n")}</blockquote>`);
+    paragraph = null;
+    quote = null;
+  };
+  const QUOTE = /^\s{0,3}&gt;\s?/;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     const item = line.match(LIST_ITEM);
     const marker = line.trim().match(FENCE)?.[1] ?? null;
+    // A paragraph or quote ends at a blank line or at any line that starts another block; a quote also takes unmarked lines that continue its text.
+    if (paragraph && (fence || !line.trim() || startsBlock(line, lines[index + 1]))) flush();
+    if (quote && !QUOTE.test(line) && (!line.trim() || startsBlock(line, lines[index + 1]) || !quote.at(-1).trim())) flush();
     if (fence && marker?.[0] === fence.marker) {
       output.push(fencedBlock(highlight(decode(fence.lines.join("\n")), fence.language), fence.language));
       fence = null;
     } else if (fence) {
       fence.lines.push(line);
+    } else if (quote) {
+      quote.push(line.replace(QUOTE, ""));
+    } else if (paragraph) {
+      paragraph.push(line);
     } else if (marker) {
       closeList();
       fence = { marker: marker[0], language: languageOf(decode(line.trim().slice(marker.length))), lines: [] };
@@ -188,18 +235,19 @@ export function renderText(path, content, options = {}) {
       }
       output.push(`<li>${inlineMarkdown(item[4], options)}`);
     } else if (lists.length && /^\s{2,}\S/.test(line)) {
-      // An indented line under an item continues that item.
-      output.push(`<br>${inlineMarkdown(line.trim(), options)}`);
-    } else if (/^&gt;\s?/.test(line)) {
+      // An indented line under an item continues that item: right after the item's text it continues the same paragraph, after a blank line it starts a new one.
+      output.push(`${lines[index - 1]?.trim() ? "" : "<br>"}${inlineMarkdown(line.trim(), options)}`);
+    } else if (QUOTE.test(line)) {
       closeList();
-      output.push(`<blockquote>${inlineMarkdown(line.replace(/^&gt;\s?/, ""), options)}</blockquote>`);
+      quote = [line.replace(QUOTE, "")];
     } else if (line.trim()) {
       closeList();
-      output.push(`<p>${inlineMarkdown(line, options)}</p>`);
+      paragraph = [line];
     } else if (!listContinues(index + 1)) {
       closeList();
     }
   }
+  flush();
   if (fence) output.push(fencedBlock(highlight(decode(fence.lines.join("\n")), fence.language), fence.language));
   closeList();
   return output.join("\n");
@@ -261,6 +309,8 @@ export function decorateFolds(content, folds) {
     });
     heading.classList.add("md-foldable");
     heading.prepend(button);
+    // The toggles sit in a gutter that the content keeps for them, so they never reach past the card, panel, or preview that holds the document.
+    content.classList.add("has-folds");
     if (folds?.has(heading.id)) heading.classList.add("is-folded");
     const folded = heading.classList.contains("is-folded");
     button.setAttribute("aria-expanded", String(!folded));
@@ -295,41 +345,31 @@ export function decorateDocuments(root, folds = new Map()) {
   });
   for (const content of root.querySelectorAll(".document-content")) {
     const host = content.parentElement;
-    if (!host || content.previousElementSibling?.classList.contains("doc-toc")) continue;
+    if (!host || content.previousElementSibling?.tagName === "PRISM-CONTENTS") continue;
     const headings = [...content.querySelectorAll("h1[id], h2[id], h3[id]")];
     if (headings.length < TOC_MINIMUM) continue;
     const top = Math.min(...headings.map((heading) => Number(heading.tagName[1])));
-    const toc = document.createElement("nav");
-    toc.className = "doc-toc";
-    toc.setAttribute("aria-label", "Contents");
-    toc.innerHTML = `<prism-button variant="ghost" size="sm" class="doc-toc-toggle" aria-expanded="false"><prism-icon name="chevron-right" size="xs"></prism-icon>Contents</prism-button>
-      <ol>${headings.map((heading) => `<li class="toc-depth-${Number(heading.tagName[1]) - top}"><a href="#${escapeHtml(heading.id.slice(HEADING_PREFIX.length))}" data-doc-anchor="${escapeHtml(heading.id.slice(HEADING_PREFIX.length))}">${escapeHtml(heading.textContent)}</a></li>`).join("")}</ol>`;
-    const toggle = toc.querySelector(".doc-toc-toggle");
-    toggle.addEventListener("click", () => {
-      const open = toc.classList.toggle("is-open");
-      toggle.setAttribute("aria-expanded", String(open));
-      toggle.firstElementChild?.setAttribute("name", open ? "chevron-down" : "chevron-right");
-    });
-    host.classList.add("has-toc");
+    // The kit's contents element lays itself out beside the document and folds above it in a narrow window.
+    const toc = document.createElement("prism-contents");
+    toc.innerHTML = `<ol>${headings.map((heading) => `<li class="depth-${Number(heading.tagName[1]) - top}"><a href="#${escapeHtml(heading.id.slice(HEADING_PREFIX.length))}" data-doc-anchor="${escapeHtml(heading.id.slice(HEADING_PREFIX.length))}">${escapeHtml(heading.textContent)}</a></li>`).join("")}</ol>`;
     content.before(toc);
   }
 }
 
 export function markCurrentSection(root, viewportTop) {
-  for (const toc of root.querySelectorAll(".doc-toc")) {
+  for (const toc of root.querySelectorAll("prism-contents")) {
     const host = toc.parentElement;
-    const links = [...toc.querySelectorAll("a[data-doc-anchor]")];
     const scroller = host.closest(".is-maximized") ?? document.getElementById("workspace");
+    toc.fit?.(scroller);
+    const links = [...toc.querySelectorAll("a[data-doc-anchor]")];
+    const areaTop = scroller?.getBoundingClientRect().top ?? viewportTop;
     const atEnd = scroller && scroller.scrollTop > 0 && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2;
     let current = links[0];
     for (const anchor of links) {
       const heading = host.querySelector(`#${CSS.escape(HEADING_PREFIX + anchor.dataset.docAnchor)}`);
       // At the end of the scroll the last heading on screen is current, since later headings can never reach the top.
-      if (heading && heading.getBoundingClientRect().top <= (atEnd ? window.innerHeight : viewportTop + 96)) current = anchor;
+      if (heading && heading.getBoundingClientRect().top <= (atEnd ? window.innerHeight : areaTop + 96)) current = anchor;
     }
-    for (const anchor of links) {
-      if (anchor === current) anchor.setAttribute("aria-current", "location");
-      else anchor.removeAttribute("aria-current");
-    }
+    toc.markCurrent?.(current);
   }
 }

@@ -1,22 +1,31 @@
 // Check the review browser layout on every page of the demo, edge-case, and empty projects at several window sizes, and the component catalog at each of them.
 // The check fails on content that escapes its container, a page that scrolls the whole window, a control cut off by its container, and browser errors.
-// Usage: node scripts/review-demo/layout-check.mjs [--viewports phone,tablet,laptop,wide] [--themes light,dark] [--screenshots directory] [--catalog url]
+// Usage: node scripts/review-demo/layout-check.mjs [--viewports phone,tablet,laptop,wide] [--themes light,dark] [--part k/n] [--screenshots directory] [--catalog url]
+// With --part k/n it checks only every n-th page and overlay, starting at the k-th, and part 1 also checks the catalog, so n runs together check everything once.
 // With --catalog it checks only the catalog at that URL. Each catalog problem prints as `catalog <entry>: <problem> at <viewport> (<width>px), <theme>`.
 // Playwright is not a dependency of this repository; the check uses an installed copy, local or global.
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { ROOT } from "./project.mjs";
 import { auditPage as audit, checkCatalog, checkNames, loadPlaywright as installedPlaywright, VIEWPORTS } from "./layout-audit.mjs";
 
 const PLACES = ["attention", "roadmap", "requirements", "decisions", "glossary"];
 
-const { values } = parseArgs({ options: { viewports: { type: "string", default: "phone,tablet,laptop,wide" }, themes: { type: "string", default: "light" }, screenshots: { type: "string" }, catalog: { type: "string" } } });
+const { values } = parseArgs({ options: { viewports: { type: "string", default: "phone,tablet,laptop,wide" }, themes: { type: "string", default: "light" }, screenshots: { type: "string" }, catalog: { type: "string" }, part: { type: "string", default: "1/1" } } });
 const viewports = values.viewports.split(",");
 const themes = values.themes.split(",");
 checkNames({ viewports, themes });
+const [part, parts] = /^\d+\/\d+$/.test(values.part) ? values.part.split("/").map(Number) : [];
+if (!(parts >= 1 && part >= 1 && part <= parts)) {
+  process.stderr.write(`layout-check: --part takes k/n with 1 <= k <= n, not ${values.part}.\n`);
+  process.exit(2);
+}
+// Every check has a fixed position in the same order at each viewport and theme, and a part takes the positions that fall to it.
+const inPart = (position) => position % parts === part - 1;
 
 function loadPlaywright() {
   const playwright = installedPlaywright();
@@ -51,6 +60,7 @@ const browser = await chromium.launch();
 const findings = new Map();
 let pages = 0;
 let catalogProblems = [];
+let catalogChecks = 0;
 
 function record(finding, where) {
   if (!findings.has(finding)) findings.set(finding, []);
@@ -68,7 +78,7 @@ try {
   await writeFile(path.join(empty, ".prism/workflow.md"), await readFile(path.join(parent, "demo/.prism/workflow.md")));
   projects.push({ name: "empty", root: empty, data: path.join(parent, "empty-data") });
 
-  const { startStandaloneReview } = await import(path.join(ROOT, "dist/server/review/review-server-pool.mjs"));
+  const { startStandaloneReview } = await import(pathToFileURL(path.join(ROOT, "dist/server/review/review-server-pool.mjs")).href);
   for (const project of projects) {
     const env = { ...process.env, PRISM_REVIEW_APP_DIR: appDirectory, PLUGIN_DATA: project.data };
     delete env.PRISM_REVIEW_APP;
@@ -87,6 +97,11 @@ try {
       const page = await context.newPage();
       let current = "";
       page.on("pageerror", (error) => record(`page error: ${error.message}`, current));
+      // A failed load names its resource and the browser's reason, which the console's own message leaves out.
+      page.on("requestfailed", (request) => {
+        const reason = request.failure()?.errorText ?? "";
+        if (reason !== "net::ERR_ABORTED") record(`request failed: ${new URL(request.url()).pathname.replace(/^\/session\/[^/]+/, "")} ${reason}`, current);
+      });
       page.on("console", (message) => {
         // The vendored PlantUML runtime sets a style attribute while it renders, which the page's style policy refuses without effect on the result.
         // Chromium words that refusal either way, depending on its version.
@@ -97,7 +112,8 @@ try {
         const url = new URL("review", project.url);
         url.searchParams.set("artifact", ref);
         await page.goto(url.href);
-        await page.waitForSelector('#artifact[aria-busy="false"]', { timeout: 10000 }).catch(() => record("the page did not render", current));
+        // The bound only tells a page that never renders from a slow one, as the largest stress pages are on a busy Windows runner.
+        await page.waitForSelector('#artifact[aria-busy="false"]', { timeout: 30000 }).catch(() => record("the page did not render", current));
         await page.waitForTimeout(400);
       };
       const check = async (project, label) => {
@@ -108,8 +124,10 @@ try {
           await page.screenshot({ path: path.join(values.screenshots, `${viewport}-${theme}-${project.name}-${label.replace(/[^a-z0-9]+/gi, "_").slice(-80)}.png`) });
         }
       };
+      let position = 0;
       for (const project of projects) {
         for (const ref of project.refs) {
+          if (!inPart(position++)) continue;
           await visit(project, ref);
           await check(project, ref);
         }
@@ -135,6 +153,7 @@ try {
         }]
       };
       for (const [name, [ref, open]] of Object.entries(states)) {
+        if (!inPart(position++)) continue;
         await visit(stress, ref, name);
         // A page still settling under load can miss the first attempt, so an overlay that does not open gets one more visit before it counts.
         for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -153,17 +172,26 @@ try {
     }
   })));
   // The component catalog of the empty project, at every checked viewport and theme.
-  const emptyProject = projects.find((project) => project.name === "empty");
-  catalogProblems = await checkCatalog({ url: new URL("kit/catalog", emptyProject.url).href, viewports, themes, browser });
+  // The first part checks it.
+  if (part === 1) {
+    const emptyProject = projects.find((project) => project.name === "empty");
+    catalogProblems = await checkCatalog({ url: new URL("kit/catalog", emptyProject.url).href, viewports, themes, browser });
+    catalogChecks = viewports.length * themes.length;
+  }
 } finally {
   await browser.close();
   await Promise.all(held.map((server) => server?.close?.()));
   try {
     const discovery = JSON.parse(await readFile(path.join(appDirectory, "review-app.json"), "utf8"));
     process.kill(discovery.pid);
+    // The app logs its stop into the app folder as it exits, so the folder is removed only once the app has gone.
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      try { process.kill(discovery.pid, 0); } catch { break; }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   } catch {
   }
-  await rm(parent, { recursive: true, force: true });
+  await rm(parent, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
 for (const problem of catalogProblems) process.stdout.write(`${catalogLine(problem)}\n`);
@@ -172,5 +200,5 @@ for (const [finding, places] of findings) {
 }
 // A catalog problem counts as one finding per entry and problem, whatever the viewports and themes it shows at.
 const distinct = findings.size + new Set(catalogProblems.map((problem) => `${problem.entry}\n${problem.problem}`)).size;
-process.stdout.write(`${pages} page checks, ${viewports.length * themes.length} catalog checks, ${distinct} distinct ${distinct === 1 ? "finding" : "findings"}.\n`);
+process.stdout.write(`${pages} page checks, ${catalogChecks} catalog checks, ${distinct} distinct ${distinct === 1 ? "finding" : "findings"}.\n`);
 process.exit(distinct ? 1 : 0);

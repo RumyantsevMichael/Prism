@@ -24,7 +24,8 @@ const remoteRegistration = (remote, name) => JSON.parse(git(remote, "show", `mai
 // Two machines: each has its own Prism application folder and a synced store that is a clone of one bare remote.
 async function machines(context) {
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-repository-sync-")));
-  context.after(async () => { await closeServers(); await rm(parent, { recursive: true, force: true }); });
+  // A Git command that a stopped server started may still be ending in a store, which Windows reports as busy for a moment.
+  context.after(async () => { await closeServers(); await rm(parent, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); });
   git(parent, "init", "-q", "--bare", "-b", "main", "store-remote.git");
   const remote = path.join(parent, "store-remote.git");
   git(parent, "clone", "-q", remote, "store-a");
@@ -99,7 +100,8 @@ test("a name the store already registered needs no remote, and a moved remote is
   const api = await repository(value.parent, "api", { remote: "https://github.com/acme/api.git", ...config(value.a, { repository: "api" }) });
   ok(await (await on(context, value.a, api)).call("get_roadmap"));
   git(value.storeA, "remote", "set-url", "origin", path.join(value.parent, "missing-remote.git"));
-  ok(await createInitiative(await on(context, value.a, api), "offline-work"));
+  // The remote is unreachable, so the initiative is created without a claim, which a sync would have to confirm.
+  ok(await createInitiative(await on(context, value.a, api), "offline-work", { claim: false }));
   const moved = await cloneOf(api, value.parent, "moved", { remote: "https://github.com/acme/platform-api.git" });
   ok(await (await on(context, value.a, moved)).call("get_roadmap"));
   assert.deepEqual((await registration(value.storeA, "api")).remotes, ["https://github.com/acme/api.git", "https://github.com/acme/platform-api.git"]);

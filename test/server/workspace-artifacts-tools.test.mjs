@@ -66,9 +66,11 @@ test("clauses 2, 4, and 7: repository and component scopes have folders of their
 test("clause 2: a repository name that is a Windows device name is refused before anything is written, and a registration under one holds no remote", async (context) => {
   const place = await workspace(context);
   const portable = (name) => /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/.test(name) && !/^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/.test(name);
+  // Windows holds no folder named by a device name, so there the checkout's folder and remote carry the name with a suffix, and only its configuration names it alone.
+  const named = (name) => process.platform === "win32" ? checkout(place, `${name}-checkout`, { repository: name }) : checkout(place, name);
   for (const name of ["aux", "nul", "com1", "lpt9"]) {
     // The checkout's folder and remote carry the name too, so a proposal derived from them must still be portable.
-    const prism = await server(context, place, await checkout(place, name));
+    const prism = await server(context, place, await named(name));
     for (const response of [
       await prism.call("get_artifact", {}),
       await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/requirements/api.md", content: "# API\n", expectedVersion: null, scope: "repository" }] }),
@@ -84,7 +86,7 @@ test("clause 2: a repository name that is a Windows device name is refused befor
   // A registration that the store already holds under such a name, as an earlier version wrote it, refuses its checkout and lets it move to the proposed name.
   await mkdir(path.join(place.store, "repositories"), { recursive: true });
   await writeFile(path.join(place.store, "repositories", "con.json"), `${JSON.stringify({ schemaVersion: 1, name: "con", remotes: ["https://github.com/acme/con.git"], root: null, registeredAt: "2026-11-01T00:00:00.000Z" }, null, 2)}\n`);
-  const con = await checkout(place, "con");
+  const con = await named("con");
   const error = refused(await (await server(context, place, con)).call("get_artifact", {}), "repository_name_invalid");
   const proposed = error.data.proposed;
   assert.ok(portable(proposed), `the proposal ${proposed} is a portable name`);

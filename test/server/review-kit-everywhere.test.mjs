@@ -4,7 +4,7 @@ import { access, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } fr
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §1, §2, §12.
@@ -27,7 +27,7 @@ async function files(directory) {
 }
 
 test("clauses 8, 82: no browser file of the review app has a guard finding", async () => {
-  const { checkKitUsage } = await import(path.join(ROOT, "scripts/review-kit/kit-guard.mjs"));
+  const { checkKitUsage } = await import(pathToFileURL(path.join(ROOT, "scripts/review-kit/kit-guard.mjs")).href);
   const findings = await checkKitUsage({ root: ROOT, files: await files(PUBLIC) });
   assert.deepEqual(findings.map((finding) => `${finding.file}:${finding.line}: ${finding.rule} ${finding.value}`), []);
   const command = await run(process.execPath, [path.join(ROOT, "scripts/review-kit/kit-guard.mjs"), ROOT]);
@@ -43,7 +43,7 @@ test("clause 82: the old stylesheet is gone and the page loads only the kit and 
   assert.deepEqual(sheets.slice(0, 2), ["kit/tokens.css", "kit/kit.css"]);
   for (const sheet of sheets.slice(2)) assert.match(sheet, /^styles\/[a-z-]+\.css$/);
   if (!process.env.PLUGIN_DATA) process.env.PLUGIN_DATA = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-everywhere-data-")));
-  const { startReviewServer } = await import(path.join(ROOT, "dist/server/review/review-server.mjs"));
+  const { startReviewServer } = await import(pathToFileURL(path.join(ROOT, "dist/server/review/review-server.mjs")).href);
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-everywhere-")));
   await mkdir(path.join(root, ".prism"), { recursive: true });
   await writeFile(path.join(root, ".prism", "workflow.md"), "## Paths\n- Plans: docs/plans/\n");

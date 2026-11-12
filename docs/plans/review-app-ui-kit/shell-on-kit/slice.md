@@ -1,5 +1,8 @@
 # Shell on the kit
 
+> Shipped history: initiative `review-app-ui-kit` shipped on 2026-11-09, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Changes
 - change `src/server/review/public/review.html`: the top bar with the mark, project menu, search button, Who's working button, and Navigation button; one sidebar of kit trees; the main island with `#page-bar` and `#artifact`; the side panel island; the status bar; the command palette, drawer, banners, store dialog, and toast as kit elements; no tab strip; and the page loads `styles/shell.css` (clauses 75, 77, 78, 82).
 - change `src/server/review/public/review.js`: pages instead of open tabs, opened through the browser history, the page bar's Back, Forward, and breadcrumbs, Alt+arrow keys, the drawer below 1100px, trees, menus, dialogs, and banners through kit events, and `aria-busy` on `#artifact` while a view loads (clauses 74, 75, 76, 77, 81).

@@ -11,13 +11,14 @@ import { answerUserGate, readCoordinationState, updateCoordinationState } from "
 import { waitForGateAnswers } from "../../dist/hooks/wait-for-gate-answers.mjs";
 import { Readable } from "node:stream";
 import { readdir } from "node:fs/promises";
+import { defer } from "./fixtures/teardown.mjs";
 
 const SERVER_PATH = fileURLToPath(new URL("../../dist/server/mcp.mjs", import.meta.url));
 const INITIATIVE = "reports";
 
 async function project(context) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-gate-wait-")));
-  context.after(() => rm(root, { recursive: true, force: true }));
+  defer(context, () => rm(root, { recursive: true, force: true }));
   await mkdir(path.join(root, ".prism"), { recursive: true });
   await writeFile(path.join(root, ".prism/workflow.md"), "## Paths\n- Plans (scratch): docs/plans/\n");
   await mkdir(path.join(root, "docs/plans/reports"), { recursive: true });
@@ -41,7 +42,7 @@ function server(context, root, clientName, { version = "2.1.296", environment = 
     messages.push(message);
     for (const listener of listeners) listener();
   });
-  context.after(async () => {
+  defer(context, async () => {
     if (child.exitCode === null) {
       child.stdin.end();
       await new Promise((resolve) => child.once("exit", resolve));

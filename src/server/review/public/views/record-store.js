@@ -5,6 +5,12 @@ import { escapeHtml, formatTime, keyValues, plural } from "./util.js";
 const PROBLEMS = { no_upstream: "Records not shared", not_a_repository: "Records not synced", push_rejected: "Records not pushed", merge_failed: "Records not merged", fetch_failed: "Records not fetched", git_failed: "Records not synced", conflicts: "Record conflicts saved" };
 const STATES = { ok: "Synced", ...PROBLEMS };
 
+// A store's short name: the last part of its folder or remote, without a .git ending.
+function storeName(label) {
+  const parts = String(label ?? "").replace(/[\\/]+$/, "").split(/[\\/:]/).filter(Boolean);
+  return (parts.at(-1) ?? String(label ?? "")).replace(/\.git$/, "");
+}
+
 /** Where the records live: { label, short, title, tone }, where the status bar shows short and its tip title. */
 export function storeItem(store) {
   if (!store) return null;
@@ -14,13 +20,14 @@ export function storeItem(store) {
   const title = [`Records live in the ${store.kind === "remote" ? "store named by its remote" : "store folder"} ${store.label}.`, store.location ? `Folder: ${store.location}` : ""].filter(Boolean).join("\n");
   // Tracked files that still wait in the checkout for an agent's tool call to move them are named beside the store as a warning, since the browser lists only the store's artifacts,
   // and files that a move kept for a person to settle as a plain note, since no tool call moves them.
+  const name = store.workspaceName ?? storeName(store.label);
   const waiting = store.awaitingMove?.files;
   const kept = store.keptInCheckout?.files;
   const details = [title, store.awaitingMove?.message, store.keptInCheckout?.message].filter(Boolean).join("\n");
-  if (waiting) return { label: `${noun} ${store.label} · ${plural(waiting, "file")} to move`, short: `Shared store · ${plural(waiting, "file")} to move`, title: details, tone: "warn" };
-  if (kept) return { label: `${noun} ${store.label} · ${plural(kept, "file")} kept in checkout`, short: `Shared store · ${plural(kept, "file")} kept in checkout`, title: details, tone: "muted" };
-  // The status bar says only that a shared store holds the records; its tip and the details name where.
-  return { label: `${noun} ${store.label}`, short: "Shared store", title, tone: "muted" };
+  if (waiting) return { label: `${noun} ${store.label} · ${plural(waiting, "file")} to move`, short: `Shared store ${name} · ${plural(waiting, "file")} to move`, title: details, tone: "warn" };
+  if (kept) return { label: `${noun} ${store.label} · ${plural(kept, "file")} kept in checkout`, short: `Shared store ${name} · ${plural(kept, "file")} kept in checkout`, title: details, tone: "muted" };
+  // The status bar names the shared store at a glance, by the workspace name when it has one; its tip and the details say where it lives.
+  return { label: `${noun} ${store.label}`, short: `Shared store ${name}`, title, tone: "muted" };
 }
 
 /**
@@ -79,7 +86,9 @@ function unsavedHtml(status, describe) {
   return unsaved.length ? `<p class="muted">Deleted locally while the upstream changed ${unsaved.map((item) => escapeHtml(recordName(item.path, describe))).join(", ")}; the upstream version was kept and nothing was saved.</p>` : "";
 }
 
-export function createRecordStoreStatus({ storeButton, storeLabel, syncButton, syncLabel, dialog, fetchJson, openRecord, hasArtifact, describe = (path) => ({ label: path, kind: "Record" }) }) {
+// One status bar button names the store and, beside it, its sync state; both open the same details, so they are one control.
+// Its tone is the sync state's, and its tip says where the records live, then the sync message.
+export function createRecordStoreStatus({ storeButton, storeLabel, syncPart, syncLabel, dialog, fetchJson, openRecord, hasArtifact, describe = (path) => ({ label: path, kind: "Record" }) }) {
   let store = null;
   let status = null;
   let workspace = null;
@@ -94,18 +103,14 @@ export function createRecordStoreStatus({ storeButton, storeLabel, syncButton, s
     workspace = nextWorkspace ?? null;
     const where = storeItem(store);
     storeButton.hidden = !where;
-    if (where) {
-      storeLabel.textContent = where.short;
-      storeButton.setAttribute("tip", where.title);
-      storeButton.dataset.tone = where.tone;
-    }
+    if (!where) return;
     const sync = syncItem(store, status, Date.now(), workspace);
-    syncButton.hidden = !sync;
-    if (sync) {
-      syncLabel.textContent = sync.label;
-      syncButton.dataset.tone = sync.tone;
-      syncButton.setAttribute("tip", [sync.message ?? status?.message, sync.problem ? "Click for details" : ""].filter(Boolean).join("\n") || sync.label);
-    }
+    storeLabel.textContent = where.short;
+    syncPart.hidden = !sync;
+    if (sync) syncLabel.textContent = sync.label;
+    storeButton.dataset.tone = sync?.tone ?? where.tone;
+    const tip = [where.title, sync ? [sync.label, sync.message ?? status?.message].filter(Boolean).join(": ") : "", sync?.problem ? "Click for details" : ""];
+    storeButton.setAttribute("tip", tip.filter(Boolean).join("\n"));
   }
 
   async function open() {
@@ -157,6 +162,5 @@ export function createRecordStoreStatus({ storeButton, storeLabel, syncButton, s
   }
 
   storeButton.addEventListener("click", open);
-  syncButton.addEventListener("click", open);
   return { update };
 }

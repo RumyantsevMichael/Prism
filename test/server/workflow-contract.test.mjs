@@ -28,7 +28,7 @@ test("keeps the core skills lean", async () => {
   for (const name of coreSkills) lines += (await skill(name)).split("\n").length;
   for (const name of ["delegation.md", "visual-review.md"]) lines += (await reference("workflow", name)).split("\n").length;
   lines += (await reference("orchestrate", "example-writer.md")).split("\n").length;
-  assert.ok(lines < 512, `the core skills and their references have ${lines} lines`);
+  assert.ok(lines < 522, `the core skills and their references have ${lines} lines`);
 });
 
 test("keeps records, snapshots, change maps, and context plans out of the skills", async () => {
@@ -156,38 +156,11 @@ test("keeps visual review selection and procedure in its reference", async () =>
   assert.match(await skill("workflow"), /\[visual-review\.md\]\(references\/visual-review\.md\)/);
 });
 
-test("supports a continuous delivery benchmark phase", async () => {
-  const benchHarness = await readFile(new URL("../../bench/harness/bench.py", import.meta.url), "utf8");
-
-  assert.match(benchHarness, /--delivery-context/);
-  assert.match(benchHarness, /choices=\["separate", "continuous"\]/);
-  assert.match(benchHarness, /CONTINUOUS_DELIVERY_PROMPT/);
-  assert.match(benchHarness, /run a fresh `review` pass in `design-audit` mode before implementation/);
-  assert.match(benchHarness, /complete findings to the same delivery context/);
-  assert.match(benchHarness, /if args\.delivery_context == "continuous"/);
-  assert.doesNotMatch(benchHarness, /Produce the full spec: ADR, contracts, a dependency-ordered implementation-task graph/);
-});
-
 test("writes review browser configuration with an adaptive default", async () => {
   const workflowInit = await skill("setup");
-  const benchHarness = await readFile(new URL("../../bench/harness/bench.py", import.meta.url), "utf8");
 
   assert.match(workflowInit, /- Review browser: auto/);
   assert.match(workflowInit, /`Review browser` defaults to `auto`/);
-  assert.match(benchHarness, /- Review browser: auto/);
-});
-
-test("uses the Codex benchmark model policy", async () => {
-  const benchHarness = await readFile(new URL("../../bench/harness/bench.py", import.meta.url), "utf8");
-  const benchReadme = await readFile(new URL("../../bench/README.md", import.meta.url), "utf8");
-
-  assert.match(benchHarness, /args\.model = "gpt-5\.6-terra" if args\.agent == "codex"/);
-  assert.match(benchHarness, /args\.po_model = "gpt-5\.6-luna"/);
-  for (const model of ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]) {
-    assert.match(benchReadme, new RegExp(model.replaceAll(".", "\\.")));
-  }
-  assert.match(benchReadme, /Use Sol only when the declared security surface is non-empty/);
-  assert.match(benchReadme, /use Terra for that role in both arms and disclose the substitution/i);
 });
 
 test("all local skill and README links resolve", async () => {

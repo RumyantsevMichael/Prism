@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { jsonLine, readJsonLines } from "./json-lines.mjs";
 import { pluginURL } from "./plugin-root.mjs";
+import { errorFields, log, startProcessLog } from "./log.mjs";
 import { ACTIVE_OPERATIONS_SCHEMA } from "./workflow/active-operations.mjs";
 import { assertInput } from "./workflow/artifact-schema.mjs";
 import { CONSERVATION_TOOLS, callConservationTool } from "./conservation/conservation-tools.mjs";
@@ -11,7 +12,7 @@ import path from "node:path";
 import { COMMENTS_PER_ARTIFACT_MAX, finishUnfinishedMoves, nameToolCallRoot, outsideToolCall, recordStoreOf, restoreMigrationReports, takeMigrationReports, toolCallContext, withToolCall } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
 import { confirmSavedConflicts, releaseSavedConflicts, takeSavedConflicts } from "./workflow/record-store-sync.mjs";
-import { withCallSession } from "./workflow/slice-claims.mjs";
+import { callSessionId, withCallSession } from "./workflow/slice-claims.mjs";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
 import {
   listRepositoryIntelligenceProviders,
@@ -34,7 +35,8 @@ import { createReviewServerPool } from "./review/review-server-pool.mjs";
 import { opensAtStart } from "./review/open-at-start.mjs";
 import { reviewAppDirectory, reviewAppDisabled } from "./review/review-app-discovery.mjs";
 import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
-import { INITIATIVE_TOOLS, InitiativeError, getInitiative, initiativeAcknowledgement, updateInitiative } from "./workflow/initiative.mjs";
+import { historyMarksText, shippedHistory } from "./workflow/shipped-history.mjs";
+import { INITIATIVE_TOOLS, InitiativeError, claimedByUpdate, getInitiative, initiativeAcknowledgement, initiativeWork, readInitiative, requireClaimedWork, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
 import { ARTIFACT_TOOLS, artifactAtLocation, getArtifact, updateArtifact } from "./workflow/store-artifacts.mjs";
 import { savedComment } from "./workflow/artifact-comments.mjs";
@@ -48,7 +50,7 @@ import { managedStoresDirectory } from "./workflow/remote-url.mjs";
 import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
 import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, waitForUserGates } from "./workflow/gate-wait.mjs";
-import { endGateWait, keptSettingsText, personChangesText, startGateWait, takePersonChanges } from "./workflow/change-notices.mjs";
+import { endGateWait, keptSettingsText, personChangesText, rememberAskedGates, startGateWait, takePersonChanges } from "./workflow/change-notices.mjs";
 import { callAgent, currentCallAgent, withCallAgent } from "./workflow/call-agent.mjs";
 import { recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
@@ -58,6 +60,8 @@ import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, f
 // PRISM_REVIEW_APP=off keeps this session on its own review server, as tests and plugin checkouts under development need.
 const reviewServers = createReviewServerPool(reviewAppDisabled() ? {} : { app: { directory: reviewAppDirectory(), evidenceDirectory: conservationStore.directory, intelligenceDirectory: nativeSemanticRuntime.directory, recordStoreDirectory: managedStoresDirectory() } });
 const pluginManifest = JSON.parse(await readFile(pluginURL(".codex-plugin/plugin.json"), "utf8"));
+// The host reads this process's stdout as the protocol, so the log goes to the shared Prism log file, and warnings also to stderr, which hosts keep.
+startProcessLog("mcp", { version: pluginManifest.version, cwd: process.cwd() }, { mirror: true });
 
 function decisionDataDirectory(argumentsValue) {
   const configured = process.env.PLUGIN_DATA || process.env.CLAUDE_PLUGIN_DATA;
@@ -173,6 +177,11 @@ function requestedTabs(argumentsValue) {
   return hasArtifact ? argumentsValue.artifact : undefined;
 }
 
+// An agent may name the tab group its presented tabs join, such as the piece of work they belong to.
+function requestedGroup(argumentsValue) {
+  return Object.hasOwn(argumentsValue, "group") ? { group: argumentsValue.group } : {};
+}
+
 // A session that fell back to its own review server tells the agent, so two review pages for one project reach the user as a known cause.
 function reviewContent(url, review) {
   const fallback = review.privateServer?.();
@@ -184,10 +193,20 @@ function reviewContent(url, review) {
 function stateContent(result) {
   const validity = result.valid ? "valid" : "invalid";
   const revision = result.revision ?? "none";
-  const opened = result.openedGates?.length ? `\nOpened user gates: ${result.openedGates.map((gate) => gate.id).join(", ")}` : "";
+  const opened = `${result.openedGates?.length ? `\nOpened user gates: ${result.openedGates.map((gate) => gate.id).join(", ")}` : ""}${result.supersededGates?.length ? `\nAnswered correctness gates superseded and closed: ${result.supersededGates.join(", ")}` : ""}`;
   const answered = (result.state?.pending ?? []).filter((gate) => gate?.answer);
   const gates = `${opened}${answered.length ? `\nUser gates answered in the review browser: ${answered.map((gate) => gate.id).join(", ")}` : ""}`;
   return `Coordination state ${validity}: ${result.initiative}\nRevision: ${revision}${gates}`;
+}
+
+// A read of a shipped initiative that marked its slice documents asks to commit those in the checkout apart from the task's changes, and says that the record store shares its own.
+async function historyMarksContent(projectRoot, history) {
+  return history?.marked?.length ? [{ type: "text", text: await historyMarksText(projectRoot, history.initiative, history.marked) }] : [];
+}
+
+// The coordination state text of a shipped initiative carries the history message as a line of its own.
+async function shippedHistoryContent(projectRoot, history) {
+  return history ? [{ type: "text", text: history.message }, ...await historyMarksContent(projectRoot, history)] : [];
 }
 
 function contextPlanContent(plan) {
@@ -339,12 +358,14 @@ function stateErrorData(error) {
     return { code: error.code, ...(error.errors ? { errors: error.errors } : {}), ...(error.currentRevision === undefined ? {} : { currentRevision: error.currentRevision }) };
   }
   // A refused component declaration or design names the entry, components, dependency, cycle, slice, or crossing paths it is about,
-  // an unfinished scope names the leaves it waits on, and a blocked ship names each scope and its blocked dependents.
-  if (error instanceof InitiativeError || error instanceof RoadmapError || ["InitiativeGraphError", "VerificationError", "SliceDesignError", "DesignViewError", "ComponentError"].includes(error?.name)) {
-    return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "state", "progress", "diagnostics", "claim", "syncState", "entry", "components", "component", "dependency", "cycle", "slice", "paths", "folder", "scope", "waiting", "scopes"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
+  // an unfinished scope names the leaves it waits on, a blocked ship names each scope and its blocked dependents, an unconfirmed ship its gate and what changed after it was asked, a ship that an open approval stops each ADR and its gates,
+  // a ship with open work names its gates, claims, and proposals, and a refused change to a shipped initiative names it and its ship time.
+  if (error instanceof InitiativeError || error instanceof RoadmapError || ["ShippedHistoryError", "UnreadableRoadmapError", "InitiativeGraphError", "VerificationError", "SliceDesignError", "DesignViewError", "ComponentError"].includes(error?.name)) {
+    return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "state", "progress", "diagnostics", "claim", "syncState", "entry", "components", "component", "dependency", "cycle", "slice", "paths", "folder", "scope", "waiting", "scopes", "afterGate", "changed", "adrs", "gates", "claims", "proposals", "fixes", "initiative", "shippedAt"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
   }
   if (error?.name !== "CoordinationStateError") {
-    if (["validation_failed", "invalid_path", "lock_timeout", "stale_snapshot", "preparation_failed", "unsupported_runtime", "corrupt_asset", "resource_limit", "incomplete_structure", "evidence_missing", "gate_blocked", "revision_conflict"].includes(error.code)) return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "expectedSnapshot", "currentSnapshot", "evidenceId"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) ? error[key].slice(0, 100) : error[key]])) };
+    // A refused deferral keeps every problem, because the caller needs each finding's reason to correct the request.
+    if (["validation_failed", "invalid_path", "lock_timeout", "stale_snapshot", "preparation_failed", "unsupported_runtime", "corrupt_asset", "resource_limit", "incomplete_structure", "evidence_missing", "gate_blocked", "revision_conflict", "deferral_refused"].includes(error.code)) return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "expectedSnapshot", "currentSnapshot", "evidenceId"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) && !(error.code === "deferral_refused" && key === "problems") ? error[key].slice(0, 100) : error[key]])) };
     return undefined;
   }
   const data = { code: error.code };
@@ -423,7 +444,7 @@ const tools = [
   ...ARTIFACT_TOOLS,
   {
     name: "verify_slice",
-    description: "Run the project's test command from .prism/workflow.md for a slice with an accepted design, after checking that its frozen acceptance tests are unchanged, and record the run as the slice's completion evidence. A slice that records a component runs that component's Test command in the component's folder, or the repository's Test command under ## Stack in the project root when the component declares none; the root component and a slice without a component run the repository's command in the project root. Before asking for approval it refuses an invalid ## Components declaration, a recorded component the repository no longer declares with component_unknown, a missing command with test_command_missing, a working folder that does not exist with component_folder_missing, and a component folder that leads outside the project through a symbolic link with component_folder_outside. Before the command runs, a slice with a component compares the project with its content when the slice started, kept under this checkout's local ref refs/prism/<initiative>/<slice>/<checkout>/start, where <checkout> is the first 16 hexadecimal digits of the SHA-256 of the project root's real path: a change outside the component and every shared path, by the declaration recorded when the slice started, fails the run with reason component_boundary, listing the crossing paths, and the command does not run. Another slice's frozen test at its frozen content, and a path that another slice's latest passing run changed after this slice started and that still holds the content it tested, do not count, while this slice's own changes do. A slice without start content runs with boundary unchecked, and a run whose start content Git can no longer read, or was recorded while the ## Components declaration was invalid or lacked the slice's component, fails with reason start_content_missing without running the command: ask the user to fix the ## Components declaration first when the message says so, then set the slice back to not-started and start it again. Results name the command, the folder it runs in with links followed and project-relative, and the slice's component. A passing run completes a slice whose design marks no review and returns the initiative revision that write produced. The result is brief: the verdict, failing test names, the run record, and the path of the full output log. The first run of a command text in a working folder asks the user to allow it in the review browser and returns approval_needed with a gate id: wait for that gate, then call again with approvalGate. In a cloud session, where the user cannot open the review browser, approval_needed says so: ask the user in chat to allow the exact command in the folder it names, then call again with approvalGate and chatApproval quoting their answer word for word; the approval and the gate's history keep the quote, and any other session refuses chatApproval. An answer with a note and no choice returns approval_unclear and runs nothing. A host that cannot keep a long call open gets status running; calling again with the same arguments keeps waiting for the same run. An implementer that finds the contract wrong calls it with contractDefects instead: nothing runs, the defects are kept as a run entry and on the slice, and the slice is blocked until design revises the contract. With dependents true, slice names a finished fit scope (a slice whose design accepted a slice plan, or a leaf that is a scope of its own) and the call runs its dependents' run instead: the test command of every component of this repository that depends, directly or through others, on a component of the scope's leaves, each distinct command and folder once in dependency order, never a component of another repository. It refuses a slice that is not a fit scope, and contractDefects, with validation_failed, and a scope with a leaf that is not done with scope_unfinished, listing waiting; it applies the same refusals as above to each dependent, and returns no_dependents when nothing depends on the scope. One approval gate lists every command and folder not yet allowed, with the components each tests: allowing it allows each listed pair, and declining it marks their components declined while the allowed pairs still run. The run is recorded on the scope, and its result lists each dependent with its status, the blocked dependents, and each command's log; a run whose commands change project files fails with reason tracked_files_changed and blocks every dependent. update_roadmap ship refuses with dependents_blocked while a finished scope's dependents have no passing run of every one of them.",
+    description: "Run the project's test command from .prism/workflow.md for a slice with an accepted design, after checking that its frozen acceptance tests are unchanged, and record the run as the slice's completion evidence. A slice that records a component runs that component's Test command in the component's folder, or the repository's Test command under ## Stack in the project root when the component declares none; the root component and a slice without a component run the repository's command in the project root. Before asking for approval it refuses an invalid ## Components declaration, a recorded component the repository no longer declares with component_unknown, a missing command with test_command_missing, a working folder that does not exist with component_folder_missing, and a component folder that leads outside the project through a symbolic link with component_folder_outside. Before the command runs, a slice with a component compares the project with its content when the slice started, kept under this checkout's local ref refs/prism/<initiative>/<slice>/<checkout>/start, where <checkout> is the first 16 hexadecimal digits of the SHA-256 of the project root's real path: a change outside the component and every shared path, by the declaration recorded when the slice started, fails the run with reason component_boundary, listing the crossing paths, and the command does not run. Another slice's frozen test at its frozen content, and a path that another slice's latest passing run changed after this slice started and that still holds the content it tested, do not count, while this slice's own changes do. A slice without start content runs with boundary unchecked, and a run whose start content Git can no longer read, or was recorded while the ## Components declaration was invalid or lacked the slice's component, fails with reason start_content_missing without running the command: ask the user to fix the ## Components declaration first when the message says so, then set the slice back to not-started and start it again. Results name the command, the folder it runs in with links followed and project-relative, and the slice's component. A passing run completes a slice whose design marks no review and returns the initiative revision that write produced. The result is brief: the verdict, failing test names, the run record, and the path of the full output log. The first run of a command text in a working folder asks the user to allow it in the review browser and returns approval_needed with a gate id: wait for that gate, then call again with approvalGate. In a cloud session, where the user cannot open the review browser, approval_needed says so: ask the user in chat to allow the exact command in the folder it names, then call again with approvalGate and chatApproval quoting their answer word for word; the approval and the gate's history keep the quote, and any other session refuses chatApproval. An answer with a note and no choice returns approval_unclear and runs nothing. A host that cannot keep a long call open gets status running; calling again with the same arguments keeps waiting for the same run. An implementer that finds the contract wrong calls it with contractDefects instead: nothing runs, the defects are kept as a run entry and on the slice, and the slice is blocked until design revises the contract. With dependents true, slice names a finished fit scope (a slice whose design accepted a slice plan, or a leaf that is a scope of its own) and the call runs its dependents' run instead: the test command of every component of this repository that depends, directly or through others, on a component of the scope's leaves, each distinct command and folder once in dependency order, never a component of another repository. It refuses a slice that is not a fit scope, and contractDefects, with validation_failed, and a scope with a leaf that is not done with scope_unfinished, listing waiting; it applies the same refusals as above to each dependent, and returns no_dependents when nothing depends on the scope. One approval gate lists every command and folder not yet allowed, with the components each tests: allowing it allows each listed pair, and declining it marks their components declined while the allowed pairs still run. The run is recorded on the scope, and its result lists each dependent with its status, the blocked dependents, and each command's log; a run whose commands change project files fails with reason tracked_files_changed and blocks every dependent. update_roadmap ship refuses with dependents_blocked while a finished scope's dependents have no passing run of every one of them, or while that run started before a leaf of the scope last passed verification.",
     inputSchema: VERIFY_SLICE_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   },
@@ -449,13 +470,13 @@ const tools = [
   },
   {
     name: "get_review_url",
-    description: "Start or update the local Prism review server and return a human review URL only. Use artifacts to add agent-presented tabs to the shared session and focus the first one; the human's open tabs stay open, and an empty array focuses Attention. This tool does not open a browser or return rendered image data.",
+    description: "Start or update the local Prism review server and return a human review URL only. Use artifacts to open every listed artifact as a tab marked as presented by the agent, in the tab strip that every window of the review session shares, and to focus the first one; the human's open tabs stay open, and an empty array focuses Attention. This tool does not open a browser or return rendered image data.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
-        artifact: { type: "string", description: "One project-relative artifact path. Use artifacts for multiple tabs." },
-        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths to add as agent tabs. An empty array focuses Attention." }
+        artifact: { type: "string", description: "One project-relative artifact path, opened as one agent tab. Use artifacts to present several artifacts at once." },
+        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths, each opened as its own agent tab that stays open until the human closes it. An empty array focuses Attention." }
       },
       required: ["projectRoot"],
       additionalProperties: false
@@ -464,13 +485,14 @@ const tools = [
   },
   {
     name: "present_review",
-    description: "Open or update one local Prism review page in the system browser for the human. Use artifacts to add agent-presented tabs to the shared session and focus the first one; the human's open tabs stay open. Repeated calls update connected viewer pages without opening another tab. Omit artifact and artifacts to open Attention, which lists recorded user gates, roadmap, and library entry points. The tool returns no rendered image data.",
+    description: "Open or update one local Prism review page in the system browser for the human. Use artifacts to open every listed artifact as a tab marked as presented by the agent, in the tab strip that every window of the review session shares, and to focus the first one; the human's open tabs stay open. Use group to gather the presented tabs into a named tab group, such as the piece of work they belong to; presenting under the same name again adds to that group. Repeated calls update connected viewer pages without opening another tab. Omit artifact and artifacts to open Attention, which lists recorded user gates, roadmap, and library entry points. The tool returns no rendered image data.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
-        artifact: { type: "string", description: "One project-relative artifact path. Use artifacts for multiple tabs." },
-        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths to add as agent tabs. An empty array opens Attention." }
+        artifact: { type: "string", description: "One project-relative artifact path, opened as one agent tab. Use artifacts to present several artifacts at once." },
+        artifacts: { type: "array", items: { type: "string" }, description: "Project-relative artifact paths, each opened as its own agent tab that stays open until the human closes it. An empty array opens Attention." },
+        group: { type: "string", minLength: 1, maxLength: 60, description: "A short name for the tab group the presented tabs join, such as the initiative or task they belong to. A new name makes a new group; a tab already in another group moves into this one. Omit it to leave the tabs ungrouped." }
       },
       required: ["projectRoot"],
       additionalProperties: false
@@ -690,7 +712,7 @@ const tools = [
   },
   {
     name: "get_coordination_state",
-    description: "Read an initiative's coordination state record with its revision. Reads never create the record.",
+    description: "Read an initiative's coordination state record with its revision. Reads never create the record. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked; a document in the checkout is to be committed apart from the task's changes, while one in the record store is shared by its sync and needs no commit. The text carries its message as a line.",
     inputSchema: {
       type: "object",
       properties: {
@@ -700,7 +722,7 @@ const tools = [
       required: ["projectRoot", "initiative"],
       additionalProperties: false
     },
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "validate_coordination_state",
@@ -796,7 +818,7 @@ const tools = [
             },
             gateOperations: {
               type: "array",
-              description: "Record a user gate with ask before asking the user, and remove it with resolve after acting on the user's answer, giving a reason when the gate has no browser answer. The user may answer in the conversation or in the review browser, which records the answer on the gate in state.pending. The result lists the ids of opened gates.",
+              description: "Record a user gate with ask before asking the user, and remove it with resolve after acting on the user's answer, giving a reason when the gate has no browser answer and, for a decision gate answered in the conversation, the chosen option's id as choice. The user may answer in the conversation or in the review browser, which records the answer on the gate in state.pending. Asking a correctness gate supersedes each earlier correctness gate of the initiative that the person already answered: it closes with a reason naming the new gate, which the review browser shows with the closed question, while an unanswered one stays pending. The result lists the ids of opened gates, and of superseded gates under supersededGates.",
               items: {
                 oneOf: [
                   {
@@ -830,7 +852,7 @@ const tools = [
                     type: "object",
                     required: ["op", "id"],
                     additionalProperties: false,
-                    properties: { op: { const: "resolve" }, id: { type: "string", minLength: 1 }, reason: { type: "string", minLength: 1, maxLength: 1000, description: "Required for an unanswered gate: the user's answer in the conversation, or why the question no longer applies. The review browser shows it with the closed question." } }
+                    properties: { op: { const: "resolve" }, id: { type: "string", minLength: 1 }, choice: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$", description: "For a decision gate the user answered in the conversation: the id of the option they chose, which the closed gate keeps as choice. A gate the user answered in the review browser accepts only the option of that answer." }, reason: { type: "string", minLength: 1, maxLength: 1000, description: "Required for an unanswered gate: the user's answer in the conversation, or why the question no longer applies. The review browser shows it with the closed question." } }
                   }
                 ]
               }
@@ -910,7 +932,7 @@ async function callGateWait(argumentsValue, metadata, requestId) {
   }
   let value;
   const unsupported = waitUnsupportedReason();
-  const hookSession = typeof metadata?.sessionId === "string" && metadata.sessionId ? metadata.sessionId : null;
+  const hookSession = callSessionId(metadata);
   // Only the initiative's coordinator when the wait starts has it end on the person's changes; one step of the session tells whether it coordinates and which entries it holds at its start.
   // Every wait that names an initiative holds its gates in the session's notice record while it runs, so their answers reach the agent once, in its result, whichever agent waited.
   // An artifact wait holds no gates there, since its gates live in the artifact's status record.
@@ -985,10 +1007,15 @@ async function callStateTool(name, argumentsValue) {
   let resultValue;
   if (name === "get_coordination_state") {
     resultValue = await readCoordinationState(input);
+    const history = await shippedHistory(projectRoot, argumentsValue.initiative);
+    if (history) resultValue = { ...resultValue, shippedHistory: history };
   } else if (name === "validate_coordination_state") {
     resultValue = await validateCoordinationState(input);
   } else if (name === "update_coordination_state") {
     resultValue = await updateCoordinationState(input);
+    // The prompt hooks deliver a gate's answer only to the session that asked it; a gate the session cannot remember is still answered through its wait or a read of the state.
+    const opened = (resultValue?.openedGates ?? []).map((gate) => gate?.id).filter((id) => typeof id === "string");
+    await rememberAskedGates({ projectRoot, initiative: argumentsValue.initiative, gateIds: opened }).catch((error) => log.warn("asked_gates_unrecorded", errorFields(error)));
   } else if (name === "checkpoint_pause") {
     resultValue = await checkpointPause(input);
     const dataDirectory = decisionDataDirectory(argumentsValue);
@@ -1006,7 +1033,7 @@ async function callStateTool(name, argumentsValue) {
     const { closed, ...state } = resultValue.state;
     resultValue = { ...resultValue, state };
   }
-  const content = [{ type: "text", text: stateContent(resultValue) }];
+  const content = [{ type: "text", text: stateContent(resultValue) }, ...await shippedHistoryContent(projectRoot, resultValue?.shippedHistory)];
   if (Array.isArray(resultValue?.keptSettings) && resultValue.keptSettings.length) content.push({ type: "text", text: keptSettingsText(resultValue.keptSettings) });
   return { content, structuredContent: resultValue };
 }
@@ -1433,7 +1460,28 @@ async function withPersonChanges(name, argumentsValue, value) {
   return { ...value, content: [...value.content, { type: "text", text: personChangesText(changes) }], structuredContent: { ...value.structuredContent, personChanges: changes } };
 }
 
+// The tools that work on one slice: each needs its caller's live claim on the slice or an ancestor.
+// A dependents' run checks a finished scope whose leaves are all done, so it works on no slice in progress and needs no claim.
+const SLICE_WORK_TOOLS = new Set(["verify_slice", "update_review", "update_change_map", "update_design_view"]);
+
+// An agent's tool call that works on slices is refused before it changes anything unless the caller holds the claim; the person's actions in the review app never come through here.
+async function requireCallClaims(name, argumentsValue) {
+  if (typeof argumentsValue?.initiative !== "string") return;
+  if (name === "update_initiative") {
+    const projectRoot = await requestedProjectRoot(argumentsValue);
+    const record = await readInitiative(projectRoot, argumentsValue.initiative).then(({ loaded }) => loaded?.record, () => null);
+    const work = initiativeWork(argumentsValue.operations, record);
+    await requireClaimedWork({ projectRoot, initiative: argumentsValue.initiative, tool: name, work, claimedHere: claimedByUpdate(argumentsValue.operations) });
+    return;
+  }
+  if (!SLICE_WORK_TOOLS.has(name) || typeof argumentsValue.slice !== "string") return;
+  if (name === "verify_slice" && argumentsValue.dependents === true) return;
+  const projectRoot = await requestedProjectRoot(argumentsValue);
+  await requireClaimedWork({ projectRoot, initiative: argumentsValue.initiative, tool: name, work: [{ slug: argumentsValue.slice, own: true }] });
+}
+
 async function callTool(name, argumentsValue = {}, metadata, requestId) {
+  await requireCallClaims(name, argumentsValue);
   if (name === "wait_for_user_gate") {
     return callGateWait(argumentsValue, metadata, requestId);
   }
@@ -1444,7 +1492,9 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
     const projectRoot = await requestedProjectRoot(argumentsValue);
     let value = await callConservationTool(name, { ...argumentsValue, projectRoot });
     if (name === "get_review") value = { ...value, runTotals: await readReviewRunTotals(projectRoot, argumentsValue) };
-    return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
+    const history = name === "get_review" && typeof argumentsValue.initiative === "string" ? await shippedHistory(projectRoot, argumentsValue.initiative) : null;
+    if (history) value = { ...value, shippedHistory: history };
+    return { content: [{ type: "text", text: JSON.stringify(value) }, ...await historyMarksContent(projectRoot, history)], structuredContent: value };
   }
   if (name === "update_design_view") {
     const value = await updateDesignView({ ...argumentsValue, projectRoot: await requestedProjectRoot(argumentsValue) });
@@ -1467,7 +1517,10 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
       : name === "get_initiative" ? await getInitiative(input)
       : initiativeAcknowledgement(await updateInitiative(input), input.operations);
     if (name === "get_initiative") value = { ...value, runTotals: await readInitiativeRecordRunTotals(projectRoot, value.initiative, value) };
-    return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
+    const marks = name === "get_initiative" ? await historyMarksContent(projectRoot, value.shippedHistory)
+      : name === "get_roadmap" ? await Promise.all((value.markedHistory ?? []).map(async (item) => ({ type: "text", text: await historyMarksText(projectRoot, item.initiative, item.marked) })))
+      : [];
+    return { content: [{ type: "text", text: JSON.stringify(value) }, ...marks], structuredContent: value };
   }
   if (name === "get_artifact" || name === "update_artifact") {
     const input = { ...argumentsValue, projectRoot: await requestedProjectRoot(argumentsValue) };
@@ -1488,7 +1541,7 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
     return { content: [{ type: "text", text: reviewContent(url, review) }], structuredContent: { url, ...await reviewSessionContent(review), ...privateServerContent(review) } };
   }
   if (name === "present_review") {
-    const opened = await review.open(requestedTabs(argumentsValue));
+    const opened = await review.open(requestedTabs(argumentsValue), requestedGroup(argumentsValue));
     return { content: [{ type: "text", text: reviewContent(opened.url, review) }], structuredContent: { ...opened, ...await reviewSessionContent(review), ...privateServerContent(review) } };
   }
   if (name === "list_reviewable_artifacts") {
@@ -1515,6 +1568,7 @@ if (process.env.CLAUDE_PROJECT_DIR) {
 // so a call cancelled before its result is written gets no response, and the saved versions its notes would name stay pending for the next result the host reads.
 const callsInProgress = new Set();
 const cancelledCalls = new Set();
+const callNames = new Map();
 
 const input = readJsonLines(process.stdin);
 input.on("line", async (line) => {
@@ -1538,11 +1592,14 @@ input.on("line", async (line) => {
       callsInProgress.add(request.id);
       const meta = request.params?._meta;
       const { name, arguments: argumentsValue } = request.params ?? {};
+      callNames.set(request.id, name);
+      const started = performance.now(), done = log.doing(`call:${request.id}`, String(name));
       const call = toolCallContext();
       const value = await withToolCall(call, () => withCallSession(meta, async () => {
         const agent = await callAgent(meta).catch(() => undefined);
         return withCallAgent(agent, async () => withPersonChanges(name, argumentsValue, await callTool(name, argumentsValue, meta, request.id)));
-      }));
+      })).finally(done);
+      log.debug("tool_call", { tool: name, ms: Math.round(performance.now() - started), ...(value?.isError ? { isError: true } : {}) });
       // A cancelled request gets no response, so it carries no notes either; nor does a result made once the host closed input, which ends the session.
       if (value.structuredContent?.status === "cancelled" || cancelledCalls.has(request.id)) return;
       if (closing) { await result(request.id, value); return; }
@@ -1559,6 +1616,7 @@ input.on("line", async (line) => {
       failure(request.id, -32601, `Method not found: ${request.method}`);
     }
   } catch (error) {
+    log.warn("request_failed", { method: request?.method, ...(callNames.has(request?.id) ? { tool: callNames.get(request.id) } : {}), ...errorFields(error) });
     if (request?.id !== undefined && !cancelledCalls.has(request.id)) {
       const data = stateErrorData(error);
       failure(request.id, -32603, errorMessage(error, data), data);
@@ -1567,6 +1625,7 @@ input.on("line", async (line) => {
     if (request?.method === "tools/call") {
       callsInProgress.delete(request.id);
       cancelledCalls.delete(request.id);
+      callNames.delete(request.id);
     }
   }
 });
@@ -1577,6 +1636,7 @@ const CLOSE_GRACE_MS = 5000;
 let closing = false;
 input.on("close", async () => {
   closing = true;
+  log.info("process_stopping", { reason: "input closed" });
   const deadline = setTimeout(() => process.exit(0), CLOSE_GRACE_MS);
   deadline.unref();
   try {
@@ -1586,6 +1646,7 @@ input.on("close", async () => {
     stopClaimRenewals();
     await Promise.all([nativeSemanticRuntime.close(), reviewServers.close(), Promise.allSettled([...endingWaits])]);
   } finally {
+    await log.flush();
     process.exit(0);
   }
 });

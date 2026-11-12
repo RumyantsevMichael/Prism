@@ -285,7 +285,8 @@ test("fails closed for a hard-linked transcript", async (context) => {
   assert.equal(result.reasonCode, CODEX_TRANSCRIPT_REASON.INVALID_TRANSCRIPT);
   assert.equal(await fileSystem.readFile(source, "utf8"), sourceText);
   assert.equal((await fileSystem.stat(source)).nlink, 2);
-  assert.equal((await fileSystem.stat(source)).mode & 0o777, 0o640);
+  // Windows has no POSIX permission bits; its per-user folders keep these files private there.
+  if (process.platform !== "win32") assert.equal((await fileSystem.stat(source)).mode & 0o777, 0o640);
 });
 
 test("bounds the first transcript record", async (context) => {

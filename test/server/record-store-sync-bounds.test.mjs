@@ -12,7 +12,8 @@ const { cancelRecordSyncs, configureRecordSync, markManagedStore, readSavedConfl
 configureRecordSync({ debounceMs: 3600000, pullIntervalMs: 1e15 });
 test.after(async () => { cancelRecordSyncs(); await rm(environment, { recursive: true, force: true }); });
 
-const git = (cwd, args) => execFileSync("git", ["-C", cwd, ...args], { stdio: ["pipe", "pipe", "pipe"], maxBuffer: 1 << 26 }).toString().trim();
+// Git for Windows skips a path longer than 260 characters unless core.longpaths is on, as every store command of Prism turns it on, so this machine's Git does too.
+const git = (cwd, args) => execFileSync("git", ["-c", "core.longpaths=true", "-C", cwd, ...args], { stdio: ["pipe", "pipe", "pipe"], maxBuffer: 1 << 26 }).toString().trim();
 const MiB = 1024 * 1024;
 const SLICE = "artifacts/plans/foo/slice.md";
 const rec = (value) => `${JSON.stringify(value)}\n`;
@@ -245,7 +246,9 @@ test("a store with no commits yet that takes the remote's branch moves a local f
 
 // A git that makes GROW_FILE GROW_SIZE bytes long the first time a sync hashes the store's files into Git, which comes right after the sync checked each file's size,
 // as a file written in place while a sync runs grows between the two.
-const realGit = execFileSync("sh", ["-c", "command -v git"]).toString().trim();
+// Node finds only an .exe for "git" on Windows, never this shell script on PATH, so the tests that use it run only on POSIX.
+const GROWING = { skip: process.platform === "win32" && "the growing Git is a shell script on PATH, which Node does not start on Windows" };
+const realGit = GROWING.skip ? "git" : execFileSync("sh", ["-c", "command -v git"]).toString().trim();
 const GROWING_GIT = `#!/bin/sh
 if [ -n "$GROW_FILE" ] && [ ! -e "$GROW_FILE.grown" ]; then
   case " $* " in *" hash-object -w "*) truncate -s "$GROW_SIZE" "$GROW_FILE" && : > "$GROW_FILE.grown" ;; esac
@@ -270,7 +273,7 @@ async function syncWhileGrowing(root, file, size) {
   }
 }
 
-test("a file that grows past its kind's bound after the sync checked its size is withheld by the size of its hashed object, so no commit of the sync holds it and the next sync pushes", { timeout: 240000 }, async (context) => {
+test("a file that grows past its kind's bound after the sync checked its size is withheld by the size of its hashed object, so no commit of the sync holds it and the next sync pushes", { ...GROWING, timeout: 240000 }, async (context) => {
   const { remote, b } = await stores(context);
   await put(b, { "README.md": "Prism store, changed\n", [SLICE]: "# Foo\n\nChanged on b.\n" });
   const status = await syncWhileGrowing(b, "README.md", 2 * MiB);
@@ -288,7 +291,7 @@ test("a file that grows past its kind's bound after the sync checked its size is
   assert.ok(git(remote, ["show", `main:${SLICE}`]).includes("Changed on b again."));
 });
 
-test("a shared comment that grows past a comment's bound after the sync checked its size is withheld for its size, while a full folder keeps every shared comment and the sync ends ok", { timeout: 240000 }, async (context) => {
+test("a shared comment that grows past a comment's bound after the sync checked its size is withheld for its size, while a full folder keeps every shared comment and the sync ends ok", { ...GROWING, timeout: 240000 }, async (context) => {
   const { remote, a, b } = await stores(context);
   const folder = "artifact-comments/plans/foo/slice.md";
   await put(a, Object.fromEntries(Array.from({ length: 1000 }, (_, index) => [`${folder}/${commentName(index)}`, rec({ index })])));
@@ -375,6 +378,160 @@ test("a refusal of a hand commit names the parent of the first commit the remote
   const status = await syncRecordStoreNow(b);
   assert.equal(status.state, "merge_failed", JSON.stringify(status));
   assert.ok(status.message.includes(`run git reset --soft ${before} in the store, which keeps every file on disk and moves the branch back to the commit before the first commit of it that the remote lacks and that holds the file`), status.message);
+});
+
+// The command that a refusal of a commit made by hand gives, run in the store as given.
+const takeOffCommand = (message) => message.match(/run (git (?:reset --soft [0-9a-f]{40,64}|update-ref -d HEAD)) in the store/)?.[1] ?? null;
+
+for (const file of ["README.md", "artifacts/plans/foo/other.md"]) {
+  test(`a ${file} of 70 MiB that a commit made by hand put on the branch, which the other machine then edits, is refused by name before the merge reads it, and the command the refusal gives lets every other change sync`, { timeout: 240000 }, async (context) => {
+    const { remote, a, b } = await stores(context, { [file]: "small\n" });
+    await truncate(path.join(b, ...file.split("/")), 70 * MiB);
+    git(b, ["add", "--", file]);
+    git(b, ["commit", "-q", "-m", "by hand"]);
+    const before = git(b, ["rev-parse", "HEAD~1"]);
+    await put(b, { [SLICE]: "# Foo\n\nChanged on b.\n" });
+    await put(a, { [file]: "small\nedited\n" });
+    push(a, "edit");
+    const status = await syncRecordStoreNow(b);
+    assert.equal(status.state, "merge_failed", JSON.stringify(status));
+    assert.ok(status.message.includes(`"${file}", which holds ${70 * MiB} bytes`), status.message);
+    // The upstream's files are not on disk yet, so the command goes back to before the commit made by hand, not to the upstream's tip, which would undo the other machine's changes.
+    assert.equal(takeOffCommand(status.message), `git reset --soft ${before}`, status.message);
+    git(b, ["reset", "-q", "--soft", before]);
+    const next = await syncRecordStoreNow(b);
+    assert.ok(["ok", "conflicts"].includes(next.state), JSON.stringify(next));
+    assert.ok(git(remote, ["show", `main:${SLICE}`]).includes("Changed on b."), "the other change reaches the remote");
+    assert.equal(git(remote, ["show", `main:${file}`]), "small\nedited", "and the other machine's edit stays");
+    assert.equal((await syncRecordStoreNow(a)).state, "ok");
+  });
+}
+
+// A hand commit that puts 1001 comment files in one comment folder, the most an artifact's comments may hold being 1000.
+async function commentFolderCommit(b, message = "by hand") {
+  const folder = path.join(b, "artifact-comments", "plans", "foo", "slice.md");
+  await mkdir(folder, { recursive: true });
+  for (let n = 0; n < 1001; n++) await writeFile(path.join(folder, `2026-01-01T00-00-00-000Z-${n.toString(16).padStart(8, "0")}.json`), "{}\n");
+  git(b, ["add", "-A"]);
+  git(b, ["commit", "-q", "-m", message]);
+  return folder;
+}
+
+test("with the remote's branch deleted, the command that a refusal of a hand commit gives keeps every commit that other machines share, so every machine syncs after it runs", { timeout: 240000 }, async (context) => {
+  const { remote, a, b } = await stores(context);
+  await put(a, { "artifacts/plans/foo/a1.md": "a1\n" });
+  push(a, "a1");
+  assert.equal((await syncRecordStoreNow(b)).state, "ok");
+  const shared = git(b, ["rev-parse", "HEAD"]);
+  git(remote, ["update-ref", "-d", "refs/heads/main"]);
+  await commentFolderCommit(b);
+  await put(b, { [SLICE]: "# Foo\n\nChanged on b.\n" });
+  const status = await syncRecordStoreNow(b);
+  assert.equal(status.state, "merge_failed", JSON.stringify(status));
+  assert.equal(takeOffCommand(status.message), `git reset --soft ${shared}`, status.message);
+  git(b, ["reset", "-q", "--soft", shared]);
+  const next = await syncRecordStoreNow(b);
+  assert.equal(next.state, "ok", JSON.stringify(next));
+  assert.equal(git(remote, ["merge-base", "--is-ancestor", shared, "main"]), "", "the remote's branch holds the shared history again");
+  assert.equal((await syncRecordStoreNow(a)).state, "ok", "and the other machine, which holds it, syncs");
+});
+
+test("with the remote's branch deleted, a refusal whose every command would take off commits that other machines share gives no command and says what to change instead, which lets every machine sync", { timeout: 240000 }, async (context) => {
+  const { remote, a, b } = await stores(context);
+  // The remote holds a second branch that this machine shares, which a commit made by hand merges into the store's branch.
+  git(a, ["checkout", "-q", "-b", "side"]);
+  await put(a, { "artifacts/plans/foo/side.md": "side\n" });
+  git(a, ["add", "-A"]);
+  git(a, ["commit", "-q", "-m", "side"]);
+  git(a, ["push", "-q", "origin", "side"]);
+  git(a, ["checkout", "-q", "main"]);
+  await put(a, { "artifacts/plans/foo/a1.md": "a1\n" });
+  push(a, "a1");
+  assert.equal((await syncRecordStoreNow(b)).state, "ok");
+  git(b, ["merge", "-q", "--no-edit", "origin/side"]);
+  const folder = await commentFolderCommit(b);
+  git(remote, ["update-ref", "-d", "refs/heads/main"]);
+  const status = await syncRecordStoreNow(b);
+  assert.equal(status.state, "merge_failed", JSON.stringify(status));
+  assert.equal(takeOffCommand(status.message), null, status.message);
+  assert.match(status.message, /No command can take the commit you made by hand that holds it off the store's branch without also taking off commits that other machines already share, so move the comment files of "artifact-comments\/plans\/foo\/slice\.md" past the first 1000 by file name out of that folder/, status.message);
+  const last = (await readdir(folder)).sort().at(-1);
+  await rm(path.join(folder, last));
+  const next = await syncRecordStoreNow(b);
+  assert.equal(next.state, "ok", JSON.stringify(next));
+  assert.equal(git(remote, ["ls-tree", "-r", "--name-only", "main", "artifact-comments/"]).split("\n").length, 1000);
+  assert.equal((await syncRecordStoreNow(a)).state, "ok", "and the other machine, which holds the shared history, syncs");
+});
+
+for (const file of ["README.md", "artifacts/plans/foo/other.md", "roadmap.json"]) {
+  test(`a merge base that holds a ${file} of 70 MiB that both sides then changed is never read: the store keeps the upstream's version and saves this machine's`, { timeout: 240000 }, async (context) => {
+    const { remote, a, b } = await stores(context, { [file]: "{}\n" });
+    // A commit made elsewhere puts the large file on the remote's branch, which this machine's sync refuses, and a later one shrinks it, which this machine takes.
+    await truncate(path.join(a, ...file.split("/")), 70 * MiB);
+    push(a, "large by hand");
+    const large = git(a, ["rev-parse", "HEAD"]);
+    assert.equal((await syncRecordStoreNow(b)).state, "merge_failed");
+    await put(a, { [file]: "{\"shrunk\":\"on the remote\"}\n" });
+    push(a, "shrunk");
+    assert.equal((await syncRecordStoreNow(b)).state, "ok");
+    // The remote's branch then goes back to the large file and shrinks it in other words, so the merge base holds the large file and both sides changed it.
+    git(a, ["reset", "-q", "--hard", large]);
+    await put(a, { [file]: "{\"shrunk\":\"again\"}\n" });
+    git(a, ["add", "-A"]);
+    git(a, ["commit", "-q", "-m", "shrunk again"]);
+    git(a, ["push", "-q", "-f", "origin", "main"]);
+    await put(b, { [SLICE]: "# Foo\n\nChanged on b.\n" });
+    const status = await syncRecordStoreNow(b);
+    assert.equal(status.state, "conflicts", JSON.stringify(status));
+    assert.deepEqual(status.conflicts.map((conflict) => conflict.path), [file]);
+    assert.equal(git(remote, ["show", `main:${file}`]), "{\"shrunk\":\"again\"}", "the store keeps the upstream's version");
+    assert.equal(await readFile((await savedFiles(b))[file], "utf8"), "{\"shrunk\":\"on the remote\"}\n", "and saves this machine's");
+    assert.ok(git(remote, ["show", `main:${SLICE}`]).includes("Changed on b."), "while every other change syncs");
+  });
+}
+
+test("a .gitattributes with a line of 2048 bytes or more that a commit made by hand put on the branch is refused by name with the command that takes that commit off, after which every other change syncs", { timeout: 240000 }, async (context) => {
+  const { remote, b } = await stores(context);
+  await put(b, { ".gitattributes": `*.md ${"x".repeat(3000)}\n`, "artifacts/plans/foo/other.md": "# Other\n\nhand edit\n" });
+  git(b, ["add", "-A"]);
+  git(b, ["commit", "-q", "-m", "by hand"]);
+  await put(b, { [SLICE]: "# Foo\n\nChanged on b.\n" });
+  const status = await syncRecordStoreNow(b);
+  assert.equal(status.state, "merge_failed", JSON.stringify(status));
+  assert.match(status.message, /The store's branch holds "\.gitattributes" that Git's object check refuses \(.*gitattributesLineLength/, status.message);
+  const command = takeOffCommand(status.message);
+  assert.equal(command, `git reset --soft ${git(b, ["rev-parse", "@{upstream}"])}`, status.message);
+  git(b, command.split(" ").slice(1));
+  const next = await syncRecordStoreNow(b);
+  assert.equal(next.state, "ok", JSON.stringify(next));
+  assert.deepEqual(next.withheld.map((entry) => entry.path), [".gitattributes"]);
+  assert.ok(git(remote, ["show", `main:${SLICE}`]).includes("Changed on b."));
+  assert.ok(git(remote, ["show", "main:artifacts/plans/foo/other.md"]).includes("hand edit"));
+});
+
+test("the tips that pushes by force outside Prism replaced, which the store's branch never held, leave no ref behind", { timeout: 240000 }, async (context) => {
+  const { a, b } = await stores(context);
+  const start = git(a, ["rev-parse", "HEAD"]);
+  const sharedRefs = () => git(b, ["for-each-ref", "--format=%(refname)", "refs/prism-store/shared/"]).split("\n").filter(Boolean);
+  for (let round = 0; round < 3; round++) {
+    // Each round the remote's branch takes a tip that this machine refuses and so never merges, and a push by force then replaces it.
+    git(a, ["reset", "-q", "--hard", start]);
+    await truncate(path.join(a, "README.md"), 2 * MiB);
+    git(a, ["add", "-A"]);
+    git(a, ["commit", "-q", "-m", `large ${round}`]);
+    git(a, ["push", "-q", "-f", "origin", "main"]);
+    assert.equal((await syncRecordStoreNow(b)).state, "merge_failed");
+    git(a, ["reset", "-q", "--hard", start]);
+    await put(a, { [`artifacts/plans/foo/round-${round}.md`]: "round\n" });
+    git(a, ["add", "-A"]);
+    git(a, ["commit", "-q", "-m", `round ${round}`]);
+    git(a, ["push", "-q", "-f", "origin", "main"]);
+    await put(b, { [SLICE]: `# Foo\n\nRound ${round}.\n` });
+    const status = await syncRecordStoreNow(b);
+    assert.equal(status.state, "ok", JSON.stringify(status));
+  }
+  assert.equal(sharedRefs().length, 1, sharedRefs().join(", "));
+  assert.equal(git(b, ["rev-parse", sharedRefs()[0]]), git(b, ["rev-parse", "HEAD"]), "and the one left is the tip this machine pushed");
 });
 
 // The notes of the next tool result of a Prism server of this machine, which uses the store at b.

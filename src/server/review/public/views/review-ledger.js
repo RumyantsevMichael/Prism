@@ -2,14 +2,14 @@ import { jsonTreeHtml } from "./json-tree.js";
 import { badge, bindLinks, card, chip, emptyState, escapeHtml, evidenceChip, formatSelector, formatTime, keyValues, pathText, plural, recordChip, shortId, stat, summaryPanel } from "./util.js";
 import { runTotalsHtml, waveRunTotals } from "./run-totals.js";
 
-const STATUSES = ["OPEN", "IN PROGRESS", "REOPENED", "FIXED", "VERIFIED"];
+const STATUSES = ["OPEN", "IN PROGRESS", "REOPENED", "FIXED", "VERIFIED", "DEFERRED"];
 const SEVERITIES = ["blocker", "high", "medium", "low"];
 
 function token(value) {
   return String(value).toLowerCase().replace(/[^a-z0-9]+/g, "-");
 }
 
-const STATUS_TONES = { OPEN: "danger", "IN PROGRESS": "info", REOPENED: "warning", FIXED: "accent", VERIFIED: "success" };
+const STATUS_TONES = { OPEN: "danger", "IN PROGRESS": "info", REOPENED: "warning", FIXED: "accent", VERIFIED: "success", DEFERRED: "neutral" };
 const SEVERITY_TONES = { blocker: "danger", high: "warning", medium: "info", low: "neutral" };
 const RESULT_TONES = { clean: "success", passed: "success", pass: "success", findings: "warning", failed: "danger", fail: "danger", pending: "neutral" };
 
@@ -83,6 +83,8 @@ function findingDetail(finding, ctx) {
     return emptyState("Select a finding", "Choose a finding on the board to read its evidence, close condition, and status history.");
   }
   const history = [...(finding.history ?? [])].reverse();
+  // A deferral's history entry carries the follow-up as its evidence, which the details above already show.
+  const repeatsFollowUp = (entry) => entry.status === "DEFERRED" && entry.evidence === finding.deferral?.followUp;
   // A revision names each changed field with its old and new value, and its entry's evidence is the reason.
   const revisionHtml = (revised) => [
     revised.clause ? `<p class="muted">Contract clause ${revised.clause.from ? `<code>${escapeHtml(revised.clause.from)}</code>` : "none"} → ${revised.clause.to ? `<code>${escapeHtml(revised.clause.to)}</code>` : "removed"}</p>` : "",
@@ -93,6 +95,9 @@ function findingDetail(finding, ctx) {
     <p class="chip-row">${severityBadge(finding.severity)}${statusBadge(finding.status)}<code>${escapeHtml(finding.id)}</code></p>
     ${keyValues([
       ["Raised in", raisedIn(finding) ? `wave <code>${escapeHtml(raisedIn(finding))}</code>` : null],
+      ["Decision gate", finding.deferral?.gate ? `<code>${escapeHtml(finding.deferral.gate)}</code>` : null],
+      ["Follow-up", finding.deferral?.followUp ? escapeHtml(finding.deferral.followUp) : null],
+      ["Deferred in", finding.deferral?.wave ? `wave <code>${escapeHtml(finding.deferral.wave)}</code>` : null],
       ["Affected path", finding.affectedPath ? pathText(finding.affectedPath, ctx) : null],
       ["Escalation", finding.escalationTarget ? escapeHtml(finding.escalationTarget) : null],
       ["Contract clause", finding.clause ? `<code>${escapeHtml(finding.clause)}</code>` : null],
@@ -106,7 +111,7 @@ function findingDetail(finding, ctx) {
       <div class="timeline-head">${statusBadge(entry.status)}<span>${escapeHtml(entry.actor)}</span><span class="muted">${escapeHtml(formatTime(entry.at))}</span></div>
       <p class="muted">wave <code>${escapeHtml(entry.wave)}</code></p>
       ${entry.revised ? revisionHtml(entry.revised) : ""}
-      ${entry.evidence ? `<p>${escapeHtml(entry.evidence)}</p>` : ""}
+      ${entry.evidence && !repeatsFollowUp(entry) ? `<p>${escapeHtml(entry.evidence)}</p>` : ""}
     </li>`).join("")}</ol></div>`;
 }
 
@@ -137,7 +142,8 @@ export function render(container, data, ctx) {
   const lanes = [...new Set(findings.map((finding) => finding.lane))].sort();
   const filtered = findings.filter((finding) => (!state.lane || finding.lane === state.lane) && (!state.severity || finding.severity === state.severity) && (!state.wave || raisedIn(finding) === state.wave));
   const openCount = findings.filter((finding) => ["OPEN", "IN PROGRESS", "REOPENED"].includes(finding.status)).length;
-  const blocking = findings.filter((finding) => finding.status !== "VERIFIED" && ["blocker", "high"].includes(finding.severity)).length;
+  const blocking = findings.filter((finding) => !["VERIFIED", "DEFERRED"].includes(finding.status) && ["blocker", "high"].includes(finding.severity)).length;
+  const deferredCount = findings.filter((finding) => finding.status === "DEFERRED").length;
   const unresolvedConflicts = (record.conflicts ?? []).filter((conflict) => !conflict.resolved).length;
 
   const select = (name, label, options, value) => `<prism-field type="select" class="ledger-filter" label="${escapeHtml(label)}" data-filter="${name}">${options.map(([option, text]) => `<prism-option value="${escapeHtml(option)}"${option === value ? " selected" : ""}>${escapeHtml(text)}</prism-option>`).join("")}</prism-field>`;
@@ -147,6 +153,7 @@ export function render(container, data, ctx) {
         ${stat(waves.length === 1 ? "wave" : "waves", String(waves.length))}
         ${stat("unresolved findings", String(openCount))}
         ${stat("blocker / high not verified", String(blocking), { tone: blocking ? "danger" : "" })}
+        ${deferredCount ? stat("deferred findings", String(deferredCount), { hint: "accepted with a follow-up" }) : ""}
         ${stat(currentWave ? `current wave ${currentWave.id}` : "current wave", currentWave ? (currentWave.accepted ? "Accepted" : "Open") : "—", { tone: currentWave?.accepted ? "success" : "warning" })}
         ${unresolvedConflicts ? stat("open conflicts", String(unresolvedConflicts), { tone: "danger" }) : ""}
       </div>

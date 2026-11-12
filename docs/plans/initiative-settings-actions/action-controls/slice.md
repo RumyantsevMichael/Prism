@@ -1,5 +1,8 @@
 # Generic action controls in the review page
 
+> Shipped history: initiative `initiative-settings-actions` shipped on 2026-11-08, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 The initiative, slice, and index pages render every action generically as compact keyboard-reachable controls with confirmation and stale handling, read-only tabs say why, and every tab of the workspace's checkouts shows applied actions and their authors as they happen.

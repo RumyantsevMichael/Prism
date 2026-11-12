@@ -141,3 +141,4 @@ The lifecycle is shown in [run-record-lifecycle.puml](run-record-lifecycle.puml)
 2026-10-23: Design re-audit of run-records scoped that refusal to run-statistics traces, so the root pre-edit trace keeps its limit behavior.
 2026-11-02: The temporary local adapter was replaced by the merged record store in `src/server/workflow/record-store.mjs`.
 2026-11-02: Run records and attribution reads follow the configured record store from #57.
+2026-11-08: [Shipped work as immutable history](shipped-history.md) proposes keeping a shipped initiative's coordination records, so coordination files are no longer deleted at ship; run records stay independent of them, and only a superseded initiative's records can still be removed.

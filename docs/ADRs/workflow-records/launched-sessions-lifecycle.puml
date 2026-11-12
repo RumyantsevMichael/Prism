@@ -1,0 +1,41 @@
+@startuml
+title Launched session lifecycle
+actor Person
+participant "Review page" as Page
+participant "Review app\naction registry" as App
+participant "Native dialog" as Dialog
+participant "Supervisor" as Sup
+participant "Host CLI" as Host
+participant "Prism server\nof the host" as Server
+database "Private\nlaunch folder" as Folder
+database "Coordination\nstate" as State
+
+Person -> Page : launch initiative with host
+Page -> App : apply launch action
+alt launch window closed
+  App -> Dialog : confirm launch
+  Dialog -> Person : Cancel is the default
+  Person -> Dialog : Launch
+end
+App -> Folder : create session record
+App -> Sup : start detached
+App -> State : history entry
+Sup -> Host : fixed arguments, launch id, prompt on its input
+Host -> Server : start
+Server -> State : ask gate
+Server -> Folder : mark gate
+Host --> Sup : events, exit status
+Sup -> Folder : run ended
+Person -> Page : answer gate
+Page -> App : apply gate answer
+App -> State : answer, history entry
+App -> Folder : record answer
+App -> Sup : resume when no run runs
+Sup -> Host : resume arguments
+Person -> Page : stop
+Page -> App : apply stop
+App -> Folder : stop request
+Sup -> Host : interrupt, then close its input
+Host --> Sup : turn ended, exit
+Sup -> Folder : stopped
+@enduml

@@ -11,27 +11,32 @@ export interface JsonLineReader extends EventEmitter {
 
 export function readJsonLines(stream: Readable): JsonLineReader {
   const reader = new EventEmitter() as JsonLineReader;
-  let pending = "";
+  // The chunks of the unfinished line. Each chunk is searched once and joined once, so a line of many megabytes costs time in proportion
+  // to its length; appending to one string and searching it again from the start after each chunk took minutes for a large index.
+  let parts: string[] = [];
   let closed = false;
   const emitLine = (line: string) => reader.emit("line", line.endsWith("\r") ? line.slice(0, -1) : line);
   const close = () => {
     if (closed) return;
     closed = true;
-    if (pending) emitLine(pending);
-    pending = "";
+    const rest = parts.join("");
+    parts = [];
+    if (rest) emitLine(rest);
     reader.emit("close");
   };
   stream.setEncoding("utf8");
   stream.on("data", (chunk: string) => {
-    pending += chunk;
     let start = 0;
-    let end = pending.indexOf("\n");
+    let end = chunk.indexOf("\n");
     while (end !== -1) {
-      emitLine(pending.slice(start, end));
+      parts.push(chunk.slice(start, end));
+      const line = parts.join("");
+      parts = [];
+      emitLine(line);
       start = end + 1;
-      end = pending.indexOf("\n", start);
+      end = chunk.indexOf("\n", start);
     }
-    pending = pending.slice(start);
+    if (start < chunk.length) parts.push(chunk.slice(start));
   });
   stream.on("end", close);
   stream.on("close", close);

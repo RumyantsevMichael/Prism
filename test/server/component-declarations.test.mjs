@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { DECLARATION, INITIATIVE, THREE, command, componentProject, planAndAccept, plannedSlice, read, refusal, slicePlan, update, workflow } from "./fixtures/components.mjs";
 import { prismServer } from "./fixtures/repository-checkouts.mjs";
+import { defer } from "./fixtures/teardown.mjs";
 
 // Requirements: docs/requirements/components.md §3-§14.
 // Contract: docs/plans/components/component-slices/slice.md clauses 1-15 and 36-38.
@@ -83,7 +84,7 @@ test("clause 5: the root component is named root without a store and after the R
   assert.equal(accepted.record.slices["billing-totals"].component, "root/root");
 
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-components-store-")));
-  context.after(() => rm(parent, { recursive: true, force: true }));
+  defer(context, () => rm(parent, { recursive: true, force: true }));
   const store = path.join(parent, "store");
   await mkdir(store);
   // A project folder sits directly in the temporary folder, so the store is one folder up from it.
@@ -147,6 +148,8 @@ test("clause 9: invalid declarations refuse the operations that read components 
   const root = await solo(context, withComponents(cases[2][0]));
   await plannedSlice(root, "billing-totals", THREE[0].changes);
   const server = await prismServer(context, root);
+  const created = (await server.call("get_initiative", { initiative: INITIATIVE })).result.structuredContent;
+  assert.equal((await server.call("update_initiative", { initiative: INITIATIVE, expectedRevision: created.revision, operations: [{ op: "claim", slug: INITIATIVE }] })).error, undefined);
   const current = (await server.call("get_initiative", { initiative: INITIATIVE })).result.structuredContent;
   const response = await server.call("update_initiative", { initiative: INITIATIVE, expectedRevision: current.revision, operations: [{ op: "propose_design", slug: INITIATIVE, operations: slicePlan([billing()]) }] });
   assert.ok(response.error, "the proposal is refused");
@@ -229,7 +232,7 @@ test("clause 15: a scope spans components, and a proposal with one refused slice
 // A path store beside the project, named relative to it, for a configuration that names its repository.
 async function storeLines(context, repository) {
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-components-store-")));
-  context.after(() => rm(parent, { recursive: true, force: true }));
+  defer(context, () => rm(parent, { recursive: true, force: true }));
   await mkdir(path.join(parent, "store"));
   return [`- Store: ../${path.relative(await realpath(os.tmpdir()), path.join(parent, "store"))}`, `- Repository: ${repository}`];
 }

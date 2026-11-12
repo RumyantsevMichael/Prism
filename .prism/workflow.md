@@ -20,14 +20,14 @@
 - Repository: prism
 
 ## Stack
-- Languages: Markdown prompts and Python benchmark tooling
-- Test command: npm test && python3 bench/harness/bench.py selfcheck
+- Languages: Markdown prompts and TypeScript
+- Test command: npm test
 - BDD harness: none
 - Typecheck: n/a
 - Lint/format: n/a
 
 ## Verification
-- Run the server tests, the Claude validator, the Codex package smoke test, and the benchmark selfcheck.
+- Run the server tests, the Claude validator, and the Codex package smoke test.
 
 ## Tracker
 - System: GitHub issues

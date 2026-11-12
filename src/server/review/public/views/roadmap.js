@@ -2,9 +2,19 @@ import { applyWidths, progressBar, stateBadge } from "./entities.js";
 import { isExpired } from "./claim-index.js";
 import { claimAttributes } from "./claims.js";
 import { enablePanZoom, graphCard, renderGraph } from "./graph.js";
-import { badge, bindLinks, card, emptyNote, escapeHtml, plural, stat, summaryPanel } from "./util.js";
+import { badge, bindLinks, card, emptyNote, escapeHtml, plural } from "./util.js";
+import { currentPhase } from "./slice.js";
+import { preference, setPreference } from "../kit/preferences.js";
 
-const MODES = [["board", "Board"], ["list", "List"], ["graph", "Graph"]];
+/** The Roadmap page's views, which the Roadmap place's sidebar switches; the page draws no switch of its own. */
+export const ROADMAP_VIEWS = Object.freeze([["board", "Board"], ["list", "List"], ["graph", "Graph"]]);
+/** The lanes a lane link names in its address, each with its band. */
+export const LANES = Object.freeze([["now", "Now"], ["next", "Next"], ["later", "Later"], ["parked", "Parked"]]);
+
+/** The heading of a lane on the drawn board, or null when the board does not show it. */
+export function laneHeading(root, lane) {
+  return LANES.some(([name]) => name === lane) ? root.querySelector(`#roadmap-band-${lane}`) : null;
+}
 
 export { stateBadge };
 
@@ -46,41 +56,68 @@ function visibleItems(data, archive) {
   return archive ? data.items : data.items.filter((item) => !ARCHIVED.has(item.state));
 }
 
-const STATE_COLUMNS = [["envisioned", "Envisioned"], ["planned", "Planned"], ["in-progress", "In progress"], ["shipped", "Shipped"]];
+const STATE_NAMES = { envisioned: "Envisioned", planned: "Planned", "in-progress": "In progress", shipped: "Shipped", superseded: "Superseded" };
+const BAND_HINTS = { Now: "being built", Next: "designed next", Later: "envisioned", Parked: "not planned", Shipped: "done" };
+const PHASE_NAMES = ["requirements", "design", "frozen", "build", "review", "shipped"];
 
-function swimlaneCard(item, titles, rank) {
-  return `<li class="initiative-item state-${escapeHtml(item.state)}">
-    <div class="initiative-item-head"><span class="item-rank"><span aria-hidden="true">#${rank}</span><span class="sr-only">Priority ${rank} in ${escapeHtml(item.band)}</span></span>${item.pillar ? badge(item.pillar) : ""}</div>
-    <h3 class="item-title">${initiativeLink(item.id, item.title)}</h3>
-    <p class="item-intent">${escapeHtml(item.intent)}</p>
-    ${progressBar(item.progress)}
-    ${claimStack(item.claims)}
-    ${signals(item)}
-    ${relationChips(item, titles)}
-  </li>`;
+// One segment per leaf slice in the color of its phase; a slice that has not started and has no design draws the empty line.
+function phaseBar(item) {
+  const slices = item.slices ?? [];
+  if (!slices.length || item.state === "envisioned") return "";
+  const phases = slices.map((slice) => {
+    if (slice.status === "not-started" && !slice.designed) return "";
+    const index = currentPhase({ status: slice.status, design: slice.designed ? { review: slice.review } : null });
+    return PHASE_NAMES[Math.min(index, PHASE_NAMES.length - 1)];
+  });
+  const shipped = slices.filter((slice) => slice.status === "done").length;
+  const started = phases.filter(Boolean).length;
+  const label = started || shipped ? `${shipped} of ${slices.length} shipped` : `0 of ${slices.length} started`;
+  return `<prism-phase-bar phases="${phases.join(",")}" label="${label}"></prism-phase-bar>`;
 }
 
-// Bands are swimlanes and lifecycle states are columns; a card keeps its priority rank within its band.
+// The card's footer: who holds its slices, or that nobody does yet once it has slices to hold.
+function cardFoot(item) {
+  if (item.claims?.length) return `<footer class="roadmap-item-foot">${claimStack(item.claims)}</footer>`;
+  if (item.slices?.length && (item.state === "planned" || item.state === "in-progress")) return '<footer class="roadmap-item-foot"><span>Nobody holds a slice yet</span></footer>';
+  return "";
+}
+
+function boardCard(item, titles, rank) {
+  return `<article class="initiative-item roadmap-item state-${escapeHtml(item.state)}" aria-labelledby="roadmap-item-${escapeHtml(item.id)}">
+    <header class="roadmap-item-top"><span class="item-rank"><span aria-hidden="true">#${rank}</span><span class="sr-only">Priority ${rank} in ${escapeHtml(item.band)}</span></span>${item.pillar ? `<span class="roadmap-item-area">${escapeHtml(item.pillar)}</span>` : ""}<prism-state state="${escapeHtml(item.state)}">${escapeHtml(STATE_NAMES[item.state] ?? item.state)}</prism-state></header>
+    <h3 class="item-title" id="roadmap-item-${escapeHtml(item.id)}">${initiativeLink(item.id, item.title)}</h3>
+    <p class="item-intent">${escapeHtml(item.intent)}</p>
+    ${phaseBar(item)}
+    ${signals(item)}
+    ${relationChips(item, titles)}
+    ${cardFoot(item)}
+  </article>`;
+}
+
+// Bands are full-width lanes stacked in priority order, each with its count and what it holds above its cards; a card keeps its priority rank within its band, and its state shows on the card.
+// An empty band takes one line, so the bands that hold work stay close together.
 function board(data, titles, archive, collapsed) {
   const items = visibleItems(data, archive).filter((item) => item.state !== "superseded");
   const superseded = archive ? data.items.filter((item) => item.state === "superseded") : [];
   const bands = archive ? data.bands : data.bands.filter((band) => band !== "Shipped");
-  const columns = archive ? STATE_COLUMNS : STATE_COLUMNS.filter(([state]) => state !== "shipped");
-  const head = columns.map(([state, label]) => `<div class="lane-column state-${state}"><span>${label}</span><prism-badge>${items.filter((item) => item.state === state).length}</prism-badge></div>`).join("");
   const lanes = bands.map((band) => {
     const members = items.filter((item) => item.band === band);
-    const rank = new Map(members.map((item, index) => [item.id, index + 1]));
-    const open = members.length > 0 && !collapsed.has(band);
-    const cells = members.length ? columns.map(([state, label]) => {
-      const cards = members.filter((item) => item.state === state);
-      return `<ul class="lane-cell" aria-label="${escapeHtml(band)}, ${escapeHtml(label)}"><li class="lane-cell-label" aria-hidden="true">${escapeHtml(label)}</li>${cards.map((item) => swimlaneCard(item, titles, rank.get(item.id))).join("")}</ul>`;
-    }).join("") : "";
-    const lane = `<div class="lane-cells">${cells}</div>`;
-    return members.length
-      ? `<section class="lane band-${band.toLowerCase()}" aria-label="${escapeHtml(band)}"><prism-disclosure data-lane="${escapeHtml(band)}" summary="${escapeHtml(`${band} · ${members.length}`)}"${open ? " open" : ""}>${lane}</prism-disclosure></section>`
-      : `<section class="lane band-${band.toLowerCase()} is-empty" aria-label="${escapeHtml(band)}"><h2 class="lane-heading">${escapeHtml(band)} <span class="muted">· 0</span></h2></section>`;
+    const open = !collapsed.has(band);
+    const id = `roadmap-band-${band.toLowerCase()}`;
+    const hint = BAND_HINTS[band] ? `<span class="roadmap-band-hint">${BAND_HINTS[band]}</span>` : "";
+    const toggle = `<prism-button class="roadmap-band-toggle" variant="ghost" size="sm" data-lane="${escapeHtml(band)}" label="${open ? "Collapse" : "Expand"} ${escapeHtml(band)}" aria-expanded="${open}"><prism-icon name="${open ? "chevron-down" : "chevron-right"}" size="xs"></prism-icon></prism-button>`;
+    const classes = `roadmap-band band-${band.toLowerCase()}${band === "Parked" ? " is-parked" : ""}${members.length ? "" : " has-none"}`;
+    if (!members.length) {
+      return `<section class="${classes}" aria-labelledby="${id}">
+      <header class="roadmap-band-head"><h2 class="roadmap-band-name" id="${id}">${escapeHtml(band)}</h2><prism-badge tone="neutral">0</prism-badge>${hint}<span class="roadmap-band-none muted">No initiatives</span></header>
+    </section>`;
+    }
+    return `<section class="${classes}" aria-labelledby="${id}">
+      <header class="roadmap-band-head"><h2 class="roadmap-band-name" id="${id}">${escapeHtml(band)}</h2><prism-badge tone="neutral">${members.length}</prism-badge>${hint}${toggle}</header>
+      <div class="roadmap-band-items"${open ? "" : " hidden"}>${members.map((item, index) => boardCard(item, titles, index + 1)).join("")}</div>
+    </section>`;
   }).join("");
-  return `<div class="lane-board columns-${columns.length}"><div class="lane-head" aria-hidden="true">${head}</div>${lanes}</div>
+  return `<div class="roadmap-board">${lanes}</div>
   ${superseded.length ? card("Superseded", `<prism-disclosure summary="${escapeHtml(plural(superseded.length, "initiative"))}"><ul class="row-list">${superseded.map((item) => `<li>${initiativeLink(item.id, item.title)} → ${initiativeLink(item.decision.by, titles.get(item.decision.by) ?? item.decision.by)}: ${escapeHtml(item.decision.reason ?? "")}</li>`).join("")}</ul></prism-disclosure>`) : ""}`;
 }
 
@@ -118,10 +155,15 @@ async function graph(container, data, ctx, titles, archive) {
   enablePanZoom(section, ctx.state.graph ??= {});
 }
 
+// The view comes from the Roadmap place's sidebar; a lane link always shows the board, with that lane open so its heading can scroll into view.
 export async function render(container, entity, ctx) {
   const data = entity.data;
-  ctx.state.mode ??= "board";
-  ctx.state.archive ??= false;
+  // The view, the archive toggle, and the collapsed lanes are the person's preferences, so every roadmap opens the way they last left one;
+  // the Roadmap place's sidebar switches the view, and a lane link always shows the board with that lane open.
+  const lane = LANES.find(([name]) => name === ctx.lane)?.[1] ?? null;
+  const chosen = ROADMAP_VIEWS.some(([name]) => name === ctx.roadmapView) ? ctx.roadmapView : preference("roadmap.view");
+  const view = { mode: lane ? "board" : chosen, archive: preference("roadmap.showArchived"), collapsedLanes: preference("roadmap.collapsedLanes") };
+  if (lane) view.collapsedLanes = view.collapsedLanes.filter((band) => band !== lane);
   const archived = data.items.filter((item) => ARCHIVED.has(item.state)).length;
   const titles = new Map(data.items.map((item) => [item.id, item.title]));
   const missing = data.error
@@ -132,49 +174,53 @@ export async function render(container, entity, ctx) {
         ? `<p class="error">The roadmap record is invalid: ${escapeHtml(data.errors.join(" "))}</p>`
         : "";
   const counts = Object.fromEntries(["in-progress", "planned", "envisioned", "shipped"].map((state) => [state, data.items.filter((item) => item.state === state).length]));
+  const metric = (count, label, state = "") => `<span class="roadmap-metric">${state ? `<prism-state state="${state}" aria-hidden="true"></prism-state>` : ""}<strong>${count}</strong> <span>${label}</span></span>`;
   container.innerHTML = `
-    ${summaryPanel(`<div class="summary-row">
-        <div class="stat-grid">
-          ${stat("initiatives", String(data.items.length))}
-          ${stat("in progress", String(counts["in-progress"]), { tone: "info" })}
-          ${stat("planned", String(counts.planned))}
-          ${stat("envisioned", String(counts.envisioned))}
-          ${stat("shipped", String(counts.shipped), { tone: "success" })}
-        </div>
-        <div class="view-controls">
-          <prism-button size="sm" data-roadmap-archive pressed="${ctx.state.archive}"${archived ? "" : " disabled"}>${ctx.state.archive ? "Hide" : "Show"} shipped and superseded (${archived})</prism-button>
-          <div class="segmented" role="group" aria-label="Roadmap view">${MODES.map(([mode, label]) => `<prism-button size="sm" variant="ghost" data-roadmap-mode="${mode}" pressed="${ctx.state.mode === mode}">${label}</prism-button>`).join("")}</div>
-        </div>
-      </div>
-      ${missing}`)}
+    ${missing ? `<prism-panel class="view-section summary-block">${missing}</prism-panel>` : ""}
+    <div class="roadmap-metrics" aria-label="Initiatives by state">
+      ${metric(data.items.length, data.items.length === 1 ? "initiative" : "initiatives")}
+      ${metric(counts["in-progress"], "in progress", "in-progress")}
+      ${metric(counts.planned, "planned", "planned")}
+      ${metric(counts.envisioned, "envisioned", "envisioned")}
+      ${metric(counts.shipped, "shipped", "shipped")}
+    </div>
     <div data-roadmap-body></div>
-    ${data.openQuestions?.length ? card("Open questions", `<ul class="row-list">${data.openQuestions.map((question) => `<li>${escapeHtml(question)}</li>`).join("")}</ul>`, { eyebrow: "Unresolved" }) : ""}
+    ${data.openQuestions?.length ? `<section class="roadmap-questions" aria-labelledby="roadmap-questions"><h2 id="roadmap-questions"><prism-icon name="question" size="sm"></prism-icon><span>Open questions</span><prism-badge tone="neutral">${data.openQuestions.length}</prism-badge></h2><ul>${data.openQuestions.map((question) => `<li><prism-icon name="chevron-right" size="xs"></prism-icon><span>${escapeHtml(question)}</span></li>`).join("")}</ul></section>` : ""}
     ${data.unlisted?.length ? card("Initiatives not on the roadmap", `<p class="muted">These plans folders have an initiative record but no roadmap entry.</p><ul class="row-list">${data.unlisted.map((id) => `<li>${initiativeLink(id, id)}</li>`).join("")}</ul>`, { eyebrow: "Needs prioritization" }) : ""}`;
+  // The page head carries the archive toggle beside the title; the board, list, and graph switch is the Roadmap place's, in the sidebar.
+  const head = container.parentElement?.querySelector(".artifact-header");
+  const controls = `<div class="view-controls roadmap-controls">
+      <prism-button size="sm" variant="ghost" data-roadmap-archive pressed="${view.archive}"${archived ? "" : " disabled"}>${view.archive ? "Hide" : "Show"} shipped and superseded <prism-badge tone="neutral">${archived}</prism-badge></prism-button>
+    </div>`;
+  head?.querySelector(".roadmap-controls")?.remove();
+  if (head) head.insertAdjacentHTML("beforeend", controls);
+  else container.insertAdjacentHTML("afterbegin", controls);
+  const controlRoot = head ?? container;
   const body = container.querySelector("[data-roadmap-body]");
-  if (ctx.state.mode === "graph") {
-    await graph(body, data, ctx, titles, ctx.state.archive);
+  if (view.mode === "graph") {
+    await graph(body, data, ctx, titles, view.archive);
   } else {
-    ctx.state.collapsedLanes ??= [];
-    body.innerHTML = ctx.state.mode === "list" ? list(data, titles, ctx.state.archive) : board(data, titles, ctx.state.archive, new Set(ctx.state.collapsedLanes));
+    body.innerHTML = view.mode === "list" ? list(data, titles, view.archive) : board(data, titles, view.archive, new Set(view.collapsedLanes));
   }
-  for (const lane of container.querySelectorAll("[data-lane]")) {
-    lane.addEventListener("toggle", () => {
-      const lanes = new Set(ctx.state.collapsedLanes);
-      if (lane.open) lanes.delete(lane.dataset.lane);
-      else lanes.add(lane.dataset.lane);
-      ctx.state.collapsedLanes = [...lanes];
+  for (const toggle of container.querySelectorAll("[data-lane]")) {
+    toggle.addEventListener("click", () => {
+      const lanes = new Set(view.collapsedLanes);
+      const band = toggle.dataset.lane;
+      const open = lanes.has(band);
+      if (open) lanes.delete(band);
+      else lanes.add(band);
+      view.collapsedLanes = [...lanes];
+      void setPreference("roadmap.collapsedLanes", view.collapsedLanes).catch(() => {});
+      toggle.closest(".roadmap-band").querySelector(".roadmap-band-items").hidden = !open;
+      toggle.setAttribute("aria-expanded", String(open));
+      toggle.setAttribute("label", `${open ? "Collapse" : "Expand"} ${band}`);
+      toggle.querySelector("prism-icon").setAttribute("name", open ? "chevron-down" : "chevron-right");
     });
   }
-  container.querySelector("[data-roadmap-archive]").addEventListener("click", () => {
-    ctx.state.archive = !ctx.state.archive;
+  controlRoot.querySelector("[data-roadmap-archive]").addEventListener("click", () => {
+    void setPreference("roadmap.showArchived", !view.archive).catch(() => {});
     ctx.rerender();
   });
-  for (const button of container.querySelectorAll("[data-roadmap-mode]")) {
-    button.addEventListener("click", () => {
-      ctx.state.mode = button.dataset.roadmapMode;
-      ctx.rerender();
-    });
-  }
   applyWidths(container);
   bindLinks(container, ctx);
 }

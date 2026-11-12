@@ -8,7 +8,12 @@
   "plugins": [
     {
       "name": "prism",
-      "source": "./",
+      "source": {
+        "source": "github",
+        "repo": "RumyantsevMichael/Prism",
+        "ref": "prism--v0.23.0",
+        "sha": "eb9b6ebe380b7d8f8b4c784fb11faf7bff27ae27"
+      },
       "displayName": "Prism",
       "description": "Code-centered workflow with EARS requirements, architecture decisions, outcome slices designed as frozen contracts, verified implementation, and opt-in independent review.",
       "author": {
@@ -16,7 +21,7 @@
       },
       "homepage": "https://github.com/RumyantsevMichael/Prism#readme",
       "repository": "https://github.com/RumyantsevMichael/Prism",
-      "license": "MIT",
+      "license": "Apache-2.0",
       "category": "workflow",
       "tags": [
         "workflow",

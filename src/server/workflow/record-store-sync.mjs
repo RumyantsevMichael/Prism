@@ -1,10 +1,11 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import { copyFile, lstat, mkdir, open, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, IDENTITY_FILE_MAX, identityContent, identityOf, letterCaseKey, locationIdentity, STATUS_RECORD_NAME, uniqueIdentities, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
 import { markArtifactIndexStale } from "./artifact-index.mjs";
-import { withFileLock, writeAtomically } from "./artifact-store.mjs";
+import { renameWhenFree, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { commitProblem, gitFileName, isLinkMode, LINK_TARGET_BYTES_MAX, linkTargetProblem, TREE_DEPTH_MAX, TREE_DEPTH_TEXT, tooDeepTree, treeEntries, treeProblems } from "./git-objects.mjs";
 import { canonicalJson, hasRecordMerge, nestedDeeperThan, recordMergeFor } from "./record-merge.mjs";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
@@ -15,7 +16,10 @@ import { parseStoreJson } from "./store-json.mjs";
 // A record store that is a Git checkout exchanges its records with its upstream.
 // One process at a time syncs a store, and record reads and writes wait while a merge replaces record files.
 export const SYNC_DIRECTORY = ".prism-sync";
-const SETTINGS = { debounceMs: 5000, pullIntervalMs: 30000, waitMs: 10000, applyLockMs: 2000, gitTimeoutMs: 120000 };
+// treeFilesMax, when set, stands in for the bound on a store tree's files, and historyBytesMax for the bound on a listing of the history that the remote lacks, so a test can reach either with a small store.
+const SETTINGS = { debounceMs: 5000, pullIntervalMs: 30000, waitMs: 10000, applyLockMs: 2000, gitTimeoutMs: 120000, treeFilesMax: null, historyBytesMax: null };
+// A short-lived process, such as a hook, reads the clone as it is: a pull it starts would outlive its host's time limit and be killed partway.
+let pullOnRead = true;
 const PUSH_ATTEMPTS = 3;
 const COMMIT_LIST = 20;
 const scheduled = new Map();
@@ -33,9 +37,10 @@ const managed = new Set();
 // which the parent process may hold, as when a Git hook starts the server, so no store command inherits them.
 const INHERITED_OUT = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|QUARANTINE_PATH|REPLACE_REF_BASE|GRAFT_FILE|SHALLOW_FILE|LITERAL_PATHSPECS|GLOB_PATHSPECS|NOGLOB_PATHSPECS|ICASE_PATHSPECS|ATTR_SOURCE|REDIRECT_STDIN|REDIRECT_STDOUT|REDIRECT_STDERR)$/;
 
-/** Change the debounce, pull interval, or torn-read wait; tests shorten them. */
+/** Change the debounce, pull interval, or torn-read wait, or the bound on a store tree's files, which tests shorten, or turn off the pull that a record read starts. */
 export function configureRecordSync(settings = {}) {
   for (const key of Object.keys(SETTINGS)) if (Number.isFinite(settings[key])) SETTINGS[key] = settings[key];
+  if (typeof settings.pullOnRead === "boolean") pullOnRead = settings.pullOnRead;
 }
 
 /** Cancel every debounced sync and forget fetch times, so a process or a test can finish. */
@@ -101,13 +106,143 @@ export function runGit(base, args, options) {
   return git(base, args, options);
 }
 
-function git(base, args, { env = {}, input, maxBuffer = 64 * 1024 * 1024 } = {}) {
+// The most bytes of Git output that a sync takes whole, from one command whose output is bounded by construction: a constant answer, one line for each item that the sync handed it, or a merge of three files within their bounds.
+// Every output that can grow with a store's content or history is read record by record through gitRecords instead, with a bound on its records and their bytes.
+const GIT_OUTPUT_MAX = 64 * 1024 * 1024;
+// The most bytes of Git's error output that a sync keeps, which a remote's messages could otherwise grow without end.
+const GIT_ERRORS_MAX = 64 * 1024;
+
+function git(base, args, { env = {}, input } = {}) {
   return new Promise((resolve) => {
-    const child = execFile("git", [...FIXED_CONFIG, "-C", base, ...args], { env: gitEnvironment(env), timeout: SETTINGS.gitTimeoutMs, maxBuffer, encoding: "buffer" }, (error, stdout, stderr) => {
-      resolve({ ok: !error, code: error ? (typeof error.code === "number" ? error.code : -1) : 0, missing: error?.code === "ENOENT", stdout, text: stdout.toString("utf8").trim(), stderr: stderr.toString("utf8").trim() });
+    const child = execFile("git", [...FIXED_CONFIG, "-C", base, ...args], { env: gitEnvironment(env), timeout: SETTINGS.gitTimeoutMs, maxBuffer: GIT_OUTPUT_MAX, encoding: "buffer", windowsHide: true }, (error, stdout, stderr) => {
+      // Nothing here may throw, since a throw in this callback would end the process rather than the sync.
+      try {
+        const over = error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+        const errors = over ? `git ${args[0]} printed more than ${GIT_OUTPUT_MAX} bytes, more than a sync takes from one command.` : stderr.subarray(0, GIT_ERRORS_MAX).toString("utf8").trim();
+        resolve({ ok: !error, code: error ? (typeof error.code === "number" ? error.code : -1) : 0, missing: error?.code === "ENOENT", stdout, text: over ? "" : stdout.toString("utf8").trim(), stderr: errors });
+      } catch (failure) {
+        resolve({ ok: false, code: -1, missing: false, stdout: Buffer.alloc(0), text: "", stderr: `git ${args[0]} failed: ${failure.message}` });
+      }
     });
+    child.stdin?.on("error", () => {});
     if (input !== undefined) child.stdin.end(input);
   });
+}
+
+/**
+ * Run Git and take its output as records, each ended by the separator byte, as they arrive rather than from one buffer: take receives each record's bytes,
+ * and Git is stopped once more than limit records arrived, once the records hold more than maxBytes bytes in all, or once one record holds more than maxRecord bytes,
+ * so a listing never takes more memory or time than its bounds allow, whatever the tree or history holds.
+ * With separator null, take receives the output's chunks as they arrive, bounded by maxBytes alone.
+ * take may return a promise, and the output waits for it, so a reader can act on a batch of records before more arrive; take returning false stops the listing.
+ * Returns { ok, over, long, stopped, stderr }: over is "count" or "bytes" when a bound on all records was passed, long holds the first bytes of a record above maxRecord, and stopped says take stopped it.
+ */
+function gitRecords(base, args, { separator, limit = Infinity, maxBytes = Infinity, maxRecord = Infinity, take, input, env = {} }) {
+  return new Promise((resolve) => {
+    const child = spawn("git", [...FIXED_CONFIG, "-C", base, ...args], { env: gitEnvironment(env), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    let count = 0, bytes = 0, over = null, long = null, stopped = false, failure = null, done = false;
+    const errors = [];
+    let errorBytes = 0;
+    const stop = () => { done = true; child.kill(); };
+    // A record is checked against every bound before take sees it, so nothing past a bound is kept.
+    const record = async (bytesOf) => {
+      if (bytesOf.length > maxRecord) { long = Buffer.from(bytesOf.subarray(0, 512)); return false; }
+      if (++count > limit) { over = "count"; return false; }
+      if ((bytes += bytesOf.length + 1) > maxBytes) { over = "bytes"; return false; }
+      try {
+        const kept = await take(bytesOf);
+        if (kept === false) { stopped = true; return false; }
+      } catch (error) { failure = error.message; return false; }
+      return true;
+    };
+    const timer = setTimeout(() => { failure ??= `git ${args[0]} took longer than ${SETTINGS.gitTimeoutMs} ms.`; done = true; child.kill("SIGKILL"); }, SETTINGS.gitTimeoutMs);
+    child.stderr.on("data", (chunk) => { if (errorBytes < GIT_ERRORS_MAX) { errors.push(chunk); errorBytes += chunk.length; } });
+    child.stdin.on("error", () => {});
+    child.on("error", (error) => { failure ??= error.code === "ENOENT" ? "Git is not available." : error.message; });
+    const reading = (async () => {
+      let pending = Buffer.alloc(0);
+      try {
+        for await (const chunk of child.stdout) {
+          if (done) continue;
+          if (separator === null) {
+            if ((bytes += chunk.length) > maxBytes) { over = "bytes"; stop(); continue; }
+            try { if ((await take(chunk)) === false) { stopped = true; stop(); } } catch (error) { failure = error.message; stop(); }
+            continue;
+          }
+          pending = pending.length ? Buffer.concat([pending, chunk]) : chunk;
+          let at = 0;
+          for (let end; !done && (end = pending.indexOf(separator, at)) >= 0; at = end + 1) if (!(await record(pending.subarray(at, end)))) stop();
+          if (done) { pending = Buffer.alloc(0); continue; }
+          pending = Buffer.from(pending.subarray(at));
+          // A record that has not ended yet is held only up to its bound.
+          if (pending.length > maxRecord) { long = Buffer.from(pending.subarray(0, 512)); pending = Buffer.alloc(0); stop(); }
+        }
+      } catch (error) { if (!done) failure ??= error.message; }
+      return pending;
+    })();
+    child.on("close", async (code) => {
+      const pending = await reading;
+      clearTimeout(timer);
+      if (!done && !failure && pending.length && separator !== null) await record(pending);
+      const stderr = failure ?? Buffer.concat(errors).toString("utf8").trim();
+      resolve({ ok: Boolean(over || long || stopped) || (!failure && code === 0), over, long, stopped, stderr });
+    });
+    child.stdin.end(input ?? "");
+  });
+}
+
+// A refusal of Git output past the bound that a sync reads it within, which the sync reports by name as it reports an entry that no store may hold, and never as a failure of the process.
+// The sync stops where the refusal arises, so a refusal of the history that a push would send says that the branch was not pushed, and any other one that the sync went no further.
+const outputRefusal = (text, fix = "", outcome = "the sync went no further") => Object.assign(new Error(`${text}, so ${outcome}.${fix ? ` ${fix}` : ""}`), { unsafePath: true, outputBound: true });
+
+/**
+ * The most bytes of a listing of the history that the remote lacks, or of the contents of its commits and trees, that a sync reads, and the most records of such a listing:
+ * far above what years of syncs list, since each sync's commit changes a few files, so only a history that commits made by hand grew, or whose trees change far more than a store's, passes them.
+ * A listing past either bound is stopped there, and the push is refused by name.
+ */
+const HISTORY_BYTES_MAX = 256 * 1024 * 1024;
+const historyBytesMax = () => SETTINGS.historyBytesMax ?? HISTORY_BYTES_MAX;
+const historyRecordsMax = () => Math.floor(historyBytesMax() / 32);
+const HISTORY_FIX = "Take the commits made by hand that the remote lacks off the store's branch, such as by running git reset --soft with the tip of the remote's branch in the store, which keeps every file on disk, and the next sync commits the store's files again.";
+// A refusal of one commit's listing names that commit, which only a commit made by hand makes so large, and the command that takes it off with every later commit while every file stays on disk:
+// a soft reset to the commit before it, or, where it is the branch's first, which Git cannot reset to before, the removal of the branch's ref, as resetAdvice gives it.
+const historyRefusal = (what, commit = null, first = false) => outputRefusal(`Git's listing of ${what} holds more than ${historyBytesMax()} bytes or ${historyRecordsMax()} entries, more than a sync reads${commit ? " for one commit" : ""}`,
+  !commit ? HISTORY_FIX : first
+    ? "Take that commit made by hand off the store's branch, such as by running git update-ref -d HEAD in the store, which keeps every file on disk and takes every commit off the branch, since that commit is its first, and the next sync commits the store's files again."
+    : `Take that commit made by hand off the store's branch, such as by running git reset --soft ${commit}^ in the store, which keeps every file on disk and takes off every later commit too, and the next sync commits the store's files again.`,
+  "the store's branch was not pushed");
+async function commitRefusal(base, what, commit) {
+  const parent = await git(base, ["rev-parse", "--verify", "--quiet", `${commit}^1`]);
+  return historyRefusal(what, commit, !(parent.ok && parent.text));
+}
+
+// The most branches or shared commits of a remote that a sync lists, far above the few that a store's remote holds, since a sync checks each of them against the branch.
+const REMOTE_REFS_MAX = 4096;
+
+// The commits that a rev-list prints, read within the bounds of a history listing.
+async function historyCommits(base, args, input, env = {}) {
+  const commits = [];
+  const listed = await gitRecords(base, args, { separator: 10, limit: historyRecordsMax(), maxBytes: historyBytesMax(), maxRecord: 128, input, env, take: (line) => { if (line.length) commits.push(line.toString("latin1")); } });
+  if (listed.over || listed.long) throw historyRefusal("the commits that the remote lacks");
+  if (!listed.ok) throw Object.assign(new Error(listed.stderr || `git ${args[0]} failed.`), { git: listed });
+  return commits;
+}
+
+/**
+ * The lines of a Git command whose output is one line for each item that the sync handed it, or a few lines of a constant form, read through gitRecords within limit lines of at most maxRecord bytes each.
+ * A command that prints more is stopped and refused by what it lists, and one that fails throws with Git's message.
+ */
+async function gitLines(base, args, options) {
+  const listed = await gitLinesResult(base, args, options);
+  if (!listed.ok) throw Object.assign(new Error(listed.stderr || `git ${args[0]} failed.`), { git: listed });
+  return listed.lines;
+}
+// The same lines as { ok, lines, stderr }, for a caller that tries again when Git fails; output past the bounds is still refused.
+async function gitLinesResult(base, args, { input, env, limit, maxRecord = 512, what = `the output of git ${args[0]}` }) {
+  const lines = [];
+  const listed = await gitRecords(base, args, { separator: 10, limit, maxBytes: limit * (maxRecord + 1), maxRecord, input, env, take: (line) => { lines.push(line.toString("utf8")); } });
+  if (listed.over || listed.long) throw outputRefusal(`Git's listing of ${what} holds more than ${listed.long ? `${maxRecord} bytes in one line` : `${limit} lines`}, more than a sync reads`);
+  return { ok: listed.ok, lines, stderr: listed.stderr };
 }
 
 /**
@@ -125,7 +260,7 @@ export function gitTooOld() {
   const key = process.env.PATH ?? "";
   if (!versionChecks.has(key)) {
     versionChecks.set(key, new Promise((resolve) => {
-      execFile("git", ["--version"], { env: gitEnvironment(), timeout: SETTINGS.gitTimeoutMs }, (error, stdout) => {
+      execFile("git", ["--version"], { env: gitEnvironment(), timeout: SETTINGS.gitTimeoutMs, windowsHide: true }, (error, stdout) => {
         const found = /^git version (\d+)\.(\d+)(?:\.(\d+))?/.exec(error ? "" : String(stdout).trim());
         if (!found) return resolve(null);
         const [major, minor] = GIT_MINIMUM.split(".").map(Number);
@@ -175,7 +310,7 @@ export function scheduleRecordSync(base) {
 /** Start a background sync after a record read when the last fetch is older than the pull interval; the read never waits for it. */
 export function pullRecordStoreIfStale(base) {
   watched.add(base);
-  if (running.has(base) || Date.now() - (lastFetch.get(base) ?? 0) < SETTINGS.pullIntervalMs) return;
+  if (!pullOnRead || running.has(base) || Date.now() - (lastFetch.get(base) ?? 0) < SETTINGS.pullIntervalMs) return;
   lastFetch.set(base, Date.now());
   syncRecordStore(base).catch(() => {});
 }
@@ -398,7 +533,7 @@ export function syncRecordStore(base, options = {}) {
       // The holder may have committed before this process wrote, so a later sync picks the change up.
       if (error.code === "lock_timeout") { scheduleRecordSync(base); return { state: "skipped" }; }
       // An upstream entry that no store may hold, or a path that leads outside the store, stops the merge before any file changes, so the branch stays and every sync reports it until the upstream drops it.
-      if (error.unsafePath) return writeStatus(base, { state: "merge_failed", message: error.message, ...await counts(base) });
+      if (error.unsafePath) return writeStatus(base, { state: "merge_failed", message: error.message, ...await counts(base).catch(() => ({})) }).catch(() => ({ state: "merge_failed", message: withoutCredentials(error.message) }));
       // A Git error outside fetch, merge, and push, such as a leftover index lock, is reported as it is and never repaired here.
       return writeStatus(base, { state: "git_failed", message: error.message }).catch(() => ({ state: "git_failed", message: withoutCredentials(error.message) }));
     }
@@ -435,7 +570,7 @@ function unsafeName(name) {
 
 // The record store module, which owns the store's layout, imports this one, so it loads when a sync first needs that layout.
 let layout;
-const storeLayout = () => layout ??= import("./record-store.mjs").then(({ boundText, COMMENTS_PER_ARTIFACT_MAX, INERT_FILES, isRootStoreFile, isStoreFile, isStoreFolder, storeFileBound }) => {
+const storeLayout = () => layout ??= import("./record-store.mjs").then(({ boundText, COMMENTS_PER_ARTIFACT_MAX, INERT_FILES, isRootStoreFile, isStoreFile, isStoreFolder, STORE_FILE_BOUNDS, STORE_TREE_FILES_MAX, storeFileBound }) => {
   const shareable = (file) => isStoreFile(file) || INERT_FILES.has(file);
   /**
    * How a store treats a tree entry: "shared" for a regular file at a path Prism writes, or a README or license at the root, which every sync writes to disk and commits;
@@ -457,7 +592,11 @@ const storeLayout = () => layout ??= import("./record-store.mjs").then(({ boundT
   const isCommentFile = (file) => file.startsWith(`${ARTIFACT_COMMENTS}/`) && isStoreFile(file);
   // A README or license at the root, or the .gitattributes or .gitignore there, takes its kind's bound as every other file does, and no reader of Prism loads it,
   // so where both sides changed one and its lines conflict, the store keeps the upstream's version and saves this machine's, as for a record or an artifact.
-  return { shareable, isStoreFolder, kind, bound: storeFileBound, boundText, commentsMax: COMMENTS_PER_ARTIFACT_MAX, isCommentFile, rootFile: isRootStoreFile };
+  // The most bytes that the sync reads of one blob at a path: its kind's bound, or the largest bound of any kind at a path that has no kind of its own.
+  const largest = Math.max(...Object.values(STORE_FILE_BOUNDS));
+  const blobMax = (file) => storeFileBound(file) ?? largest;
+  const treeFilesMax = () => SETTINGS.treeFilesMax ?? STORE_TREE_FILES_MAX;
+  return { shareable, isStoreFolder, kind, bound: storeFileBound, blobMax, boundText, commentsMax: COMMENTS_PER_ARTIFACT_MAX, isCommentFile, rootFile: isRootStoreFile, treeFilesMax };
 });
 
 // Why a file stays out of a commit, or out of a store, by its size or by its comment folder's count, as a sync's status or refusal names it.
@@ -469,65 +608,92 @@ const overComments = (max) => `${OVER_COMMENTS} ${max} comment files, the most t
 
 /**
  * The first file of a commit's tree that a store shares and that holds more than its kind's bound, as { path, size, bound }, or the first comment folder that holds more comment files than an artifact may,
- * as { folder, count }; null when the tree holds neither. The sizes come from Git's tree listing, so no blob is read.
+ * as { folder, count }, or { files } with the bound for a tree of more files than a store's tree may hold; null when the tree holds none of them.
+ * The sizes come from Git's tree listing, so no blob is read.
  */
 export async function oversizedStoreEntry(base, commit) {
   const { kind, bound, isCommentFile, commentsMax } = await storeLayout();
-  const output = (await required(base, ["ls-tree", "-r", "-z", "-l", "--full-tree", commit])).stdout;
   const counts = new Map();
-  for (let at = 0; at < output.length;) {
-    const end = output.indexOf(0, at) < 0 ? output.length : output.indexOf(0, at);
-    const tab = output.indexOf(9, at);
-    if (tab < 0 || tab > end) throw new Error(`git ls-tree printed an entry without a path for ${commit}.`);
-    const [mode, , object, size] = output.subarray(at, tab).toString("latin1").split(/ +/);
-    const file = pathOfBytes(output.subarray(tab + 1, end));
-    at = end + 1;
-    if (!FILE_MODES.has(mode) || kind(file, { mode, object }) !== "shared") continue;
-    const limit = bound(file);
-    if (limit !== null && Number(size) > limit) return { path: file, size: Number(size), bound: limit };
-    if (isCommentFile(file)) {
-      const folder = path.posix.dirname(file);
-      counts.set(folder, (counts.get(folder) ?? 0) + 1);
-    }
+  let found = null;
+  try {
+    await listTree(base, commit, true, (meta, name) => {
+      if (found) return;
+      const [mode, , object, size] = meta.split(/ +/);
+      const file = pathOfBytes(name);
+      if (!FILE_MODES.has(mode) || kind(file, { mode, object }) !== "shared") return;
+      const limit = bound(file);
+      if (limit !== null && Number(size) > limit) { found = { path: file, size: Number(size), bound: limit }; return; }
+      if (isCommentFile(file)) {
+        const folder = path.posix.dirname(file);
+        counts.set(folder, (counts.get(folder) ?? 0) + 1);
+      }
+    });
+  } catch (error) {
+    if (!error.treeTooLarge) throw error;
+    return { files: error.treeTooLarge, bytes: error.listingBytes };
   }
+  if (found) return found;
   for (const [folder, count] of counts) if (count > commentsMax) return { folder, count };
   return null;
 }
 
 /**
- * The first file above its kind's bound that a commit reachable from the branch and not from the known commits adds or changes, as { path, size, bound }, or null.
- * Each such commit's changes come from Git's tree comparison with its parents and their sizes from Git's object listing, so no blob is read.
+ * The first file above its kind's bound that a commit reachable from tip and not from the known commits adds or changes, as { path, size, bound }, or null.
+ * Each such commit's changes come from Git's tree comparison with its parents, read as it arrives, and their sizes from Git's object listing, so no blob is read.
+ * A merge lists only the files that it holds differently from every parent, since a file that it holds as a parent does came from that parent, which is itself walked or known.
+ * Only the entries of files that a store shares and bounds are kept, and their sizes are checked a batch at a time, so the walk holds at most one batch however long the history is;
+ * each commit's own listing is bounded as a history listing is, and a commit past that bound is refused by name.
  */
-async function oversizedHistory(base, known) {
+async function oversizedHistory(base, known, tip = "HEAD") {
   const { shareable, bound } = await storeLayout();
-  const commits = (await required(base, ["rev-list", "--stdin"], { input: `HEAD\n${known.map((commit) => `^${commit}\n`).join("")}`, maxBuffer: PACK_BYTES_MAX })).text.split("\n").filter(Boolean);
+  const commits = await historyCommits(base, ["rev-list", "--stdin"], `${tip}\n${known.map((commit) => `^${commit}\n`).join("")}`);
   if (!commits.length) return null;
-  const output = (await required(base, ["diff-tree", "--stdin", "-r", "-z", "-m", "--root", "--no-commit-id", "--no-renames"], { input: `${commits.join("\n")}\n`, maxBuffer: PACK_BYTES_MAX })).stdout;
-  // Each changed entry is its metadata, ":<old mode> <new mode> <old id> <new id> <status>", and then its path, each ended by a zero byte.
-  const added = [];
-  for (let at = 0; at < output.length;) {
-    const end = output.indexOf(0, at);
-    if (end < 0) break;
-    const meta = output.subarray(at, end).toString("latin1");
-    if (!meta.startsWith(":")) { at = end + 1; continue; }
-    const pathEnd = output.indexOf(0, end + 1) < 0 ? output.length : output.indexOf(0, end + 1);
-    const [, mode, , object] = meta.slice(1).split(" ");
-    const file = pathOfBytes(output.subarray(end + 1, pathEnd));
-    at = pathEnd + 1;
-    if (FILE_MODES.has(mode) && shareable(file) && bound(file) !== null) added.push({ file, object });
-  }
-  if (!added.length) return null;
-  const sizes = await objectInfo(base, [...new Set(added.map(({ object }) => object))]);
-  for (const { file, object } of added) {
-    const size = sizes.get(object)?.size;
-    if (size !== undefined && size > bound(file)) return { path: file, size, bound: bound(file) };
-  }
-  return null;
+  const batch = new Map();
+  let found = null, meta = null, commit = null, records = 0, bytes = 0, tooLong = null;
+  const check = async () => {
+    const sizes = await objectInfo(base, [...batch.keys()]);
+    for (const [object, { file, limit }] of batch) {
+      const size = sizes.get(object)?.size;
+      if (found === null && size !== undefined && size > limit) found = { path: file, size, bound: limit };
+    }
+    batch.clear();
+    return found === null;
+  };
+  // Each commit's listing is its id, and then each changed entry: its metadata, ":<modes> <ids> <status>" with one more colon, mode, and id for each further parent, and its path, each ended by a zero byte;
+  // the last mode and id are the commit's own.
+  const listed = await gitRecords(base, ["diff-tree", "--stdin", "-r", "-z", "-c", "--root", "--no-renames"], {
+    separator: 0, maxRecord: LISTED_META_MAX * 8 + LISTED_PATH_BYTES_MAX, input: `${commits.join("\n")}\n`, take: async (record) => {
+      if (meta === null && record[0] !== 0x3a) {
+        commit = record.toString("latin1");
+        records = 0;
+        bytes = 0;
+        return true;
+      }
+      if (++records > historyRecordsMax() || (bytes += record.length + 1) > historyBytesMax()) { tooLong = commit; return false; }
+      if (meta === null) {
+        meta = record.toString("latin1");
+        return true;
+      }
+      const parents = /^:+/.exec(meta)[0].length;
+      const fields = meta.slice(parents).split(" ");
+      meta = null;
+      const [mode, object] = [fields[parents], fields[2 * parents + 1]];
+      const file = pathOfBytes(record);
+      const limit = FILE_MODES.has(mode) && shareable(file) ? bound(file) : null;
+      if (limit === null || (batch.get(object)?.limit ?? Infinity) <= limit) return true;
+      batch.set(object, { file, limit });
+      return batch.size < 4096 || await check();
+    } });
+  if (tooLong !== null || listed.long) throw (tooLong ?? commit) ? await commitRefusal(base, `the changes of commit ${tooLong ?? commit}`, tooLong ?? commit) : historyRefusal("the changes that the remote lacks");
+  if (!listed.ok) throw Object.assign(new Error(listed.stderr || "git diff-tree failed."), { git: listed });
+  if (found === null && batch.size) await check();
+  return found;
 }
 
 /** The refusal of an upstream or a remote branch that holds a file above its kind's bound or a comment folder above its bound, in the words of a sync's message. */
 export async function describeOversizedEntry(over) {
   const { boundText, commentsMax, rootFile } = await storeLayout();
+  if (over.files) return `${wideTree(over)}, which no store takes`;
   if (over.folder) return `${over.count} comment files in ${shownPath(over.folder)}, above the ${commentsMax} that an artifact's comments may hold, which no reader takes`;
   return `${shownPath(over.path)}, which holds ${over.size} bytes, above the ${boundText(over.bound)} that a store file of its kind may hold, which ${rootFile(over.path) ? "no store takes" : "no reader takes"}`;
 }
@@ -634,11 +800,15 @@ async function migrateLineEndings(base) {
   const top = await git(base, ["rev-parse", "--show-toplevel"]);
   if (!top.ok || path.resolve(top.text) !== path.resolve(base)) return;
   const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
-  const { shared } = await partition(await treeFiles(base, head.ok ? head.text : null));
+  // A branch past the files that a store's tree may hold is refused by the sync, and the migration waits for a branch that a sync can list.
+  let listed;
+  try { listed = await treeFiles(base, head.ok ? head.text : null); }
+  catch (error) { if (error.treeTooLarge) return; throw error; }
+  const { shared } = await partition(listed);
   const found = [];
   for (const [file, entry] of shared) if ((await lstat(path.join(base, ...file.split("/"))).catch(() => null))?.isFile()) found.push([file, entry]);
-  const hashed = found.length ? await required(base, ["hash-object", "--no-filters", "--stdin-paths"], { input: `${found.map(([file]) => file).join("\n")}\n` }) : { text: "" };
-  const objects = hashed.text ? hashed.text.split("\n") : [];
+  // Git answers with one id for each path given.
+  const objects = found.length ? await gitLines(base, ["hash-object", "--no-filters", "--stdin-paths"], { input: `${found.map(([file]) => file).join("\n")}\n`, limit: found.length, maxRecord: 128 }) : [];
   const echoes = [];
   const { bound } = await storeLayout();
   const differing = found.filter(([, entry], index) => objects[index] !== entry.object);
@@ -649,8 +819,8 @@ async function migrateLineEndings(base) {
     const blobSize = blobSizes.get(entry.object)?.size;
     const size = (await lstat(target).catch(() => null))?.size;
     if (blobSize === undefined || size === undefined || size <= blobSize || size > 2 * blobSize || (bound(file) !== null && blobSize > bound(file))) continue;
-    const [bytes, blobBytes] = await Promise.all([boundedBytes(target, 2 * blobSize), entryBytes(base, entry)]);
-    if (Buffer.isBuffer(bytes) && blobBytes && lineEndingEcho(bytes, blobBytes)) echoes.push({ file, target, blobBytes });
+    const [bytes, blobBytes] = await Promise.all([boundedBytes(target, 2 * blobSize), readBlob(base, file, entry)]);
+    if (Buffer.isBuffer(bytes) && Buffer.isBuffer(blobBytes) && lineEndingEcho(bytes, blobBytes)) echoes.push({ file, target, blobBytes });
   }
   // Each file is rewritten under the lock that a write of it takes, and only while it still holds the converted copy.
   const rewrite = async ({ target, blobBytes }) => {
@@ -666,13 +836,13 @@ async function migrateLineEndings(base) {
 
 /**
  * The store's files at the paths it shares, as Map(path, { mode, object }), each hashed from its bytes exactly as they are, so no ignore or attributes rule decides what is committed or how.
- * Only regular files count, found without following a symbolic link, and with artifacts false the branch's artifacts stand in for the ones on disk.
+ * Only regular files count, found without following a symbolic link.
  * A file keeps the mode the branch gives it, and a new one is a plain file, so a file system without an executable bit changes no mode.
  * Every file it hashes held at most its kind's bound when its size was checked, a README at the root among them, so a commit that reads them under the artifact lock holds that lock for a bounded read unless a file grows meanwhile,
  * and one that grew past its bound by its hashing is withheld by the size of the object Git wrote.
  * oversized takes each file it leaves out that a merge may replace, by its path, with the size it found for a file above its kind's bound and null for a comment past its folder's bound.
  */
-async function localFiles(base, artifacts, held, withheld, oversized = new Map()) {
+async function localFiles(base, held, withheld, oversized = new Map()) {
   const { shareable, isStoreFolder, bound, boundText, isCommentFile, commentsMax, rootFile } = await storeLayout();
   for (let attempt = 1; ; attempt++) {
     const found = [];
@@ -683,8 +853,8 @@ async function localFiles(base, artifacts, held, withheld, oversized = new Map()
       for (const entry of entries) {
         const child = relative ? `${relative}/${entry.name}` : entry.name;
         // A file whose path some machine cannot write stays out of every commit, and the sync's status names it.
-        if (entry.isFile()) { if (shareable(child) && (artifacts || !isGuardedFile(child))) (storePathFits(child) ? found.push(child) : withheld.set(child, TOO_LONG)); }
-        else if (entry.isDirectory() && isStoreFolder(child) && (artifacts || (child !== ARTIFACTS && !STATUS_FOLDERS.includes(child)))) await visit(child);
+        if (entry.isFile()) { if (shareable(child)) (storePathFits(child) ? found.push(child) : withheld.set(child, TOO_LONG)); }
+        else if (entry.isDirectory() && isStoreFolder(child)) await visit(child);
       }
     };
     await visit("");
@@ -713,8 +883,9 @@ async function localFiles(base, artifacts, held, withheld, oversized = new Map()
       for (const [file, size] of over) if (size !== null || !isCommentFile(file) || held.has(file)) oversized.set(file, size);
       found.splice(0, found.length, ...found.filter((file) => !over.has(file)));
     }
-    const hashed = found.length ? await git(base, ["hash-object", "-w", "--no-filters", "--stdin-paths"], { input: `${found.join("\n")}\n` }) : { ok: true, text: "" };
-    const objects = hashed.text ? hashed.text.split("\n") : [];
+    // Git answers with one id for each path given.
+    const hashed = found.length ? await gitLinesResult(base, ["hash-object", "-w", "--no-filters", "--stdin-paths"], { input: `${found.join("\n")}\n`, limit: found.length, maxRecord: 128 }) : { ok: true, lines: [] };
+    const objects = hashed.lines;
     // A record removed or replaced between the listing and the hashing makes the hashing fail, so the listing is taken again.
     if (!hashed.ok || objects.length !== found.length) {
       if (attempt < 3) continue;
@@ -734,7 +905,6 @@ async function localFiles(base, artifacts, held, withheld, oversized = new Map()
       }
       files.set(file, { mode: held.get(file)?.mode ?? "100644", object: objects[index] });
     }
-    if (!artifacts) for (const [file, entry] of held) if (isGuardedFile(file)) files.set(file, entry);
     return files;
   }
 }
@@ -752,31 +922,42 @@ const OBJECT_CHECK = "Git's object check, which every other machine's fetch appl
 const TOO_LONG = `its name holds more than ${STORE_NAME_BYTES_MAX} bytes or its path more than ${STORE_PATH_BYTES_MAX}, so some machine could not write it`;
 
 /**
- * Commit the store's changes; run is one sync's state, whose artifacts is false once an update held the artifact lock when this sync came to read the artifacts,
+ * Commit the store's changes; run is one sync's state, whose lockBusy is true where an update held the artifact lock for as long as this commit waits for it,
  * and whose withheld maps each file this commit left out to why: a path too long for some machine, or a file whose object Git's object check refuses, which keeps the branch's version.
  * An artifact update holds the store's artifact lock from its version checks to its last write, so reading the artifacts under that lock never commits part of an update.
- * An update in progress is left to a later sync, which its own write schedules, for the rest of this sync, so this sync never merges the upstream over a change the update is still making:
- * the first commit tries the lock once, and a later commit waits for it as long as a merge does.
+ * The first commit of a sync tries the lock once, so a sync never merges the upstream over an update that is still writing, and a later commit of the sync waits for it as long as a merge waits to apply;
+ * where the lock is busy, the commit reads nothing and makes nothing, and the sync commits, merges, and pushes nothing, so it never merges while files under the lock are uncommitted on disk,
+ * and a later sync, which the update's own write schedules too, tries again.
  * The commit holds the shared files as the store holds them and every other entry as the branch holds it, so no local commit adds, changes, or removes a file Prism does not write.
  */
 async function commitLocal(base, author, run) {
+  run.pending = null;
+  run.lockBusy = false;
   const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
   const previous = head.ok ? head.text : null;
-  const branch = await treeFiles(base, previous);
+  let branch;
+  try { branch = await treeFiles(base, previous); }
+  catch (error) {
+    if (error.treeTooLarge) run.wideBranch = { files: error.treeTooLarge, bytes: error.listingBytes };
+    else if (error.longPath) run.wideBranch = { path: error.longPath, long: true, kind: "an entry" };
+    else throw error;
+    return false;
+  }
+  run.wideBranch = null;
   const { shared, other } = await partition(branch);
   const withheld = new Map();
   run.withheld = withheld;
   // The local version of each file withheld because Git's object check refuses it, which a merge that replaces the file saves.
   run.heldBack = new Map();
-  let files = null;
   const oversized = new Map();
-  if (run.artifacts !== false) {
-    files = await withFileLock(path.join(base, ARTIFACTS), () => localFiles(base, true, shared, withheld, oversized), undefined, { timeoutMs: run.artifacts ? SETTINGS.applyLockMs : 1 })
-      .catch((error) => { if (error.code !== "lock_timeout") throw error; return null; });
-    run.artifacts = files !== null;
-    if (!files) scheduleRecordSync(base);
+  const files = await withFileLock(path.join(base, ARTIFACTS), () => localFiles(base, shared, withheld, oversized), undefined, { timeoutMs: run.lockTried ? SETTINGS.applyLockMs : 1 })
+    .catch((error) => { if (error.code !== "lock_timeout") throw error; return null; });
+  run.lockTried = true;
+  run.lockBusy = files === null;
+  if (run.lockBusy) {
+    scheduleRecordSync(base);
+    return false;
   }
-  if (run.artifacts === false) files = await localFiles(base, false, shared, withheld, oversized);
   // A withheld file keeps the branch's version in the commit, and its local version is held back, so a merge that replaces it saves it as a conflict's local version is saved.
   // A comment past its folder's bound is hashed, since it held at most a comment's bound when its size was checked; a file above its kind's bound is never read, and enters neither memory nor a commit:
   // it is held back by the file it is on disk, which a merge that replaces or removes its path moves into the saved copies by a rename.
@@ -801,6 +982,7 @@ async function commitLocal(base, author, run) {
     }
     if (shared.has(file)) files.set(file, shared.get(file)); else files.delete(file);
   }
+  const { treeFilesMax } = await storeLayout();
   for (;;) {
     const entries = besides(files, other);
     if (sameFiles(entries, branch)) return false;
@@ -812,15 +994,30 @@ async function commitLocal(base, author, run) {
     const refused = await refusedObjects(base, commit, previous ? [previous] : [], { pushing: false });
     if (refused) {
       const culprits = changed.filter((file) => files.has(file) && refused.objects.includes(files.get(file).object) && (refused.places.get(files.get(file).object)?.includes(file) ?? true));
-      if (!culprits.length) throw new Error(`Git's object check, which every other machine's fetch applies, refuses the store's new commit, so it was not made: ${refused.message}`);
-      for (const file of culprits) {
-        withheld.set(file, `${OBJECT_CHECK} (${refused.message})`);
-        run.heldBack.set(file, files.get(file));
-        if (shared.has(file)) files.set(file, shared.get(file)); else files.delete(file);
+      // A refusal only of files that the branch already holds, as a .gitattributes that a commit made by hand put there, is no change of this commit's,
+      // so the commit is made, and the push check refuses the branch by that file's name with the command that takes the commit made by hand off.
+      const held = new Set([...branch.values()].map((entry) => entry.object));
+      const inherited = !culprits.length && refused.objects.length > 0 && refused.objects.every((object) => held.has(object));
+      if (!culprits.length && !inherited) throw new Error(`Git's object check, which every other machine's fetch applies, refuses the store's new commit, so it was not made: ${refused.message}`);
+      if (culprits.length) {
+        for (const file of culprits) {
+          withheld.set(file, `${OBJECT_CHECK} (${refused.message})`);
+          run.heldBack.set(file, files.get(file));
+          if (shared.has(file)) files.set(file, shared.get(file)); else files.delete(file);
+        }
+        continue;
       }
-      continue;
+    }
+    // No commit whose tree holds more files than a store's tree may enters the branch's history, and no file is left out to make room:
+    // where this machine's changes would take the tree past that bound, the commit is left unmade, as a commit object that no ref names and no push sends,
+    // and the merge takes its tree as this machine's side, so its result, which must be within the bound, is the branch's next commit.
+    if (entries.size > treeFilesMax()) {
+      run.pending = { commit, from: previous, files: entries.size, entries };
+      return false;
     }
     await moveBranch(base, commit, previous, "prism: update records");
+    // The commits that this sync made of this machine's changes one after another, which a stop at the bound on a store tree's files takes off together.
+    run.made = previous && run.made?.to === previous ? { from: run.made.from, to: commit } : { from: previous, to: commit };
     return true;
   }
 }
@@ -841,10 +1038,15 @@ async function refusedObjects(base, tip, known, { pushing = true } = {}) {
   await mkdir(folder, { recursive: true });
   try {
     const revisions = `${tip}\n${known.map((commit) => `^${commit}\n`).join("")}`;
-    const history = await refusedHistory(base, revisions, pushing);
+    const history = await refusedHistoryInBatches(base, tip, known, pushing);
     if (history.reasons.length) return refusal(history.reasons, history.places);
-    const pack = (await required(base, ["pack-objects", "--revs", "--stdout", "--quiet", "--filter=blob:none"], { input: revisions, maxBuffer: PACK_BYTES_MAX })).stdout;
-    await writeFile(path.join(folder, "objects.pack"), pack);
+    // The pack reaches its file as Git writes it, within its bound, so no pack is held in memory.
+    const handle = await open(path.join(folder, "objects.pack"), "w");
+    let packed;
+    try { packed = await gitRecords(base, ["pack-objects", "--revs", "--stdout", "--quiet", "--filter=blob:none"], { separator: null, maxBytes: PACK_BYTES_MAX, input: revisions, take: async (chunk) => { await handle.write(chunk); } }); }
+    finally { await handle.close(); }
+    if (packed.over) throw outputRefusal(`The commits and trees that the remote lacks pack to more than ${PACK_BYTES_MAX} bytes, more than a sync checks`, HISTORY_FIX, "the store's branch was not pushed");
+    if (!packed.ok) throw Object.assign(new Error(packed.stderr || "git pack-objects failed."), { git: packed });
     const checked = await git(base, ["index-pack", "--strict", "-o", path.join(folder, "objects.idx"), path.join(folder, "objects.pack")]);
     if (checked.ok) return null;
     const reasons = checked.stderr.split("\n").filter((line) => line.startsWith("error: ")).map((line) => line.slice("error: ".length));
@@ -852,6 +1054,63 @@ async function refusedObjects(base, tip, known, { pushing = true } = {}) {
   } finally {
     await rm(folder, { recursive: true, force: true });
   }
+}
+
+/**
+ * refusedHistory over the commits reachable from tip and not from the known commits, oldest first, a batch of commits at a time, so each walk stays within the bound of a history listing
+ * however long that history is, as after many syncs whose pushes failed: each batch walks its commits' own objects, those that no commit before it and no known commit holds.
+ * A batch past the bound is walked again in halves, and a single commit past it is refused by name, since only a commit made by hand makes one so large.
+ */
+async function refusedHistoryInBatches(base, tip, known, pushing) {
+  const commits = (await historyCommits(base, ["rev-list", "--topo-order", "--reverse", "--parents", "--stdin"], `${tip}\n${known.map((commit) => `^${commit}\n`).join("")}`)).map((line) => line.split(" "));
+  let size = Math.min(commits.length, 1024), ceiling = Infinity;
+  for (let at = 0; at < commits.length;) {
+    const batch = commits.slice(at, at + size);
+    const inBatch = new Set(batch.map(([commit]) => commit));
+    const below = new Set(batch.flatMap(([, ...parents]) => parents).filter((parent) => !inBatch.has(parent)));
+    const revisions = `${[...inBatch].join("\n")}\n${[...below, ...known].map((commit) => `^${commit}\n`).join("")}`;
+    let history;
+    try { history = await refusedHistory(base, revisions, pushing); }
+    catch (error) {
+      if (!error.outputBound) throw error;
+      if (batch.length === 1) throw await commitRefusal(base, `the objects of commit ${batch[0][0]}`, batch[0][0]);
+      ceiling = batch.length;
+      size = Math.ceil(batch.length / 2);
+      continue;
+    }
+    if (history.reasons.length) return history;
+    at += batch.length;
+    size = Math.max(1, Math.min(size * 2, ceiling - 1));
+  }
+  return { reasons: [], places: new Map() };
+}
+
+// The commit up to which the history of the store's branch passed the push checks, so a later check walks only the commits after it, whatever the remote holds:
+// a sync whose pushes keep failing then walks only what changed since its last sync. The ref is Prism's own and no push or fetch sends or prunes it.
+const CHECKED_REF = "refs/prism-checked/branch";
+async function checkedTip(base) {
+  const checked = await git(base, ["rev-parse", "--verify", "--quiet", `${CHECKED_REF}^{commit}`]);
+  return checked.ok && checked.text ? checked.text : null;
+}
+
+/**
+ * Run the push checks of the branch's history, the object check and the size check, on the commits after the last checked one and the known commits, and record the branch's tip as checked when they pass,
+ * so each sync checks only what changed since the last one, also while fetches or pushes fail. A refusal is left for the push check, which reports it by name.
+ */
+async function advanceChecked(base, remote) {
+  const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  if (!head.ok || !head.text) return;
+  const checked = await checkedTip(base);
+  if (checked === head.text) return;
+  const walked = [...await knownCommits(base, remote), ...(checked ? [checked] : [])];
+  try {
+    if (await refusedObjects(base, head.text, walked)) return;
+    if (await oversizedHistory(base, walked, head.text)) return;
+  } catch (error) {
+    if (error.outputBound) return;
+    throw error;
+  }
+  await required(base, ["update-ref", CHECKED_REF, head.text]);
 }
 
 // A filtered pack holds only commits and trees, so even a store of long history packs within this bound.
@@ -876,20 +1135,24 @@ const ATTRIBUTES_BYTES_MAX = 100 * 1024 * 1024;
  * such as a folder named .gitattributes, a link, a .gitmodules, or one in a folder, is a reason too, so no Git that checks less than 2.43 lets such a history be pushed.
  */
 async function refusedHistory(base, revisions, pushing) {
-  const listed = await git(base, ["rev-list", "--objects", "--stdin"], { input: revisions, maxBuffer: PACK_BYTES_MAX });
-  // Git 2.43 and later stop the walk at a tree deeper than core.maxTreeDepth, which every store command sets to Git's default, as every other machine's fetch would.
-  if (!listed.ok && listed.stderr.includes(TREE_DEPTH_TEXT)) return { reasons: [deepTreeReason()], places: new Map() };
-  if (!listed.ok) throw Object.assign(new Error(listed.stderr || "git rev-list failed."), { git: listed });
-  const output = listed.stdout;
-  // Each line is an object id, followed for a tree or a blob by a space and the path it was first found at.
+  // The walk is read as it arrives, so no output buffer bounds it: it walks only the commits that the known ones lack, this machine's own history, which a first publish of a long-lived store makes long,
+  // and every tree in it that a sync commits or a push sends is one that the bound on a store tree's files already checked.
   const where = new Map();
-  for (let at = 0; at < output.length;) {
-    const end = output.indexOf(10, at) < 0 ? output.length : output.indexOf(10, at);
-    const line = output.subarray(at, end);
+  const listed = await gitRecords(base, ["rev-list", "--objects", "--stdin"], { separator: 10, limit: historyRecordsMax(), maxBytes: historyBytesMax(), maxRecord: LISTED_META_MAX + LISTED_PATH_BYTES_MAX, input: revisions, take: (line) => {
+    // Each line is an object id, followed for a tree or a blob by a space and the path it was first found at.
     const space = line.indexOf(32);
     const object = (space < 0 ? line : line.subarray(0, space)).toString("latin1");
     if (OBJECT_ID.test(object)) where.set(object, space < 0 ? "" : pathOfBytes(line.subarray(space + 1)));
-    at = end + 1;
+  } });
+  // Git 2.43 and later stop the walk at a tree deeper than core.maxTreeDepth, which every store command sets to Git's default, as every other machine's fetch would.
+  if (!listed.ok && listed.stderr.includes(TREE_DEPTH_TEXT)) return { reasons: [deepTreeReason()], places: new Map() };
+  if (!listed.ok) throw Object.assign(new Error(listed.stderr || "git rev-list failed."), { git: listed });
+  if (listed.over) throw historyRefusal("the objects that the remote lacks");
+  // An object found at a path longer than any supported machine holds ends the walk, which keeps nothing past it.
+  if (listed.long) {
+    const space = listed.long.indexOf(32);
+    const shown = `${pathOfBytes(listed.long.subarray(space + 1, space + 1 + 64))}…`;
+    return { reasons: [`largePath: ${longEntry(shown)}`], places: new Map([[listed.long.subarray(0, space).toString("latin1"), [shown]]]) };
   }
   const none = { reasons: [], places: new Map() };
   if (!where.size) return none;
@@ -900,7 +1163,9 @@ async function refusedHistory(base, revisions, pushing) {
   const places = new Map();
   const place = (tree, name) => where.get(tree) ? `${where.get(tree)}/${name}` : name;
   const refuse = (object, reason, at = []) => { reasons.push(`object ${object}: ${reason}`); if (at.length) places.set(object, [...(places.get(object) ?? []), ...at]); };
-  for (const [commit, contents] of await objectContents(base, [...where.keys()].filter((object) => types.get(object)?.type === "commit"))) {
+  // The commits' and trees' contents are read within the bound of a history listing, and past it the push is refused by name.
+  const historyContents = (objects) => objectContents(base, objects, historyBytesMax(), "the commits and trees that the remote lacks").catch((error) => { throw error.outputBound ? historyRefusal("the commits and trees that the remote lacks") : error; });
+  for (const [commit, contents] of await historyContents([...where.keys()].filter((object) => types.get(object)?.type === "commit"))) {
     const problem = commitProblem(contents, commit.length);
     if (problem) refuse(commit, `${problem.id}: ${problem.text}`);
     const tree = /^tree ([0-9a-f]+)\n/.exec(contents.toString("latin1"))?.[1];
@@ -909,7 +1174,7 @@ async function refusedHistory(base, revisions, pushing) {
   const found = new Map();
   const misnamed = new Map();
   const links = new Map();
-  const treeContents = await objectContents(base, trees);
+  const treeContents = await historyContents(trees);
   // Git before 2.43 walks a tree of any depth, so the depth that later releases allow is checked here too.
   const deep = tooDeepTree(roots, treeContents);
   if (deep) {
@@ -942,7 +1207,11 @@ async function refusedHistory(base, revisions, pushing) {
     else if (info.size > ATTRIBUTES_BYTES_MAX) refuse(object, "gitattributesLarge: .gitattributes too large to parse", found.get(object));
     else readable.push(object);
   }
-  for (const [object, contents] of await objectContents(base, readable)) {
+  // A .gitattributes above the bound of its kind is not read: the bound checks of the push refuse it in every commit that the remote lacks.
+  const attributes = await readBlobs(base, readable.map((object) => ({ file: ".gitattributes", entry: { mode: "100644", object } })));
+  for (const [index, contents] of attributes.entries()) {
+    const object = readable[index];
+    if (!Buffer.isBuffer(contents)) continue;
     const text = contents.includes(0) ? contents.subarray(0, contents.indexOf(0)) : contents;
     for (let at = 0; at < text.length;) {
       const end = text.indexOf(10, at) < 0 ? text.length : text.indexOf(10, at);
@@ -959,7 +1228,9 @@ async function refusedHistory(base, revisions, pushing) {
     else if (info.size > LINK_TARGET_BYTES_MAX) refuse(object, "symlinkTargetLength: symlink target too long", at);
     else targets.push(object);
   }
-  for (const [object, contents] of await objectContents(base, targets)) {
+  const read = await readBlobs(base, targets.map((object) => ({ file: "<symlink-target>", entry: { mode: "100644", object }, max: LINK_TARGET_BYTES_MAX })));
+  for (const [index, contents] of read.entries()) {
+    const object = targets[index];
     const problem = linkTargetProblem(contents);
     if (problem) refuse(object, `${problem.id}: ${problem.text}`, links.get(object));
   }
@@ -970,29 +1241,53 @@ async function refusedHistory(base, revisions, pushing) {
 const deepTreeReason = () => `maxTreeDepth: ${TREE_DEPTH_TEXT}, since a folder is nested more than ${TREE_DEPTH_MAX} folders deep`;
 
 // The type and size of each object the store holds: Map(object, { type, size }), without the ones it lacks.
+// Git answers with one line for each object asked, so the listing is read within that many lines.
 async function objectInfo(base, objects) {
   const info = new Map();
-  const output = (await required(base, ["cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)"], { input: `${objects.join("\n")}\n` })).text;
-  for (const line of output.split("\n")) {
+  if (!objects.length) return info;
+  for (const line of await gitLines(base, ["cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)"], { input: `${objects.join("\n")}\n`, limit: objects.length, maxRecord: 128, what: "the store's object sizes" })) {
     const [object, type, size] = line.split(" ");
     if (size !== undefined && type !== "missing") info.set(object, { type, size: Number(size) });
   }
   return info;
 }
 
-// The contents of objects the store holds, as Map(object, bytes), read in one Git process.
-async function objectContents(base, objects) {
+/**
+ * The contents of objects the store holds, as Map(object, bytes), read in one Git process as its output arrives: commits and trees, and the blobs that readBlobs sized first.
+ * The output is read within maxBytes, which readBlobs sets to the bytes its sizes take, and past which the read is refused by what it reads.
+ */
+async function objectContents(base, objects, maxBytes, what = "the store's objects") {
   const contents = new Map();
   if (!objects.length) return contents;
-  const output = (await required(base, ["cat-file", "--batch"], { input: `${objects.join("\n")}\n`, maxBuffer: PACK_BYTES_MAX })).stdout;
-  for (let at = 0; at < output.length;) {
-    const header = output.indexOf(10, at);
-    if (header < 0) break;
-    const [object, type, size] = output.subarray(at, header).toString("latin1").split(" ");
-    if (type === "missing" || size === undefined) { at = header + 1; continue; }
-    contents.set(object, output.subarray(header + 1, header + 1 + Number(size)));
-    at = header + 1 + Number(size) + 1;
-  }
+  // Each object is a header line, "<object> <type> <size>" or "<object> missing", then that many bytes and a line feed, which arrive split across chunks anywhere.
+  let header = Buffer.alloc(0), current = null, parts = [], have = 0;
+  const listed = await gitRecords(base, ["cat-file", "--batch"], { separator: null, maxBytes, input: `${objects.join("\n")}\n`, take: (chunk) => {
+    for (let at = 0; at < chunk.length;) {
+      if (!current) {
+        const end = chunk.indexOf(10, at);
+        if (end < 0) { header = Buffer.concat([header, chunk.subarray(at)]); return; }
+        const [object, type, size] = Buffer.concat([header, chunk.subarray(at, end)]).toString("latin1").split(" ");
+        header = Buffer.alloc(0);
+        at = end + 1;
+        if (type === "missing" || size === undefined) continue;
+        current = { object, need: Number(size) + 1 };
+        parts = [];
+        have = 0;
+      }
+      const piece = chunk.subarray(at, Math.min(chunk.length, at + current.need - have));
+      parts.push(piece);
+      have += piece.length;
+      at += piece.length;
+      if (have === current.need) {
+        const body = Buffer.concat(parts);
+        contents.set(current.object, body.subarray(0, body.length - 1));
+        current = null;
+        parts = [];
+      }
+    }
+  } });
+  if (listed.over) throw outputRefusal(`Git's output of ${what} holds more than ${maxBytes} bytes, more than a sync reads`);
+  if (!listed.ok) throw Object.assign(new Error(listed.stderr || "git cat-file failed."), { git: listed });
   return contents;
 }
 
@@ -1209,8 +1504,58 @@ async function fetchRemote(base, remote) {
   const { targets, missing } = await remoteTargets(base, remote, "--upload-pack");
   if (missing) return { ok: false, stderr: missing };
   const [{ target, helper }] = targets;
-  return git(base, ["-c", "fetch.fsckObjects=true", "fetch", "--quiet", "--prune", "--no-prune-tags", "--no-tags", "--no-recurse-submodules", "--no-write-commit-graph",
+  // The tips that the last fetch brought, which the branch may have merged since, are recorded before this fetch can prune them, and what this fetch brings after it.
+  if (named) await recordShared(base, remote);
+  const fetched = await git(base, ["-c", "fetch.fsckObjects=true", "fetch", "--quiet", "--prune", "--no-prune-tags", "--no-tags", "--no-recurse-submodules", "--no-write-commit-graph",
     ...helper, target, ...(named ? [`+refs/heads/*:refs/remotes/${remote}/*`] : [])]);
+  if (fetched.ok && named) await recordShared(base, remote);
+  return fetched;
+}
+
+// The commits of the store's branch that it knows a named remote held, kept as refs named by their commit below SHARED_REFS/<remote>/, which no fetch prunes and no push sends:
+// a fetch with --prune drops the remote-tracking branch of a branch deleted on the remote while other machines still hold its commits,
+// so these refs and the remote-tracking branches are together the commits that the store knows it shares, which the push check takes as known and no refusal's reset takes off.
+const SHARED_REFS = "refs/prism-store/shared";
+// A remote's branches are its own, so they are listed within REMOTE_REFS_MAX of them, each with a name of at most a ref's length on any supported machine, and a remote past that is refused by name.
+const refObjects = async (base, prefix) => (await gitLines(base, ["for-each-ref", "--format=%(refname) %(objectname) %(symref)", prefix], { limit: REMOTE_REFS_MAX, maxRecord: 2 * LISTED_PATH_BYTES_MAX + LISTED_META_MAX, what: `the refs below ${prefix}` }))
+  .filter(Boolean).map((line) => line.split(" ")).filter(([, , symref]) => !symref).map(([ref, object]) => [ref, object]);
+
+/**
+ * Record, after a fetch, the commits of the store's branch that the remote's branches hold, each tip that the branch holds and the merge bases of the branch with each tip it lacks,
+ * and, after a push, the pushed commit, beside the commits recorded before that the branch still holds, keeping only the ones that no other of them holds.
+ * Only commits that the branch holds are recorded or kept, and no commit the branch lacks ever replaces one it holds, so what the store knows its branch shares with other machines
+ * outlasts a remote branch that is deleted or rewritten, even one whose tip the store never merged, while the refs stay few: a commit that the branch no longer holds, as after a push by force outside Prism, goes.
+ */
+async function recordShared(base, remote, pushed = []) {
+  if (!REMOTE_NAME.test(remote)) return;
+  const prefix = `${SHARED_REFS}/${remote}/`;
+  const held = await refObjects(base, prefix);
+  const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  const shared = new Set();
+  if (head.ok && head.text) {
+    const holds = async (object) => (await git(base, ["merge-base", "--is-ancestor", object, head.text])).ok;
+    for (const object of new Set(held.map(([, object]) => object))) if (await holds(object)) shared.add(object);
+    for (const object of new Set([...(await refObjects(base, `refs/remotes/${remote}/`)).map(([, object]) => object), ...pushed])) {
+      if (await holds(object)) { shared.add(object); continue; }
+      // Two commits have few merge bases, so their listing is read within the bound on a remote's refs.
+      const common = await gitLinesResult(base, ["merge-base", "--all", head.text, object], { limit: REMOTE_REFS_MAX, maxRecord: 128, what: "the merge bases of the store's branch and a remote branch" });
+      if (common.ok) for (const commit of common.lines.filter(Boolean)) shared.add(commit);
+    }
+  }
+  const tips = [...shared];
+  // The independent tips are some of the tips given, so their listing is one line for each at most.
+  const kept = new Set(tips.length > 1 ? (await gitLines(base, ["merge-base", "--independent", ...tips], { limit: tips.length, maxRecord: 128 })).filter(Boolean) : tips);
+  const updates = [
+    ...held.filter(([ref, object]) => !kept.has(object) || ref !== `${prefix}${object}`).map(([ref]) => `delete ${ref}\n`),
+    ...[...kept].filter((object) => !held.some(([ref]) => ref === `${prefix}${object}`)).map((object) => `update ${prefix}${object} ${object}\n`)
+  ];
+  if (updates.length) await required(base, ["update-ref", "--stdin"], { input: updates.join("") });
+}
+
+// The commits that the store knows a remote's machines share: its remote-tracking branches and the tips recorded for it.
+async function knownCommits(base, remote) {
+  const refs = [...await refObjects(base, `refs/remotes/${remote}/`), ...(REMOTE_NAME.test(remote) ? await refObjects(base, `${SHARED_REFS}/${remote}/`) : [])];
+  return [...new Set(refs.map(([, object]) => object))];
 }
 
 // A remote named in the store's configuration, whose remote.<name>.mirror setting would make Git refuse a push of one refspec, rather than a URL, which has no such setting.
@@ -1235,6 +1580,7 @@ async function pushBranch(base, remote, destination, { setUpstream } = {}) {
     if (!result.ok) return result;
     if (!byName && named && destination.startsWith("refs/heads/")) await required(base, ["update-ref", `refs/remotes/${remote}/${destination.slice("refs/heads/".length)}`, pushed]);
   }
+  if (named) await recordShared(base, remote, [pushed]);
   if (setUpstream && !byName) {
     await required(base, ["config", `branch.${setUpstream}.remote`, remote]);
     await required(base, ["config", `branch.${setUpstream}.merge`, destination]);
@@ -1254,22 +1600,48 @@ async function sync(base, options) {
   const conflicts = await recoverSaved(base);
   const run = {};
   const report = (status) => writeStatus(base, withheldIn({ ...status, conflicts: [...conflicts, ...(status.conflicts ?? [])] }, run.withheld));
+  const checked = await checkedTip(base);
+  const started = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  // A sync stopped at the bound on a store tree's files takes off the commits it made of this machine's changes, if any, so the branch, the index,
+  // and the checked commit are as they were before it, and the disk too, which only a merge's replacement changes. No file is named as withheld, since none is committed.
+  // Where an earlier attempt of the sync merged the upstream and lost its push to another push, that merge stays, and the message says so.
+  const stopped = async (pastTree) => {
+    if (run.made) await takeOffCommit(base, run.made);
+    // The checked commit only lets a later check walk less, so going back to the earlier one is always safe.
+    if (await checkedTip(base) !== checked) await git(base, checked ? ["update-ref", CHECKED_REF, checked] : ["update-ref", "-d", CHECKED_REF]);
+    const now = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+    const kept = now.ok && now.text !== (started.ok ? started.text : null);
+    return writeStatus(base, withheldIn({ state: "merge_failed", message: await pastTreeRefusal(pastTree, kept), conflicts, ...await counts(base) }, null));
+  };
+  // A sync that found an artifact update holding the artifact lock commits, merges, and pushes nothing, so no merge moves an artifact away from a file on disk that no commit holds yet;
+  // it is no failure, so it ends as a sync that found another sync running does, writes no status, and the next sync, which the update's write schedules, tries again.
+  const locked = () => ({ state: "skipped" });
   await commitLocal(base, author, run);
+  if (run.lockBusy) return locked();
   let upstream = await upstreamOf(base);
+  // A branch whose tree a commit made by hand took past the files that a store's tree may hold is refused before it is merged or pushed, with the command that takes that commit off.
+  if (run.wideBranch) return report({ state: "merge_failed", message: await wideBranchRefusal(base, upstream?.remote ?? "origin", { upstream: false, sent: "merged or pushed", unsafe: run.wideBranch }), ...await counts(base) });
+  // With no upstream to merge, the tree that a push would send is this machine's own, so changes that take it past the bound stop the sync.
+  if (run.pending && !upstream) return stopped({ files: run.pending.files });
   if (!upstream && managed.has(base)) {
     const published = await publishBranch(base, author, options, run, conflicts);
     if (published.status) return report(published.status);
     upstream = published.upstream;
   }
   if (!upstream) return report({ state: "no_upstream", message: "The store's branch has no upstream, so records are committed locally only." });
+  // The branch's new commits pass the push checks now, before the fetch, so a store whose fetches or pushes fail for a long time checks each sync's commits once rather than all of them at every sync.
+  await advanceChecked(base, upstream.remote);
   let busy = false;
   for (let attempt = 1; attempt <= PUSH_ATTEMPTS; attempt++) {
     // A merge left unapplied keeps the branch where it was, so files it replaced and local writes are committed and merged again.
     if (attempt > 1) await commitLocal(base, author, run);
+    if (run.lockBusy) return locked();
+    if (run.wideBranch) return report({ state: "merge_failed", message: await wideBranchRefusal(base, upstream.remote, { upstream: false, sent: "merged or pushed", unsafe: run.wideBranch }), ...await counts(base) });
     const fetched = await fetchRemote(base, upstream.remote);
     if (!fetched.ok) return report({ state: "fetch_failed", message: fetched.stderr, ...await counts(base) });
     lastFetch.set(base, Date.now());
-    const merged = await merge(base, author, options, run);
+    const merged = await merge(base, author, options, run, upstream.remote);
+    if (merged.pastTree) return stopped(merged.pastTree);
     if (merged.failed) return report({ state: "merge_failed", message: merged.failed, ...await counts(base) });
     // A merge that replaced files without moving the branch saved the local versions it replaced, which the next attempt would otherwise commit as the upstream's.
     conflicts.push(...merged.conflicts);
@@ -1353,10 +1725,16 @@ async function publishBranch(base, author, options, run, conflicts) {
 }
 
 // Merge the fetched upstream without touching the working tree, then replace changed files one by one atomically.
-async function merge(base, author, options, run) {
+async function merge(base, author, options, run, remote) {
   const upstream = await git(base, ["rev-parse", "--verify", "--quiet", "@{upstream}"]);
   const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  // This machine's changes that its own commit would take past the bound on a store tree's files are this side of the merge, as the commit object that the branch never took,
+  // so the merge holds them as if they were committed, and where nothing of the upstream merges with them, the tree that a push would send is theirs alone, which stops the sync.
+  // Its files are taken as the commit read them, since a listing of its tree would pass the bound that every listing keeps.
+  const pending = run.pending && head.ok && run.pending.from === head.text ? run.pending.entries : null;
+  if (run.pending && !pending) return { pastTree: { files: run.pending.files }, conflicts: [] };
   // An upstream branch that the remote does not hold, as one deleted there, has nothing to merge, and the push that publishes the branch again keeps none of its entries that a store does not share.
+  if (!upstream.ok && pending) return { pastTree: { files: run.pending.files }, conflicts: [] };
   if (!upstream.ok) {
     if (head.ok) await alignWithUpstream(base, author, head.text, null);
     return { applied: true, conflicts: [] };
@@ -1365,13 +1743,14 @@ async function merge(base, author, options, run) {
   // A branch that holds the whole upstream takes nothing from it, and only gives its push the upstream's entries that a store does not share,
   // which are checked first, since a branch that took the upstream by hand can hold one that this machine's Git refuses in an index.
   if (head.ok && (await git(base, ["merge-base", "--is-ancestor", theirs, head.text])).ok) {
+    if (pending) return { pastTree: { files: run.pending.files }, conflicts: [] };
     await refuseUnsafeTree(base, theirs);
     await alignWithUpstream(base, author, head.text, theirs);
     return { applied: true, conflicts: [] };
   }
   // The upstream is another machine's work, so its whole tree is checked before any of it is taken, whether it fast-forwards or merges.
   await refuseUnsafeTree(base, theirs);
-  if (!head.ok || (await git(base, ["merge-base", "--is-ancestor", head.text, theirs])).ok) {
+  if (!head.ok || (!pending && (await git(base, ["merge-base", "--is-ancestor", head.text, theirs])).ok)) {
     const from = head.ok ? head.text : null;
     const kept = run.heldBack?.size ? heldCopies(run, await treeFiles(base, from), await treeFiles(base, theirs)) : [];
     return replaceFiles(base, run, { from, to: theirs, copies: kept }, options);
@@ -1379,7 +1758,16 @@ async function merge(base, author, options, run) {
   const mergeBase = await git(base, ["merge-base", head.text, theirs]);
   if (!mergeBase.ok || !mergeBase.text) return { failed: "The store's branch and its upstream share no commit, so the store was left as it was.", conflicts: [] };
   // Only the entries a store shares merge; every other entry comes from the upstream alone, so no machine's commit changes one and a local one never reaches the remote.
-  const [original, local, upstreamFiles] = await Promise.all([mergeBase.text, head.text, theirs].map(async (commit) => (await partition(await treeFiles(base, commit)))));
+  const [original, local, upstreamFiles] = await Promise.all([mergeBase.text, pending ?? head.text, theirs].map(async (commit) => (await partition(typeof commit === "string" ? await treeFiles(base, commit) : commit))));
+  // The upstream's files passed their bounds above, and a file that this machine changed and that holds more than its kind's bound, which only a commit made by hand puts on the branch,
+  // is refused before the merge reads any blob, since the push would refuse it anyway and Git's output of a blob that large can outgrow what a sync reads.
+  // The upstream's files are not on disk yet, so the command goes back to before that commit rather than to the upstream's tip.
+  const over = await oversizedChange(base, original.shared, local.shared);
+  if (over) {
+    const fix = await takeOffAdvice(base, { upstream: false, known: await knownCommits(base, remote), paths: [over.path], holds: (_file, { size }) => size > over.bound,
+      until: "each file while it stays above its bound", instead: oversizedFix(over.path) });
+    return { failed: `The store's branch holds ${await describeOversizedEntry(over)}, so the upstream was not merged and the branch was not pushed, since every other machine's sync would then refuse the remote's branch. ${fix}`, conflicts: [] };
+  }
   // Each side's change to an artifact merges at the location that the merge gives the artifact's identity, as if both sides had made it there.
   const placed = await placeByIdentity(base, original.shared, local.shared, upstreamFiles.shared);
   const { result, conflicts: fileConflicts } = await mergeFiles(base, placed.original, placed.local, placed.upstream);
@@ -1407,7 +1795,11 @@ async function merge(base, author, options, run) {
   const surplus = await surplusComments(result, placed.upstream);
   for (const [file] of surplus) result.delete(file);
   await placedIdentities(base, result, placed.identities);
+  // A merge never takes the tree past the files that a store's tree may hold: where the merge of both sides' changes would, counted once every placement made its files, no file is left out to make room,
+  // and the merge is not made, so the sync commits, merges, and pushes nothing, and every file stays on disk as it is.
+  const { treeFilesMax } = await storeLayout();
   const merged = besides(result, upstreamFiles.other);
+  if (merged.size > treeFilesMax()) return { pastTree: { files: merged.size }, conflicts: [] };
   // A file the upstream carries can still meet a local file in another letter case, which no other machine could then take.
   const clash = letterCaseClash(merged.keys());
   if (clash) return { failed: `The merge would hold ${describeUnsafeEntry({ path: clash[1], clash: clash[0] })}, so the store was left as it was. Remove or rename one of them.`, conflicts: [] };
@@ -1436,7 +1828,8 @@ async function merge(base, author, options, run) {
   const surplusSaved = new Set(copies.filter(([file, entry]) => surplus.some(([candidate, left]) => candidate === file && left === entry)).map(([file]) => file));
   // A saved copy of such a file is named as a change that both machines made, unless it holds the version that this machine's sync withheld, which is named as withheld.
   const bothSaved = new Set(copies.filter(([file, entry]) => entry && bothChanged.get(file) === entry).map(([file]) => file));
-  return replaceFiles(base, run, { from: head.text, to: commit, copies, theirs: theirsSaved, tooLong: tooLongSaved, surplus: surplusSaved, bothChanged: bothSaved, undone: [...placed.undone, ...undoneFiles] }, options);
+  // The files on disk hold this machine's side of the merge, which is the commit left unmade where there is one, while the branch moves from where it is.
+  return replaceFiles(base, run, { from: head.text, diskTree: pending ?? head.text, to: commit, copies, theirs: theirsSaved, tooLong: tooLongSaved, surplus: surplusSaved, bothChanged: bothSaved, undone: [...placed.undone, ...undoneFiles] }, options);
 }
 
 /**
@@ -1448,7 +1841,7 @@ async function merge(base, author, options, run) {
  * bothChanged the copied files at the store's root that the upstream changed too, and undone lists the local changes that the target does not keep and no copy names, which the stage carries so that the next tool results name them once the branch moved.
  * A comment on disk that neither commit holds and that the target's comments leave no room for is saved into the stage too, which is made when it is first needed.
  */
-async function replaceFiles(base, run, { from, to, copies, theirs = new Set(), tooLong = new Map(), surplus = new Set(), bothChanged = new Set(), undone = [] }, options) {
+async function replaceFiles(base, run, { from, diskTree = from, to, copies, theirs = new Set(), tooLong = new Map(), surplus = new Set(), bothChanged = new Set(), undone = [] }, options) {
   const held = run.heldBack ?? new Map();
   let stage = copies.length || undone.length ? await stageLocal(base, copies, { from, to, theirs, tooLong, surplus, bothChanged, undone }) : null;
   const progress = {
@@ -1458,7 +1851,7 @@ async function replaceFiles(base, run, { from, to, copies, theirs = new Set(), t
       return bytes === null ? stageSurplusMove(base, stage, file) : stageSurplus(stage, file, bytes);
     }
   };
-  const applied = await apply(base, from, to, options, progress, held);
+  const applied = await apply(base, from, to, options, progress, held, diskTree);
   // The files the sync replaced change what the store's artifact listings hold.
   await markArtifactIndexStale(base);
   if (applied) for (const [file, entry] of copies) if (entry && held.get(file) === entry) { held.delete(file); run.withheld?.delete(file); }
@@ -1518,12 +1911,10 @@ async function treeIdentities(base, files, groups) {
     const entry = group.has("artifact") ? files.get(identityPath(location)) : undefined;
     if (entry && FILE_MODES.has(entry.mode)) wanted.push([location, entry.object]);
   }
-  const objects = [...new Set(wanted.map(([, object]) => object))];
-  const info = objects.length ? await objectInfo(base, objects) : new Map();
-  const contents = await objectContents(base, objects.filter((object) => info.get(object)?.type === "blob" && info.get(object).size <= IDENTITY_FILE_MAX));
+  const contents = await readBlobs(base, wanted.map(([location, object]) => ({ file: identityPath(location), entry: { mode: "100644", object }, max: IDENTITY_FILE_MAX })));
   const written = new Map();
-  for (const [location, object] of wanted) {
-    const id = contents.has(object) ? identityOf(contents.get(object)) : null;
+  for (const [index, [location]] of wanted.entries()) {
+    const id = Buffer.isBuffer(contents[index]) ? identityOf(contents[index]) : null;
     if (id !== null) written.set(location, id);
   }
   // An id that two locations hold is no artifact's own, so each location whose file gave it takes the id the location gives instead, until no two locations share one.
@@ -1543,8 +1934,9 @@ const commentFileReader = () => commentModule().then(({ readCommentFile }) => re
 // The entry a file of one location takes at another: a comment of the exact form Prism writes names its new location, as a move rewrites it, and every other file keeps its bytes as they are.
 async function placedEntry(base, role, entry, from, to) {
   if (!role.startsWith("comment/") || !FILE_MODES.has(entry.mode)) return entry;
-  if (!((await objectInfo(base, [entry.object])).get(entry.object)?.size <= COMMENT_BYTES_MAX)) return entry;
-  const value = (await commentForm())(role.slice("comment/".length), await entryBytes(base, entry), from);
+  const bytes = await readBlob(base, rolePath(role, from), entry, COMMENT_BYTES_MAX);
+  if (!Buffer.isBuffer(bytes)) return entry;
+  const value = (await commentForm())(role.slice("comment/".length), bytes, from);
   if (value === null) return entry;
   const object = (await required(base, ["hash-object", "-w", "--no-filters", "--stdin"], { input: Buffer.from(`${JSON.stringify({ ...value, location: to })}\n`, "utf8") })).text;
   return { ...entry, object };
@@ -1565,7 +1957,8 @@ async function placedEntry(base, role, entry, from, to) {
  * Identity files take no part in the path merge; placedIdentities gives back the one of each artifact the merge keeps.
  * Returns { original, local, upstream, saved, theirs, undone, identities }: the trees as Map(path, entry), saved as Map(path, entry) of the files to save under their own paths,
  * theirs as the Set of saved paths that hold the upstream's change rather than this machine's, tooLong as Map(path, location) of the saved paths left out because their path at the artifact's location would pass a store path's bounds, undone as the changes of this machine that the merge does not keep and that no saved copy names,
- * { removal: location } for a removal that gave way and { move: location, movedTo } for a move to another location that the merge sent elsewhere, and what placedIdentities reads.
+ * { removal: location } for a removal that gave way and { move: location, movedTo } for a move to another location that the merge sent elsewhere,
+ * and what placedIdentities reads.
  */
 async function placeByIdentity(base, original, local, upstream) {
   const trees = { original, local, upstream };
@@ -1651,12 +2044,15 @@ async function placeByIdentity(base, original, local, upstream) {
       const to = dropped.has(id) ? null : final.get(id);
       for (const [role, [file, entry]] of group) {
         const target = to === null ? null : to === location ? file : rolePath(role, to);
-        if (target !== null && storePathFits(target)) { later.push([name, target, to === location ? entry : await placedEntry(base, role, entry, location, to)]); continue; }
+        if (target !== null && storePathFits(target)) {
+          later.push([name, target, to === location ? entry : await placedEntry(base, role, entry, location, to)]);
+          continue;
+        }
         // A file that leaves the merge is saved when it holds a change of this side's that would otherwise be lost.
         if (name === "original" || sameEntry(await baseFile(id, role, location), entry)) continue;
         if (to === null && name === "local") {
           const keeps = upstream.get(file);
-          const views = role === "artifact" && keeps && [await entryBytes(base, entry), await entryBytes(base, keeps)].every((bytes) => bytes?.includes(GENERATED_VIEW));
+          const views = role === "artifact" && keeps && (await readBlobs(base, [{ file, entry }, { file, entry: keeps }])).every((bytes) => Buffer.isBuffer(bytes) && bytes.includes(GENERATED_VIEW));
           if (sameEntry(keeps, entry) || views) continue;
         }
         if (name === "local" || to !== null) save(file, entry, name, location, to);
@@ -1734,6 +2130,22 @@ function strandedFiles(result) {
 }
 
 /**
+ * The first file that the local side changed from the merge base and that holds more than its kind's bound, as { path, size, bound }, or null.
+ * The sizes come from one listing of Git's object sizes, so no blob is read.
+ */
+async function oversizedChange(base, original, local) {
+  const { bound } = await storeLayout();
+  const changed = [...local].filter(([file, entry]) => FILE_MODES.has(entry.mode) && bound(file) !== null && !sameEntry(original.get(file), entry));
+  if (!changed.length) return null;
+  const sizes = await objectInfo(base, [...new Set(changed.map(([, { object }]) => object))]);
+  for (const [file, { object }] of changed) {
+    const size = sizes.get(object)?.size;
+    if (size !== undefined && size > bound(file)) return { path: file, size, bound: bound(file) };
+  }
+  return null;
+}
+
+/**
  * Merge three trees' files path by path: result maps each file path to the entry it takes, and conflicts lists the paths that changed on both sides and do not merge.
  * A path that changed on one side only takes that side's entry, which is no entry where that side removed it, and a path that both sides changed alike keeps that change.
  * A file that both sides changed takes the line merge of its text when it merges cleanly, and otherwise the upstream's entry, so the local one is saved.
@@ -1748,7 +2160,7 @@ async function mergeFiles(base, original, local, upstream) {
     let taken = theirs;
     if (sameEntry(ours, theirs) || sameEntry(was, theirs)) taken = ours;
     else if (!sameEntry(was, ours)) {
-      const object = await lineMerge(base, was, ours, theirs, bound(file));
+      const object = await lineMerge(base, file, was, ours, theirs, bound(file));
       if (object) taken = { mode: ours.mode, object };
       else conflicts.push(file);
     }
@@ -1786,11 +2198,13 @@ const isText = (bytes) => !bytes.subarray(0, 8000).includes(0);
 
 // The object of the clean line merge of a text file that both sides changed and kept as a regular file of one mode, or null when it conflicts, is no such file, or would hold more than limit bytes,
 // so a merge that would make a file exceed its kind's bound keeps the upstream's version and saves the local one, as a line conflict does.
+// A version above its kind's bound, as a merge base that a commit made elsewhere left can hold, is not read, and the file is no merge either.
 // A file that both sides added merges against an empty file, as Git's own merge does.
-async function lineMerge(base, original, local, upstream, limit = null) {
+async function lineMerge(base, file, original, local, upstream, limit = null) {
   if (!local || !upstream || local.mode !== upstream.mode || !FILE_MODES.has(local.mode) || (original && !FILE_MODES.has(original.mode))) return null;
-  const contents = await Promise.all([local, original, upstream].map(async (entry) => entry ? (await required(base, ["cat-file", "blob", entry.object])).stdout : Buffer.alloc(0)));
-  if (!contents.every(isText)) return null;
+  const read = await readBlobs(base, [local, original, upstream].map((entry) => ({ file, entry })));
+  const contents = read.map((bytes, index) => index === 1 && bytes === null ? Buffer.alloc(0) : bytes);
+  if (!contents.every((bytes) => Buffer.isBuffer(bytes) && isText(bytes))) return null;
   const folder = syncPath(base, "merge-files");
   await rm(folder, { recursive: true, force: true });
   await mkdir(folder, { recursive: true });
@@ -1845,7 +2259,7 @@ async function stageLocal(base, copies, { from, to, theirs = new Set(), tooLong 
     if (entry.disk) { conflicts.push({ path: file, saved: true, moved: true, overBound: true, ...whose, ...cause }); continue; }
     const target = path.join(folder, "files", ...file.split("/"));
     await mkdir(path.dirname(target), { recursive: true });
-    await writeAtomically(target, await entryBytes(base, entry));
+    await writeAtomically(target, await boundedBlob(base, file, entry));
     conflicts.push({ path: file, saved: true, ...whose, ...cause });
   }
   await mkdir(folder, { recursive: true });
@@ -1867,13 +2281,13 @@ async function moveAside(base, stage, file) {
   const source = path.join(base, ...file.split("/"));
   const target = path.join(stage.folder, "files", ...file.split("/"));
   await mkdir(path.dirname(target), { recursive: true });
-  try { await rename(source, target); }
+  try { await renameWhenFree(source, target); }
   catch (error) {
     if (error.code === "ENOENT") return;
     if (error.code !== "EXDEV") throw error;
     const partial = path.join(stage.folder, "copying");
     await copyFile(source, partial);
-    await rename(partial, target);
+    await renameWhenFree(partial, target);
     await rm(source, { force: true });
   }
 }
@@ -2066,15 +2480,17 @@ async function structuralMerges(base, original, local, upstream) {
   const views = [];
   const differs = (side, file) => !sameEntry(original.get(file), side.get(file));
   const changed = [...new Set([...original.keys(), ...local.keys(), ...upstream.keys()])].filter((file) => differs(local, file) && differs(upstream, file));
-  const bytesOf = (side, file) => entryBytes(base, side.get(file));
+  const bytesOf = (side, file) => readBlob(base, file, side.get(file));
   // Prism writes the views it generates from records, such as initiative.md, into the store's artifacts, so one that both sides regenerated is not a person's change.
   for (const file of changed.filter((item) => item.startsWith(`${ARTIFACTS}/`))) {
     const [mine, theirs] = await Promise.all([local, upstream].map((side) => bytesOf(side, file)));
-    if (mine !== null && theirs !== null && !mine.equals(theirs) && [mine, theirs].every((bytes) => bytes.includes(GENERATED_VIEW))) views.push(file);
+    if ([mine, theirs].every(Buffer.isBuffer) && !mine.equals(theirs) && [mine, theirs].every((bytes) => bytes.includes(GENERATED_VIEW))) views.push(file);
   }
   const both = changed.filter((file) => hasRecordMerge(file) || isRegistrationFile(file));
   for (const file of both) {
     const [was, mine, theirs] = await Promise.all([original, local, upstream].map((side) => bytesOf(side, file)));
+    // A version above its kind's bound, whichever tree holds it, was not read, so the file keeps the upstream's version and the local one is saved.
+    if ([was, mine, theirs].some(overBytes)) { if (mine !== null && theirs !== null) fallback.push(file); continue; }
     if (mine === null || theirs === null || mine.equals(theirs)) continue;
     if (isRegistrationFile(file)) {
       // Two machines that registered one repository alike, apart from when each did, as two first accesses of a new store do, lose nothing by keeping the upstream one.
@@ -2114,17 +2530,52 @@ function sameRegistration(left, right) {
   }
 }
 
-// The bytes of a tree entry's blob exactly as Git holds them, or null for no entry or one that is no regular file.
-const entryBytes = async (base, entry) => entry && FILE_MODES.has(entry.mode) ? (await required(base, ["cat-file", "blob", entry.object])).stdout : null;
+/**
+ * The one reader of the blobs that a sync reads, whatever tree holds them, a side, the merge base, or a conflict's copy, and whatever kind they are, a record, a status record, a comment, an artifact, or a root file:
+ * each blob is sized first, from one listing of Git's object sizes, and only the blobs of at most their bound are then read, in one Git process, so no blob above its bound enters memory
+ * and no Git output outgrows what a sync takes. wanted lists { file, entry, max }, where max defaults to the bound of the file's kind.
+ * Returns one answer for each, in order: null for no entry or one that is no regular file, the blob's bytes exactly as Git holds them, and { size } for a blob above its bound, which is never read.
+ */
+async function readBlobs(base, wanted) {
+  const { blobMax } = await storeLayout();
+  const answers = wanted.map(() => null);
+  const items = wanted.map((item, index) => ({ ...item, index })).filter(({ entry }) => entry && FILE_MODES.has(entry.mode));
+  if (!items.length) return answers;
+  const info = await objectInfo(base, [...new Set(items.map(({ entry }) => entry.object))]);
+  const readable = new Map();
+  for (const item of items) {
+    const found = info.get(item.entry.object);
+    if (found?.type !== "blob") throw new Error(`Git holds no blob ${item.entry.object} for ${shownPath(item.file)}.`);
+    if (found.size > (item.max ?? blobMax(item.file))) answers[item.index] = { size: found.size };
+    else readable.set(item.entry.object, found.size);
+  }
+  const total = [...readable.values()].reduce((sum, size) => sum + size + 128, 0);
+  const contents = await objectContents(base, [...readable.keys()], total + 1024 * 1024);
+  for (const item of items) if (answers[item.index] === null) answers[item.index] = contents.get(item.entry.object);
+  return answers;
+}
+const readBlob = async (base, file, entry, max) => (await readBlobs(base, [{ file, entry, max }]))[0];
+
+// The bytes of a blob that the sync writes to disk, which a store holds within its bound wherever the sync writes from: a blob above it is refused by name rather than read.
+async function boundedBlob(base, file, entry) {
+  const bytes = await readBlob(base, file, entry);
+  if (overBytes(bytes)) {
+    const { bound, boundText } = await storeLayout();
+    throw new Error(`The store's Git holds ${shownPath(file)} at ${bytes.size} bytes, above the ${boundText(bound(file) ?? bytes.size)} that a store file of its kind may hold, which no sync reads, so the store was left as it was.`);
+  }
+  return bytes;
+}
 // A path that is a folder, or lies below a file, holds no file, as when a file on one side meets a folder on the other.
 const fileBytes = (target) => readFile(target).catch((error) => { if (["ENOENT", "ENOTDIR", "EISDIR"].includes(error.code)) return null; throw error; });
 
 /**
  * The bytes of a regular file of at most max bytes, null where no file or a folder is there, and { size } for one above max, a link, or any other entry, which is read no further:
- * it is opened without following a link and without blocking, and its type and size come from the opened file before any byte is read, so memory stays bounded whatever the file holds.
+ * it is opened without following a link and without blocking, and its type and size come from the opened file before any byte is read, so memory stays bounded whatever the file holds;
+ * where the platform has no O_NOFOLLOW, as on Windows, a check of the entry before the open stands in for it.
  * max null reads a file of any size; a file that grows past its size while it is read counts as above max.
  */
 async function boundedBytes(target, max) {
+  if (!constants.O_NOFOLLOW && (await lstat(target).catch(() => null))?.isSymbolicLink()) return { size: null };
   let handle;
   try { handle = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0)); }
   catch (error) {
@@ -2159,18 +2610,46 @@ async function holdLocks(targets, action) {
 async function treeFiles(base, commit) {
   const files = new Map();
   if (!commit) return files;
-  const output = (await required(base, ["ls-tree", "-r", "-z", "--full-tree", commit])).stdout;
-  for (let at = 0; at < output.length;) {
-    const end = output.indexOf(0, at) < 0 ? output.length : output.indexOf(0, at);
-    const tab = output.indexOf(9, at);
-    if (tab < 0 || tab > end) throw new Error(`git ls-tree printed an entry without a path for ${commit}.`);
-    const [mode, , object] = output.subarray(at, tab).toString("latin1").split(" ");
-    const name = output.subarray(tab + 1, end);
+  await listTree(base, commit, false, (meta, name) => {
+    const [mode, , object] = meta.split(" ");
     files.set(pathOfBytes(name), utf8(name) ? { mode, object } : { mode, object, notUtf8: true });
-    at = end + 1;
-  }
+  });
   return files;
 }
+
+/**
+ * List a commit's or a tree's whole tree, giving each entry's metadata before its tab, with its size when sizes is true, and its path's bytes to take,
+ * and reading no more of the listing than a store's tree may hold: a tree of more files throws an error that names the bound,
+ * which a sync reports as merge_failed, as it reports an entry that no store may hold, and whose treeTooLarge holds the bound.
+ */
+async function listTree(base, commit, sizes, take) {
+  const { treeFilesMax } = await storeLayout();
+  const max = treeFilesMax();
+  const listed = await gitRecords(base, ["ls-tree", "-r", "-z", ...(sizes ? ["-l"] : []), "--full-tree", commit], { separator: 0, limit: max, maxBytes: listingBytesMax(max), maxRecord: LISTED_META_MAX + LISTED_PATH_BYTES_MAX, take: (record) => {
+    const tab = record.indexOf(9);
+    if (tab < 0) throw new Error(`git ls-tree printed an entry without a path for ${commit}.`);
+    take(record.subarray(0, tab).toString("latin1"), record.subarray(tab + 1));
+  } });
+  if (listed.long) {
+    const tab = listed.long.indexOf(9);
+    const shown = `${pathOfBytes(listed.long.subarray(tab + 1, tab + 1 + 64))}…`;
+    throw Object.assign(new Error(`The store's Git holds ${longEntry(shown)} at ${commit}, so the store was left as it was.`), { unsafePath: true, longPath: shown });
+  }
+  if (listed.over) throw Object.assign(new Error(`The store's Git holds ${wideTree({ files: max, bytes: listed.over === "bytes" ? listingBytesMax(max) : null })} at ${commit}, so the store was left as it was.`), { unsafePath: true, treeTooLarge: max, listingBytes: listed.over === "bytes" ? listingBytesMax(max) : null });
+  if (!listed.ok) throw Object.assign(new Error(listed.stderr || "git ls-tree failed."), { git: listed });
+}
+
+// A listed entry's metadata before its path, at most its mode, type, object id of 64 digits, and size, and the longest path that any supported machine holds,
+// Windows with long paths, so a listing stops at the first entry past them; a listing of a tree within its bound on files, whose shared paths hold at most STORE_PATH_BYTES_MAX each, stays below listingBytesMax.
+const LISTED_META_MAX = 128;
+const LISTED_PATH_BYTES_MAX = 32767;
+const listingBytesMax = (files) => files * (LISTED_META_MAX + STORE_PATH_BYTES_MAX);
+const longEntry = (shown) => `an entry whose path holds more than ${LISTED_PATH_BYTES_MAX} bytes, the most that any supported machine holds, ${JSON.stringify(shown)}`;
+const wideTree = ({ files, bytes }) => bytes ? `a tree whose listing holds more than ${bytes} bytes, more than a tree of ${files} files, ${TREE_BOUND}, at ${STORE_PATH_BYTES_MAX} bytes for each path`
+  : `a tree of more than ${files} files, ${TREE_BOUND}`;
+
+// The bound on a store tree's files, in the words of a sync's message.
+const TREE_BOUND = "the most files that a store's tree may hold";
 
 // A byte of a tree path that is no part of a UTF-8 character is read as the lone surrogate U+DC00 plus that byte, which no UTF-8 text decodes to,
 // so two paths that differ only in such bytes keep apart, and every path is written back with the bytes it was read from.
@@ -2264,14 +2743,25 @@ function settleLetterCase(result, local, upstream) {
  */
 export async function unsafeStoreEntry(base, commit) {
   const { kind } = await storeLayout();
-  const files = await treeFiles(base, commit);
+  let files;
+  try { files = await treeFiles(base, commit); }
+  catch (error) {
+    if (error.treeTooLarge) return { files: error.treeTooLarge, bytes: error.listingBytes };
+    if (error.longPath) return { path: error.longPath, long: true, kind: "an entry" };
+    throw error;
+  }
   for (const [file, entry] of files) if (kind(file, entry) === "unsafe") return { path: file, kind: entryKind(entry.mode) };
   const clash = letterCaseClash(files.keys());
   return clash ? { path: clash[1], kind: "an entry", clash: clash[0] } : null;
 }
 
+/** What to change on the remote's branch for a refusal of what it holds that no store may hold. */
+export const unsafeEntryFix = (unsafe) => unsafe.files ? `Remove files${unsafe.bytes ? ", or shorten their paths," : ""} from the remote's branch until it holds at most ${unsafe.files}${unsafe.bytes ? ` whose paths hold at most ${STORE_PATH_BYTES_MAX} bytes each` : ""}.` : "Remove that path from the remote's branch.";
+
 /** What a tree holds that no store may hold, and why, for a refusal that names a tree's unsafe entry. */
 export function describeUnsafeEntry(unsafe) {
+  if (unsafe.files) return `${wideTree(unsafe)}, which no store may hold, since every machine would have to list and hold them`;
+  if (unsafe.long) return `${longEntry(unsafe.path)}, which no store may hold, since no machine could hold it`;
   const what = unsafe.clash ? `${shownPath(unsafe.clash)} and ${shownPath(unsafe.path)}, whose paths differ only in letter case,` : `${unsafe.kind} at ${shownPath(unsafe.path)},`;
   return `${what} which no store may hold, since a link, a path that some file system reads as Git's folder, the sync folder, or a place outside the store, a name that Windows refuses, a path that is not UTF-8, a file Prism shares whose name holds more than ${STORE_NAME_BYTES_MAX} bytes or whose path holds more than ${STORE_PATH_BYTES_MAX}, two paths that macOS and Windows read as one, a name that Git reads as .gitattributes or .gitmodules other than the store's own .gitattributes at its root, or an entry where Prism keeps its own files would make some machine's store unsafe or stuck`;
 }
@@ -2279,7 +2769,7 @@ export function describeUnsafeEntry(unsafe) {
 /** Refuse an upstream commit whose tree holds an entry no store may hold, before any file is written or removed and before the branch or the index moves, so the branch stays where it was. */
 async function refuseUnsafeTree(base, commit) {
   const unsafe = await unsafeStoreEntry(base, commit);
-  if (unsafe) throw Object.assign(new Error(`The upstream holds ${describeUnsafeEntry(unsafe)}, so the store was left as it was. Remove that path from the remote's branch.`), { unsafePath: true });
+  if (unsafe) throw Object.assign(new Error(`The upstream holds ${describeUnsafeEntry(unsafe)}, so the store was left as it was. ${unsafeEntryFix(unsafe)}`), { unsafePath: true });
   // A file above its kind's bound, or a comment folder above its bound, is refused as such an entry is, so it never reaches a disk that a reader reads.
   const over = await oversizedStoreEntry(base, commit);
   if (over) throw Object.assign(new Error(`The upstream holds ${await describeOversizedEntry(over)}, so the store was left as it was. Shrink or remove ${over.folder ? "comment files of that folder" : "that file"} on the remote's branch.`), { unsafePath: true });
@@ -2294,26 +2784,90 @@ async function refuseUnsafeTree(base, commit) {
  */
 async function unpushable(base, remote, { upstream = true } = {}) {
   const unsafe = await unsafeStoreEntry(base, "HEAD");
+  if (unsafe?.files || unsafe?.long) return wideBranchRefusal(base, remote, { upstream, sent: "pushed", unsafe });
   if (unsafe) return `The store's branch holds ${describeUnsafeEntry(unsafe)}, so it was not pushed. Remove that path from the remote's branch or from this store.`;
-  const known = (await required(base, ["for-each-ref", "--format=%(objectname)", `refs/remotes/${remote}/`])).text.split("\n").filter(Boolean);
-  // Only a commit made by hand puts such a file on the branch, since a sync's own commit withholds it, so each refusal names the command that takes that commit off while every file stays on disk.
-  const takeOff = async (paths, holds, until) => `Take the commit you made by hand that holds it off the store's branch: ${await resetAdvice(base, { upstream, known, paths, holds })}; the next sync then commits the store's other changes again and withholds ${until}.`;
+  const known = await knownCommits(base, remote);
+  // The history that an earlier check passed is walked no more, so the checks walk only the commits after the last checked one; the advice below still keeps every commit that other machines share.
+  const head = (await required(base, ["rev-parse", "--verify", "HEAD"])).text;
+  const checked = await checkedTip(base);
+  const walked = [...known, ...(checked ? [checked] : [])];
   // Git's object check runs first, since a tree that it refuses, such as one nested deeper than Git walks, is one that no listing of the branch's files could read.
-  const refused = await refusedObjects(base, "HEAD", known);
+  const refused = await refusedObjects(base, head, walked);
   if (refused) {
     const places = [...new Set([...refused.places.values()].flat())];
     const named = places.length ? places : [...await treeFiles(base, "HEAD")].filter(([, entry]) => refused.objects.includes(entry.object)).map(([file]) => file);
-    const fix = await takeOff(named, (_file, { object }) => refused.objects.includes(object), "each such file until it is fixed");
+    const fix = await takeOffAdvice(base, { upstream, known, paths: named, holds: (_file, { object }) => refused.objects.includes(object), until: "each such file until it is fixed",
+      instead: `fix each such file in the store as Git's reason says, and take it out of every commit of the store's branch that no other machine holds yet while keeping every commit that other machines share, such as by making those commits again without it; the next sync then pushes the branch` });
     return `The store's branch holds ${named.length ? named.map(shownPath).join(" and ") : "an object"} that Git's object check refuses (${refused.message}), so it was not pushed, since every other machine's fetch and first clone would then refuse the remote for good. ${fix}`;
   }
   const over = await oversizedStoreEntry(base, "HEAD");
-  const before = over ? null : await oversizedHistory(base, known);
+  const before = over ? null : await oversizedHistory(base, walked, head);
   const found = over ?? before;
-  if (!found) return null;
-  // A comment folder that holds too many comment files has no one file to look for, so the oldest commit that the remote lacks is taken off with every later one.
-  const fix = await takeOff(found.path ? [found.path] : [], (_file, { size }) => size > found.bound, "each file while it stays above its bound");
+  if (!found) {
+    await required(base, ["update-ref", CHECKED_REF, head]);
+    return null;
+  }
+  const { commentsMax } = await storeLayout();
+  // A comment folder that holds too many comment files has no one file to look for, so the oldest commit that the remote lacks is taken off with every later one,
+  // and where that would take off a commit that other machines share, moving the surplus comment files out of the folder lets the next sync commit their removal, since only the branch's tip counts them.
+  const fix = await takeOffAdvice(base, { upstream, known, paths: found.path ? [found.path] : [], holds: (_file, { size }) => size > found.bound, until: "each file while it stays above its bound",
+    instead: found.folder
+      ? `move the comment files of ${shownPath(found.folder)} past the first ${commentsMax} by file name out of that folder in the store, keeping what they say if that matters, and the next sync commits their removal and pushes the branch`
+      : oversizedFix(found.path) });
   if (over) return `The store's branch holds ${await describeOversizedEntry(over)}, so it was not pushed, since every other machine's sync would then refuse the remote's branch. ${fix}`;
   return `A commit of the store's branch that the remote does not hold yet holds ${await describeOversizedEntry(before)}, so the branch was not pushed, since the remote would keep that file in its history for every clone to fetch. ${fix}`;
+}
+
+/**
+ * The refusal of a branch whose tree holds more files than a store's tree may, which only a commit made by hand makes, since a sync makes no commit past the bound:
+ * the command that takes the commits that the remote lacks off the branch, after which files are removed from the store until the next sync can commit them, or, where that would take off a commit that other machines share, removing files by hand instead.
+ * Before a merge the upstream's files are not on disk yet, so upstream is false there and the command goes back to before those commits rather than to the upstream's tip.
+ */
+async function wideBranchRefusal(base, remote, { upstream, sent, unsafe }) {
+  const { treeFilesMax } = await storeLayout();
+  const max = treeFilesMax();
+  const until = unsafe.long ? "no such entry, which no sync commits" : null;
+  const then = unsafe.long ? null : `then remove files that the store no longer needs from it${unsafe.bytes ? ", or shorten their paths," : ""} until it holds at most ${max}, and the next sync shares every change`;
+  const instead = unsafe.long ? "remove that entry from the store's branch with a commit made by hand; the next sync then pushes the branch"
+    : `remove files${unsafe.bytes ? ", or shorten their paths," : ""} from the store's branch with a commit made by hand until it holds at most ${max}; the next sync then pushes the branch`;
+  const fix = await takeOffAdvice(base, { upstream, known: await knownCommits(base, remote), paths: [], holds: () => false, until, then, instead });
+  const what = unsafe.files && !unsafe.bytes ? `more than ${max} files, ${TREE_BOUND}` : unsafe.long ? longEntry(unsafe.path) : wideTree(unsafe);
+  return `The store's branch holds ${what}, so it was not ${sent}, since every other machine's sync would then refuse the remote's branch. ${fix}`;
+}
+
+/**
+ * The refusal of a sync whose tree to push, this machine's changes merged with the upstream's as fetched, would hold more files than a store's tree may, with that count, the bound, and the fix:
+ * nothing was committed, merged, or pushed, and every file stays on disk as it is, so removing files on any machine is all that the next sync needs to share every change.
+ * kept says that an earlier attempt of the sync merged the upstream before another machine pushed first, which stays on the branch and on disk.
+ */
+async function pastTreeRefusal({ files }, kept = false) {
+  const { treeFilesMax } = await storeLayout();
+  const max = treeFilesMax();
+  return `The tree that the sync would push, this machine's changes merged with the upstream's as fetched, would hold ${files} files, more than ${max}, ${TREE_BOUND}, `
+    + (kept ? "so the sync pushed nothing: it keeps the merge of the upstream that it made before another machine pushed first, and this machine's later changes stay on disk as they are, in no commit. "
+      : "so the sync committed, merged, and pushed nothing, and every file stays on disk as it is. ")
+    + `Remove files that the store no longer needs, on this machine or another, until it holds at most ${max}, and the next sync shares every change.`;
+}
+
+// Take the commits that a sync made of this machine's changes off the branch, which still points at the last of them, so the branch and the index are as they were before the sync.
+async function takeOffCommit(base, { from, to }) {
+  const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  if (!head.ok || head.text !== to) return;
+  await required(base, from ? ["read-tree", from] : ["read-tree", "--empty"]);
+  await required(base, from ? ["update-ref", "-m", "prism: keep the store's tree within its bound", "HEAD", from, to] : ["update-ref", "-d", "HEAD", to]);
+}
+
+// What a refusal of a file above its bound asks for where no commit can be taken off the branch without one that other machines share.
+const oversizedFix = (file) => `make ${shownPath(file)} smaller than its bound in the store, and take it out of every commit of the store's branch that no other machine holds yet while keeping every commit that other machines share, such as by making those commits again without it; the next sync then pushes the branch`;
+
+/**
+ * The fix that a refusal of a commit made by hand gives: the command that takes it off the store's branch, as resetAdvice gives it, with what the next sync then does,
+ * or, where no command can take it off without a commit that other machines already share, what to change instead.
+ */
+async function takeOffAdvice(base, { upstream, known, paths, holds, until, then = null, instead }) {
+  const command = await resetAdvice(base, { upstream, known, paths, holds });
+  if (command) return `Take the commit you made by hand that holds it off the store's branch: ${command}; ${then ?? `the next sync then commits the store's other changes again and withholds ${until}`}.`;
+  return `No command can take the commit you made by hand that holds it off the store's branch without also taking off commits that other machines already share, so ${instead}.`;
 }
 
 /**
@@ -2322,6 +2876,8 @@ async function unpushable(base, remote, { upstream = true } = {}) {
  * else a soft reset to the parent of the oldest commit that the remote lacks and whose entry at one of the paths holds tells apart, as { object, size } from Git's object listing,
  * else, where that commit is the branch's first, the removal of the branch's ref, after which the next sync commits the files on disk as the branch's first commit.
  * With no path, or none that such a commit holds, the oldest commit that the remote lacks is the one, so the command takes off every commit the push would send.
+ * The known commits are the ones that the store knows other machines share, which outlast a branch deleted on the remote, so no such command takes one off:
+ * where the parent would, the last commit of the branch that other machines share is the one, and where there is no single such commit, the answer is null.
  */
 async function resetAdvice(base, { upstream, known, paths, holds }) {
   if (upstream) {
@@ -2332,9 +2888,10 @@ async function resetAdvice(base, { upstream, known, paths, holds }) {
   let first = null;
   if (paths.length) {
     // The commits that the remote lacks and that change one of the paths, oldest first, so no commit comes before one of its parents.
-    const changing = (await required(base, ["rev-list", "--topo-order", "--reverse", "--full-history", "--stdin", "--", ...paths], { input: revisions, env: { GIT_LITERAL_PATHSPECS: "1" }, maxBuffer: PACK_BYTES_MAX })).text.split("\n").filter(Boolean);
+    const changing = await historyCommits(base, ["rev-list", "--topo-order", "--reverse", "--full-history", "--stdin", "--", ...paths], revisions, { GIT_LITERAL_PATHSPECS: "1" });
     const names = changing.flatMap((commit) => paths.map((file) => ({ commit, file })));
-    const listed = names.length ? (await required(base, ["cat-file", "--batch-check=%(objectname) %(objectsize)"], { input: `${names.map(({ commit, file }) => `${commit}:${file}`).join("\n")}\n`, maxBuffer: PACK_BYTES_MAX })).text.split("\n") : [];
+    // Git answers with one line for each name asked, "<object> <size>", or the name and "missing" for a commit that does not hold the path.
+    const listed = names.length ? await gitLines(base, ["cat-file", "--batch-check=%(objectname) %(objectsize)"], { input: `${names.map(({ commit, file }) => `${commit}:${file}`).join("\n")}\n`, limit: names.length, maxRecord: 128 + STORE_PATH_BYTES_MAX * 2, what: "the sizes of a file in the commits that the remote lacks" }) : [];
     const at = names.findIndex(({ file }, index) => {
       const [object, size] = (listed[index] ?? "").split(" ");
       return /^[0-9a-f]{40,64}$/.test(object) && holds(file, { object, size: Number(size) });
@@ -2342,10 +2899,36 @@ async function resetAdvice(base, { upstream, known, paths, holds }) {
     first = at < 0 ? null : names[at].commit;
   }
   const holding = first !== null;
-  first ??= (await required(base, ["rev-list", "--topo-order", "--reverse", "--stdin"], { input: revisions, maxBuffer: PACK_BYTES_MAX })).text.split("\n").find(Boolean) ?? null;
+  if (first === null) {
+    // Only the oldest commit is wanted, so the listing stops at it.
+    const listed = await gitRecords(base, ["rev-list", "--topo-order", "--reverse", "--stdin"], { separator: 10, maxRecord: 128, input: revisions, take: (line) => { first = line.toString("latin1"); return false; } });
+    if (listed.long) throw historyRefusal("the commits that the remote lacks");
+    if (!listed.ok) throw Object.assign(new Error(listed.stderr || "git rev-list failed."), { git: listed });
+    first ||= null;
+  }
   const parent = first ? await git(base, ["rev-parse", "--verify", "--quiet", `${first}^1`]) : { ok: false };
-  if (parent.ok && parent.text) return `run git reset --soft ${parent.text} in the store, which keeps every file on disk and moves the branch back to the commit before the first commit of it that the remote lacks${holding ? " and that holds the file" : ""}`;
-  return `run git update-ref -d HEAD in the store, which keeps every file on disk and takes every commit off the branch, since ${holding ? "its first commit holds the file" : "the remote lacks each of them"}`;
+  const target = parent.ok && parent.text ? parent.text : null;
+  if (await keepsShared(base, target, known)) {
+    if (target) return `run git reset --soft ${target} in the store, which keeps every file on disk and moves the branch back to the commit before the first commit of it that the remote lacks${holding ? " and that holds the file" : ""}`;
+    return `run git update-ref -d HEAD in the store, which keeps every file on disk and takes every commit off the branch, since ${holding ? "its first commit holds the file" : "the remote lacks each of them"}`;
+  }
+  // The latest commits of the branch that other machines share; one of them, which holds every other, is where the branch can go back to.
+  const shared = [];
+  for (const commit of known) {
+    const common = await git(base, ["merge-base", "HEAD", commit]);
+    if (common.ok && common.text) shared.push(common.text);
+  }
+  const latest = shared.length ? (await gitLines(base, ["merge-base", "--independent", ...new Set(shared)], { limit: new Set(shared).size, maxRecord: 128 })).filter(Boolean) : [];
+  if (latest.length === 1 && await keepsShared(base, latest[0], known)) return `run git reset --soft ${latest[0]} in the store, which keeps every file on disk and moves the branch back to the last commit of it that other machines already share`;
+  return null;
+}
+
+// Whether moving the branch back to target, or taking every commit off it for null, keeps every commit of it that the known commits hold, so the branch keeps every commit that other machines share.
+async function keepsShared(base, target, known) {
+  if (!known.length) return true;
+  // A count is one line, whatever the history holds.
+  const count = async (others) => (await required(base, ["rev-list", "--count", "--stdin"], { input: `HEAD\n${target ? `^${target}\n` : ""}${others}` })).text;
+  return await count("") === await count(known.map((commit) => `^${commit}\n`).join(""));
 }
 
 /**
@@ -2355,24 +2938,22 @@ async function resetAdvice(base, { upstream, known, paths, holds }) {
 export async function writeCommitFiles(base, commit) {
   const { shared } = await partition(await treeFiles(base, commit));
   const files = [...shared];
-  // The blobs are read in batches of bounded size, so a store of many files takes few Git processes and no batch outgrows the output buffer.
-  const sizes = files.length ? (await required(base, ["cat-file", "--batch-check=%(objectname) %(objectsize)"], { input: `${files.map(([, entry]) => entry.object).join("\n")}\n` })).text.split("\n").map((line) => Number(line.split(" ")[1])) : [];
+  // The blobs are read in batches of bounded size through the sync's one blob reader, so a store of many files takes few Git processes, no batch outgrows the output buffer, and no blob above its bound is read.
+  const info = files.length ? await objectInfo(base, [...new Set(files.map(([, entry]) => entry.object))]) : new Map();
+  const sizes = files.map(([, entry]) => info.get(entry.object)?.size ?? 0);
   const LIMIT = 32 * 1024 * 1024;
   for (let start = 0; start < files.length;) {
     let end = start;
     let total = 0;
     while (end < files.length && (end === start || total + sizes[end] <= LIMIT)) total += sizes[end++] + 128;
     const batch = files.slice(start, end);
-    const output = (await required(base, ["cat-file", "--batch"], { input: `${batch.map(([, entry]) => entry.object).join("\n")}\n`, maxBuffer: total + 1024 * 1024 })).stdout;
-    let at = 0;
-    for (const [file, entry] of batch) {
-      const header = output.indexOf(10, at);
-      const [object, type, size] = output.subarray(at, header).toString("utf8").split(" ");
-      if (object !== entry.object || type !== "blob") throw new Error(`Git holds no blob ${entry.object} for ${file}.`);
+    const contents = await readBlobs(base, batch.map(([file, entry]) => ({ file, entry })));
+    for (const [index, [file]] of batch.entries()) {
+      const bytes = contents[index];
+      if (!Buffer.isBuffer(bytes)) throw new Error(`Git holds ${shownPath(file)} above the bound that a store file of its kind may hold, so its files were not written.`);
       const target = path.join(base, ...file.split("/"));
       await mkdir(path.dirname(target), { recursive: true });
-      await writeFile(target, output.subarray(header + 1, header + 1 + Number(size)));
-      at = header + 1 + Number(size) + 1;
+      await writeFile(target, bytes);
     }
     start = end;
   }
@@ -2408,21 +2989,22 @@ async function clearFolder(target) {
 /**
  * Replace the files at shared paths that differ between two commits by atomic renames of their blobs' bytes, then move the branch and index to the target commit.
  * An entry at any other path, such as a .DS_Store the store's history holds, is never written, removed, or compared on disk.
- * The branch moves only when every changed file held the previous commit's bytes and holds the target's bytes afterwards, in the target's spelling.
+ * The branch moves only when every changed file held the previous commit's bytes and holds the target's bytes afterwards, in the target's spelling;
+ * diskTree, when given, is the files, as Map(path, entry), that the disk holds in place of the previous commit's, as this machine's changes that the branch never took because their tree passes the bound on a store tree's files.
  * Otherwise the branch stays, so the next commit records the replaced files and the local writes, and the next merge resolves them; progress.replacing, when given, runs before each file is replaced or removed.
  * progress.leaving, when given, takes each comment on disk that neither commit holds and that the target's comments leave no room for, before it leaves the disk.
  * held maps a file whose local version the sync withheld to that version, which the file may hold in place of the branch's, or, for a file above its kind's bound, to the file on disk that it must still be.
  * On a file system that ignores letter case, as macOS and Windows use by default, a path that differs only in letter case from a file on disk opens that file,
  * so a path counts as holding bytes only when every name of it is stored in that spelling, and two changed paths that such a file system reads as one take one lock.
  */
-async function apply(base, from, to, options, progress = {}, held = new Map()) {
+async function apply(base, from, to, options, progress = {}, held = new Map(), diskTree = from) {
   const marker = syncPath(base, "working-tree");
   await writeAtomically(marker, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
   let files = [];
   try {
     await options.beforeApply?.();
     const { shareable, bound } = await storeLayout();
-    const [before, after] = await Promise.all([treeFiles(base, from), treeFiles(base, to)]);
+    const [before, after] = await Promise.all([diskTree instanceof Map ? diskTree : treeFiles(base, diskTree), treeFiles(base, to)]);
     // A link that the branch held and the target drops was never a file on disk that Prism wrote, so it stays as it is; a submodule link's empty folder goes.
     const onDisk = (file) => [before.get(file), after.get(file)].some((entry) => FILE_MODES.has(entry?.mode)) || before.get(file)?.mode === "160000";
     files = [...new Set([...before.keys(), ...after.keys()])].filter((file) => shareable(file) && !sameEntry(before.get(file), after.get(file)) && onDisk(file)).sort();
@@ -2446,13 +3028,14 @@ async function apply(base, from, to, options, progress = {}, held = new Map()) {
             // A file withheld because it is above its kind's bound is never read: it must still be the file the sync held back, which the caller moves aside before replacing it.
             if (held.get(file)?.disk) {
               if (!(await sameDiskFile(targets[index], held.get(file).disk))) return false;
-              next.push(await entryBytes(base, after.get(file)));
+              next.push(await boundedBlob(base, file, after.get(file)));
               continue;
             }
-            const [bytes, expected] = await Promise.all([ownBytes(index, listings), entryBytes(base, before.get(file))]);
+            // The branch's version is read only within its bound, as every blob the sync reads is, and one above it, which only a commit made by hand puts on the branch, is refused by name.
+            const [bytes, expected] = await Promise.all([ownBytes(index, listings), boundedBlob(base, file, before.get(file))]);
             // A file whose local version the sync withheld still holds that version, which the caller saved.
-            if (!sameBytes(bytes, expected) && !(held.has(file) && sameBytes(bytes, await entryBytes(base, held.get(file))))) return false;
-            next.push(await entryBytes(base, after.get(file)));
+            if (!sameBytes(bytes, expected) && !(held.has(file) && sameBytes(bytes, await boundedBlob(base, file, held.get(file))))) return false;
+            next.push(await boundedBlob(base, file, after.get(file)));
           }
           // A comment that this machine wrote after the sync read its comment folders, as while the sync fetched or while an update held the artifact lock, is in neither commit,
           // so the merge did not count it; where the target's comments leave it no room in its folder, it is saved, named as a comment that the folder's bound left out, and leaves the disk,
@@ -2540,6 +3123,14 @@ async function storedInSpelling(base, file, cache) {
   return true;
 }
 
+// Windows refuses to rename a folder to another spelling of its own name, so there the folder first moves to a unique name beside it.
+async function respell(from, to) {
+  if (process.platform !== "win32") return rename(from, to);
+  const between = `${from}.respell-${process.pid}-${randomBytes(4).toString("hex")}`;
+  await renameWhenFree(from, between);
+  try { await renameWhenFree(between, to); } catch (error) { await renameWhenFree(between, from).catch(() => {}); throw error; }
+}
+
 /**
  * Give each folder above a path that the file system stores in another letter case, and finds by this spelling too, this spelling, as it would after a removal emptied it,
  * so a file written below it lands at the target's spelling, which the next commit reads back; a file system that tells letter case apart keeps the two spellings as two folders.
@@ -2553,7 +3144,7 @@ async function respellFolders(base, file) {
     if (stored === undefined) return;
     if (stored !== name) {
       if (!(await lstat(path.join(folder, name)).then((stats) => stats.isDirectory(), () => false))) return;
-      await rename(path.join(folder, stored), path.join(folder, name));
+      await respell(path.join(folder, stored), path.join(folder, name));
     }
     folder = path.join(folder, name);
   }
@@ -2592,7 +3183,7 @@ export async function localStoreChanges(base) {
   const commits = !ahead.ok || Number(ahead.text) > 0 || await unpublished(base);
   const committed = head.ok ? (await partition(await treeFiles(base, head.text))).shared : new Map();
   const withheld = new Map();
-  const onDisk = await localFiles(base, true, committed, withheld);
+  const onDisk = await localFiles(base, committed, withheld);
   let files = withheld.size > 0 || onDisk.size !== committed.size;
   for (const [file, entry] of onDisk) if (!files && committed.get(file)?.object !== entry.object) files = true;
   return { commits, files, conflicts: (await listSavedConflicts(base)).length > 0 };

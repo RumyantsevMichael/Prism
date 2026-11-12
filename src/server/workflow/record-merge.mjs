@@ -8,7 +8,9 @@ export { JSON_DEPTH_MAX, nestedDeeperThan };
 const MERGES = [
   { matches: (relative) => relative === "roadmap.json", load: async () => (await import("./roadmap.mjs")).mergeRoadmapRecord },
   { matches: (relative) => /^initiatives\/[A-Za-z0-9_-]+\/initiative\.json$/.test(relative), load: async () => (await import("./initiative.mjs")).mergeInitiativeRecord },
-  { matches: (relative) => /^initiatives\/[A-Za-z0-9_-]+\/state\.json$/.test(relative), load: async () => (await import("./state.mjs")).mergeCoordinationState }
+  { matches: (relative) => /^initiatives\/[A-Za-z0-9_-]+\/state\.json$/.test(relative), load: async () => (await import("./state.mjs")).mergeCoordinationState },
+  // A status record merges by what its versions say, so a ship's acceptance on one machine and an approval asked on another leave the ADR's file and recorded status agreeing.
+  { matches: (relative) => /^artifact-status\/.+\/status\.json$/.test(relative), load: async () => (await import("./artifact-status.mjs")).mergeStatusRecord }
 ];
 
 /** Whether a store-relative record path has a structural merge. */

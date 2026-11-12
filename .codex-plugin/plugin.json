@@ -1,6 +1,6 @@
 {
   "name": "prism",
-  "version": "0.20.0",
+  "version": "0.23.0",
   "description": "Spec-driven engineering workflow with EARS requirements, ADRs, slices designed as frozen contracts with failing acceptance tests, verified implementation, and orchestration.",
   "author": {
     "name": "Michael Rumyantsev",
@@ -8,7 +8,7 @@
   },
   "homepage": "https://github.com/RumyantsevMichael/Prism#readme",
   "repository": "https://github.com/RumyantsevMichael/Prism",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "workflow",
     "spec-driven",
@@ -42,6 +42,8 @@
       "Use Prism to design this change.",
       "Use Prism to design this slice as a contract with failing acceptance tests.",
       "Use Prism to implement this approved specification."
-    ]
+    ],
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/icon.png"
   }
 }

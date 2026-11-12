@@ -7,8 +7,10 @@
     {
       "name": "prism",
       "source": {
-        "source": "local",
-        "path": "./"
+        "source": "url",
+        "url": "https://github.com/RumyantsevMichael/Prism.git",
+        "ref": "prism--v0.23.0",
+        "sha": "eb9b6ebe380b7d8f8b4c784fb11faf7bff27ae27"
       },
       "policy": {
         "installation": "AVAILABLE",

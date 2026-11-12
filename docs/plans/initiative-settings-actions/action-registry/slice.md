@@ -1,5 +1,8 @@
 # Apply actions through one registry
 
+> Shipped history: initiative `initiative-settings-actions` shipped on 2026-11-08, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 The review app lists and applies revision-checked actions from one transport-independent registry, with the six initiative settings, gate answers, and each component's own index rebuild as its actions, and records each with its author in history.

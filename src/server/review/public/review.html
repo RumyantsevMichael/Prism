@@ -23,20 +23,22 @@
         <img class="brand-mark" src="./prism-mark.svg" alt="" aria-hidden="true">
         <span class="wordmark">Prism</span>
       </a>
-      <prism-button id="project-button" class="topbar-project" variant="ghost" disabled>
+      <prism-button id="project-button" class="topbar-project" variant="chrome" disabled>
+        <prism-avatar id="project-tile" class="project-tile" kind="workspace" aria-hidden="true"></prism-avatar>
         <span id="project" class="project-label">Loading project</span>
         <prism-badge id="project-gates" variant="count" tone="danger" hidden></prism-badge>
         <prism-icon name="chevron-down" size="xs"></prism-icon>
       </prism-button>
       <prism-menu id="project-menu" for="project-button"></prism-menu>
-      <prism-button id="jump" class="topbar-search" label="Search or jump to (Ctrl K)" aria-keyshortcuts="Control+K Meta+K">
+      <prism-button id="jump" class="topbar-search" variant="search" label="Search or jump to (Ctrl K)" aria-keyshortcuts="Control+K Meta+K">
         <prism-icon name="search" size="sm"></prism-icon>
         <span class="topbar-search-label">Search or jump to…</span>
-        <kbd>Ctrl K</kbd>
+        <prism-kbd class="topbar-search-keys">Ctrl K</prism-kbd>
       </prism-button>
       <div class="topbar-end">
-        <prism-button id="presence-button" class="topbar-presence" variant="ghost">0 working</prism-button>
+        <prism-button id="presence-button" class="topbar-presence" variant="chrome" shape="round">0 working</prism-button>
         <prism-popover id="presence" for="presence-button" heading="Who's working"></prism-popover>
+        <prism-rail-item id="attention-button" class="topbar-attention" value="attention" label="Attention" icon="bell" size="sm"></prism-rail-item>
       </div>
     </header>
     <div id="banners" class="banners">
@@ -47,18 +49,24 @@
         <p>The shared review app could not be reached, so another session may show this project at a different link, and this page stops when its session ends.</p>
         <p class="private-server-reason" id="private-server-reason"></p>
       </prism-banner>
+      <prism-banner id="missing-project" tone="info" heading="The link named a workspace or checkout that Prism no longer lists, so the workspace used last opened instead." dismissible hidden>
+        <p>Choose another workspace from the workspace switcher at the top.</p>
+      </prism-banner>
       <div id="notice" class="notices" aria-live="polite" hidden></div>
       <prism-banner id="connection" tone="warning" heading="The review server is not responding. Retrying…" hidden></prism-banner>
     </div>
     <div id="shell-body" class="shell-body">
-      <nav id="sidebar" class="sidebar" aria-label="Workspace navigation">
-        <div id="nav" class="nav">
-          <prism-tree id="nav-places" label="Places"></prism-tree>
-          <div id="nav-scope" class="nav-scope"></div>
-          <div id="nav-library" class="nav-library"></div>
-        </div>
+      <div id="rail-dock" class="rail-dock">
+        <prism-rail id="rail" label="Places">
+          <prism-rail-item slot="head" id="sidebar-toggle" value="sidebar" label="Collapse the sidebar" tip="Collapse the sidebar ([)" icon="panel-left" aria-controls="sidebar" aria-expanded="true" aria-keyshortcuts="["></prism-rail-item>
+        </prism-rail>
+      </div>
+      <nav id="sidebar" class="sidebar" aria-label="Sidebar">
+        <prism-place-head id="place-head"></prism-place-head>
+        <div id="nav" class="nav"></div>
       </nav>
       <prism-panel id="main" class="main" variant="island" flush>
+        <prism-doc-tabs id="open-tabs" class="open-documents" label="Open artifacts" empty></prism-doc-tabs>
         <div id="page-bar" class="page-bar"></div>
         <div id="workspace" class="workspace">
           <div id="artifact" class="artifact-view" aria-live="polite" aria-busy="true">
@@ -69,7 +77,7 @@
         </div>
       </prism-panel>
       <prism-panel id="side-panel" class="side" variant="island" flush hidden>
-        <prism-button slot="tools" id="side-panel-open" variant="ghost" size="sm">Open as page</prism-button>
+        <prism-button slot="tools" id="side-panel-open" variant="ghost" size="sm">Open as tab</prism-button>
         <prism-button slot="tools" id="side-panel-close" variant="ghost" size="sm" label="Close the side panel" tip="Close (Esc)"><prism-icon name="close"></prism-icon></prism-button>
         <div id="side-panel-resizer" class="side-resizer" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" tabindex="0"></div>
         <p class="side-source" id="side-panel-source"></p>
@@ -77,17 +85,17 @@
       </prism-panel>
     </div>
     <footer class="statusbar" id="statusbar" aria-label="Status">
-      <prism-button class="status-item" id="store-status" variant="ghost" size="sm" hidden>
+      <prism-button class="status-item" id="store-status" variant="status" hidden>
         <prism-icon name="store" size="xs"></prism-icon>
         <span id="store-status-label" class="status-label"></span>
-      </prism-button>
-      <prism-button class="status-item" id="store-sync" variant="ghost" size="sm" hidden>
-        <span class="status-dot" aria-hidden="true"></span>
-        <span id="store-sync-label" class="status-label"></span>
+        <span id="store-sync" class="store-sync" hidden>
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="store-sync-label" class="status-label"></span>
+        </span>
       </prism-button>
       <span class="statusbar-spacer"></span>
       <span class="indexing" id="indexing" hidden>
-        <prism-button class="status-item" id="indexing-button" variant="ghost" size="sm">
+        <prism-button class="status-item" id="indexing-button" variant="status">
           <span class="status-dot" aria-hidden="true"></span>
           <span id="indexing-label" class="status-label"></span>
           <span id="indexing-component" class="indexing-component" hidden></span>
@@ -97,24 +105,28 @@
         <prism-popover id="indexing-panel" for="indexing-button" heading="Repository index"></prism-popover>
       </span>
       <span class="statusbar-appearance">
-        <prism-button id="appearance-button" variant="ghost"><prism-icon name="contrast" size="sm"></prism-icon>Appearance</prism-button>
-        <prism-menu id="appearance-menu" for="appearance-button">
-          <prism-menu-group label="Theme">
-            <prism-menu-item type="radio" value="system">System</prism-menu-item>
-            <prism-menu-item type="radio" value="light">Light</prism-menu-item>
-            <prism-menu-item type="radio" value="dark">Dark</prism-menu-item>
+        <prism-button class="status-item" id="appearance-button" variant="status" aria-keyshortcuts="Control+Comma Meta+Comma"><prism-icon name="contrast" size="sm"></prism-icon><span class="status-label appearance-label">Appearance</span></prism-button>
+        <prism-menu id="appearance-menu" for="appearance-button" heading="Appearance" keys="Ctrl ," size="wide" sheet>
+          <prism-menu-group label="Theme" layout="tiles">
+            <prism-menu-item type="radio" variant="tile" preview="system" value="system"><prism-icon name="monitor" size="xs"></prism-icon>System</prism-menu-item>
+            <prism-menu-item type="radio" variant="tile" preview="light" value="light"><prism-icon name="sun" size="xs"></prism-icon>Light</prism-menu-item>
+            <prism-menu-item type="radio" variant="tile" preview="dark" value="dark"><prism-icon name="moon" size="xs"></prism-icon>Dark</prism-menu-item>
           </prism-menu-group>
-          <prism-menu-group label="Density">
-            <prism-menu-item type="radio" value="compact">Compact</prism-menu-item>
-            <prism-menu-item type="radio" value="comfortable">Comfortable</prism-menu-item>
+          <prism-menu-group label="Density" layout="segmented">
+            <prism-menu-item type="radio" variant="segment" value="compact">Compact</prism-menu-item>
+            <prism-menu-item type="radio" variant="segment" value="comfortable">Comfortable</prism-menu-item>
           </prism-menu-group>
-          <prism-menu-item value="catalog"><prism-icon name="external" size="sm"></prism-icon> Component catalog</prism-menu-item>
+          <prism-menu-item value="catalog"><prism-icon name="grid" size="sm"></prism-icon>Component catalog<prism-icon slot="hint" name="external" size="xs"></prism-icon></prism-menu-item>
         </prism-menu>
       </span>
     </footer>
   </div>
-  <prism-dialog id="nav-drawer" heading="Navigation" placement="start"></prism-dialog>
-  <prism-dialog id="side-panel-sheet" heading="Side panel" placement="bottom"></prism-dialog>
+  <prism-dialog id="nav-drawer" heading="Navigation" placement="start" bare flush>
+    <div id="drawer-places" class="drawer-places">
+      <prism-rail id="drawer-rail" label="Places"></prism-rail>
+    </div>
+  </prism-dialog>
+  <prism-dialog id="side-panel-sheet" heading="Side panel" placement="bottom" bare></prism-dialog>
   <prism-dialog id="store-dialog" heading="Record store" size="lg"></prism-dialog>
   <prism-dialog id="action-dialog" heading="Confirm the change">
     <p id="action-dialog-message" class="action-dialog-message"></p>
@@ -129,15 +141,24 @@
     <prism-button slot="footer" id="workspace-add-cancel">Cancel</prism-button>
     <prism-button slot="footer" id="workspace-add-submit" variant="primary">Add workspace</prism-button>
   </prism-dialog>
-  <prism-dialog id="palette" class="palette" heading="Command palette" size="lg">
-    <prism-field id="palette-input" type="search" label="Search or jump to" placeholder="An initiative, slice, document, or file, or text in a document"></prism-field>
+  <prism-dialog id="palette" class="palette" heading="Command palette" size="lg" placement="top" bare>
+    <prism-field id="palette-input" type="search" variant="bare" label="Search or jump to" placeholder="An initiative, slice, document, or file, or text in a document">
+      <prism-icon slot="start" name="search"></prism-icon>
+      <prism-kbd slot="end">Esc</prism-kbd>
+    </prism-field>
+    <div id="palette-scopes" class="palette-scopes" role="group" aria-label="Search in"></div>
     <div class="palette-body">
-      <prism-listbox id="palette-results" class="palette-results" for="palette-input" label="Results"></prism-listbox>
+      <prism-listbox id="palette-results" class="palette-results" for="palette-input" label="Results" first-current></prism-listbox>
       <div id="palette-preview" class="palette-preview" aria-live="polite"></div>
     </div>
-    <p class="palette-hint">Enter opens the result · Esc closes</p>
+    <div class="palette-foot">
+      <span class="palette-keys"><prism-kbd>↑</prism-kbd><prism-kbd>↓</prism-kbd> move</span>
+      <span class="palette-keys"><prism-kbd>↵</prism-kbd> open</span>
+      <span class="palette-keys palette-keys-wide"><prism-kbd>Esc</prism-kbd> close</span>
+      <span id="palette-count" class="palette-count" aria-live="polite"></span>
+    </div>
   </prism-dialog>
-  <prism-dialog id="evidence-drawer" class="evidence-dialog" heading="Evidence" size="lg">
+  <prism-dialog id="evidence-drawer" class="evidence-dialog" heading="Evidence" placement="end" modeless>
     <nav id="evidence-trail" class="evidence-trail" aria-label="Evidence trail"></nav>
     <div id="evidence-body" class="evidence-body"></div>
   </prism-dialog>

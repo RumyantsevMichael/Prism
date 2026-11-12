@@ -27,7 +27,7 @@ export const REPOSITORY_REFUSALS = Object.freeze(["repository_name_missing", "re
 const CONFIRMING = new Set(["ok", "conflicts", "no_upstream", "not_a_repository"]);
 
 const git = (root, args) => new Promise((resolve) => {
-  execFile("git", ["-C", root, ...args], { timeout: 10000 }, (error, stdout) => resolve(error ? null : stdout.trim()));
+  execFile("git", ["-C", root, ...args], { timeout: 10000, windowsHide: true }, (error, stdout) => resolve(error ? null : stdout.trim()));
 });
 
 /** The identity every full clone of one repository shares, its first root commit in sorted order, or null outside Git, before the first commit, or in a shallow clone, whose oldest fetched commits only look like roots. */

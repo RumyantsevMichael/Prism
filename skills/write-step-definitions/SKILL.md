@@ -9,7 +9,7 @@ sdm: "0.3"
 ## 1. Prepare
 
 1. If `.prism/workflow.md` exists, read it first.
-2. Read the [feature file](../workflow/SKILL.md#common-terms), linked requirements, selected production surface, executable tests, and existing helpers.
+2. Read the [feature file](../workflow/SKILL.md#common-terms), linked requirements, selected production surface, executable tests, and existing helpers, reading requirements through `get_artifact` when they are [store artifacts](../workflow/SKILL.md#common-terms).
 
 ## 2. Connect the acceptance path
 
@@ -21,7 +21,7 @@ sdm: "0.3"
   4. Bind Given through product interfaces or existing fixtures.
   5. Bind When to the selected user or system action.
   6. Bind Then to the minimum assertion proving its claim.
-  7. Put reusable drivers, fakes, and spies in the existing shared helper location.
+  7. Put reusable drivers, fakes, and spies in the existing shared helper location, giving each new file a [portable name](../workflow/SKILL.md#common-terms).
 
 Bindings keep implementation details out of features and use no mutable module-level scenario state.
 Unexpected errors fail the scenario.

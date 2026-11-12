@@ -10,6 +10,7 @@ import { remoteLabel } from "../workflow/remote-url.mjs";
 import { describeRecordStore, forgetStoreWithoutCheckout, isStoreWithoutCheckout, outsideToolCall, recordStoreOf, useStoreWithoutCheckout, withFetchlessReads } from "../workflow/record-store.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
 import {
+  APP_LOCK_STALE_MS,
   REVIEW_APP_PROTOCOL,
   lockBase,
   newCredential,
@@ -27,8 +28,9 @@ import {
   writeProjectRoots
 } from "./review-app-discovery.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
+import { errorFields, log } from "../log.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
-import { createProjectReview, exchangeWriteGrant, fromPage, isTrustedHost, normalizeTabs, READ_ONLY_NOTICE, readBody, readJson, send, sendJson, servePageRoute, storeTabRef } from "./review-server.mjs";
+import { createProjectReview, exchangeWriteGrant, fromPage, isTrustedHost, normalizeTabs, READ_ONLY_NOTICE, readBody, readJson, send, sendJson, serveOutsideSession, servePageRoute, storeTabRef, wantsPage } from "./review-server.mjs";
 import { loadAttention } from "./workspace-model.mjs";
 import { readWorkspaceIdentity, workspaceLabel } from "./workspace-identity.mjs";
 import { createAddedWorkspaces, storeAddresses } from "./added-workspaces.mjs";
@@ -38,13 +40,15 @@ import { createWriteSessions } from "./write-sessions.mjs";
 import { watchWorkspace, WORKSPACE_FETCH_MAX_MS, WORKSPACE_FETCH_MS } from "./workspace-sync.mjs";
 import { codeFolder, createCodeClones, registeredRemotes } from "./code-clones.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
+import { createViewerHub } from "./viewer-hub.mjs";
+import { createCachedValue } from "./cached-value.mjs";
 
 const LEASE_MS = 3 * 60 * 1000;
 const IDLE_MS = 30 * 60 * 1000;
 const SWEEP_MS = 30 * 1000;
 const NONCE_MS = 2 * 60 * 1000;
 const LOCK_RENEW_MS = 5 * 1000;
-const LOCK_STALE_MS = 30 * 1000;
+const LOCK_STALE_MS = APP_LOCK_STALE_MS;
 const LOCK_TIMEOUT_MS = 1000;
 const OPEN_LEASE_MS = 10 * 1000;
 const STORAGE_DIRECTORY_LIMIT = 4;
@@ -53,6 +57,10 @@ const NOTICE_MS = 60 * 1000;
 const RECENT_LIMIT = 20;
 // The empty folders that stand for no checkout, one per added workspace, through which the app reads and writes a store's clone when no checkout of it is registered.
 const STORE_ROOTS = "store-roots";
+// Every open tab lists the projects every few seconds, and reading one project's gates, store, and index state takes long on a large project, so the list keeps each.
+// Agents record gates and build indexes in their own processes, which tell this app nothing, so those two are kept briefly.
+// A checkout's store and name change only with its configuration, so they are kept longer, and a session that registers or presents the project renews them at once.
+const PROJECT_SUMMARY_MS = { gates: 10 * 1000, indexing: 10 * 1000, store: 60 * 1000 };
 
 function statusError(status, message) {
   return Object.assign(new Error(message), { status });
@@ -138,6 +146,9 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
   let closing = null;
   // One write session store serves every checkout's page, so a tab that switches checkouts keeps its write session.
   let writeSessions = null;
+  // Every project's page is served from this one origin, so a browser holds one shared event stream for all its tabs, whatever project each shows.
+  // A tab that joins or leaves the shared stream changes how many pages each workspace has connected, which its fetch timer follows.
+  const hub = createViewerHub({ onChange: () => { for (const view of workspaces.values()) view.review.reportViewers(); } });
 
   const viewerPrefix = () => `/session/${viewerToken}`;
 
@@ -299,9 +310,16 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
         view.usedAt = ++sequence;
         deliverPendingNotices(view.id, sendNotice);
       },
-      // Every checkout of a workspace shows its page through this one review, so an applied action reaches every page of the workspace.
-      onAction: (event) => view.review.notify("action", event),
-      evidenceStore: () => evidenceStoreOf(currentProject(view)), intelligenceDirectories: () => intelligenceDirectoriesOf(currentProject(view)), writeSessions,
+      // Every checkout of a workspace shows its page through this one review, so an applied action reaches every page of the workspace,
+      // and an answered gate or a rebuild changes what the project list shows for each of its checkouts.
+      onAction: (event) => {
+        view.review.notify("action", event);
+        for (const member of membersOf(view)) {
+          member.summary.gates.invalidate();
+          member.summary.indexing.invalidate();
+        }
+      },
+      evidenceStore: () => evidenceStoreOf(currentProject(view)), intelligenceDirectories: () => intelligenceDirectoriesOf(currentProject(view)), writeSessions, hub,
       workspace: { id: view.id, describe: () => describeWorkspace(view), sync: async () => await syncedClone(view) ? view.watch.state() : null, viewers: (count) => view.watch.viewers(count),
         checkouts: () => membersOf(view).map(({ root: member, repository }) => ({ root: member, repository: repository ?? null })),
         code: {
@@ -548,6 +566,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
     if (!project) {
       // A new project starts as the most recent, so the recent limit never drops the project being registered.
       project = { id, root, leases: new Map(), lastSeen: ++sequence, workspaceId: null, repository: null, evidenceDirectories: [], intelligenceDirectories: [], recordStoreDirectories: [] };
+      project.summary = projectSummary(project);
       projects.set(id, project);
       if (persist) await rememberProjects();
     }
@@ -584,18 +603,33 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
     return loadAttention(root).then((attention) => attention.gateCount, () => null);
   }
 
+  // The slow parts of one project's entry in the project list, each kept as PROJECT_SUMMARY_MS says.
+  function projectSummary(project) {
+    return {
+      workspace: createCachedValue(() => readWorkspaceIdentity(project.root), { ttlMs: PROJECT_SUMMARY_MS.store }),
+      // Checkouts whose records resolve to one store share their records, so the switcher lists them as one project.
+      store: createCachedValue(() => describeRecordStore(project.root).then(async ({ kind, label, location }) => ({ kind, label, location, workspaceName: kind === "project" ? null : await readWorkspaceName(project.root) })).catch(() => null), { ttlMs: PROJECT_SUMMARY_MS.store }),
+      gates: createCachedValue(() => gateCount(project.root), { ttlMs: PROJECT_SUMMARY_MS.gates }),
+      indexing: createCachedValue(async () => (await readIndexingStatus(project.root, intelligenceDirectoriesOf(project)).catch(() => null))?.state ?? null, { ttlMs: PROJECT_SUMMARY_MS.indexing })
+    };
+  }
+
+  // A session that registers or presents a project may have changed its configuration, records, or reported storage.
+  function forgetSummary(project) {
+    for (const value of Object.values(project.summary)) value.invalidate();
+  }
+
   async function projectList(current) {
     const now = Date.now();
     const entries = await Promise.all([...projects.values()].map(async (project) => ({
       id: project.id,
       name: path.basename(project.root),
-      workspace: await readWorkspaceIdentity(project.root),
+      workspace: await project.summary.workspace.get(),
       projectRoot: project.root,
       live: live(project, now),
-      gates: await gateCount(project.root),
-      // Checkouts whose records resolve to one store share their records, so the switcher lists them as one project.
-      store: await describeRecordStore(project.root).then(async ({ kind, label, location }) => ({ kind, label, location, workspaceName: kind === "project" ? null : await readWorkspaceName(project.root) })).catch(() => null),
-      indexing: (await readIndexingStatus(project.root, intelligenceDirectoriesOf(project)).catch(() => null))?.state ?? null,
+      gates: await project.summary.gates.get().catch(() => null),
+      store: await project.summary.store.get().catch(() => null),
+      indexing: await project.summary.indexing.get().catch(() => null),
       url: workspaceUrl(project.workspaceId),
       lastSeen: project.lastSeen
     })));
@@ -604,9 +638,15 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
   }
 
 
+  // The live workspace used most recently, else the workspace used most recently, else null.
+  async function mostRecentWorkspace() {
+    const [chosen] = (await workspaceList()).sort((left, right) => Number(right.live) - Number(left.live));
+    return chosen ?? null;
+  }
+
   // The app's root opens the live workspace used most recently, else the workspace used most recently, else the page without a workspace, which offers to add one.
   async function serveRoot(request, response, prefix) {
-    const [chosen] = (await workspaceList()).sort((left, right) => Number(right.live) - Number(left.live));
+    const chosen = await mostRecentWorkspace();
     if (chosen) {
       response.writeHead(302, { Location: `${prefix}/w/${chosen.id}/`, "Cache-Control": "no-store" });
       response.end();
@@ -623,6 +663,18 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
     if (artifact && view.kind === "store") kept.set("artifact", await storeTabRef(project.root, artifact));
     const search = kept.toString();
     return `${prefix}/w/${view.id}${rest}${search ? `?${search}` : ""}`;
+  }
+
+  // A page of a workspace or checkout the app no longer lists opens the workspace used most recently with a notice, or the app's root, which offers to add one, when there is none,
+  // so the person can choose another from its menu; a call from a page gets a plain refusal.
+  async function serveMissing(request, response, prefix, message) {
+    if (!wantsPage(request)) {
+      send(response, 404, message);
+      return;
+    }
+    const chosen = await mostRecentWorkspace();
+    response.writeHead(302, { Location: chosen ? `${prefix}/w/${chosen.id}/?missing=project` : `${prefix}/`, "Cache-Control": "no-store" });
+    response.end();
   }
 
   function freshNonce(nonce) {
@@ -653,6 +705,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
       checkDirectories(body);
       const project = await projectFor(body.projectRoot);
       await reportDirectories(project, body);
+      forgetSummary(project);
       project.leases.set(lease, Date.now() + LEASE_MS);
       const view = await placeProject(project);
       await touch(project);
@@ -673,6 +726,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
       }
       const project = await projectFor(body.projectRoot);
       await reportDirectories(project, body);
+      forgetSummary(project);
       const view = await placeProject(project);
       const review = view.review;
       // A session start asks only whether to open a window, and leaves tabs and other projects' notices alone.
@@ -682,14 +736,14 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
       }
       if (body.open === true) {
         const tabs = normalizeTabs(body.tabs);
-        const presented = await review.presentTabs(tabs, project.root);
+        const presented = await review.presentTabs(tabs, { from: project.root, ...(Object.hasOwn(body, "group") ? { group: body.group } : {}) });
         await touch(project);
         // The link names the presented page as the workspace's session names it, so it opens the same artifact through any checkout.
         const url = review.reviewUrl(tabs.length ? [presented.activeTab] : []);
         return withGrant({ url, open: announce(project, view, url, workspaceLabel(await readWorkspaceIdentity(project.root)), acceptsGrant), session: review.getSession() }, acceptsGrant);
       }
       if (body.tabs !== undefined) {
-        await review.setOpenTabs(body.tabs, project.root);
+        await review.setOpenTabs(body.tabs, { from: project.root });
         await touch(project);
       }
       return { url: review.reviewUrl([]), open: false, session: await review.currentSession() };
@@ -726,8 +780,20 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
     response.end(body);
   }
 
+  // A request that takes longer than this is logged, by its route without the viewer credential, so a stalled app leaves a trace.
+  const SLOW_REQUEST_MS = 2000;
+  const routeOf = (request) => {
+    let pathname;
+    try { pathname = new URL(request.url, "http://127.0.0.1").pathname; } catch { return "<invalid>"; }
+    return pathname.startsWith(viewerPrefix()) ? `<viewer>${pathname.slice(viewerPrefix().length)}` : pathname.startsWith("/control/") ? pathname : "<other>";
+  };
   // A request answers a browser, never a tool call, so no store access in it moves a checkout's artifacts, even on a server that a tool call started.
   const server = createServer((request, response) => withFetchlessReads(() => outsideToolCall(async () => {
+    const started = performance.now();
+    response.once("finish", () => {
+      const ms = performance.now() - started;
+      if (ms >= SLOW_REQUEST_MS) log.warn("slow_request", { method: request.method, route: routeOf(request), status: response.statusCode, ms: Math.round(ms) });
+    });
     try {
       if (!isTrustedHost(request.headers.host)) {
         send(response, 403, "Unknown host");
@@ -739,6 +805,12 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
         return;
       }
       const prefix = viewerPrefix();
+      // An address without the current viewer credential, such as a tab from before a restart or the bare port, gets only the kit's files and the page that says so.
+      if (url.pathname !== prefix && !url.pathname.startsWith(`${prefix}/`)) {
+        await serveOutsideSession(request, response, url.pathname);
+        return;
+      }
+      // The app's own address opens the project an agent used last, live or not, so the project menu is always one click away.
       if (url.pathname === prefix || url.pathname === `${prefix}/`) {
         await serveRoot(request, response, prefix);
         return;
@@ -752,7 +824,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
       if (inWorkspace) {
         const view = await viewOf(inWorkspace[1]);
         if (!view) {
-          send(response, 404, "No workspace has that id on this machine.");
+          await serveMissing(request, response, prefix, "No workspace has that id on this machine.");
           return;
         }
         // The page's own links are relative to its folder, so a workspace's page always ends in a slash.
@@ -783,7 +855,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
       if (inCheckout) {
         const project = projects.get(inCheckout[1]);
         if (!project) {
-          send(response, 404, "Not found");
+          await serveMissing(request, response, prefix, "Not found");
           return;
         }
         response.writeHead(308, { Location: await checkoutRedirect(project, inCheckout[2] || "/", url.searchParams, prefix), "Cache-Control": "no-store" });
@@ -815,6 +887,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
       if (route !== "/review" && await servePageRoute(request, response, route)) return;
       send(response, 404, "Not found");
     } catch (error) {
+      log.warn("request_failed", { method: request.method, route: routeOf(request), status: error.status ?? 400, ...errorFields(error) });
       if (response.headersSent) {
         response.destroy();
       } else {
@@ -913,6 +986,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
         view.watch.stop();
         view.review.closeViewers();
       }
+      hub.close();
       server.closeAllConnections?.();
       await new Promise((resolve) => server.close(() => resolve()));
       // Only the lock holder touches the discovery file, so an app that lost its lock never removes the winner's.

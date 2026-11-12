@@ -1,4 +1,5 @@
 import { badge, escapeHtml } from "./util.js";
+import { coalesce } from "./poller.js";
 
 // The page draws every action from its listing: the registry names the fields, and this view places them as kit controls:
 // a prism-field per text field, a group of pressed prism-buttons per choice, and prism-buttons to apply and reset.
@@ -67,6 +68,11 @@ export function valueText(action, input = currentInput(action)) {
   const choice = fields.find((field) => field.kind !== "text");
   if (choice && input[choice.name] !== null) return String(optionLabel(choice, input[choice.name]));
   return isRecord(action.value) ? Object.values(action.value).filter((item) => item !== null).join(", ") : String(action.value);
+}
+
+/** The note that a tab without a write session can only read, as the kit's notice. */
+export function readOnlyNotice() {
+  return `<p class="notice action-notice" role="note">${escapeHtml(READ_ONLY_NOTICE).replace("prism review", "<code>prism review</code>")}</p>`;
 }
 
 const keyOf = (target, action) => `${target}|${action.id}`;
@@ -171,8 +177,9 @@ export function shownActionEntries() {
  * api is { list(target), apply(request), confirm({ title, message }), toast(message) }: list resolves to a listing, apply to { status, json },
  * and confirm to true only after the person confirms. drafts keeps unsent input per action across re-renders.
  * keepStaleDrafts keeps the person's input when the record changed under it, for input such as a comment that stays meaningful against the current record.
+ * notice false leaves out the read-only notice, for a page that shows many lists and says it once for all of them.
  */
-export function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, onRender = null, keepStaleDrafts = false }) {
+export function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, notice = true, onRender = null, keepStaleDrafts = false }) {
   const listings = new Map();
   const entries = new Map();
   let failure = null;
@@ -197,8 +204,8 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     const items = actionsOf();
     if (!items.length) return `<p class="empty-note">${escapeHtml(emptyText)}</p>`;
     const options = { writable: writable(), renderMarkdown, heading, submitLabel };
-    const notice = writable() ? "" : `<p class="notice action-notice" role="note">${escapeHtml(READ_ONLY_NOTICE).replace("prism review", "<code>prism review</code>")}</p>`;
-    return `${notice}<div class="action-list${compact ? " is-compact" : ""}">${items.map(({ target, action }) => actionHtml(action, entryOf(target, action), options)).join("")}</div>`;
+    const readOnly = writable() || !notice ? "" : readOnlyNotice();
+    return `${readOnly}<div class="action-list${compact ? " is-compact" : ""}">${items.map(({ target, action }) => actionHtml(action, entryOf(target, action), options)).join("")}</div>`;
   }
 
   // A re-render keeps the focused control and the cursor in a text field, so a refresh never takes the person's place.
@@ -227,7 +234,8 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     onRender?.();
   }
 
-  async function refresh() {
+  // A listing asked for again while one is on its way is read once more after it, never twice at once.
+  const refresh = coalesce(async () => {
     const results = await Promise.all(wanted.map((target) => Promise.resolve(api.list(target)).then((listing) => ({ target, listing }), (error) => ({ target, error }))));
     failure = null;
     for (const { target, listing, error } of results) {
@@ -235,7 +243,7 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
       else listings.set(target, listing);
     }
     if (root.isConnected) render();
-  }
+  });
 
   function locate(element) {
     const row = element.closest("[data-action-key]");

@@ -399,8 +399,8 @@ const NO_OBJECT = /^0+$/;
 export async function changedBlobs(projectRoot, from, to) {
   try {
     const env = { ...process.env, GIT_OPTIONAL_LOCKS: "0" };
-    const prefix = (await execute("git", ["rev-parse", "--show-prefix"], { cwd: projectRoot, env })).stdout.trim();
-    const { stdout } = await execute("git", ["diff-tree", "-r", "-z", "--raw", "--no-abbrev", "--no-renames", ...(prefix ? [`--relative=${prefix}`] : []), "--end-of-options", from, to], { cwd: projectRoot, env, maxBuffer: 256 * 1024 * 1024 });
+    const prefix = (await execute("git", ["rev-parse", "--show-prefix"], { cwd: projectRoot, env, windowsHide: true })).stdout.trim();
+    const { stdout } = await execute("git", ["diff-tree", "-r", "-z", "--raw", "--no-abbrev", "--no-renames", ...(prefix ? [`--relative=${prefix}`] : []), "--end-of-options", from, to], { cwd: projectRoot, env, maxBuffer: 256 * 1024 * 1024, windowsHide: true });
     const fields = stdout.split("\0");
     const changed = [];
     for (let at = 0; at + 1 < fields.length; at += 2) {
@@ -424,8 +424,8 @@ export async function objectsAt(projectRoot, tree, paths) {
   if (!paths.length) return found;
   try {
     const env = { ...process.env, GIT_OPTIONAL_LOCKS: "0" };
-    const { stdout } = await execute("git", ["--literal-pathspecs", "ls-tree", "-z", "--full-name", "--end-of-options", tree, "--", ...paths], { cwd: projectRoot, env, maxBuffer: 64 * 1024 * 1024 });
-    const prefix = (await execute("git", ["rev-parse", "--show-prefix"], { cwd: projectRoot, env })).stdout.trim();
+    const { stdout } = await execute("git", ["--literal-pathspecs", "ls-tree", "-z", "--full-name", "--end-of-options", tree, "--", ...paths], { cwd: projectRoot, env, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
+    const prefix = (await execute("git", ["rev-parse", "--show-prefix"], { cwd: projectRoot, env, windowsHide: true })).stdout.trim();
     for (const line of stdout.split("\0")) {
       const tab = line.indexOf("\t");
       if (tab < 0) continue;

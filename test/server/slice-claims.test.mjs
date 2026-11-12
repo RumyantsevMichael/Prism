@@ -477,7 +477,7 @@ test("reads and writes older records without claims as before, and reports unrea
   const claimFile = path.join(value.parent, "store", CLAIM_FILE("s2"));
   const claim = JSON.parse(await readFile(path.join(value.parent, "store", CLAIM_FILE("s1")), "utf8"));
   assert.deepEqual(Object.keys(claim), ["schemaVersion", "slug", "holder", "label", "activity", "claimedAt", "renewedAt", "expiresAt", "nonce"]);
-  for (const [malformed, problem] of [[{ ...claim, slug: "s2", activity: "review" }, /activity must be/], [{ ...claim, slug: "s2", expiresAt: "soon" }, /expiresAt must be a date-time/], [{ ...claim, slug: "s1" }, /slug must be s2/], [{ ...claim, slug: "s2", extra: 1 }, /unknown fields extra/], ["held", /must be a JSON object/]]) {
+  for (const [malformed, problem] of [[{ ...claim, slug: "s2", activity: "review" }, /activity must be/], [{ ...claim, slug: "s2", expiresAt: "soon" }, /expiresAt must be a date-time/], [{ ...claim, slug: "s1" }, /slug must be s2/], ["held", /must be a JSON object/]]) {
     await writeFile(claimFile, `${JSON.stringify(malformed)}\n`);
     const loaded = await read(value.a);
     assert.equal(loaded.valid, true, "a claim record never makes the initiative record invalid");
@@ -595,4 +595,24 @@ test("the review model shows live claims, a scope's design claim on its slices, 
   const s2 = (await loadEntity(root, "slice:reports/s2")).data;
   assert.deepEqual([s2.coveringClaim.slug, s2.coveringClaim.claim.activity], ["reports", "design"]);
   assert.equal(claimChip(null), "");
+});
+
+test("a claim may name the harness its holder runs in, which Prism reads and shows but does not yet write, and a field Prism does not know leaves the claim readable", async () => {
+  const { newClaim, parseClaim, serializeClaim, claimView } = await import("../../dist/server/workflow/slice-claims.mjs");
+  const now = Date.now();
+  const written = newClaim(null, { slug: "export", holder: "session-0123456789abcdef", label: "Prism Test on build-2", activity: "implementation", now });
+  assert.equal(Object.hasOwn(written, "host"), false, "this release writes no harness, so a machine on an earlier release never meets the field");
+  assert.doesNotMatch(serializeClaim(written), /"host"/);
+  const withHost = { ...written, host: "Codex" };
+  const parsed = parseClaim("export", serializeClaim(withHost));
+  assert.equal(parsed.claim?.host, "Codex", "a claim that names its harness reads as a valid claim");
+  assert.equal(claimView(parsed.claim).host, "Codex");
+  assert.equal(Object.hasOwn(claimView(written), "host"), false);
+  for (const host of ["", "   ", 7, "x".repeat(65)]) {
+    assert.match(parseClaim("export", JSON.stringify({ ...written, host })).problem ?? "", /host must be a non-empty string of at most 64 characters/, `host ${JSON.stringify(host)} is refused`);
+  }
+  const later = parseClaim("export", JSON.stringify({ ...written, owner: "x" }));
+  assert.equal(later.problem, undefined, "a field a later release adds does not make the claim unreadable");
+  assert.equal(Object.hasOwn(later.claim, "owner"), false, "the unknown field is left out of the claim");
+  assert.equal(serializeClaim(later.claim), serializeClaim(written), "renewing such a claim writes the fields this release knows");
 });

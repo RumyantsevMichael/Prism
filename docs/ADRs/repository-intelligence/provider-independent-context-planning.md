@@ -105,6 +105,7 @@ Local session instrumentation can add search, read, first-edit, edit, test, comp
 The Prism MCP process opens the native provider and zero or one selected external contributor for one project.
 Discovery never downloads assets or loads the model.
 Native preparation uses one lazy Node 24 helper, two inference threads, and a five-minute idle timeout.
+The process that prepares indexes reads, checks, and writes each full index in a worker thread that also owns the build helper, and only index metadata without fragments reaches its event loop, which answers pages and agents.
 Pinned platform archives and model files are verified before atomic publication in private storage.
 The helper uses Transformers.js 4.3.0, ONNX Runtime 1.30.0, Orama 3.1.18, and CodeGraph SDK 1.6.0.
 Orama 3.2.0 was not published when the implementation pins were verified.
