@@ -44,6 +44,8 @@ import { stopClaimRenewals } from "./workflow/slice-claims.mjs";
 import { managedStoresDirectory } from "./workflow/remote-url.mjs";
 import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
 import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
+import { ArtifactCheckError, MAX_CHECK_PATHS, checkArtifacts } from "./workflow/artifact-check.mjs";
+import { ARTIFACT_TYPES } from "./workflow/artifact-formats.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, waitForUserGates } from "./workflow/gate-wait.mjs";
 import { endGateWait, keptSettingsText, personChangesText, rememberAskedGates, startGateWait, takePersonChanges } from "./workflow/change-notices.mjs";
 import { callAgent, currentCallAgent, withCallAgent } from "./workflow/call-agent.mjs";
@@ -489,6 +491,21 @@ const tools = [
     inputSchema: {
       type: "object",
       properties: { projectRoot: { type: "string", description: "The absolute path to the active project root." } },
+      required: ["projectRoot"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "check_artifacts",
+    description: "Check the project's requirement files, ADRs, glossary, and feature files against Prism's artifact formats. Without paths it checks every .md file other than README.md up to four folders below the configured Requirements and ADRs paths, every .feature file up to four folders below the Feature files path, and the configured Glossary file. It returns each format's type, version, and reference file, and for each artifact whether it conforms, each finding with its rule id, line, and message, each value written as unknown, the newest earlier format version it conforms to, and any legacy mark. A path under none of the configured paths is refused with artifact_type_unknown, and a path that does not exist with artifact_missing. This tool reads files and changes nothing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string", description: "The absolute path to the active project root." },
+        paths: { type: "array", maxItems: MAX_CHECK_PATHS, items: { type: "string", minLength: 1, maxLength: 1024 }, description: "Project-relative artifact files to check; omit to check every configured artifact." },
+        type: { type: "string", enum: [...ARTIFACT_TYPES], description: "Check only artifacts of this format type." }
+      },
       required: ["projectRoot"],
       additionalProperties: false
     },
@@ -1171,6 +1188,22 @@ async function callVerifySlice(argumentsValue, metadata, requestId) {
   }
 }
 
+// A refused check names the path it is about in its text and its structured content, so an agent sees which path to correct.
+async function callCheckArtifacts(argumentsValue) {
+  assertExactToolArguments(argumentsValue, ["projectRoot", "paths", "type"], [], "check_artifacts arguments");
+  const projectRoot = await requestedProjectRoot(argumentsValue);
+  try {
+    const value = await checkArtifacts({ projectRoot, paths: argumentsValue.paths, type: argumentsValue.type });
+    const broken = value.artifacts.filter((artifact) => !artifact.conforms).length;
+    const summary = `Checked ${plural(value.artifacts.length, "artifact")}: ${broken} ${broken === 1 ? "breaks its format" : "break their formats"}.`;
+    return { content: [{ type: "text", text: `${summary}\n${JSON.stringify(value)}` }], structuredContent: value };
+  } catch (error) {
+    if (!(error instanceof ArtifactCheckError)) throw error;
+    const value = { code: error.code, message: error.message, ...(error.path === undefined ? {} : { path: error.path }) };
+    return { content: [{ type: "text", text: error.message }], structuredContent: value, isError: true };
+  }
+}
+
 // The first write after an upgrade moves files in the user's work tree, so its result says which, to commit on their own.
 const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
@@ -1289,6 +1322,9 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
   }
   if (repositoryTools.has(name)) {
     return callRepositoryTool(name, argumentsValue);
+  }
+  if (name === "check_artifacts") {
+    return callCheckArtifacts(argumentsValue);
   }
   const review = await server(argumentsValue, metadata);
   if (name === "get_review_url") {
