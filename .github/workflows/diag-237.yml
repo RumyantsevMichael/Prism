@@ -23,9 +23,13 @@ jobs:
           npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
           npm run build:native
       - run: fc-match sans-serif; fc-match Inter; fc-match system-ui
-      - name: Layout check part 1 at phone, twice
+      - name: Layout check in two parts under load, three times
         run: |
-          for i in 1 2; do
+          for i in 1 2 3; do
+            yes > /dev/null & y1=$!; yes > /dev/null & y2=$!
+            node scripts/review-demo/layout-check.mjs --viewports phone,laptop --themes light,dark --part 2/2 > other$i.txt 2>&1 &
+            other=$!
             node scripts/review-demo/layout-check.mjs --viewports phone,laptop --themes light,dark --part 1/2 > out$i.txt 2>&1 || true
-            grep -E "claim|distinct" out$i.txt | cut -c1-1500 | head -20
+            wait $other || true; kill $y1 $y2
+            grep -hE "claim|distinct" out$i.txt other$i.txt | cut -c1-1500 | head -20
           done
