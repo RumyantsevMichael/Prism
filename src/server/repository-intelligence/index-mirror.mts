@@ -52,6 +52,22 @@ async function holds(mirror: string, files: string[]) {
   return true;
 }
 
+// Whether the mirror holds a file that neither the manifest nor the snapshot names, as a build that stopped after copying a file the snapshot has since lost leaves;
+// the code graph indexes every file of its folder, so such a file would reach the index. The runtime's own `.codegraph` folder is not the mirror's.
+async function holdsUnnamed(mirror: string, named: (file: string) => boolean) {
+  const pending = [""];
+  while (pending.length) {
+    const folder = pending.pop()!;
+    const entries = await readdir(path.join(mirror, folder), { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const file = folder ? `${folder}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) { if (file !== ".codegraph") pending.push(file); }
+      else if (!named(file)) return true;
+    }
+  }
+  return false;
+}
+
 // Removes the folders a removed file leaves empty, up to the mirror itself.
 async function pruneEmpty(mirror: string, target: string) {
   for (let folder = path.dirname(target); inside(mirror, folder); folder = path.dirname(folder)) {
@@ -62,12 +78,15 @@ async function pruneEmpty(mirror: string, target: string) {
 
 /**
  * Brings the location's mirror to the snapshot's files, copying only those whose hash differs from the manifest, and names the changes since the indexed build.
- * A manifest that is missing, unreadable, names a file the mirror lacks, or has no indexed build empties the mirror and the runtime's state for a full build.
+ * A manifest that is missing, unreadable, names a file the mirror lacks, or has no indexed build, or a mirror file that neither the manifest nor the snapshot names,
+ * empties the mirror and the runtime's state for a full build.
  */
 export async function updateMirror(directory: string, files: Pick<SourceFile, "file" | "hash" | "absolutePath">[], { privateDirectory, report = () => {}, current = () => {} }: UpdateOptions): Promise<MirrorUpdate> {
   const mirror = path.join(directory, "mirror");
   let manifest = await readMirrorManifest(directory);
-  if (!manifest || manifest.indexed === null || !(await holds(mirror, Object.keys(manifest.mirror)))) {
+  const snapshot = new Map(files.map(file => [file.file, file]));
+  if (!manifest || manifest.indexed === null || !(await holds(mirror, Object.keys(manifest.mirror)))
+    || await holdsUnnamed(mirror, file => snapshot.has(file) || Object.hasOwn(manifest!.mirror, file))) {
     manifest = { schemaVersion: 1, mirror: {}, indexed: null };
     // The empty manifest comes first, so a build that stops while emptying or copying leaves the next build a full one.
     await writeManifest(directory, manifest);
@@ -75,7 +94,6 @@ export async function updateMirror(directory: string, files: Pick<SourceFile, "f
     await rm(path.join(directory, "runtime-state"), { recursive: true, force: true });
   }
   await privateDirectory(mirror);
-  const snapshot = new Map(files.map(file => [file.file, file]));
   const copied = files.filter(file => manifest!.mirror[file.file] !== file.hash);
   const removed = Object.keys(manifest.mirror).filter(file => !snapshot.has(file));
   const kept = Object.fromEntries(Object.entries(manifest.mirror).filter(([file]) => snapshot.has(file) && snapshot.get(file)!.hash === manifest!.mirror[file]));

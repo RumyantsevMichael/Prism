@@ -36,6 +36,20 @@ async function holds(mirror, files) {
   }
   return true;
 }
+async function holdsUnnamed(mirror, named) {
+  const pending = [""];
+  while (pending.length) {
+    const folder = pending.pop();
+    const entries = await readdir(path.join(mirror, folder), { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const file = folder ? `${folder}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        if (file !== ".codegraph") pending.push(file);
+      } else if (!named(file)) return true;
+    }
+  }
+  return false;
+}
 async function pruneEmpty(mirror, target) {
   for (let folder = path.dirname(target); inside(mirror, folder); folder = path.dirname(folder)) {
     if ((await readdir(folder).catch(() => ["unreadable"])).length) return;
@@ -48,14 +62,14 @@ async function updateMirror(directory, files, { privateDirectory, report = () =>
 } }) {
   const mirror = path.join(directory, "mirror");
   let manifest = await readMirrorManifest(directory);
-  if (!manifest || manifest.indexed === null || !await holds(mirror, Object.keys(manifest.mirror))) {
+  const snapshot = new Map(files.map((file) => [file.file, file]));
+  if (!manifest || manifest.indexed === null || !await holds(mirror, Object.keys(manifest.mirror)) || await holdsUnnamed(mirror, (file) => snapshot.has(file) || Object.hasOwn(manifest.mirror, file))) {
     manifest = { schemaVersion: 1, mirror: {}, indexed: null };
     await writeManifest(directory, manifest);
     await rm(mirror, { recursive: true, force: true });
     await rm(path.join(directory, "runtime-state"), { recursive: true, force: true });
   }
   await privateDirectory(mirror);
-  const snapshot = new Map(files.map((file) => [file.file, file]));
   const copied = files.filter((file) => manifest.mirror[file.file] !== file.hash);
   const removed = Object.keys(manifest.mirror).filter((file) => !snapshot.has(file));
   const kept = Object.fromEntries(Object.entries(manifest.mirror).filter(([file]) => snapshot.has(file) && snapshot.get(file).hash === manifest.mirror[file]));
