@@ -56,7 +56,7 @@ test("clause 60: an index rebuild is offered only for repositories with a checko
   const { prism, id } = await searchable(context);
   const targets = await prism.get(`/w/${id}/api/actions/targets?kind=index`);
   assert.equal(targets.status, 200, targets.body);
-  assert.deepEqual(targets.json.targets, ["index:api/billing"]);
+  assert.deepEqual(targets.json.targets, ["index:api/api", "index:api/billing"], "each component of a repository with a checkout here, its root component first");
   const refused = await prism.get(`/w/${id}/api/actions?target=${encodeURIComponent("index:web/pages")}`);
   assert.equal(refused.json?.code, "unknown_target", refused.body);
 });
