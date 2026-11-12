@@ -9,8 +9,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        load: [layout, shard1]
-        round: [1, 2, 3]
+        load: [layout]
+        round: [1, 2, 3, 4]
     runs-on: windows-2025
     timeout-minutes: 45
     defaults:
@@ -40,10 +40,11 @@ jobs:
           pwsh -NoProfile -File diag/sample-sockets.ps1 -Out "$samples" -Stop "$stop" &
           set +e
           if [ "${{ matrix.load }}" = layout ]; then
-            for i in 1 2 3; do
+            for i in 1 2; do
               node scripts/review-demo/layout-check.mjs --viewports phone,laptop --themes light,dark --part 1/2 > "$RUNNER_TEMP/l$i-1.txt" 2>&1 &
+              first=$!
               node scripts/review-demo/layout-check.mjs --viewports phone,laptop --themes light,dark --part 2/2 > "$RUNNER_TEMP/l$i-2.txt" 2>&1
-              wait %2 2>/dev/null; wait
+              wait $first
               echo "round $i: $(date +%T)"; grep -h "ERR_\|problem" "$RUNNER_TEMP"/l$i-*.txt | sort | uniq -c | head -20
             done
           else
@@ -53,7 +54,7 @@ jobs:
           touch "$stop"; sleep 3
           echo "== error times"; grep -ho "ERR_NO_BUFFER_SPACE" "$RUNNER_TEMP"/*.txt | wc -l
           echo "== samples (max total)"; sort -t= -k2 -n -r <(sed 's/.*total=\([0-9]*\).*/\1 &/' "$samples") | head -5
-          echo "== all samples"; cat "$samples"
+          echo "== samples within 3 s of an error"; for t in $(grep -l ERR_NO_BUFFER_SPACE "$RUNNER_TEMP"/l*.txt 2>/dev/null); do echo "$t"; done; echo "== all samples"; cat "$samples"
 
   smoke:
     name: smoke (${{ matrix.round }})
