@@ -206,6 +206,44 @@ const physical = (store, relative) => path.join(store.base, relative.slice(RECOR
  * A checkout of an external store passes its repository name check first: repository is its accepted name, and a refused checkout, including one that names no repository, throws.
  */
 export async function recordStoreOf(projectRootPath) {
+  const scope = currentScope();
+  if (!scope) return storeOf(projectRootPath);
+  if (!scope.stores.has(projectRootPath)) scope.stores.set(projectRootPath, storeOf(projectRootPath));
+  return scope.stores.get(projectRootPath);
+}
+
+// One burst of reads, such as one review page request, resolves each project's store once, prepares a synced store once, and resolves each folder once.
+// A page reads hundreds of records, and resolving the store and its folders again for each one costs seconds where file access is slow, as on Windows.
+const readScope = new AsyncLocalStorage();
+
+/** Runs `action` as one burst of record reads: what it reads is resolved as of its start, and writes it makes resolve the store again. */
+export async function withRecordReads(action) {
+  const scope = { open: true, stores: new Map(), synced: new Map(), configs: new Map(), folderChecks: folderChecks() };
+  try {
+    return await readScope.run(scope, action);
+  } finally {
+    // Work the burst started that outlives it, such as a background pull, reads afresh.
+    scope.open = false;
+    scope.stores.clear();
+    scope.synced.clear();
+    scope.configs.clear();
+    scope.folderChecks = null;
+  }
+}
+
+/** The workflow configuration of a project, read once for a burst of record reads and afresh outside one. */
+async function scopedWorkflowConfig(projectRootPath) {
+  const scope = currentScope();
+  if (!scope) return readWorkflowConfig(await projectRoot(projectRootPath));
+  if (!scope.configs.has(projectRootPath)) scope.configs.set(projectRootPath, projectRoot(projectRootPath).then(readWorkflowConfig));
+  return scope.configs.get(projectRootPath);
+}
+const currentScope = () => {
+  const scope = readScope.getStore();
+  return scope?.open ? scope : null;
+};
+
+async function storeOf(projectRootPath) {
   const store = await resolveStore(projectRootPath);
   if (!store.external) return { ...store, repository: null };
   return { ...store, repository: await checkedRepository(store) };
@@ -331,7 +369,9 @@ export async function resolveRecordFile(projectRootPath, relative) {
 
 // Every existing ancestor must resolve inside the project, or inside the record store, so a symlink cannot redirect writes.
 // With checks, from folderChecks, a folder whose real path one check found is not resolved again.
-async function assertContained(root, target, label = "the project root", checks = null) {
+// A burst of reads shares its checks across every read, and a write checks its folders again, so a symlink placed since cannot redirect it.
+async function assertContained(root, target, label = "the project root", checks = null, { write = false } = {}) {
+  checks ??= write ? null : currentScope()?.folderChecks ?? null;
   let current = path.dirname(target);
   while (true) {
     try {
@@ -464,8 +504,8 @@ async function pruneEmptyFolders(target) {
 async function moveRecord(root, store, move, report) {
   const source = path.join(root, move.from), target = physical(store, move.to);
   if (!(await regularFile(source))) return;
-  await assertContained(root, source);
-  await assertContained(store.contain, target, store.external ? "the record store" : "the project root");
+  await assertContained(root, source, "the project root", null, { write: true });
+  await assertContained(store.contain, target, store.external ? "the record store" : "the project root", null, { write: true });
   if (await regularFile(target)) {
     const [left, right] = await Promise.all([readFile(source), readFile(target)]);
     if (left.equals(right)) { await rm(source, { force: true }); report.moved.push(move); return; }
@@ -526,7 +566,7 @@ async function migrateIntoStore(root, store, config, report) {
     const at = new Date().toISOString();
     const marker = path.join(store.base, "migrations", `${at.replace(/[:.]/g, "-")}-${randomBytes(4).toString("hex")}.json`);
     await mkdir(path.dirname(marker), { recursive: true });
-    await assertContained(store.contain, marker, "the record store");
+    await assertContained(store.contain, marker, "the record store", null, { write: true });
     const records = [...new Set(report.moved.map((move) => move.to))];
     await writeAtomically(marker, `${JSON.stringify({ schemaVersion: 2, repository, migratedAt: at, moved: records.length, records, conflicts: report.conflicts }, null, 2)}\n`);
   }, fail, { timeoutMs: 30000 }));
@@ -876,8 +916,17 @@ async function synced(store) {
 // Records move into .prism only on a write, while a record store takes a checkout's records on its first access.
 async function openStore(projectRootPath, { write = false } = {}) {
   const store = await recordStoreOf(projectRootPath);
-  if (write || store.external) await ensureRecords(store.root);
-  await synced(store);
+  const scope = write ? null : currentScope();
+  if (!scope) {
+    if (write || store.external) await ensureRecords(store.root);
+    await synced(store);
+    return store;
+  }
+  if (!scope.synced.has(store.base)) scope.synced.set(store.base, (async () => {
+    if (store.external) await ensureRecords(store.root);
+    await synced(store);
+  })());
+  await scope.synced.get(store.base);
   return store;
 }
 
@@ -911,7 +960,7 @@ export async function readRecord(projectRootPath, key, { maxBytes = STORE_FILE_B
 export async function writeRecord(projectRootPath, key, contents) {
   const { store, located } = await locate(projectRootPath, key, { write: true });
   await mkdir(path.dirname(located.target), { recursive: true });
-  await assertContained(store.contain, located.target, storeLabel(store));
+  await assertContained(store.contain, located.target, storeLabel(store), null, { write: true });
   await ensureHousekeeping(store);
   await writeAtomically(located.target, contents);
   if (store.sync) scheduleRecordSync(store.base);
@@ -922,14 +971,14 @@ export async function writeRecord(projectRootPath, key, contents) {
 export async function withRecordLock(projectRootPath, key, action, makeError = fail, options = {}) {
   const { store, located } = await locate(projectRootPath, key, { write: true });
   await mkdir(path.dirname(located.target), { recursive: true });
-  await assertContained(store.contain, located.target, storeLabel(store));
+  await assertContained(store.contain, located.target, storeLabel(store), null, { write: true });
   return withArtifactLock(located.target, () => withFileLock(located.target, () => action(located), makeError, options));
 }
 
 /** Remove a record's file, and its folder when that leaves it empty; returns whether a file was removed. */
 export async function removeRecord(projectRootPath, key) {
   const { store, located } = await locate(projectRootPath, key, { write: true });
-  await assertContained(store.contain, located.target, storeLabel(store));
+  await assertContained(store.contain, located.target, storeLabel(store), null, { write: true });
   if (!(await regularFile(located.target))) return false;
   await rm(located.target, { force: true });
   await rmdir(path.dirname(located.target)).catch(() => {});
@@ -960,7 +1009,7 @@ export async function appendRecord(projectRootPath, key, id, entry) {
   const target = path.join(located.target, `${id}.json`);
   await ensureHousekeeping(store);
   await mkdir(located.target, { recursive: true });
-  await assertContained(store.contain, target, storeLabel(store));
+  await assertContained(store.contain, target, storeLabel(store), null, { write: true });
   const appended = await withArtifactLock(target, () => withFileLock(target, async () => {
     if (await regularFile(target)) throw fail("entry_exists", `The entry ${id} already exists.`);
     await writeAtomically(target, `${JSON.stringify(entry, null, 2)}\n`);
@@ -1020,7 +1069,7 @@ export async function removeInitiativeRecords(projectRootPath, initiative) {
   await ensureRecords(store.root);
   await synced(store);
   const target = path.join(physical(store, INITIATIVES), requireSlug(initiative, "initiative"));
-  await assertContained(store.contain, path.join(target, "x"), storeLabel(store));
+  await assertContained(store.contain, path.join(target, "x"), storeLabel(store), null, { write: true });
   for (const kind of ["initiative", "state"]) await rm(physical(store, recordPath({ kind, initiative })), { force: true });
   await rm(path.join(target, CLAIMS), { recursive: true, force: true });
   for (const slice of await directoryNames(path.join(target, "slices"))) {
@@ -1159,7 +1208,7 @@ export const folderChecks = () => ({ folders: new Set(), missing: new Set(), rea
 export async function resolveArtifactFile(seen, location, { fresh = false } = {}) {
   const target = path.join(seen.base, ...location.split("/"));
   if (!inside(seen.base, target) || target === seen.base) throw fail("invalid_path", "The artifact location resolves outside the store's artifacts folder.");
-  const checks = fresh ? null : seen.folderChecks ?? null;
+  const checks = fresh ? null : seen.folderChecks ?? currentScope()?.folderChecks ?? null;
   await assertUnlinked(seen.store.base, target, checks);
   await assertContained(seen.store.contain, target, "the record store", checks);
   return target;
@@ -1171,7 +1220,7 @@ export async function resolveStatusFile(seen, relative, { fresh = false } = {}) 
   if (![ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY].includes(relative.split("/")[0])) throw fail("invalid_path", "A status file lies outside the store's status folders.");
   const target = path.join(seen.store.base, ...relative.split("/"));
   if (!inside(folder, target) || target === folder) throw fail("invalid_path", "The status location resolves outside the store's status folders.");
-  const checks = fresh ? null : seen.folderChecks ?? null;
+  const checks = fresh ? null : seen.folderChecks ?? currentScope()?.folderChecks ?? null;
   await assertUnlinked(seen.store.base, target, checks);
   await assertContained(seen.store.contain, target, "the record store", checks);
   return target;
@@ -1219,7 +1268,7 @@ export async function resolveLedgerFile(seen, name) {
   if (!ARTIFACT_LEDGER_FILE.test(name)) throw fail("invalid_path", "An artifact ledger file has a time and a random suffix as its name.");
   const target = path.join(seen.store.base, ARTIFACT_MIGRATIONS, name);
   await assertUnlinked(seen.store.base, target);
-  await assertContained(seen.store.contain, target, "the record store");
+  await assertContained(seen.store.contain, target, "the record store", null, { write: true });
   return target;
 }
 
@@ -1245,7 +1294,7 @@ export async function inArtifactStore(projectRootPath, file) {
 
 /** A test of whether a project-relative path is an artifact path, as inArtifactStore decides, reading the configuration once; it accepts no path in a project without a store. */
 export async function artifactPathTest(projectRootPath) {
-  const config = await readWorkflowConfig(await projectRoot(projectRootPath));
+  const config = await scopedWorkflowConfig(projectRootPath);
   if ((config.workspace?.store ?? null) === null) return () => false;
   const kinds = artifactKinds(config);
   return (file) => {
@@ -1288,14 +1337,14 @@ export async function writeArtifactText(projectRootPath, file, decide, { write =
   const root = await projectRoot(projectRootPath);
   const target = path.resolve(root, file);
   if (!inside(root, target) || target === root) throw fail("invalid_path", `${file} lies outside the project root.`);
-  await assertContained(root, target);
+  await assertContained(root, target, "the project root", null, { write: true });
   const current = await regularFile(target) ? await readFile(target, "utf8") : null;
   const next = await choose(current);
   if (next === undefined || (next === null && current === null) || next === current) return { written: false, store: false };
   if (next === null) await rm(target, { force: true });
   else {
     await mkdir(path.dirname(target), { recursive: true });
-    await assertContained(root, target);
+    await assertContained(root, target, "the project root", null, { write: true });
     await write(target, next);
   }
   return { written: true, store: false };
@@ -1303,7 +1352,7 @@ export async function writeArtifactText(projectRootPath, file, decide, { write =
 
 /** The artifact paths the store holds below a project-relative folder, as { path, scope, kind }, or null when the project names no store, so its files are listed in the checkout. */
 export async function listStoreArtifacts(projectRootPath, folder = "") {
-  const config = await readWorkflowConfig(await projectRoot(projectRootPath));
+  const config = await scopedWorkflowConfig(projectRootPath);
   if ((config.workspace?.store ?? null) === null) return null;
   return (await storeArtifacts()).storeArtifactPaths(projectRootPath, folder);
 }
