@@ -134,6 +134,13 @@ A stall is not a native limit, so the next call that needs the index prepares it
 That build, and any later build of the same index or component in any session that shares the storage, reuses every saved embedding of unchanged fragment text and embeds only the rest.
 A build that failed or ended with its process keeps its saved embeddings the same way.
 
+Each index, or each component's index, also keeps a private mirror of the files its builds read, beside the index in the same storage.
+A rebuild copies into the mirror only the files that changed since the previous build, removes the files that no longer exist, and its `snapshot-copy` phase counts only the copied files.
+The code structure is then updated for the changed and removed files only, and the units and fragments of the other files are reused, so a rebuild after a small edit parses and fragments only what changed.
+A rebuild returns the same index that a build from scratch of the same files returns.
+When the mirror or the kept structure cannot be trusted, for example after it was edited, removed, or written by another version, the next build copies and parses every file again.
+The mirror takes about as much disk space as the indexed source, and the kept structure takes less than the index, because it holds no embeddings.
+
 #### Answer from structure while embeddings fill
 
 A build publishes the structure of its files, their units, references, coverage, and fragments, before it embeds any fragment.
