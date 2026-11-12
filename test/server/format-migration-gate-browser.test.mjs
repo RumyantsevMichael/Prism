@@ -8,7 +8,7 @@ import { launch, openPage, serveProject, skip, useAppDirectory, waitForView } fr
 import { startActionReview } from "./fixtures/review-actions.mjs";
 import { mcp } from "./fixtures/shipped-work.mjs";
 
-// A pending migration on Attention and on its own page, built from the review app's UI kit, answered there by the person.
+// A pending format migration on Attention and on its own page, built from the review app's UI kit, answered there by the person.
 
 // The review server reads its private data folder when it loads, so the folder is set before any server starts.
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-formats-browser-data-")));
@@ -47,7 +47,7 @@ test("clause 38: a pending migration is a question on Attention", { timeout: 600
   const { base } = await serveProject(context, root);
   const attention = await (await fetch(`${base}/api/entity?ref=attention`)).json();
   const item = attention.data.needsYou.find((entry) => entry.type === "migration");
-  assert.deepEqual([item?.id, item?.artifactType, item?.source, item?.target, item?.summary], [migration.id, "glossary", TERMS, PATHS.glossary, SUMMARY]);
+  assert.deepEqual([item?.id, item?.artifactType, item?.source, item?.target, item?.summary], [migration.id, "glossary", { path: TERMS, scope: null }, { path: PATHS.glossary, scope: null }, SUMMARY]);
   const kinds = (await (await fetch(`${base}/api/index`)).json()).navigation.places.attention.kinds;
   assert.equal(kinds.questions, 1);
 });

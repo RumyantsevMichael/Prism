@@ -95,12 +95,13 @@ async function answer(root, id, input) {
 
 const exists = (root, file) => stat(path.join(root, file)).then(() => true, () => false);
 
-test("clauses 28, 36, 37: a proposal that places every statement returns a pending migration with its diff, leftovers, and unknowns", async (context) => {
+test("clauses 28, 36, 37, 48: a proposal that places every statement returns a pending migration with its diff, leftovers, and unknowns", async (context) => {
   const { call } = await project(context);
   const { migration, text } = await propose(call, glossaryProposal());
   assert.ok(migration, text);
   assert.match(migration.id, /^migration-[0-9a-f]+$/);
-  assert.deepEqual([migration.type, migration.source, migration.target, migration.separateSource, migration.status], ["glossary", TERMS, PATHS.glossary, true, "pending"]);
+  assert.deepEqual([migration.type, migration.separateSource, migration.status], ["glossary", true, "pending"]);
+  assert.deepEqual([migration.source, migration.target], [{ path: TERMS, scope: null }, { path: PATHS.glossary, scope: null }], "a project without a store names checkout files with no scope");
   assert.deepEqual(migration.leftovers, LEFTOVERS);
   assert.deepEqual(migration.unknowns, []);
   assert.deepEqual(migration.conflicts, []);
@@ -193,7 +194,7 @@ test("clauses 39, 41: a migration applies only after acceptance, records who acc
   await assert.rejects(answer(root, migration.id, { decision: "decline" }), (error) => error.code === "already_answered" || /already/.test(error.message));
   const applied = await call("apply_migration", { id: migration.id });
   assert.equal(applied.value?.code ?? null, null, applied.text);
-  assert.deepEqual([applied.value.written, applied.value.removed], [[PATHS.glossary], []]);
+  assert.deepEqual([applied.value.written, applied.value.removed], [[{ path: PATHS.glossary, scope: null }], []]);
   assert.equal(applied.value.acceptedBy.name, "Ada Reviewer");
   assert.ok(Date.parse(applied.value.acceptedAt) <= Date.now());
   const glossary = await read(root, PATHS.glossary);
@@ -216,7 +217,7 @@ test("clause 41: an accepted removal removes a separate source, and a chosen sou
   assert.ok(migration, text);
   await answer(root, migration.id, { decision: "accept", removeSource: "on", "conflict:retry-deadline": "source" });
   const applied = await call("apply_migration", { id: migration.id });
-  assert.deepEqual([applied.value.written, applied.value.removed], [[PATHS.glossary], [TERMS]]);
+  assert.deepEqual([applied.value.written, applied.value.removed], [[{ path: PATHS.glossary, scope: null }], [{ path: TERMS, scope: null }]]);
   assert.equal(await exists(root, TERMS), false);
   const glossary = await read(root, PATHS.glossary);
   assert.match(glossary, /The longest a request may wait\./);

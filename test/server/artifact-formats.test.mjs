@@ -96,8 +96,9 @@ test("clause 5: a title, header, or field order break is reported, and a missing
   assert.deepEqual(rulesOf(entry), ["requirements.fields", "requirements.header", "requirements.title"]);
 });
 
+// Prism's own requirements are store artifacts now, which a checkout and CI cannot read, so the test keeps a verbatim copy of one that the template wrote.
 test("clause 5: Prism's own requirement files written to the template conform", async (context) => {
-  const own = await realpath(path.join(import.meta.dirname, "../../docs/requirements/artifact-formats.md"));
+  const own = await realpath(path.join(import.meta.dirname, "fixtures/template-requirement.md"));
   const text = await (await import("node:fs/promises")).readFile(own, "utf8");
   const entry = await single(context, "docs/requirements/artifact-formats.md", text);
   assert.deepEqual(entry.findings, []);
