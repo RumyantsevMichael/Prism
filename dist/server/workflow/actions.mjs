@@ -34,6 +34,7 @@ export class ActionError extends Error {
 }
 
 const fail = (code, message, details) => new ActionError(code, message, details);
+const order = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const option = (value, label, consequence = null) => ({ value, label, consequence });
 
@@ -67,19 +68,35 @@ export function parseTarget(reference) {
 
 const unknownTarget = (reference) => fail("unknown_target", `No action target ${JSON.stringify(String(reference ?? ""))} exists on this page.`);
 
-// The checkout's components as index targets: the root component first and the declared ones in declaration order.
-async function indexComponents(projectRoot) {
-  const config = await readWorkflowConfig(projectRoot);
+// A checkout's components as index targets: the root component first and the declared ones in declaration order, each with the checkout that indexes it.
+async function checkoutComponents(root) {
+  const config = await readWorkflowConfig(root);
   const listed = listComponents(config);
   const repository = listed.repository ?? "root";
-  if (listed.problem || listed.declared.length === 0) return [{ identity: `${repository}/${repository}`, folder: "" }];
-  return listed.declared.map((component) => ({ identity: component.component, folder: component.folder }));
+  if (listed.problem || listed.declared.length === 0) return [{ identity: `${repository}/${repository}`, folder: "", root }];
+  return listed.declared.map((component) => ({ identity: component.component, folder: component.folder, root }));
 }
 
-/** The targets of a kind on a checkout's page: { targets }, which only the index kind lists. */
-export async function listActionTargets({ projectRoot, kind }) {
+// The index targets of a page: the checkout's own components, or, for a workspace's page, given checkouts, the components of every checkout of the workspace on this machine,
+// by repository name and each repository's root component first, so a repository without a checkout here offers no index rebuild.
+async function indexComponents(projectRoot, checkouts = null) {
+  if (checkouts === null) return checkoutComponents(projectRoot);
+  const byRepository = new Map();
+  for (const root of checkouts) {
+    const components = await checkoutComponents(root).catch(() => []);
+    const repository = components[0]?.identity.split("/")[0];
+    if (repository && !byRepository.has(repository)) byRepository.set(repository, components);
+  }
+  return [...byRepository].sort(([left], [right]) => order(left, right)).flatMap(([, components]) => components);
+}
+
+/**
+ * The targets of a kind on a page: { targets }, which only the index kind lists.
+ * checkouts, for a workspace's page, lists the roots of the workspace's checkouts on this machine, whose components are its index targets.
+ */
+export async function listActionTargets({ projectRoot, kind, checkouts = null }) {
   if (kind !== "index") throw fail("unknown_target", "Only index targets are listed.");
-  return { targets: (await indexComponents(projectRoot)).map((component) => `index:${component.identity}`) };
+  return { targets: (await indexComponents(projectRoot, checkouts)).map((component) => `index:${component.identity}`) };
 }
 
 async function initiativeExists(projectRoot, initiative, record) {
@@ -112,7 +129,7 @@ async function seenArtifact(projectRoot, parsed) {
 }
 
 // Reads what a target's actions need: the initiative's coordination state and record, the index component, the approval gate, or the store artifact, and refuses a target that does not exist.
-async function readTarget(projectRoot, parsed, indexer, state = undefined) {
+async function readTarget(projectRoot, parsed, indexer, state = undefined, checkouts = null) {
   if (parsed.kind === "artifact") {
     const artifact = await seenArtifact(projectRoot, parsed);
     if (!artifact) throw unknownTarget(parsed.reference);
@@ -125,9 +142,9 @@ async function readTarget(projectRoot, parsed, indexer, state = undefined) {
     return { ...parsed, gateRecord: gates[0], ambiguous: gates.length > 1 ? ambiguousApprovalMessage(parsed.gate, gates) : null };
   }
   if (parsed.kind === "index") {
-    const component = (await indexComponents(projectRoot)).find((item) => item.identity === parsed.identity);
+    const component = (await indexComponents(projectRoot, checkouts)).find((item) => item.identity === parsed.identity);
     if (!component) throw unknownTarget(parsed.reference);
-    const status = await Promise.resolve(indexer.status(projectRoot, component)).catch(() => null);
+    const status = await Promise.resolve(indexer.status(component.root, component)).catch(() => null);
     return { ...parsed, component, indexState: status?.state ?? null };
   }
   const coordination = state ?? await readCoordinationState({ projectRoot, initiative: parsed.initiative }).then((read) => ({ exists: read.exists, revision: read.revision, state: read.state, valid: read.valid }));
@@ -389,10 +406,10 @@ export const prismIndexer = Object.freeze({
 // ---- Listing ----
 
 /** The actions that apply to a target: { target, actions }, available or not. */
-export async function listActions({ projectRoot, target, indexer = prismIndexer }) {
+export async function listActions({ projectRoot, target, indexer = prismIndexer, checkouts = null }) {
   const parsed = parseTarget(target);
   if (!parsed) throw unknownTarget(target);
-  const context = await readTarget(projectRoot, parsed, indexer);
+  const context = await readTarget(projectRoot, parsed, indexer, undefined, checkouts);
   return { target, actions: definitionsFor(parsed.kind).map((definition) => view(definition, context)) };
 }
 
@@ -493,11 +510,11 @@ function check(definition, context, { revision, input, confirmed }) {
  * Applies one action to a target: { applied, actions }, where applied is the history entry or null for an unchanged value, and actions the target's listing after it;
  * an approval's or a comment's result also names its artifact as artifact { path, scope }, since its entry belongs to no initiative, and a comment's result names its stored comment's id as comment.
  */
-export async function applyAction({ projectRoot, target, action, input, revision, confirmed, via = "review-app", indexer = prismIndexer }) {
+export async function applyAction({ projectRoot, target, action, input, revision, confirmed, via = "review-app", indexer = prismIndexer, checkouts = null }) {
   const parsed = parseTarget(target);
   if (!parsed) throw unknownTarget(target);
   const definition = definitionsFor(parsed.kind).find((item) => item.id === action);
-  const read = await readTarget(projectRoot, parsed, indexer);
+  const read = await readTarget(projectRoot, parsed, indexer, undefined, checkouts);
   if (!definition) throw fail("unknown_action", `The target ${target} has no action ${JSON.stringify(String(action ?? ""))}.`);
   const request = { revision, input, confirmed };
   const entryOf = async (checked, context) => ({
@@ -546,8 +563,9 @@ export async function applyAction({ projectRoot, target, action, input, revision
     const checked = check(definition, read, request);
     if (checked) {
       applied = await entryOf(checked, read);
-      await indexer.rebuild(projectRoot, read.component);
-      await appendIndexHistory(projectRoot, applied);
+      // The rebuild and its history entry belong to the checkout that indexes the component.
+      await indexer.rebuild(read.component.root, read.component);
+      await appendIndexHistory(read.component.root, applied);
     }
   } else {
     // The checks repeat under the state lock on the state it holds, so a change that lands between the read above and the write is never overwritten.
@@ -564,5 +582,5 @@ export async function applyAction({ projectRoot, target, action, input, revision
   if (parsed.kind === "approval") return { applied, actions: [], artifact: { path: read.gateRecord.artifact.path, scope: read.gateRecord.artifact.scope } };
   // A comment leaves its artifact unchanged, so the target lists its action again, and the result names the artifact it commented on.
   if (parsed.kind === "artifact") return { applied, actions: [view(definition, read)], artifact: { path: read.artifact.path, ...(read.artifact.path === null ? { location: read.artifact.location } : {}), scope: read.artifact.scope }, comment: stored.id };
-  return { applied, actions: (await listActions({ projectRoot, target, indexer })).actions };
+  return { applied, actions: (await listActions({ projectRoot, target, indexer, checkouts })).actions };
 }

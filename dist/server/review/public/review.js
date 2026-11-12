@@ -1968,12 +1968,21 @@ async function initialize() {
     entries: paletteEntries,
     describe,
     claimFor: (ref) => claimIndex.claimFor(ref),
-    // A text match in a store artifact found by the reading checkout's path opens the store artifact, follows the scope filter, and names its scope.
-    search: async (query) => (await fetchJson(`./api/search?q=${encodeURIComponent(query)}`)).results.flatMap((result) => {
-      const ref = localTab(result.path);
-      if (!isStoreRef(ref)) return [result];
-      return scopeShown(refScopes.get(ref)) ? [{ ...result, path: ref, scope: refScopes.get(ref) ?? "workspace" }] : [];
-    }),
+    // A checkout's text match in a store artifact found by its path opens the store artifact, follows the scope filter, and names its scope.
+    // A workspace's search names each store artifact by its ref and scope, and adds the code matches of its indexed components, each opened from its repository,
+    // and the components it left out.
+    search: async (query) => {
+      const answer = await fetchJson(`./api/search?q=${encodeURIComponent(query)}`);
+      const results = answer.results.flatMap((result) => {
+        const ref = result.ref ?? localTab(result.path);
+        if (!isStoreRef(ref)) return [result];
+        const scope = result.scope?.label ?? refScopes.get(ref) ?? "workspace";
+        return scopeShown(scope) ? [{ ...result, path: ref, scope }] : [];
+      });
+      if (!Array.isArray(answer.code)) return results;
+      const code = answer.code.map((match) => ({ ...match, ref: `code:${match.component.split("/")[0]}:${match.file}` }));
+      return { results, code, leftOut: answer.leftOut ?? [] };
+    },
     onOpen: (ref, { find, ...options }) => {
       pendingFind = find ? { path: ref, text: find } : null;
       openRef(ref, options);

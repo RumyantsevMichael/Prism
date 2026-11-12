@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
+import { listComponents } from "../workflow/components.mjs";
 import { listMachineCheckouts } from "../workflow/machine-checkouts.mjs";
 import { managedStoresDirectory, remoteLabel, storeIdentity } from "../workflow/remote-url.mjs";
 import { REPOSITORIES, REPOSITORY_NAME } from "../workflow/repository-names.mjs";
@@ -106,4 +107,48 @@ export async function listWorkspaces(views, { urlOf, env = process.env } = {}) {
   }));
   entries.sort((left, right) => Number(right.entry.live) - Number(left.entry.live) || right.lastSeen - left.lastSeen || collator.compare(left.entry.name, right.entry.name));
   return entries.map(({ entry }) => entry);
+}
+
+/**
+ * A workspace's checkouts on this machine, each { root, repository } once by its real path: the given registered checkouts in their order,
+ * then the entries of the machine's checkout list for the store folder whose folder still holds a configuration that names that store and repository.
+ */
+export async function checkoutsOnMachine(registered, folder, env = process.env) {
+  const listed = folder === null ? [] : (await listMachineCheckouts(env).catch(() => [])).filter((entry) => entry.store === folder).map((entry) => ({ root: entry.path, repository: entry.repository }));
+  const seen = new Map();
+  for (const checkout of [...registered, ...listed]) {
+    const root = await real(checkout.root);
+    if (!seen.has(root)) seen.set(root, { root, repository: checkout.repository ?? null });
+  }
+  return [...seen.values()];
+}
+
+/**
+ * The components a workspace knows, sorted by identity, each { identity, repository, root }: the components of each checkout on this machine, root the first checkout that declares it,
+ * each code clone's declared components and each component scope folder of the store, root null, and the root component <repository>/<repository> of each repository.
+ * checkouts lists { root } of this machine's checkouts, repositories the workspace's repository names, scopes the store's scopes, and clones(repository), when code content exists,
+ * the clone's declared components as code/components answers them, or null without a clone.
+ */
+export async function knownComponents({ checkouts = [], repositories = [], scopes = [], clones = null }) {
+  const known = new Map();
+  const note = (identity, root = null) => {
+    const [repository, component] = identity.split("/");
+    if (!REPOSITORY_NAME.test(repository ?? "") || !REPOSITORY_NAME.test(component ?? "")) return;
+    const entry = known.get(identity);
+    if (!entry) known.set(identity, { identity, repository, root });
+    else if (entry.root === null && root !== null) entry.root = root;
+  };
+  for (const { root } of checkouts) {
+    const listed = listComponents(await readWorkflowConfig(root).catch(() => null));
+    const repository = listed.repository ?? "root";
+    note(`${repository}/${repository}`, root);
+    for (const component of listed.declared) note(component.component, root);
+  }
+  for (const scope of scopes) if (scope.kind === "component" && scope.repository && scope.component) note(`${scope.repository}/${scope.component}`);
+  const names = new Set([...repositories, ...[...known.values()].map((entry) => entry.repository)]);
+  if (clones) {
+    for (const repository of names) for (const component of (await Promise.resolve(clones(repository)).catch(() => null))?.components ?? []) note(component.identity);
+  }
+  for (const repository of names) note(`${repository}/${repository}`);
+  return [...known.values()].sort((left, right) => byText(left.identity, right.identity));
 }

@@ -7,11 +7,12 @@ import { fileURLToPath } from "node:url";
 import { PLUGIN_ROOT } from "../plugin-root.mjs";
 import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
+import { listComponents } from "../workflow/components.mjs";
 import { artifactKinds, parseWorkflowConfig, readWorkflowConfig } from "../workflow/workflow-config.mjs";
 import { RECORD_DIRECTORY, artifactPathTest, artifactsInCheckout, describeRecordStore, inArtifactStore, isStoreWithoutCheckout, outsideToolCall, keyOfPath, recordStoreOf, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
 import { artifactStoreLocation, readStoreArtifact, readStoreArtifactAt, reviewStoreArtifact, reviewStoreArtifactAt, storeArtifactLocation, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
 import { codeRefOf, parseCodeRef, resolveLinks } from "./artifact-links.mjs";
-import { registeredRepositories } from "./workspaces.mjs";
+import { checkoutsOnMachine, knownComponents, registeredRepositories } from "./workspaces.mjs";
 import { withoutCredentials } from "../workflow/remote-url.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
 import { readReviewRunTotals } from "../session/run-totals.mjs";
@@ -291,11 +292,36 @@ function snippet(line, token) {
   return `${start ? "…" : ""}${text.slice(start, start + SEARCH_SNIPPET)}…`;
 }
 
+// A search query's lowercase words, or null when they hold fewer than two characters in all.
+function searchTokens(query) {
+  const tokens = String(query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+  return tokens.length && tokens.join("").length >= 2 ? tokens : null;
+}
+
+// How a text matches a query's words: null unless every word occurs in it, else its score, which ranks a name that holds every word and lines that hold them all together first,
+// and its first matching lines, those with the most words first.
+function matchText(content, tokens, name) {
+  const lower = content.toLowerCase();
+  if (!tokens.every((token) => lower.includes(token))) return null;
+  const matches = [];
+  let complete = 0;
+  content.split(/\r?\n/).forEach((line, index) => {
+    const lowerLine = line.toLowerCase();
+    const hits = tokens.filter((token) => lowerLine.includes(token)).length;
+    if (!hits) return;
+    if (hits === tokens.length) complete += 1;
+    matches.push({ line: index + 1, text: snippet(line, tokens.find((token) => lowerLine.includes(token))), hits });
+  });
+  matches.sort((left, right) => right.hits - left.hits || left.line - right.line);
+  const nameHit = tokens.every((token) => name.toLowerCase().includes(token));
+  return { score: (nameHit ? 1000 : 0) + complete * 10 + matches.length, matches: matches.slice(0, SEARCH_LINE_LIMIT).map(({ line, text }) => ({ line, text })) };
+}
+
 // Full-text search over the Prism artifacts the review lists, never over source files: every term must occur in a file,
 // and files whose lines hold all terms together rank first.
 export async function searchArtifacts(projectRoot, query) {
-  const tokens = String(query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
-  if (!tokens.length || tokens.join("").length < 2) return { query: query ?? "", results: [] };
+  const tokens = searchTokens(query);
+  if (!tokens) return { query: query ?? "", results: [] };
   const results = [];
   for (const artifactPath of await listArtifacts(projectRoot)) {
     let content;
@@ -310,24 +336,42 @@ export async function searchArtifacts(projectRoot, query) {
     } catch {
       continue;
     }
-    const lower = content.toLowerCase();
-    if (!tokens.every((token) => lower.includes(token))) continue;
-    const lines = content.split(/\r?\n/);
-    const matches = [];
-    let complete = 0;
-    lines.forEach((line, index) => {
-      const lowerLine = line.toLowerCase();
-      const hits = tokens.filter((token) => lowerLine.includes(token)).length;
-      if (!hits) return;
-      if (hits === tokens.length) complete += 1;
-      matches.push({ line: index + 1, text: snippet(line, tokens.find((token) => lowerLine.includes(token))), hits });
-    });
-    matches.sort((left, right) => right.hits - left.hits || left.line - right.line);
-    const pathHit = tokens.every((token) => artifactPath.toLowerCase().includes(token));
-    results.push({ path: artifactPath, score: (pathHit ? 1000 : 0) + complete * 10 + matches.length, matches: matches.slice(0, SEARCH_LINE_LIMIT).map(({ line, text }) => ({ line, text })) });
+    const matched = matchText(content, tokens, artifactPath);
+    if (matched) results.push({ path: artifactPath, ...matched });
   }
   results.sort((left, right) => right.score - left.score || left.path.localeCompare(right.path));
   return { query, results: results.slice(0, SEARCH_FILE_LIMIT).map(({ score, ...result }) => result) };
+}
+
+// Full-text search over a workspace's store artifacts of every scope, matched as a checkout's search matches its artifacts, each result { ref, scope, matches }.
+async function searchStoreArtifacts(projectRoot, stored, tokens) {
+  const results = [];
+  for (const entry of stored?.entries ?? []) {
+    if (!TEXT_EXTENSIONS.has(path.posix.extname(entry.location).toLowerCase())) continue;
+    const read = await readStoreArtifactAt(projectRoot, entry.location).catch(() => null);
+    if (!read || read.bytes.length > SEARCH_SIZE_LIMIT) continue;
+    const matched = matchText(read.bytes.toString("utf8"), tokens, entry.location);
+    if (matched) results.push({ ref: storeRefOf(entry.location), scope: entry.scope, ...matched });
+  }
+  results.sort((left, right) => right.score - left.score || left.ref.localeCompare(right.ref) || left.scope.label.localeCompare(right.scope.label));
+  return results.slice(0, SEARCH_FILE_LIMIT).map(({ score, ...result }) => result);
+}
+
+const SEARCH_PATH_LIMIT = 50;
+
+// The shortest folders and files of a checkout's review sources that lie outside every declared component's folder and hold none of them,
+// which select only the root component's index in a component search, or null when more are needed than one search takes.
+function rootComponentPaths(sources, folders) {
+  const inside = (file, folder) => file === folder || file.startsWith(`${folder}/`);
+  const paths = new Set();
+  for (const file of sources) {
+    if (folders.some((folder) => inside(file, folder))) continue;
+    const parts = file.split("/");
+    let prefix = parts[0];
+    for (let depth = 1; depth < parts.length && folders.some((folder) => inside(folder, prefix)); depth += 1) prefix = `${prefix}/${parts[depth]}`;
+    paths.add(prefix);
+  }
+  return paths.size <= SEARCH_PATH_LIMIT ? [...paths].sort() : null;
 }
 
 function linkedDiagramPaths(artifactPath, content) {
@@ -731,8 +775,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   // The registry's indexer serves each component's own index: with declared components, a target shows its component's entry in the status, or none
   // while that component has neither an index nor a preparation, and without them the root target shows the checkout's one index.
   // A person's request rebuilds only its own component, starts at once, and ignores the background opt-out, because it is not in the background.
+  // A workspace's page also lists the components of its other checkouts on this machine, whose status each one's own index storage holds.
   const indexer = {
-    status: async (_root, component) => componentIndexingStatus(await indexingStatus(), component),
+    status: async (root, component) => componentIndexingStatus(root === projectRoot ? await indexingStatus() : await readIndexingStatus(root, intelligenceDirectories()), component),
     rebuild: async (root, component) => {
       if (await isStoreWithoutCheckout(root)) return;
       rebuild.startedAt = Date.now();
@@ -913,6 +958,78 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       if (components === null) off();
       else sendJson(response, 200, { repository, ...components });
     }
+  }
+
+  // The roots of a workspace's checkouts on this machine, the checkout the page reads through first, or null for a checkout's own page,
+  // so that a repository without a checkout here offers no action that needs one.
+  async function machineCheckouts() {
+    if (!workspace) return null;
+    const own = await isStoreWithoutCheckout(projectRoot) ? [] : [{ root: projectRoot, repository: null }];
+    const store = await recordStoreOf(projectRoot).catch(() => null);
+    const folder = store?.external ? await realpath(store.base).catch(() => store.base) : null;
+    return checkoutsOnMachine([...own, ...await workspace.checkouts?.() ?? []], folder);
+  }
+
+  // The roots of the checkouts whose components a page offers as index targets, or null for a checkout's own page.
+  async function checkoutRoots() {
+    return (await machineCheckouts())?.map((checkout) => checkout.root) ?? null;
+  }
+
+  // A workspace's Knowledge search: the store artifacts of every scope that match, the code of each component whose checkout here has a ready index,
+  // and every other component the workspace knows with why the search left it out.
+  async function searchWorkspace(query) {
+    const tokens = searchTokens(query);
+    const stored = await workspaceStoreArtifacts(projectRoot);
+    const checkouts = await machineCheckouts();
+    const known = await knownComponents({ checkouts, repositories: await storeRepositories(), scopes: stored?.scopes ?? [], clones: workspace.code ? (repository) => workspace.code.components(repository) : null });
+    const checkedOut = new Set();
+    for (const component of known) if (component.root !== null) checkedOut.add(component.repository);
+    const leftOut = [];
+    const searchable = new Map();
+    for (const component of known) {
+      if (!checkedOut.has(component.repository)) leftOut.push({ component: component.identity, reason: "no_checkout" });
+      else if (component.root === null) leftOut.push({ component: component.identity, reason: "no_index" });
+      else searchable.set(component.root, [...searchable.get(component.root) ?? [], component]);
+    }
+    const code = [];
+    for (const [root, components] of searchable) {
+      const searched = await searchCheckoutCode(root, components, tokens ? query : null);
+      code.push(...searched.code);
+      leftOut.push(...searched.leftOut);
+    }
+    leftOut.sort((left, right) => (left.component < right.component ? -1 : left.component > right.component ? 1 : 0));
+    return { query: query ?? "", results: tokens ? await searchStoreArtifacts(projectRoot, stored, tokens) : [], code, leftOut };
+  }
+
+  // The code matches of one checkout's components whose index is ready, as search_repository_concepts answers them, each with its component,
+  // and its other components, left out with no_index, or with search_failed when their search failed; a query of null searches nothing.
+  async function searchCheckoutCode(root, components, query) {
+    const status = await readIndexingStatus(root, intelligenceDirectories()).catch(() => null);
+    const ready = components.filter((component) => componentIndexingStatus(status, component)?.state === "ready");
+    const leftOut = components.filter((component) => !ready.includes(component)).map((component) => ({ component: component.identity, reason: "no_index" }));
+    const code = [];
+    if (query === null || !ready.length) return { code, leftOut };
+    const { searchRepositoryConcepts } = await import("../repository-intelligence/semantic-native-provider.mjs");
+    const listed = listComponents(await readWorkflowConfig(root).catch(() => null));
+    const declared = Array.isArray(status?.components);
+    const folders = listed.declared.filter((entry) => entry.folder !== "").map((entry) => entry.folder);
+    for (const component of ready) {
+      const folder = listed.declared.find((entry) => entry.component === component.identity)?.folder ?? "";
+      // In a repository with components, the search names the component's own paths, so it reads only that component's index and starts no other build.
+      const paths = !declared ? null : folder !== "" ? [folder] : rootComponentPaths(await listReviewSources(root).catch(() => []), folders);
+      try {
+        if (declared && (paths === null || !paths.length)) throw new Error("The root component's files cannot be named in one search.");
+        const answer = await searchRepositoryConcepts({ projectRoot: root, query, ...(paths ? { filters: { paths } } : {}) });
+        if (answer.status === "preparing") {
+          leftOut.push({ component: component.identity, reason: "no_index" });
+          continue;
+        }
+        for (const result of answer.results ?? []) if ((result.component ?? component.identity) === component.identity) code.push({ ...result, component: component.identity });
+      } catch {
+        leftOut.push({ component: component.identity, reason: "search_failed" });
+      }
+    }
+    return { code, leftOut };
   }
 
   // The repositories a workspace's store registers, with those its registered checkouts name, by name.
@@ -1161,14 +1278,14 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       send(response, 200, JSON.stringify(await updateSession(body)), "application/json; charset=utf-8");
     } else if (route === "/api/actions" && request.method === "GET") {
       try {
-        const listed = await listActions({ projectRoot, target: url.searchParams.get("target"), indexer });
+        const listed = await listActions({ projectRoot, target: url.searchParams.get("target"), indexer, checkouts: await checkoutRoots() });
         sendJson(response, 200, { target: listed.target, writable: writableRequest(request), actions: listed.actions });
       } catch (error) {
         sendActionError(response, error);
       }
     } else if (route === "/api/actions/targets" && request.method === "GET") {
       try {
-        sendJson(response, 200, await listActionTargets({ projectRoot, kind: url.searchParams.get("kind") }));
+        sendJson(response, 200, await listActionTargets({ projectRoot, kind: url.searchParams.get("kind"), checkouts: await checkoutRoots() }));
       } catch (error) {
         sendActionError(response, error);
       }
@@ -1187,7 +1304,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         return;
       }
       try {
-        const result = await applyAction({ projectRoot, target: body.target, action: body.action, input: body.input, revision: body.revision, confirmed: body.confirmed, via: "review-app", indexer });
+        const result = await applyAction({ projectRoot, target: body.target, action: body.action, input: body.input, revision: body.revision, confirmed: body.confirmed, via: "review-app", indexer, checkouts: await checkoutRoots() });
         if (result.applied) forgetWorkspace();
         sendJson(response, 200, { applied: result.applied, actions: result.actions });
         if (result.applied) {
@@ -1220,7 +1337,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     } else if (route === "/api/indexing" && request.method === "GET") {
       send(response, 200, JSON.stringify(await indexingStatus()), "application/json; charset=utf-8");
     } else if (route === "/api/search") {
-      send(response, 200, JSON.stringify(await searchArtifacts(projectRoot, url.searchParams.get("q"))), "application/json; charset=utf-8");
+      const query = url.searchParams.get("q");
+      send(response, 200, JSON.stringify(workspace ? await searchWorkspace(query) : await searchArtifacts(projectRoot, query)), "application/json; charset=utf-8");
     } else if (route === "/api/artifact") {
       const artifactPath = url.searchParams.get("path");
       // A store artifact's comments come one page at a time from commentOffset, which names a whole number of at least 1 in ASCII digits.

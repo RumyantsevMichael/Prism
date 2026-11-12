@@ -4,8 +4,10 @@
 import { claimElement } from "./claim-index.js";
 
 const KIND_ORDER = ["action", "place", "initiative", "slice", "requirement", "decision", "term", "record", "file"];
-const GROUPS = { action: "Settings on this page", place: "Places", initiative: "Initiatives", slice: "Slices", requirement: "Requirements", decision: "Decisions", term: "Glossary terms", record: "Records", file: "Files", text: "Text in documents" };
-const KINDS = { action: "Setting", place: "Place", initiative: "Initiative", slice: "Slice", requirement: "Requirement", decision: "Decision", term: "Term", file: "File" };
+const GROUPS = { action: "Settings on this page", place: "Places", initiative: "Initiatives", slice: "Slices", requirement: "Requirements", decision: "Decisions", term: "Glossary terms", record: "Records", file: "Files", text: "Text in documents", code: "Code in indexed components" };
+// Why a workspace's search left a component out, as the left-out list names it.
+const LEFT_OUT = { no_checkout: "no checkout here", no_index: "no ready index", search_failed: "search failed" };
+const KINDS = { action: "Setting", place: "Place", initiative: "Initiative", slice: "Slice", requirement: "Requirement", decision: "Decision", term: "Term", file: "File", code: "Code" };
 const RESULT_LIMIT = 40;
 const TEXT_SEARCH_DELAY_MS = 200;
 const TEXT_SEARCH_MINIMUM = 3;
@@ -45,6 +47,8 @@ export function kindOf(entry) {
 export function createPalette({ dialog, field, results, preview, entries, onOpen, search = null, describe = (path) => ({ label: path, kind: "Document" }), claimFor = () => null }) {
   let matches = [];
   let textMatches = [];
+  let codeMatches = [];
+  let leftOut = [];
   let textState = "idle";
   let searchTimer = 0;
   let searchRequest = 0;
@@ -60,18 +64,24 @@ export function createPalette({ dialog, field, results, preview, entries, onOpen
       ? all.map((entry) => ({ entry, rank: rank(entry, text, tokens) })).filter((item) => item.rank).sort(compare).slice(0, RESULT_LIMIT).map((item) => item.entry)
       : all.filter((entry) => entry.kind === "action" || entry.kind === "place" || entry.kind === "initiative").slice(0, RESULT_LIMIT);
     textMatches = [];
+    codeMatches = [];
+    leftOut = [];
     clearTimeout(searchTimer);
     const current = ++searchRequest;
     textState = search && text.length >= TEXT_SEARCH_MINIMUM ? "searching" : "idle";
     if (textState === "searching") {
       searchTimer = setTimeout(async () => {
-        let found = [];
+        let answer = [];
         try {
-          found = await search(query());
+          answer = await search(query());
         } catch {
-          found = [];
+          answer = [];
         }
         if (current !== searchRequest) return;
+        // A workspace's search answers { results, code, leftOut }: code matches of the indexed components and the components it left out, beside the documents.
+        const found = Array.isArray(answer) ? answer : answer.results ?? [];
+        codeMatches = Array.isArray(answer) ? [] : (answer.code ?? []).map((match) => ({ ref: match.ref, kind: "code", label: match.file, code: true, detail: String(match.excerpt ?? "").split(/\r?\n/).find((line) => line.trim())?.trim() ?? "", line: match.range?.startLine ?? null, find: null, scope: match.component }));
+        leftOut = Array.isArray(answer) ? [] : answer.leftOut ?? [];
         textMatches = found.flatMap((result) => result.matches.slice(0, 1).map((match) => {
           const named = describe(result.path);
           // As in the Records group, a record that belongs to a slice or initiative reads as its kind, and the preview names its owner.
@@ -86,7 +96,7 @@ export function createPalette({ dialog, field, results, preview, entries, onOpen
     render({ keep: false });
   }
 
-  const all = () => [...matches, ...textMatches];
+  const all = () => [...matches, ...textMatches, ...codeMatches];
 
   function option(entry, index) {
     const code = entry.kind === "file" || entry.code;
@@ -120,10 +130,27 @@ export function createPalette({ dialog, field, results, preview, entries, onOpen
     return holder;
   }
 
+  // The components a workspace's search left out, each a chip that names it and why, so a missing code match reads as not searched rather than absent.
+  function leftOutGroup() {
+    const holder = node("div", "palette-group");
+    holder.dataset.leftOut = "";
+    const chips = node("div", "palette-left-out");
+    for (const item of leftOut) {
+      const chip = node("prism-chip", "", item.component);
+      chip.dataset.leftOutComponent = item.component;
+      chip.dataset.codeSubject = "";
+      chip.append(node("span", "", LEFT_OUT[item.reason] ?? item.reason));
+      chip.lastChild.slot = "meta";
+      chips.append(chip);
+    }
+    holder.append(node("div", "palette-group-label", "Left out of this search"), chips);
+    return holder;
+  }
+
   function render({ keep }) {
     const active = keep ? results.active?.getAttribute("value") ?? null : null;
     const list = all();
-    const key = JSON.stringify([list.map((entry) => [entry.ref, entry.kind, entry.label, entry.line ?? null]), textState]);
+    const key = JSON.stringify([list.map((entry) => [entry.ref, entry.kind, entry.label, entry.line ?? null]), leftOut, textState]);
     if (key === rendered) return;
     rendered = key;
     const groups = [];
@@ -137,6 +164,8 @@ export function createPalette({ dialog, field, results, preview, entries, onOpen
     if (textState === "searching") groups.push(node("p", "palette-status", "Searching text…"));
     else if (textState === "done" && textMatches.length) groups.push(group("text", textMatches.map((entry, offset) => option(entry, index + offset))));
     else if (textState === "done" && !list.length) groups.push(node("p", "palette-status", "No text matches."));
+    if (textState === "done" && codeMatches.length) groups.push(group("code", codeMatches.map((entry, offset) => option(entry, index + textMatches.length + offset))));
+    if (textState === "done" && leftOut.length) groups.push(leftOutGroup());
     if (!list.length && textState !== "searching" && textState !== "done") groups.push(node("p", "palette-status", "Nothing matches."));
     results.replaceChildren(...groups);
     results.activate(active);
@@ -158,7 +187,7 @@ export function createPalette({ dialog, field, results, preview, entries, onOpen
     if (code) title.dataset.codeSubject = "";
     const parts = [node("p", "palette-preview-kind", entry.preview?.kind ?? kindOf(entry)), title];
     if (entry.detail && entry.detail !== entry.preview?.title) {
-      const detail = node("p", "palette-preview-detail", entry.kind === "text" ? `Line ${entry.line}: ${entry.detail}` : entry.detail);
+      const detail = node("p", "palette-preview-detail", (entry.kind === "text" || entry.kind === "code") && entry.line ? `Line ${entry.line}: ${entry.detail}` : entry.detail);
       // A file's path, and a line of a document's text, are quoted as they are.
       if (code || entry.kind === "text") detail.dataset.codeSubject = "";
       parts.push(detail);

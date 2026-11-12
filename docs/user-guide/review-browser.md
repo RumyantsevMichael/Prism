@@ -267,6 +267,10 @@ It finds places, initiatives, slices, requirements, decisions, glossary terms, a
 A slice's result shows who holds a claim on it, and beside the results a preview shows the active result.
 A query of three or more characters also searches the text of Prism artifacts, never source files, and every word must occur in a matching file.
 Opening a text match scrolls to and highlights the first occurrence.
+On a workspace's page the text search covers the store artifacts of every scope, each match with its scope label, whichever checkout the page reads through.
+It also searches the code of each component whose index is ready in a checkout on this machine, and lists those matches as **Code in indexed components**, each with its component.
+Under **Left out of this search** it names every other component the workspace knows, with why: `no checkout here` for a repository without a checkout on this machine, `no ready index` for a component whose index is not built, and `search failed` for one whose search failed.
+The components a workspace knows are those of each checkout on this machine, those that each code clone's branches declare, and those that hold a component scope folder in the store, plus each repository's root component.
 When the match is not visible in the rendered view, try the Raw view.
 On an initiative or slice page, the palette also lists the page's settings as entries such as `Push: Off`, and choosing one moves the focus to that setting's control.
 In the palette, the arrow keys move through the results, Enter opens one, and Esc closes the palette.
@@ -277,6 +281,7 @@ The index item at the right of the status bar shows the open project's native in
 Its panel lists each index target of the checkout, the root component first and then each declared component, with its indexing state and a **Rebuild** button that rebuilds only that component's index.
 While a component's index is being built, its row says `An index build is already running.` in place of the button.
 In a repository with components, the item combines every component's index and names the component being built.
+On a workspace's page the panel lists the components of every repository with a checkout on this machine, by repository name, and offers no rebuild for a repository without one, because a rebuild runs in a checkout.
 A long component identity ends in an ellipsis, and its tooltip names it whole.
 See [Watch an index build in the review browser](repository-intelligence.md#watch-an-index-build-in-the-review-browser) for what each state means.
 
