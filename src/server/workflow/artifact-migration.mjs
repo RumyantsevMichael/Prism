@@ -39,7 +39,7 @@ const byPath = (left, right) => left.path < right.path ? -1 : left.path > right.
 // The checkout's files that Git lists, as project-relative paths: tracked from the index, and with others the untracked ones that Git does not ignore, or with ignored the ignored ones.
 // Git runs without the checkout's file system monitor, so listing runs no program that the checkout's configuration names.
 async function gitFiles(root, args, pathspecs = []) {
-  const { stdout } = await run("git", ["-c", "core.fsmonitor=false", "-C", root, "ls-files", "-z", ...args, "--", ...pathspecs], { maxBuffer: LIST_BUFFER });
+  const { stdout } = await run("git", ["-c", "core.fsmonitor=false", "-C", root, "ls-files", "-z", ...args, "--", ...pathspecs], { maxBuffer: LIST_BUFFER, windowsHide: true });
   return [...new Set(stdout.split("\0").filter(Boolean))].sort();
 }
 
@@ -99,7 +99,7 @@ const MARKER_READ_MAX = 64 * 1024;
  * Throws when Git cannot locate the markers, so a caller that cannot tell moves and removes nothing.
  */
 async function operationInProgress(root) {
-  const { stdout } = await run("git", ["-c", "core.fsmonitor=false", "-C", root, "rev-parse", ...OPERATION_MARKERS.flatMap((marker) => ["--git-path", marker])], { maxBuffer: LIST_BUFFER });
+  const { stdout } = await run("git", ["-c", "core.fsmonitor=false", "-C", root, "rev-parse", ...OPERATION_MARKERS.flatMap((marker) => ["--git-path", marker])], { maxBuffer: LIST_BUFFER, windowsHide: true });
   const located = stdout.split("\n").filter(Boolean);
   if (located.length !== OPERATION_MARKERS.length) throw new Error("git rev-parse did not locate every marker");
   const at = new Map(OPERATION_MARKERS.map((marker, index) => [marker, path.resolve(root, located[index])]));
