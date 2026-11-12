@@ -351,10 +351,13 @@ const LAUNCH_RESUME = {
     return context.shipped ? shippedActionReason(context.shipped) : context.resumeReason;
   },
   after: () => null,
-  async launch({ context, env }) {
+  async launch({ projectRoot, context, env }) {
     await confirmLaunch({ initiative: context.view.initiative, host: context.view.host, checkout: context.view.checkout, env });
+    // The initiative may have shipped while the dialog was open; then nothing starts.
+    const shipped = await shippedDecision(projectRoot, context.initiative).catch(() => null);
+    if (shipped) throw fail("action_unavailable", shippedActionReason(shipped), { reason: shippedActionReason(shipped) });
     const launch = await resumeLaunch({ id: context.launch, env, cause: "person" });
-    return { launch, after: { launch: launch.id, run: launch.runs }, initiative: context.initiative, started: null };
+    return { launch, after: { launch: launch.id, run: launch.runs }, initiative: context.initiative, started: launch.id };
   }
 };
 
@@ -571,7 +574,7 @@ async function applyLaunchAction({ projectRoot, definition, context, request, en
   try {
     await recordPersonAction({ projectRoot, initiative: outcome.initiative, prepare: async () => ({ entry }) });
   } catch (error) {
-    // A launch that cannot be recorded does not stay started.
+    // A launch or resume that cannot be recorded does not stay started.
     if (outcome.started) await stopLaunch({ id: outcome.started, env }).catch(() => {});
     throw error;
   }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -33,6 +33,11 @@ async function ask(root, launchId, initiative = INITIATIVE) {
     delete process.env.PRISM_LAUNCH;
   }
 }
+
+const historyOf = async (root) => {
+  const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
+  return (await readCoordinationState({ projectRoot: root, initiative: INITIATIVE })).state?.history ?? [];
+};
 
 const gatesFile = (s, id) => path.join(s.app, "launches", id, "gates.json");
 
@@ -81,4 +86,51 @@ test("the gate record keeps its newest marks and answers and drops malformed ent
     marks: [{ gate: "gate-0000000a", at: new Date(0).toISOString() }],
     answers: [{ entry: "b".repeat(32), gate: "gate-0000000a", run: null, resumed: false }]
   });
+});
+
+test("a stop request written for a run that already exited 0 keeps its supervisor from resuming for an answer", { skip: posixOnly }, async (t) => {
+  const s = await setup(t, { plans: { claude: [{ hold: 50 }, { hold: 50 }] } });
+  const id = (await apply(s.base, { action: "launch.claude-code", target: `initiative:${INITIATIVE}`, input: {}, revision: null }, s.headers)).json.launch.id;
+  const gateId = await ask(s.root, id);
+  await waitFor(async () => (await s.launchView(id))?.resumeCommand, { what: "the run to end" });
+  // The answer as it is kept for a run that was running when the person answered, and the stop the person pressed while the run's end was recorded.
+  const folder = path.join(s.app, "launches", id);
+  const { token } = JSON.parse(await readFile(path.join(folder, "launch.json"), "utf8")).runs[0];
+  const gates = JSON.parse(await readFile(gatesFile(s, id), "utf8"));
+  await writeFile(gatesFile(s, id), JSON.stringify({ ...gates, answers: [{ entry: "c".repeat(32), gate: gateId, run: token, resumed: false }] }));
+  await writeFile(path.join(folder, "stop.json"), JSON.stringify({ token, requestedAt: new Date().toISOString() }));
+  const { resumeForAnswers } = await import("../../dist/server/session/launched-sessions.mjs");
+  assert.equal(await resumeForAnswers({ id, token, env: s.env }), false);
+  assert.equal(s.runs("claude").length, 1);
+  await rm(path.join(folder, "stop.json"));
+  assert.equal(await resumeForAnswers({ id, token, env: s.env }), true, "without the stop request the answer resumes the session");
+  await waitFor(() => s.runs("claude").length === 2, { what: "the resumed run" });
+});
+
+test("a resume whose initiative shipped while the confirmation was open starts nothing and records nothing", { skip: posixOnly }, async (t) => {
+  const s = await setup(t, { plans: { claude: [{ hold: 50 }, { hold: "forever" }] } });
+  const id = (await apply(s.base, { action: "launch.claude-code", target: `initiative:${INITIATIVE}`, input: {}, revision: null }, s.headers)).json.launch.id;
+  await waitFor(async () => (await s.launchView(id))?.state === "finished", { what: "the run to finish" });
+  await writeFile(path.join(s.app, "launches", "window.json"), JSON.stringify({ confirmedAt: new Date(Date.now() - 40 * 60000).toISOString(), endsAt: new Date(Date.now() - 10 * 60000).toISOString() }));
+  // The dialog ships the initiative before it confirms, as an orchestrate run elsewhere might while the person reads it.
+  const { readRecord } = await import("../../dist/server/workflow/record-store.mjs");
+  const roadmap = JSON.parse((await readRecord(s.root, { kind: "roadmap" })).bytes.toString("utf8"));
+  for (const entry of roadmap.initiatives) if (entry.id === INITIATIVE) entry.decision = { kind: "shipped", at: new Date().toISOString() };
+  const shipped = path.join(s.bin, "shipped-roadmap.json");
+  await writeFile(shipped, `${JSON.stringify(roadmap, null, 2)}\n`);
+  const zenity = path.join(s.bin, "zenity");
+  await writeFile(zenity, `#!${process.execPath}
+const { pathToFileURL } = require("node:url");
+import(pathToFileURL(${JSON.stringify(path.resolve("dist/server/workflow/record-store.mjs"))}).href)
+  .then(({ writeRecord }) => writeRecord(${JSON.stringify(s.root)}, { kind: "roadmap" }, require("node:fs").readFileSync(${JSON.stringify(shipped)}, "utf8")))
+  .then(() => process.exit(0), () => process.exit(1));
+`);
+  await chmod(zenity, 0o755);
+  const before = await historyOf(s.root);
+  const resumed = await apply(s.base, { action: "launch.resume", target: `launch:${id}`, input: {}, revision: null }, s.headers);
+  assert.equal(resumed.status, 409, resumed.text);
+  assert.equal(resumed.json.code, "action_unavailable");
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  assert.equal(s.runs("claude").length, 1);
+  assert.deepEqual(await historyOf(s.root), before);
 });

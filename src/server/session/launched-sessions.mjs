@@ -299,6 +299,8 @@ export async function resumeForAnswers({ id, token, env = process.env }) {
     const record = await readLaunchRecord(folder);
     const run = record?.runs.find((entry) => entry.token === token);
     if (!run?.endedAt || run !== record.runs.at(-1) || run.stopRequestedAt || run.exit?.code !== 0 || run.exit?.signal) return false;
+    // A stop request for this run counts even when the supervisor did not act on it, such as one written while it drained the output.
+    if ((await readStopRequest(folder))?.token === token) return false;
     const current = await readGateRecord(folder);
     const due = current.answers.filter((answer) => answer.run === token && !answer.resumed);
     if (!due.length) return false;
