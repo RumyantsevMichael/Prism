@@ -1,6 +1,6 @@
 # Build native indexes in stages that keep their work
 
-Status: Proposed
+Status: Accepted
 Created: 2026-11-11
 
 ## Requirements
@@ -34,6 +34,9 @@ A repeated progress value MUST NOT count as progress.
 When a call needs a component that has no index while the running build is of a component that the call does not need, the running build MUST be paused, and it MUST resume later from its saved work.
 A build MUST keep a private mirror of the files it indexed and a code graph of that mirror, and a rebuild MUST copy, parse, and fragment only the files that changed since the mirror's last build.
 An incremental rebuild MUST produce the same index as a full build of the same snapshot.
+A rebuild MUST also re-read every unchanged file that resolves through a changed or removed file.
+A rebuild MUST build in full when it cannot bound that set, when a file that the code graph reads as configuration changed, when the detected frameworks changed, or when a framework links files across the whole project.
+A mirror that holds a file which neither its manifest nor the snapshot names MUST be reset before the build.
 A search across several indexes MUST merge them with one reciprocal rank fusion that ranks vector evidence by similarity across all indexes and lexical evidence by each result's rank within its own index.
 
 ## Rationale
@@ -43,6 +46,7 @@ An append-only store with fixed-size records needs no index of its own, survives
 Progress, not elapsed time, separates a large build from a hung one, so a stall limit lets any size of repository finish while still freeing the queue from a hang.
 Pausing reuses the saved work that resuming already needs, so a paused build loses only its current batch, while running builds side by side would multiply the memory of the model and the index.
 The code graph already updates a kept database for named paths, so an incremental rebuild needs no second parser.
+Equality with a full build matters more than speed, so every case the sync cannot prove equal falls back to a full build.
 Cosine similarity of one model is comparable between indexes and lexical scores are not, so ranks carry the lexical evidence across indexes.
 
 ## Alternatives
@@ -66,7 +70,7 @@ Cosine similarity of one model is comparable between indexes and lexical scores 
 ## Mechanism
 
 1. A build copies the changed files into its mirror and asks the runtime to build, naming the changed and removed files.
-2. The runtime updates its code graph for those files, reuses the derived data of unchanged files, plans fragments, and reports the structure.
+2. The runtime adds the unchanged files that resolve through the changed or removed ones, updates its code graph for all of them, reuses the derived data of the rest, plans fragments, and reports the structure.
 3. Prism stores the structure as the snapshot's structure-only index and points the storage location at it.
 4. The runtime embeds the fragments that have no saved embedding and reports each batch's vectors, which Prism appends to the embedding store.
 5. Prism stores the complete index, points the storage location at it, and rewrites the embedding store to its fragments.
