@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { writePlanFile } from "./plan-files.mjs";
 import { defer } from "./teardown.mjs";
 
 // Projects that declare components, for the acceptance tests of components.md.
@@ -92,8 +93,10 @@ export async function write(root, files) {
 export async function componentProject(context, { config = workflow(), files = {}, requirements = ["r.md#1", "r.md#2", "r.md#3"] } = {}) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-components-")));
   defer(context, () => rm(root, { recursive: true, force: true }));
-  await write(root, { ...FILES, ...files, ".prism/workflow.md": config, [`${PLANS}/slice.md`]: "# Work\n\n## Contract\n1. Billing totals.\n2. Shared values.\n3. Web pages.\n" });
+  await write(root, { ...FILES, ...files, ".prism/workflow.md": config });
   git(root, "init", "-q", "-b", "main");
+  // With a record store, Prism reads plan files only there.
+  await writePlanFile(root, `${PLANS}/slice.md`, "# Work\n\n## Contract\n1. Billing totals.\n2. Shared values.\n3. Web pages.\n");
   commitAll(root, "start");
   const { updateInitiative } = await import("../../../dist/server/workflow/initiative.mjs");
   await updateInitiative({ projectRoot: root, initiative: INITIATIVE, expectedRevision: null, operations: [{ op: "create", slug: INITIATIVE, title: "Work", requirements }] });
@@ -102,7 +105,7 @@ export async function componentProject(context, { config = workflow(), files = {
 
 /** Write a planned slice's slice.md with the given Changes lines. */
 export async function plannedSlice(root, slug, changes) {
-  await write(root, { [`${PLANS}/${slug}/slice.md`]: `# ${slug}\n\n## Changes\n${changes.map((line) => `- ${line}`).join("\n")}\n` });
+  await writePlanFile(root, `${PLANS}/${slug}/slice.md`, `# ${slug}\n\n## Changes\n${changes.map((line) => `- ${line}`).join("\n")}\n`);
 }
 
 /** Apply update_initiative operations at the current revision. */

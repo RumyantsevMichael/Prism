@@ -1,0 +1,10 @@
+@startuml
+title artifact-sync
+
+component "store-artifacts\nupdateArtifact" as tools
+component "record-store-sync\nscheduleRecordSync, merge, takeSavedConflicts" as sync
+component "mcp\nsaved-version note" as mcp
+
+tools --> sync
+mcp --> sync
+@enduml

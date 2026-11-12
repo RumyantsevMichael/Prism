@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { CHROMIUM_OPTIONS } from "../../../scripts/review-demo/layout-audit.mjs";
 import { defer } from "./teardown.mjs";
 
 export const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
@@ -81,7 +82,7 @@ export async function serveProject(context, projectRoot) {
 }
 
 export async function launch(context) {
-  const browser = await playwright.chromium.launch();
+  const browser = await playwright.chromium.launch(CHROMIUM_OPTIONS);
   defer(context, () => browser.close());
   return browser;
 }

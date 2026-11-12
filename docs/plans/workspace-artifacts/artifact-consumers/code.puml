@@ -1,0 +1,26 @@
+@startuml
+title artifact-consumers
+
+component "record-store\nreadArtifactText, writeArtifactText" as text
+component "initiative\nChanges check, frozen_test_in_store, initiative.md" as initiative
+component "slice-design\nmeasureContract" as measure
+component "diagram-check" as diagrams
+component "design-view" as view
+component "state\ncheckpointPause recovery.md" as state
+component "projection and roadmap\ngenerated views" as projection
+component "review-ledger\nreview.md" as ledger
+component "review-server\nlistArtifacts, artifactScopes" as server
+component "workspace-model\nlibraries, slice files" as model
+
+initiative --> text
+initiative --> measure
+initiative --> diagrams
+measure --> text
+diagrams --> text
+view --> text
+state --> text
+projection --> text
+ledger --> text
+server --> text
+model --> text
+@enduml

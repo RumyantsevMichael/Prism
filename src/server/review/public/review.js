@@ -18,6 +18,7 @@ import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createPresence } from "./views/presence.js";
 import { DENSITIES, onPreferencesChange, preference, preferencesReady, savePreferences, setPreference, THEMES } from "./kit/preferences.js";
 import { shownActionEntries } from "./views/actions.js";
+import { artifactReviewHtml, focusAfterMore, mountArtifactReview, readListedComments } from "./views/artifact-review.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
 import { currentPhase } from "./views/slice.js";
 import { messageHtml, shortDate } from "./views/util.js";
@@ -932,8 +933,10 @@ function onStreamEvent(name, data) {
     notices.set(data.projectId, data);
     renderNotices();
   } else if (name === "action") {
-    // An applied action of this page or of another checkout's page on the same records: views that show it update without a reload.
+    // An applied action of this page or of another checkout's page on the same records: views that show it update without a reload,
+    // and a comment on the open file shows at once rather than at the next check.
     document.dispatchEvent(new CustomEvent("prism:action", { detail: data }));
+    if (data?.artifact?.path && data.artifact.path === selectedPath) void showArtifact(selectedPath);
   } else if (name === "session") {
     sessionConnected = true;
     try {
@@ -1899,10 +1902,12 @@ function controlsOf(root) {
 // and then the scroll position, open sections, and focus come back; a newly opened path starts where its tab was left, or at the top.
 function beginRebuild(path) {
   const same = renderedPath === path;
-  const memory = { path, top: same ? workspace.scrollTop : scrollPositions.get(path) ?? 0, open: null, focus: -1 };
+  const memory = { path, top: same ? workspace.scrollTop : scrollPositions.get(path) ?? 0, open: null, focus: -1, focusKey: null };
   if (same) {
     memory.open = [...artifact.querySelectorAll("prism-disclosure")].map((disclosure) => [disclosure.getAttribute("summary") ?? "", disclosure.open]);
     memory.focus = artifact.contains(document.activeElement) ? controlsOf(artifact).indexOf(document.activeElement) : -1;
+    // A control whose view names it with data-focus-key, such as a kit button whose own control sits in its shadow, gets its focus back by that name.
+    memory.focusKey = artifact.contains(document.activeElement) ? document.activeElement.closest("[data-focus-key]")?.dataset.focusKey ?? null : null;
     artifact.style.minHeight = `${artifact.offsetHeight}px`;
   } else {
     artifact.style.minHeight = "";
@@ -2025,7 +2030,26 @@ function endRebuild(memory) {
       if (sections[index] && (sections[index].getAttribute("summary") ?? "") === summary) sections[index].open = open;
     });
   }
-  if (memory.focus >= 0 && !artifact.contains(document.activeElement)) controlsOf(artifact)[memory.focus]?.focus({ preventScroll: true });
+  // Focus that a view named with data-focus-key comes back by that name, and a comment, which is no control, takes it without entering the tab order.
+  // A comment is never found again by position, since a list that grew or shrank would move focus to another control: one that is gone hands focus to the More comments button when one is listed.
+  // A More comments button that this redraw no longer lists, as when it lists the last comments that a press of it asked for, hands focus on as that press would:
+  // to the More comments button that follows the added comments, or else to the first comment that the press added, never to a control found by position.
+  const keyed = (key) => [...artifact.querySelectorAll("[data-focus-key]")].find((control) => control.dataset.focusKey === key);
+  const comment = memory.focusKey?.startsWith("comment:") === true;
+  const more = memory.focusKey === "more-comments";
+  if (memory.focusKey && !artifact.contains(document.activeElement)) {
+    const found = keyed(memory.focusKey) ?? (comment ? keyed("more-comments") : null);
+    if (found?.dataset.commentId !== undefined) found.tabIndex = -1;
+    if (found) found.focus({ preventScroll: true });
+    else if (more) {
+      const list = artifact.querySelector("[data-comment-list]");
+      const listed = [...(list?.querySelectorAll("[data-comment-id]") ?? [])];
+      // Without a press under way, focus goes to the last listed comment, the place in the list where the button stood.
+      const before = state.moreBefore ?? new Set(listed.slice(0, -1).map((item) => item.dataset.commentId));
+      if (list) focusAfterMore(list, before);
+    }
+  }
+  if (!comment && !more && memory.focus >= 0 && !artifact.contains(document.activeElement)) controlsOf(artifact)[memory.focus]?.focus({ preventScroll: true });
   workspace.scrollTop = memory.top;
   if (pendingAnchor?.path === memory.path) {
     scrollToAnchor(pendingAnchor.anchor);
@@ -2210,6 +2234,16 @@ async function showArtifact(path) {
     return;
   }
   const data = await response.json();
+  const state = viewState(data.path);
+  // A Review card that lists further comment reads reads them all again with the first, so its list stays the file's first comments as they now are.
+  const readPage = (commentOffset) => fetchJson(`./api/artifact?path=${encodeURIComponent(data.path)}&commentOffset=${commentOffset}`);
+  if (data.artifact && (state.commentReads ?? 1) > 1) {
+    const listed = await readListedComments(data.artifact, state, readPage).catch(() => null);
+    if (path !== selectedPath) return;
+    // Reads that never agreed, or failed, leave the card as it is until the next redraw; a card not shown yet lists the first read alone.
+    if (listed) data.artifact = listed;
+    else if (renderedPath === path) { setBusy(false); return; }
+  }
   const snapshot = JSON.stringify(data);
   if (path !== selectedPath) return;
   if (snapshot === lastSnapshot) {
@@ -2225,7 +2259,6 @@ async function showArtifact(path) {
     : structured || data.path.toLowerCase().endsWith(".puml")
       ? ""
       : `<section class="document-sheet"><prism-doc class="document-content">${renderText(data.path, data.content, markdownOptions(data.path))}</prism-doc></section>`;
-  const state = viewState(data.path);
   const memory = beginRebuild(path);
   // A repository file is named by its path; a record of Prism's by its title and kind, never its file name.
   const named = describe(data.path);
@@ -2243,8 +2276,12 @@ async function showArtifact(path) {
         ${source ? "<prism-chip>Read-only</prism-chip>" : structured ? "" : `<prism-chip>${diagramLabel}</prism-chip>`}
       </div>
     </header>
+    ${artifactReviewHtml(data, state)}
     <div class="document-history" data-shipped-history>${documentHistoryHtml(path)}</div>
     ${documentCard}`;
+  // A store artifact shows its review view above its content, and its comment form keeps an unsent comment across the page's live updates.
+  // More comments lists further comments in place, so the page takes what the card now lists as what it shows and redraws only when that changes.
+  mountArtifactReview(artifact, data, { actionApi, state, readPage, onListed: (listed) => { if (listed.path === selectedPath) lastSnapshot = JSON.stringify(listed); } });
   pageBar.setActions(structured ? modeButtons(state, path) : []);
   if (structured) {
     const container = document.createElement("div");
@@ -2338,9 +2375,10 @@ function viewContext(path, state) {
       if (path === selectedPath) decorateMaximize(path);
     },
     // A gate answer is the gate's answer action, applied against the revision its listing shows.
-    async answerGate({ initiative, id, choice, note }) {
+    // An approval gate of a requirement or ADR is the target approval:<id>, since the artifact's status record in the store holds it, and its revision is the artifact's version.
+    async answerGate({ initiative, approval, id, choice, note }) {
       if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
-      const target = `gate:${initiative}/${id}`;
+      const target = approval ? `approval:${id}` : `gate:${initiative}/${id}`;
       const unanswered = () => {
         throw new Error("The review app did not answer, so the answer was not recorded. Try again in a moment.");
       };
@@ -2375,7 +2413,8 @@ function paletteEntries() {
     { ref: "requirements", label: "Requirements", kind: "place", detail: "Library" },
     { ref: "decisions", label: "Decisions", kind: "place", detail: "Library" },
     { ref: "glossary", label: "Glossary", kind: "place", detail: "Library" },
-    { ref: "knowledge:diagrams", label: "Diagrams", kind: "place", detail: "Library" }
+    { ref: "knowledge:diagrams", label: "Diagrams", kind: "place", detail: "Library" },
+    { ref: "launches", label: "Launched sessions", kind: "place", detail: "Headless sessions on this computer" }
   ];
   const indexed = navigation.index ?? [];
   const known = new Set(indexed.map((entry) => entry.ref));
@@ -2833,10 +2872,11 @@ async function initialize() {
           synchronizeSession(snapshot);
         }
         // A failed probe leaves the open view as it is rather than replacing it with an error.
-        if (sidePanel.isOpen()) void sidePanel.refresh();
+        const panel = sidePanel.isOpen() ? sidePanel.refresh().catch(() => {}) : null;
         if (selectedPath) {
           await showArtifact(selectedPath);
         }
+        await panel;
         // Knowledge's sidebar counts the remembered slice's records, which can change without the navigation changing; the Touched page counts them as it draws.
         if (currentPlace === "knowledge" && lastSlice && selectedPath !== "knowledge:touched") await countTouched(lastSlice);
       }

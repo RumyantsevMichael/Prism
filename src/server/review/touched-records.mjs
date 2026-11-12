@@ -1,8 +1,7 @@
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { loadDesignView } from "../workflow/design-view.mjs";
 import { changedPaths, treeId } from "../workflow/slice-gate.mjs";
-import { listRecordEntries, sliceDocumentFolder } from "../workflow/record-store.mjs";
+import { listRecordEntries, readArtifactText, sliceDocumentFolder } from "../workflow/record-store.mjs";
 import { glossaryEntries, loadGlossary, loadInitiativeView, recordFiles } from "./workspace-model.mjs";
 
 const GIT_TIMEOUT_MS = 10000;
@@ -81,7 +80,8 @@ export async function touchedRecords(projectRoot, sliceId) {
   const design = await loadDesignView(projectRoot, id, slug).catch(() => null);
   const folder = await sliceDocumentFolder(projectRoot, id, slug).catch(() => null);
   const designPath = design?.path ?? (folder ? `${folder}/slice.md` : null);
-  const designSource = designPath ? await readFile(path.join(projectRoot, designPath), "utf8").catch(() => null) : null;
+  // With a record store the slice.md is a store artifact, so it is read from the store, never from the checkout.
+  const designSource = designPath ? await readArtifactText(projectRoot, designPath).catch(() => null) : null;
 
   const group = () => new Map();
   const add = (target, key, record, why) => {

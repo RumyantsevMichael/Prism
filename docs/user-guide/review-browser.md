@@ -117,11 +117,14 @@ A tab in the background checks nothing until you show it again, and then it catc
 
 Attention lists the questions that an agent recorded for you, with the artifacts to inspect, including read-only source files.
 The newest question comes first, and so does the newest answer that still waits for the agent.
-Answer a question on Attention or in the conversation.
+Answer a question on Attention or in the conversation, except the approval of a requirement or ADR and the correctness review that confirms a ship, which count only when you answer them on Attention.
 Each decision and action request explains itself so you can answer without having followed the run: below the question it shows what happened, what was tried, and an example, and a decision lists what each option leads to and which option the agent recommends and why.
 Prism refuses to record a decision or action request without that explanation, or a decision without a consequence for each option and a recommendation, so a question always reaches you with them.
 Questions recorded by an earlier Prism version show only their question.
 A design or correctness review needs Approve or Request changes, and Request changes also needs a note that says what should change.
+Approving the correctness review of a finished initiative lets the agent ship it, which in a project with a record store also accepts the Proposed ADRs that its slice designs link, as [Ship an initiative](workflow.md#ship-an-initiative) describes.
+The approval of a requirement or ADR takes the same answers, and its card names the file, its scope, its recorded status, and the whole status that approving records, wrapped onto further lines when it is long.
+Approving writes that status into the file's `Status:` line, and for `Approved` the day you answer into its `Approved:` line, as [Statuses change only at gates](shared-records.md#statuses-change-only-at-gates) describes.
 A decision takes one of its options, a note in your own words, or both.
 An action request needs only Mark as done, with an optional note.
 The button that sends your answer stays disabled until the answer is complete, and the text beside it says what is missing.
@@ -133,7 +136,9 @@ When you resume a session with open questions, Prism lists the ones that session
 In Codex the agent ends its turn, and Prism's Stop hook keeps the turn open for up to 55 minutes and continues it with your answer.
 Codex runs that hook only after you trust Prism's current hook definition through `/hooks`.
 Elsewhere, or after the 55 minutes, the agent receives the answer with your next message, even a short one such as "go".
-An answer reaches only the session whose agent or sub-agents asked the question, so another session working in the same project, on the same initiative or another, never receives it.
+An answer to a question that an agent asked reaches only the session whose agent or sub-agents asked it, so another session working in the same project, on the same initiative or another, never receives it.
+An answer to the approval of a requirement or ADR reaches, once and in the same ways, only an agent working in the checkout that asked for the approval, however long you take to answer.
+Agents in other checkouts or on other machines are not told, but any agent that reads that file also reads your latest answer and its note, so requested changes are not lost when nothing waits.
 Attention also lists blocked slices, open findings, failed verifications, and active work.
 A slice that is not done is a failed verification while its latest verification run failed, with the reason in words, such as `The tests failed, 2 tests failed`, until a later run passes or the slice is done.
 Choosing a kind or an initiative in the sidebar opens Attention filtered to it, at an address such as `attention:failed` or `attention:work/<initiative>`, which shows only those items, says above them the filter and its count, such as `Failed verifications · 1 of 13 items`, and offers **Show everything**.
@@ -141,9 +146,10 @@ Each filtered item opens where it is handled: a question opens Attention with th
 Questions are the recorded questions that wait for an answer and the notes left for you; problems are unreadable or invalid records, a missing or invalid roadmap, initiatives with a record that the roadmap does not list, the roadmap's open questions, and workflow settings warnings.
 **Answered in the last 7 days** lists the questions answered or closed in the last 7 days, newest first, each with its initiative and slice and your answer or the reason the agent closed it.
 Under Earlier questions it shows the 20 most recently closed questions with your answer, or with the reason the agent gave when it closed a question you had not answered in the browser.
-Under Recent changes it shows the 20 newest actions applied from the review app, newest first: setting changes and answers of every initiative in the project's records, and index rebuilds of this checkout.
+Under Recent changes it shows the 20 newest actions applied from the review app, newest first: setting changes and answers of every initiative in the project's records, answers to the approvals of the requirements and ADRs this checkout sees, each with the file and its scope, comments on the files this checkout sees, each with the file, its scope, the line, and the start of the comment, and index rebuilds of this checkout.
 Each change shows the value before and after it, the author's Git name, or email when no name is set, and the checkout label and host the change came from.
-A change applied in any tab joins the top of the list at once, also a setting change or answer from another checkout whose records live in the same record store, while another checkout's index rebuild never appears.
+A change applied in any tab joins the top of the list at once, also a setting change or answer from another checkout whose records live in the same record store, and an approval answered or a comment made in another checkout of that store when this checkout sees the file, while another checkout's index rebuild never appears.
+An answered approval stays under Recent changes after it leaves Needs you.
 A change that a record store sync brings from another machine appears the next time Attention loads.
 
 Only a tab that Prism opened can answer; see [Which tabs can make changes](#which-tabs-can-make-changes).
@@ -151,9 +157,13 @@ See [Upgrading to managed records](upgrading-to-managed-records.md#answering-in-
 
 ## Changes you make in the page
 
-Every change that the review page makes to Prism's records is an action: answering a question, changing an initiative setting, or rebuilding an index.
+Every change that the review page makes is an action: answering a question, changing an initiative setting, commenting on a file in the record store, rebuilding an index, or launching, stopping, or resuming a launched session.
 The page sends each action with the version of the record it showed you, so when an agent or another tab changed that record in the meantime, Prism refuses your action and changes nothing.
-An action changes only Prism's records, and apart from a rebuild starting Prism's own indexer, it never runs a command, changes a project file, or writes to Git.
+Apart from a rebuild, which starts Prism's own indexer, and the launched-session actions of [Launched sessions](#launched-sessions), an action changes only Prism's records, and it never runs a command, changes a project file, or writes to Git.
+Answering the approval of a requirement or ADR also needs a tab that can make changes, and Prism records nothing when the file changed since the approval was asked.
+When more than one pending approval holds the same id, as a copied status record or a scope move that stopped halfway can leave, Prism lists each one, names every file and scope that holds the id, and refuses an answer to any of them, so the agent asks again for the file it means.
+A comment needs a tab that can make changes and a Git `user.name` in the checkout, and Prism stores nothing when the file changed since the page showed it; the page then shows the current file and keeps your comment unsent.
+While the record store cannot be used, such as when it is unavailable or the checkout's repository name is refused, Prism refuses an approval answer or a comment with the same reason that reading the file gives, and records nothing.
 
 ### Which tabs can make changes
 
@@ -209,6 +219,81 @@ Each component that `## Components` declares has its own index target, named `<r
 Rebuilding a component's index prepares only that component, also one that has no index yet, retries it when its last build failed, and reuses its index without a build while it is up to date.
 A rebuild is refused while that component's index is already being built, and a rebuild of another component waits for the running build without stopping it.
 In a repository without components, the root component's rebuild prepares the checkout's one index.
+
+## Launched sessions
+
+A launched session is a headless Claude Code or Codex session that runs Prism's orchestrate skill for one initiative on this computer, started from the review page.
+It works on the initiative as an agent you started in a terminal would, and you watch, stop, and resume it from the page.
+
+### Launch an initiative
+
+The initiative page's **Initiative settings** card ends with **Launch with Claude Code** and **Launch with Codex** under **Launched session**; a slice page offers no launch.
+A launch action is unavailable with a reason such as `Claude Code was not found: no claude executable on PATH.` while its host's executable, `claude` or `codex`, is not on the review app's `PATH`, and with `A launched session of <initiative> is running on this machine.` while a launched session of the initiative runs on this computer.
+Checkouts whose records live in the same place, such as two checkouts of one shared store, count as one initiative here, so only one launched session of an initiative runs on this computer at a time.
+Like every action, a launch needs a tab that can make changes.
+
+Before anything starts, Prism asks you in a dialog of the operating system, outside the browser, so a script that drives the page cannot launch on its own.
+The dialog says `Start a <host> session on this computer that runs Prism's orchestrate skill for the initiative <initiative> in <checkout>? Further launches in the next 30 minutes will start without asking.`, offers **Launch** and **Cancel**, and Cancel is its default answer.
+When you choose **Launch**, the session starts and the launch window opens: for the next 30 minutes, further launches and resumes on this computer start without asking, and the window's end stops no running session.
+When you choose **Cancel**, or nobody answers within 2 minutes, nothing starts and nothing is recorded, and for 30 seconds after that a new launch is refused with `You declined a launch moments ago; wait a little before launching again.`.
+While one dialog is open, another launch is refused with `Another launch is waiting for your confirmation.`.
+
+| System | The dialog |
+| --- | --- |
+| Linux, FreeBSD, OpenBSD | `zenity`, or `kdialog` without it, on the display that `DISPLAY` or `WAYLAND_DISPLAY` names for the review app |
+| macOS | `osascript` |
+| Windows | `powershell.exe` |
+
+A computer that cannot show the dialog refuses every launch with `This computer cannot show a confirmation outside the browser:` and what is missing, such as `no graphical display (DISPLAY or WAYLAND_DISPLAY) is set for the review app` or `neither zenity nor kdialog is installed`.
+
+### What runs
+
+Claude Code runs as `claude -p --verbose --session-id <session id> --input-format stream-json --output-format stream-json --permission-mode auto --permission-prompts none` with the prompt `/prism:orchestrate <initiative>`.
+Codex runs as `codex app-server` with the approval policy `on-request`, the automatic approval reviewer, and the `workspace-write` sandbox, and the prompt `$prism:orchestrate <initiative>`.
+Each runs in the checkout's folder with the review app's environment, without the variables of an agent session that the review app may have inherited, and with `PRISM_LAUNCH` set to the launch's id.
+The host's own permission handling and the project's own host settings apply: Prism grants no permission and answers no question of the host itself, so an action the host's automatic handling refuses ends as a refusal that the session shows.
+A session keeps running when the review app exits, idles out, restarts, or is replaced by a newer release, because a supervisor process of its own starts and watches the host.
+Each launched session keeps its record in `launches/<launch id>/` in the review app folder, readable only by you, and Prism removes it 14 days after the session's last run ended.
+The host's session id stays in that record on this computer: no shared record, history entry, or log holds it, and only this computer's page shows it, in the command that continues the session in a terminal.
+
+### The Launched sessions place
+
+Open **Launched sessions** from the Jump palette, where its detail reads `Headless sessions on this computer`, or at the address `review?artifact=launches`.
+It lists every launched session on this computer whose checkout shares this checkout's records, the most recently launched first.
+Each session shows its initiative's title, which opens the initiative page, the host, when it was launched, its running time, which counts every second while a run runs, its state, the reason for the state, how its last run ended, and its **Stop** and **Resume** actions.
+**Runs** shows how many times the session ran when it ran more than once.
+While no run runs and the host reported its session id, the session also shows the command that continues it in a terminal, `claude --resume <session id>` or `codex resume <thread id>`, with the folder to run it in, and **Copy** copies the command.
+The place reads the list again every 5 seconds and after each action you apply there.
+Without a launched session it says `Nothing launched on this computer yet. Launch an initiative from its page.`.
+
+| State | Meaning |
+| --- | --- |
+| Running | The host is working. |
+| Waiting for you | A question that the session asked waits for your answer. |
+| Blocked | The host refused an action that the session needed, with a reason such as `Claude Code refused Bash: <the host's reason>`. |
+| Finished | The last run ended by itself. |
+| Failed | The host reported an error, its process ended with an exit code other than 0 or by a signal, or Prism stopped supervising it, each with its reason. |
+| Stopped | You stopped the last run. |
+
+A session whose supervisor ended without recording the run's end shows `Prism stopped supervising this session; its host process may still run.`.
+
+### Stop, resume, or continue a session
+
+**Stop** interrupts the host's turn as the host's own Stop button does, after which the host ends its turn and exits by itself.
+When the host still runs 10 seconds after you stopped it, Prism ends the host process; `PRISM_LAUNCH_STOP_GRACE_MS` sets another wait in milliseconds.
+A stop ends only the host process, so a process that the host or its agent started and detached may keep running, as after the host's own Stop button.
+**Stop** stays available while a run runs, also after the initiative shipped.
+
+**Resume** starts the same host session again headless, with the dialog unless the launch window is open.
+It is unavailable while the session runs, after the initiative shipped, while another launched session of the initiative runs, while the host's executable is not on `PATH`, and when the host never reported its session id.
+To continue a session in a terminal instead, run its command in its folder once no run runs.
+
+When you answer, on this computer, a question that a launched session asked, Prism resumes that session without asking, unless it still runs.
+A session that still runs receives the answer itself, and when that run then ends by itself with the question still open, Prism resumes it once; a run you stopped is never resumed for an answer.
+An answer that a teammate gives on another computer reaches the records but starts nothing here: the session then says `An answer given on another machine waits; resume this session here to continue.`, and **Resume** continues it.
+
+Each launch, resume, and stop goes into the initiative's history, except a stop after the initiative shipped, which only the session's own record keeps.
+Only the review page launches, stops, or resumes a session: no agent tool and no Prism command does.
 
 ## Roadmap, initiatives, and slices
 
@@ -307,6 +392,33 @@ The side panel holds one file at a time, so opening another replaces it, and a l
 Open as tab opens the file in a tab that stays open, Esc or the close button closes the panel, and dragging its left edge sets its width.
 Graph, diagram, and document cards can be maximized with their Maximize button, and Esc restores them.
 A maximized document keeps its Restore button in view while it scrolls, in its contents header when it has contents.
+
+### Review a file in the record store
+
+In a project whose `.prism/workflow.md` names a record store, a requirement, ADR, plan file, glossary, or roadmap view opens with a Review card above its content.
+The card names the file's scope, `workspace`, the repository, or `<repository>/<component>`, and says whether a person accepted the file and whether it changed since.
+A file is accepted when a person approves it, when the design of the slices whose folder holds it is accepted, or when its initiative ships.
+Below that, the card shows the lines that changed since the accepted version, with the line numbers of both versions, or the whole file as added when no version was accepted yet.
+It then lists the comments on the file, oldest first, each with its author's Git name, the host it came from, the line it names, and its time, and marks a comment made on an earlier version of the file.
+Comments that a record store sync brings from other machines appear the next time the page checks the file, and comments from this machine's tabs appear at once.
+The page checks again 1.5 seconds after its last check ended, never while one still runs, and the review app reads only the comment files that the page lists and those that changed since its last read, so a file with many comments keeps the page responsive.
+The heading counts every comment on the file, while the list shows the first 20; while more follow, select **More comments** under the list to show the next 20, until every comment shows.
+After **More comments** shows the next comments, keyboard focus moves to the **More comments** button that follows them, or to the first comment it added when none follows, also when the page redrew the list meanwhile.
+Agents read the comments in the same pages of at most 20, with the total and where the next page starts.
+
+To find a line's number, open **Lines of the current version** on the Review card, which lists every line of the file as it is now with its number, also when the file matches its accepted version and for lines that the changes leave out.
+The list is closed when the page opens, and it stays open or closed as you left it while comments arrive and the file changes, with the line you scrolled to still in view.
+To comment, enter that line number, with or without spaces around it, and your comment of at most 4000 characters, then select Comment.
+A file takes at most 1000 comments: once it holds 1000, Prism refuses a further comment with `comment_limit` and stores nothing, and a file whose comment folder holds more than 1000 files, as a sync from elsewhere could bring, shows no comments at all.
+The comment goes to the record store as a file of its own, so it reaches every checkout that sees the file and every machine that syncs the store, and the file itself does not change.
+Agents read the comments with the file through `get_artifact`.
+A file's comments belong to it: when an agent moves the file to another scope its comments move with it, and when an agent removes the file its comments are removed with it, so a new file at the same path starts without them.
+A comment you are still typing stays in the form when the file moves to another scope, and Comment then sends it to the file in its new scope.
+A comment made on one machine while another machine moves the file follows the file once the two machines' stores have synced.
+A comment made on one machine while another machine removes the file leaves the store when they sync, whichever machine synced first, also when that machine then writes or moves another file to the same path, which keeps the path.
+The comment is saved in the sync folder of the machine whose sync met the two changes and is named with its line and text to the agent in that machine's next Prism result, so nothing you wrote is lost and it never shows on the later file.
+The notes that name saved files hold at most 32 KiB in one result; when a sync saves more, the note counts the files it leaves out and names the store's `.prism-sync` folder, which holds every saved copy.
+The card and Recent changes on Attention take only comments and approvals in the form Prism writes them, so a damaged file that a sync brings shows nowhere, and Recent changes lists an entry dated more than five minutes ahead of this machine's clock only once that time comes.
 
 ## Find artifacts
 

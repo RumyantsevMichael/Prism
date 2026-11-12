@@ -8,6 +8,7 @@ sdm: "0.3"
 
 An ADR records a lasting architectural decision or invariant, not product intent, implementation tasks, or local code choices.
 Design can record decisions that child slices share before it splits a slice.
+In a project with a store, ADRs are [store artifacts](../workflow/SKILL.md#common-terms), read through `get_artifact` and created and edited through `update_artifact`.
 
 ## 1. Prepare
 
@@ -22,7 +23,7 @@ Design can record decisions that child slices share before it splits a slice.
 - If an Accepted ADR needs clarification without changed meaning, append a dated explanation to its Decision Log.
 - If an existing ADR sufficiently records the decision, reuse it.
 - If the decision is new or an authorized supersession:
-  1. Create a Proposed ADR with a descriptive filename in the configured ADR directory, defaulting to `docs/ADRs/<topic>/`.
+  1. Create a Proposed ADR with a descriptive filename that is a [portable name](../workflow/SKILL.md#common-terms) in the configured ADR directory, defaulting to `docs/ADRs/<topic>/`.
   2. Keep related decisions in the same topic.
   3. For supersession, link the replacement and original without changing the original status.
 
@@ -70,7 +71,8 @@ Created: <YYYY-MM-DD>
 
 Invariants use `MUST`/`MUST NOT` for absolute rules and `SHOULD` for justified exceptions.
 Architecture rules do not use code names, paths, or task identifiers.
-Orchestration alone accepts implemented ADRs after the slice passes verification and marks replaced ADRs Superseded.
+Without a store, orchestration alone accepts implemented ADRs after the slice passes verification and marks replaced ADRs Superseded.
+With a store, the ship of an initiative accepts each Proposed ADR that its `slice.md` files link, after the person confirms the ship at a [correctness gate](../workflow/SKILL.md#common-terms), and a replaced ADR becomes Superseded only through an [approval gate](../workflow/SKILL.md#common-terms) that `update_artifact` `ask_approval` asks with that status.
 Accepted and Superseded ADRs remain preserved.
 
 ## 3. Explain and check

@@ -1,0 +1,14 @@
+@startuml
+title adr-acceptance
+
+component "roadmap\nship afterGate, acceptedAdrs" as roadmap
+component "artifact-status\nacceptAtShip" as status
+component "state\nanswered correctness gate" as state
+component "verification runs\nlatest passing run per leaf" as runs
+component "store-artifacts\nget_artifact acceptance" as tools
+
+roadmap --> state
+roadmap --> status
+status --> runs
+tools --> status
+@enduml

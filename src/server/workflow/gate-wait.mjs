@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { forgetAskedGates } from "./approval-deliveries.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { endGateWait, gateWaitStep, personChangesText } from "./change-notices.mjs";
 
@@ -33,7 +34,29 @@ function sleep(milliseconds, signal) {
 export function answerText(gate) {
   const { choice, note } = gate.answer;
   const label = choice === null ? "a free answer" : gate.options?.find((option) => option.id === choice)?.label ?? choice;
-  return `The user answered user gate ${gate.id} in the review browser. Question: ${gate.question} Answer: ${label}.${note ? ` Note: ${note}` : ""}`;
+  const recorded = gate.kind === "approval" ? choice === "approve" ? ` Prism recorded ${gate.status} for ${gate.artifact ?? "the artifact"} and rewrote its status lines in the store.` : ` The recorded status of ${gate.artifact ?? "the artifact"} stays as it was.` : "";
+  return `The user answered user gate ${gate.id} in the review browser. Question: ${gate.question} Answer: ${label}.${note ? ` Note: ${note}` : ""}${recorded}`;
+}
+
+/**
+ * How a wait reads its gates: an initiative's from its coordination state, or one requirement's or ADR's approval gates from its status record in the store,
+ * where an answered approval gate stays listed with its answer and a superseded one is gone.
+ */
+// After the first read an artifact wait reads leniently, so an artifact removed, moved out of the checkout's view, or out of the given scope has no gates left and the wait ends as resolved.
+export function gateSource({ projectRoot, initiative, artifact, scope }) {
+  if (typeof artifact === "string" && artifact) {
+    let since = false;
+    return async () => {
+      const { artifactApprovalGates } = await import("./store-artifacts.mjs");
+      let gates;
+      try { gates = await artifactApprovalGates(projectRoot, artifact, scope, undefined, { since }); }
+      catch (error) { if (since && ["scope_invalid", "component_unknown"].includes(error?.code)) return []; throw error; }
+      since = true;
+      return gates.map((gate) => ({ ...gate, artifact }));
+    };
+  }
+  if (typeof initiative !== "string" || !initiative) throw new Error("Pass the initiative whose coordination state holds the gates, or the artifact whose approval gates to wait on.");
+  return async () => (await readCoordinationState({ projectRoot, initiative })).state?.pending ?? [];
 }
 
 /** The text of a wait that the person's changes ended. */
@@ -59,7 +82,7 @@ function outcome(initiative, gateIds, state, history, shown, held, known, first,
 // Each poll renews the wait's hold on its gates for this long, at least ten polls, so the hold of a wait whose process stopped lapses soon.
 const HOLD_LEASE_MS = 15000;
 
-// The wait reads the coordination state record rather than server memory, so an answer recorded by any review server process ends it.
+// The wait reads the coordination state record, or an artifact's status record, rather than server memory, so an answer recorded by any review server process ends it.
 // After the first answer it keeps polling briefly, because a user often answers several gates in one visit.
 // Given notices, { session, directory, waitId, hold }, each poll is one step of the session's notice record of the initiative: it reads the state and what the session was shown once and decides.
 // The wait holds its gates in that record while it runs, so another result of the session leaves their answers to it, and the answer entries it finds count as shown when it ends, unless it is cancelled.
@@ -67,13 +90,26 @@ const HOLD_LEASE_MS = 15000;
 // hold, a time, keeps the gates held after a timeout, for a wait that the host's Stop hook goes on with under the same waitId; the hook's polls renew it.
 // Only a wait given watchChanges, the coordinator's, ends on the person's changes: entries absent from knownEntries, the ids held when the wait started, that the session was not shown.
 // Without knownEntries the wait holds the ids the session was shown at its first valid read, or every entry then before the session's starting point exists.
-export async function waitForUserGates({ projectRoot, initiative, gateIds, maxWaitMinutes = DEFAULT_WAIT_MINUTES, signal, onProgress, heartbeatMs = 60000, pollMs = POLL_MS, settleMs = SETTLE_MS, knownEntries, notices = null, watchChanges = false, leaseMs = Math.max(HOLD_LEASE_MS, 10 * pollMs) }) {
+// An artifact wait reads the artifact's approval gates instead: it takes no notices and never ends on the person's changes, which an initiative records.
+// An artifact wait that returns answers is how the checkout that asked them receives them, so the prompt hook does not hand them to it again.
+export async function waitForUserGates(input) {
+  const result = await waitOnGates(input);
+  if (result.status === "answered" && typeof input.artifact === "string" && input.artifact) {
+    await forgetAskedGates(input.projectRoot, result.answered.map((gate) => gate.id), input.deliveredDirectory ? { directory: input.deliveredDirectory } : {}).catch(() => {});
+  }
+  return result;
+}
+
+async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, maxWaitMinutes = DEFAULT_WAIT_MINUTES, signal, onProgress, heartbeatMs = 60000, pollMs = POLL_MS, settleMs = SETTLE_MS, knownEntries, notices = null, watchChanges = false, leaseMs = Math.max(HOLD_LEASE_MS, 10 * pollMs) }) {
   if (!Array.isArray(gateIds) || !gateIds.length || gateIds.length > MAX_WAIT_GATES || gateIds.some((id) => typeof id !== "string" || !id)) {
     throw new Error(`Pass one to ${MAX_WAIT_GATES} gate ids.`);
   }
   if (typeof maxWaitMinutes !== "number" || !(maxWaitMinutes > 0) || maxWaitMinutes > MAX_WAIT_MINUTES) {
     throw new Error(`The maxWaitMinutes argument must be greater than 0 and at most ${MAX_WAIT_MINUTES}.`);
   }
+  const readArtifactGates = typeof artifact === "string" && artifact ? gateSource({ projectRoot, artifact, scope }) : null;
+  if (readArtifactGates) notices = null;
+  else gateSource({ projectRoot, initiative }); // throws without an initiative
   const ids = [...new Set(gateIds)];
   const started = Date.now();
   const deadline = started + maxWaitMinutes * 60000;
@@ -96,7 +132,9 @@ export async function waitForUserGates({ projectRoot, initiative, gateIds, maxWa
     first = false;
     return decision;
   };
-  const poll = notices
+  const poll = readArtifactGates
+    ? async () => decide({ pending: await readArtifactGates() }, [], new Set()).result
+    : notices
     ? () => gateWaitStep({ projectRoot, initiative, ...session, waitId, gateIds: ids, until: Date.now() + leaseMs }, decide)
     : async () => {
       const read = await readCoordinationState({ projectRoot, initiative });

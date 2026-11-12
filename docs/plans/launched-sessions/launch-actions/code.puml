@@ -1,0 +1,18 @@
+@startuml
+title launch-actions - code
+component "workflow/actions.mjs\nlaunch, stop, resume actions,\ngate.answer resume" as Registry
+component "workflow/state.mjs\nask marks a launched gate" as State
+component "session/launched-sessions.mjs\nstartLaunch, stopLaunch,\nresumeLaunch, listLaunches" as Api
+component "session/launch-confirmation.mjs\nconfirmLaunch" as Confirm
+component "session/launch-records.mjs\ngate marks, answers,\nwaiting, answerWaits" as Records
+component "session/launch-supervisor.mjs\nresume after a run" as Supervisor
+component "review/review-server.mjs\napi/launches, refusal codes" as Routes
+Routes --> Registry : apply
+Routes --> Api : api/launches
+Registry --> Confirm : before launch, person's resume
+Registry --> Api : start, stop, resume
+Registry --> Records : record answer
+State --> Records : mark gate
+Supervisor --> Records : answers of the run
+Supervisor ..> Api : resume once
+@enduml

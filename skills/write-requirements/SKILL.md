@@ -13,17 +13,18 @@ sdm: "0.3"
 3. If durable sources conflict, stop with the conflict for user resolution.
 
 Configured paths override `docs/Glossary.md` and `docs/requirements/`.
+In a project with a store, requirement files and the glossary are [store artifacts](../workflow/SKILL.md#common-terms), read through `get_artifact` and created and edited through `update_artifact`.
 Each requirement file covers one product capability, independent of components, teams, or delivery slices.
 
 ## 2. Author the proposal
 
 - For a new capability:
-  1. Select an unused readable slug directly under the requirements directory.
+  1. Select an unused readable slug that is a [portable name](../workflow/SKILL.md#common-terms) directly under the requirements directory.
   2. Create a Draft file with the shape below.
 - For an existing Draft:
   1. Edit its obligations in place.
 - For an Approved file:
-  1. Prepare a proposed diff for user review without applying changes to the Approved file.
+  1. In a project with a store, write the amendment into the file, where the review browser shows it against the accepted version; otherwise, prepare a proposed diff for user review without applying changes to the Approved file.
   2. For a replacement obligation, use the next unused number.
   3. For an obligation that ends without replacement, propose `Disposition: Withdrawn`.
 
@@ -89,14 +90,22 @@ Reverse traceability uses repository link searches instead of a central backlink
 
 ## 4. Obtain approval
 
-1. Present the complete proposal through the [workflow gate rules](../workflow/SKILL.md#supporting-procedures).
-2. Request explicit user acceptance of each Draft file or Approved-file amendment.
-3. For accepted Draft files, set `Status: Approved` and `Approved: <approval date>` together.
-4. For accepted amendments, apply the approved additions, disposition changes, and reciprocal links together.
-5. For unaccepted proposals, leave Draft files Draft and preserve existing Approved content.
-6. After approval:
-   - Recommend `orchestrate` for the initiative.
-7. Return the file paths, statuses, and unresolved questions.
+- In a project with a store:
+  1. For each Draft file or amended Approved file, call `update_artifact` with an `ask_approval` operation, with the status to set when it is not `Approved` and context for a person who has not followed the work, which records an [approval gate](../workflow/SKILL.md#common-terms).
+  2. Tell the user to answer each gate in the review browser.
+  3. For each file, call `wait_for_user_gate` with the file as `artifact` and its gate id.
+  4. When the person requests changes, revise the file from the note and ask again.
+- Otherwise:
+  1. Present the complete proposal through the [workflow gate rules](../workflow/SKILL.md#supporting-procedures).
+  2. Request explicit user acceptance of each Draft file or Approved-file amendment.
+  3. For accepted Draft files, set `Status: Approved` and `Approved: <approval date>` together.
+  4. For accepted amendments, apply the approved additions, disposition changes, and reciprocal links together.
+  5. For unaccepted proposals, leave Draft files Draft and preserve existing Approved content.
+
+With a store, approving writes the file's `Status:` and `Approved:` lines, so an agent leaves them as written.
+
+1. After approval, recommend `orchestrate` for the initiative.
+2. Return the file paths, statuses, and unresolved questions.
 
 Design consumes only Approved requirements.
 Requirement approval does not start design or orchestration in this context.

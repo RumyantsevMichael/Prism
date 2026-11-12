@@ -1,0 +1,18 @@
+@startuml
+title launches-place - code
+component "views/launched-sessions.js\nrows, running time, refresh" as View
+component "views/actions.js\ngeneric action controls" as Actions
+component "views/entities.js\nlaunches place" as Entities
+component "workspace-model.mjs\nplace reference" as Model
+component "review.js\npalette place entry" as Shell
+component "views/palette.js\nplace icon" as Palette
+component "styles/workflow-views.css\nplace layout" as Styles
+component "review-server.mjs\napi/launches, api/actions" as Routes
+Entities --> View : renders launches
+Model ..> Entities : same reference
+Shell --> Palette : place entry
+View --> Actions : stop, resume
+View ..> Routes : api/launches
+Actions ..> Routes : apply
+View ..> Styles
+@enduml

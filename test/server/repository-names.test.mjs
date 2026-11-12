@@ -315,7 +315,9 @@ test("naming a repository keeps every record, ledger entry, and run that an earl
   assert.deepEqual(initiativeAfter.record, initiativeBefore.record);
   const now = await snapshot(place.store);
   for (const [file, bytes] of Object.entries(stored)) assert.equal(now[file], bytes, `${file} is unchanged`);
-  assert.deepEqual(Object.keys(now).filter((file) => !(file in stored)), ["repositories/api.json"], "naming adds only the registration");
+  // The plan files that the checkout wrote while it used no store move into its repository's scope, each with its identity, and with the ledger of that move, as every checkout's artifacts do.
+  const added = Object.keys(now).filter((file) => !(file in stored) && !file.startsWith("artifacts/") && !file.startsWith("artifact-identity/") && !file.startsWith("artifact-migrations/"));
+  assert.deepEqual(added, ["repositories/api.json"], "naming adds only the registration");
   assert.equal((await runEntries(place.store))[0].checkout.repository, root(api), "a run from before the name keeps its root-commit repository");
 });
 

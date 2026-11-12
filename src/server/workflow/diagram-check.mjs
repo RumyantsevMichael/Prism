@@ -1,7 +1,8 @@
-import { readdir, readFile, realpath } from "node:fs/promises";
+import { readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { pluginPath } from "../plugin-root.mjs";
+import { listStoreArtifacts, readArtifactText } from "./record-store.mjs";
 
 // A design diagram is read by a person at the design gate, so one that shows more than this many elements is split.
 export const DIAGRAM_ELEMENT_LIMIT = 30;
@@ -31,17 +32,24 @@ export function diagramProblems(results) {
   });
 }
 
-/** Parse every PlantUML file directly in a project folder and count its elements and relations, without drawing it for anyone. */
+// The PlantUML files directly in a folder: with a store, the ones the store holds there, and otherwise the checkout's.
+async function diagramNames(root, folder) {
+  const stored = await listStoreArtifacts(root, folder);
+  if (stored !== null) return [...new Set(stored.map((entry) => entry.path).filter((file) => path.posix.dirname(file) === folder && file.endsWith(".puml")).map((file) => path.posix.basename(file)))].sort();
+  try { return (await readdir(path.join(root, folder), { withFileTypes: true })).filter((entry) => entry.isFile() && entry.name.endsWith(".puml")).map((entry) => entry.name).sort(); }
+  catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
+  return [];
+}
+
+/** Parse every PlantUML file directly in a project folder and count its elements and relations, without drawing it for anyone; with a store, the folder's diagrams are read there. */
 export async function checkFolderDiagrams(projectRoot, folder) {
   if (folder === null) return [];
   const root = await realpath(projectRoot);
-  let names = [];
-  try { names = (await readdir(path.join(root, folder), { withFileTypes: true })).filter((entry) => entry.isFile() && entry.name.endsWith(".puml")).map((entry) => entry.name).sort(); }
-  catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
+  const names = await diagramNames(root, folder);
   if (!names.length) return [];
   const sources = [];
   for (const name of names.slice(0, MAX_DIAGRAMS)) {
-    const source = await readFile(path.join(root, folder, name), "utf8");
+    const source = await readArtifactText(root, `${folder}/${name}`) ?? "";
     sources.push({ path: `${folder}/${name}`, source: source.length > MAX_SOURCE_BYTES ? source.slice(0, MAX_SOURCE_BYTES) : source });
   }
   return parse(sources);
