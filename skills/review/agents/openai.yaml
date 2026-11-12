@@ -1,4 +1,3 @@
 interface:
   display_name: "Review"
-  short_description: "Audit or review a Prism slice"
-  default_prompt: "Use $review with mode design-audit or implementation-review."
+  short_description: "Review a verified Prism slice"

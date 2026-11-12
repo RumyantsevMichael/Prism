@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { writeAtomically } from "./artifact-store.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
-import { readRecord, listClaimRecords, withRecordLock, writeRecord } from "./record-store.mjs";
+import { artifactPathTest, inArtifactStore, readArtifactText, readRecord, listClaimRecords, withRecordLock, writeArtifactText, writeRecord } from "./record-store.mjs";
 import { isLive, parseClaim } from "./slice-claims.mjs";
 import { readCoordinationState } from "./state.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
@@ -45,7 +46,7 @@ async function roadmapEntry(projectRoot, initiative) {
   try {
     const { bytes } = await readRecord(projectRoot, { kind: "roadmap" });
     if (!bytes) return { entry: undefined };
-    record = JSON.parse(bytes.toString("utf8"));
+    record = parseStoreJson(bytes.toString("utf8"));
   } catch (error) {
     return { problem: error instanceof SyntaxError ? "it is not valid JSON" : error.message, error };
   }
@@ -84,7 +85,7 @@ export async function refuseShipped(projectRoot, initiative) {
 async function pendingProposals(projectRoot, initiative, record) {
   if (record === undefined) {
     const { bytes } = await readRecord(projectRoot, { kind: "initiative", initiative });
-    record = bytes ? JSON.parse(bytes.toString("utf8")) : null;
+    record = bytes ? parseStoreJson(bytes.toString("utf8")) : null;
   }
   const proposals = record?.proposals;
   return proposals && typeof proposals === "object" && !Array.isArray(proposals) ? Object.keys(proposals).sort() : [];
@@ -182,7 +183,7 @@ async function sliceDocumentPaths(projectRoot, initiative) {
   try {
     const { bytes } = await readRecord(projectRoot, { kind: "initiative", initiative });
     if (!bytes) return [];
-    slices = JSON.parse(bytes.toString("utf8"))?.slices;
+    slices = parseStoreJson(bytes.toString("utf8"))?.slices;
   } catch {
     return [];
   }
@@ -195,8 +196,13 @@ async function sliceDocumentPaths(projectRoot, initiative) {
 }
 
 // A document's state: { content } when it reads, { absent: true } when it does not exist, or { problem } with why it cannot be read.
+// With a record store a slice document is a store artifact, so it is read from the store, never from the checkout.
 async function readDocument(projectRoot, relative) {
   try {
+    if (await inArtifactStore(projectRoot, relative)) {
+      const content = await readArtifactText(projectRoot, relative);
+      return content === null ? { absent: true } : { content };
+    }
     return { content: await readFile(path.join(projectRoot, relative), "utf8") };
   } catch (error) {
     if (error.code === "ENOENT" || error.code === "ENOTDIR") return { absent: true };
@@ -205,7 +211,7 @@ async function readDocument(projectRoot, relative) {
 }
 
 /**
- * The slice documents of an initiative that exist in this checkout: documents lists { path, content, unmarked } for each readable one,
+ * The slice documents of an initiative that exist in this checkout, or in the record store when it holds them: documents lists { path, content, unmarked } for each readable one,
  * and problems { path, reason } for each that exists but cannot be read, both in path order.
  */
 export async function readSliceDocuments(projectRoot, initiative) {
@@ -240,7 +246,14 @@ export async function writeHistoryMarks(projectRoot, initiative, decision, docum
         if (!markedMeanwhile) problems.push({ path: document.path, reason: current.problem ?? (current.absent ? "it was removed after it was read, so it was not marked" : "it changed after it was read, so it was not marked and its recorded content is the content read") });
         continue;
       }
-      await writeAtomically(path.join(projectRoot, document.path), next);
+      if (await inArtifactStore(projectRoot, document.path)) {
+        // The store's checked update writes the mark only over the content that was read, so a change that a sync brought meanwhile is never overwritten.
+        const { written } = await writeArtifactText(projectRoot, document.path, (stored) => stored === document.content ? next : undefined);
+        if (!written) {
+          problems.push({ path: document.path, reason: "it changed after it was read, so it was not marked and its recorded content is the content read" });
+          continue;
+        }
+      } else await writeAtomically(path.join(projectRoot, document.path), next);
       marked.push(document.path);
     } catch (error) {
       problems.push({ path: document.path, reason: error.message });
@@ -264,7 +277,7 @@ export async function recordShipDocuments(projectRoot, initiative) {
     const before = await readRoadmapBytes(projectRoot);
     if (!before) return null;
     const revision = sha256(before);
-    const decision = entryShippedDecision(JSON.parse(before.toString("utf8"))?.initiatives?.find?.((entry) => entry?.id === initiative));
+    const decision = entryShippedDecision(parseStoreJson(before.toString("utf8"))?.initiatives?.find?.((entry) => entry?.id === initiative));
     if (!decision || Array.isArray(decision.documents)) return null;
     const { documents } = await readSliceDocuments(projectRoot, initiative);
     if (!documents.length) return null;
@@ -272,7 +285,7 @@ export async function recordShipDocuments(projectRoot, initiative) {
     const written = await withRecordLock(projectRoot, { kind: "roadmap" }, async () => {
       const current = await readRoadmapBytes(projectRoot);
       if (!current || sha256(current) !== revision) return false;
-      const record = JSON.parse(current.toString("utf8"));
+      const record = parseStoreJson(current.toString("utf8"));
       const entry = record.initiatives.find((item) => item?.id === initiative);
       entry.decision = recorded;
       await writeRecord(projectRoot, { kind: "roadmap" }, `${JSON.stringify(record, null, 2)}\n`);
@@ -319,7 +332,7 @@ async function documentChanges(projectRoot, initiative, recorded) {
 async function laterFixes(projectRoot, initiative) {
   const bytes = await readRoadmapBytes(projectRoot);
   if (!bytes) return [];
-  const entries = JSON.parse(bytes.toString("utf8"))?.initiatives;
+  const entries = parseStoreJson(bytes.toString("utf8"))?.initiatives;
   const fixes = (Array.isArray(entries) ? entries : []).filter((entry) => entry?.corrects?.initiative === initiative && Array.isArray(entry.corrects.slices));
   if (!fixes.length) return [];
   const { deriveInitiative } = await import("./roadmap.mjs");
@@ -369,5 +382,16 @@ export const shippedHistoryLabel = (initiative, decision) => `Shipped history: $
 /** The reason that the review browser gives for every action on a shipped initiative, its slices, and its gates. */
 export const shippedActionReason = (decision) => `The initiative shipped on ${shipDate(decision)}, so its state is history.`;
 
-/** The text line of an MCP read that marked slice documents, asking to commit them apart from the task's changes. */
-export const historyMarksText = (initiative, marked) => `Prism marked these slice documents of shipped initiative ${initiative} as history: ${marked.join(", ")}. Commit them in a commit of their own, apart from this task's changes.`;
+/**
+ * The text line of an MCP read that marked slice documents: a document marked in the checkout is to be committed apart from the task's changes,
+ * while one marked in the record store is a store artifact that its sync shares, so nothing asks to commit it.
+ */
+export async function historyMarksText(projectRoot, initiative, marked) {
+  const inStore = await artifactPathTest(projectRoot).catch(() => () => false);
+  const shared = marked.filter((file) => inStore(file));
+  const local = marked.filter((file) => !inStore(file));
+  return [
+    ...(local.length ? [`Prism marked these slice documents of shipped initiative ${initiative} as history: ${local.join(", ")}. Commit them in a commit of their own, apart from this task's changes.`] : []),
+    ...(shared.length ? [`Prism marked these slice documents of shipped initiative ${initiative} as history in the record store, which shares them with every checkout, so there is nothing to commit: ${shared.join(", ")}.`] : [])
+  ].join(" ");
+}

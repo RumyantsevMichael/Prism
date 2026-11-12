@@ -17,7 +17,7 @@ const { describeRecordStore, forgetMigrations, listInitiatives, recordStoreOf, r
 const { remoteIdentity } = await import("../../dist/server/workflow/repository-names.mjs");
 const { listArtifacts } = await import("../../dist/server/review/review-server.mjs");
 
-test("the review browser shows a refused checkout as an unavailable store and still lists its documents", async (context) => {
+test("the review browser shows a refused checkout as an unavailable store and lists no checkout copy of its artifacts", async (context) => {
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-repository-review-")));
   context.after(() => rm(parent, { recursive: true, force: true }));
   const store = await storeFolder(parent);
@@ -35,7 +35,7 @@ test("the review browser shows a refused checkout as an unavailable store and st
   const described = await describeRecordStore(other);
   assert.equal(described.location, null);
   assert.match(described.unavailable, /repository name api/);
-  assert.ok((await listArtifacts(other)).includes("docs/plans/reports/slice.md"), "documents still list");
+  assert.equal((await listArtifacts(other)).includes("docs/plans/reports/slice.md"), false, "a refused checkout shows no checkout copy of an artifact");
 });
 
 test("an unnamed checkout is refused on every record access with the same proposed name", async (context) => {

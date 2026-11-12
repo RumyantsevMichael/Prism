@@ -4,6 +4,7 @@ import { readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises
 import path from "node:path";
 import { prepareDirectory, reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { claimHolder } from "./slice-claims.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 // Which agent of a host session made a Prism tool call.
 // Codex names the calling thread in each call's turn metadata; Claude Code sends only the tool use id, so its PreToolUse hook records the sub-agent of each tool use here first.
@@ -45,7 +46,7 @@ async function recordedAgent(session, toolUseId, directory, now) {
     const file = recordFile(directory, session, toolUseId);
     const info = await stat(file);
     if (now - info.mtimeMs > CALL_AGENT_TTL_MS) return null;
-    return text(JSON.parse(await readFile(file, "utf8"))?.agentId);
+    return text(parseStoreJson(await readFile(file, "utf8"))?.agentId);
   } catch {
     return null;
   }
@@ -55,7 +56,7 @@ function turnMetadata(meta) {
   const value = meta?.["x-codex-turn-metadata"];
   if (typeof value !== "string") return value && typeof value === "object" ? value : null;
   try {
-    const parsed = JSON.parse(value);
+    const parsed = parseStoreJson(value);
     return parsed && typeof parsed === "object" ? parsed : null;
   } catch {
     return null;

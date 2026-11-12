@@ -1,0 +1,13 @@
+@startuml
+title artifact-guidance
+
+component "workflow skill\nstore artifact rule, Common terms" as workflow
+component "design, implement, ideate skills" as phases
+component "write-requirements, write-adr skills" as writers
+component "orchestrate skill\nship after a correctness gate" as orchestrate
+component "user guide\nshared records, review browser, workflow" as guide
+
+phases --> workflow
+writers --> workflow
+orchestrate --> workflow
+@enduml

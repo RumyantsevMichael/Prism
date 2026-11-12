@@ -1,4 +1,4 @@
-import { artifactChip, artifactLink, badge, bindLinks, chip, emptyState, escapeHtml, messageHtml, pageSub, plural, setPageSub, stat } from "./util.js";
+import { artifactChip, artifactLink, badge, bindLinks, chip, emptyState, escapeHtml, keyValues, messageHtml, pageSub, plural, setPageSub, stat } from "./util.js";
 import { recordKind, recordLabel } from "./entities.js";
 import { claimAttributes } from "./claims.js";
 import { isExpired } from "./claim-index.js";
@@ -10,7 +10,8 @@ const GATE_LABELS = {
   "visual-review": "Visual review",
   correctness: "Correctness confirmation",
   decision: "Decision",
-  assistance: "Action needed"
+  assistance: "Action needed",
+  approval: "Approval"
 };
 
 // The kind of a question as the glyph and tone of its row and the icon of its chip.
@@ -18,7 +19,8 @@ const KIND_LOOK = {
   "visual-review": { icon: "gate", tone: "accent", chip: "eye" },
   correctness: { icon: "gate", tone: "accent", chip: "check-circle" },
   decision: { icon: "question", tone: "info", chip: "question" },
-  assistance: { icon: "warning", tone: "warning", chip: "warning" }
+  assistance: { icon: "warning", tone: "warning", chip: "warning" },
+  approval: { icon: "gate", tone: "accent", chip: "check-circle" }
 };
 
 function ago(timestamp) {
@@ -39,13 +41,14 @@ function shortAgo(timestamp) {
 }
 
 function location(item, ctx) {
+  if (item.kind === "approval" && item.artifact) return artifactChip(item.artifact.path, ctx, item.artifact.path.split("/").pop());
   const parts = [];
   if (item.initiative) parts.push(artifactChip(`initiative:${item.initiative.id}`, ctx, item.initiative.title));
   if (item.slice) parts.push(artifactChip(`slice:${item.initiative.id}/${item.slice.slug}`, ctx, item.slice.title));
   return parts.join('<span class="crumb-separator" aria-hidden="true">›</span>');
 }
 
-const REVIEW_KINDS = new Set(["visual-review", "correctness"]);
+const REVIEW_KINDS = new Set(["visual-review", "correctness", "approval"]);
 
 // What each answer of a review gate leads to, shown under the option as a decision's consequence is.
 const REVIEW_OUTCOMES = {
@@ -229,12 +232,31 @@ function answerForm(item, draft) {
     ? `<div class="gate-choices"><p class="label-caps" aria-hidden="true">Your answer</p><prism-choice aria-label="Your answer" data-choice${state.choice ? ` value="${escapeHtml(state.choice)}"` : ""}>${options.map(([id, label]) => `<prism-choice-option value="${escapeHtml(id)}"${id === "request-changes" ? ' tone="danger"' : ""}>${escapeHtml(label)}${id === item.recommended?.option ? ` ${badge("Recommended", "accent")}` : ""}${consequences.get(id) ? `<span slot="detail">${escapeHtml(consequences.get(id))}</span>` : ""}</prism-choice-option>`).join("")}</prism-choice>${optional ? `<prism-button size="sm" variant="ghost" data-clear-choice${state.choice ? "" : " disabled"}>Clear the choice</prism-button>` : ""}</div>`
     : '<p class="label-caps">Your answer</p>';
   const ready = readyText(item, state);
-  return `<div class="gate-answer" data-gate="${key}" data-initiative="${escapeHtml(item.initiative.id)}">
+  // An approval gate is the target approval:<id> of the review app's actions, every other gate the target gate:<initiative>/<id>.
+  const target = item.kind === "approval" ? " data-approval" : ` data-initiative="${escapeHtml(item.initiative.id)}"`;
+  return `<div class="gate-answer" data-gate="${key}"${target}>
     ${choice}
     <prism-field class="gate-note" type="textarea" data-note label="${escapeHtml(noteLabel(state))}" placeholder="${escapeHtml(state.notePlaceholder)}"${state.noteRequired ? " required" : ""} value="${escapeHtml(draft.note ?? "")}"></prism-field>
     <div class="gate-actions"><p class="gate-hint${state.ready && !state.hint ? " is-ready" : ""}" id="gate-hint-${key}" aria-live="polite"><prism-icon name="check-circle" size="sm"${state.ready && !state.hint ? "" : " hidden"}></prism-icon><span class="gate-hint-text">${escapeHtml(ready)}</span></p><prism-button variant="${state.choice === "request-changes" ? "danger" : "primary"}" data-submit${state.ready ? "" : " disabled"}>${escapeHtml(state.submitLabel)}</prism-button></div>
     <p class="gate-error" id="gate-error-${key}" role="alert"${draft.error ? "" : " hidden"}>${escapeHtml(draft.error ?? "")}</p>
   </div>`;
+}
+
+// An approval gate names the requirement or ADR in full, with its scope and the status an approval records, since the answer applies to exactly that file.
+// Both statuses are plain text that wraps, so the whole status that approving writes reads at every width; a status of up to 200 characters fits no one-line label.
+function approvalSubject(item) {
+  const scope = item.artifact.scope?.label ?? "workspace";
+  const status = (text, modifier) => `<span class="approval-status-value ${modifier}">${escapeHtml(text)}</span>`;
+  const change = item.recorded && item.recorded !== item.status
+    ? `<span class="approval-status">${status(item.recorded, "is-recorded")}<span class="approval-status-arrow" aria-hidden="true">→</span><span class="sr-only">to</span>${status(item.status, "is-approved")}</span>`
+    : `<span class="approval-status">${status(item.status, "is-approved")}</span>`;
+  return `${keyValues([
+      ["File", `<code class="approval-path" data-code-subject>${escapeHtml(item.artifact.path)}</code>`],
+      ["Scope", chip(escapeHtml(scope))],
+      ["Approving records", change]
+    ])}
+    ${item.ambiguous ? `<p class="notice">Another pending approval holds this question's id, so an answer cannot tell which file it approves and is refused. The agent asks again for the file it means.</p>` : ""}
+    ${item.changed ? `<p class="notice">The file changed since this approval was asked, so approving it is refused. The agent asks again for the current version.</p>` : ""}`;
 }
 
 // A question the server no longer takes an answer to, such as one of a shipped initiative, names why in place of the form.
@@ -243,6 +265,20 @@ function unavailableAnswer(item) {
 }
 
 export function gateDetail(item, ctx, draft) {
+  if (item.kind === "approval") {
+    return `<article class="gate attention-item gate-approval" aria-label="${escapeHtml(GATE_LABELS.approval)}">
+    <header class="gate-head">
+      ${gateHead(item, ctx, item.askedAt)}
+    </header>
+    <div class="gate-body">
+      <div class="gate-main">
+        ${approvalSubject(item)}
+        ${gateContext(item, ctx)}
+      </div>
+      ${answerForm(item, draft)}
+    </div>
+  </article>`;
+  }
   return `<article class="gate attention-item gate-${escapeHtml(item.kind)}" aria-label="${escapeHtml(GATE_LABELS[item.kind] ?? "Question")}">
     <header class="gate-head">
       ${gateHead(item, ctx, item.askedAt)}
@@ -299,6 +335,9 @@ function closedDetail(item, ctx) {
 export function answerError(error) {
   if (error.code === "action_unavailable" || error.code === "gate_answered") return { message: error.message, rerender: true };
   if (error.code === "unknown_gate") return { message: "The agent already resolved or withdrew this question.", rerender: true };
+  if (error.code === "artifact_changed") return { message: "The file changed since this approval was asked, so nothing was recorded. The agent asks again for the current version.", rerender: true };
+  if (error.code === "approval_ambiguous") return { message: "Another pending approval holds this question's id, so nothing was recorded. The agent asks again for the file it means.", rerender: true };
+  if (error.code === "author_unknown") return { message: "Git names no user for this checkout, so the approval cannot record who gave it. Set one with git config user.name, then answer again.", rerender: false };
   return { message: error.message, rerender: false };
 }
 
@@ -372,7 +411,8 @@ function bindAnswers(container, ctx, gates) {
       clearFailure();
       refresh();
       try {
-        await ctx.answerGate({ initiative: form.dataset.initiative, id, choice: state.choice, note: draft.note });
+        const target = form.hasAttribute("data-approval") ? { approval: true } : { initiative: form.dataset.initiative };
+        await ctx.answerGate({ ...target, id, choice: state.choice, note: draft.note });
         delete drafts[id];
         ctx.state.focus = null;
         ctx.showToast("Answer recorded. An agent that is waiting resumes on its own; any other agent sees it with your next message.");
@@ -420,10 +460,17 @@ function changeWhere(entry, ctx) {
   if (entry.initiative) parts.push(artifactChip(`initiative:${entry.initiative}`, ctx, entry.initiative));
   if (kind === "index") parts.push(`<code class="recent-change-target" data-code-subject>${escapeHtml(rest)}</code>`);
   if (kind === "gate") parts.push('<span class="muted">question</span>');
+  // A change of a store artifact, such as an approval, names the file in full and its scope, since it belongs to no initiative.
+  if (entry.artifact && typeof entry.artifact.path === "string") {
+    parts.push(`<code class="recent-change-target" data-code-subject>${escapeHtml(entry.artifact.path)}</code>`, chip(escapeHtml(entry.artifact.scope?.label ?? "workspace")));
+  }
+  if (kind === "approval") parts.push('<span class="muted">approval</span>');
   return parts.join('<span class="crumb-separator" aria-hidden="true">›</span>');
 }
 
 const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+// The characters of a comment that Recent changes shows.
+const COMMENT_SHOWN = 280;
 
 function changeStep(before, after) {
   return `<span class="recent-change-before">${escapeHtml(before)}</span> <span aria-hidden="true">→</span><span class="sr-only">to</span> <span class="recent-change-after">${escapeHtml(after)}</span>`;
@@ -432,6 +479,11 @@ function changeStep(before, after) {
 // Two object values, such as model names, show only the parts that changed, so a long value does not hide what differs.
 function changeValues(entry) {
   if (entry.action === "gate.answer") return escapeHtml(changeValue(entry.after));
+  // A comment changes no value, so it shows the line it names and the start of its text, which the file's page shows whole.
+  if (entry.action === "artifact.comment" && isObject(entry.after)) {
+    const text = String(entry.after.text ?? "");
+    return `<span class="recent-change-part">Line ${escapeHtml(String(entry.after.line ?? ""))}: ${escapeHtml(text.length > COMMENT_SHOWN ? `${text.slice(0, COMMENT_SHOWN)}…` : text)}</span>`;
+  }
   if (isObject(entry.before) && isObject(entry.after)) {
     const keys = [...new Set([...Object.keys(entry.before), ...Object.keys(entry.after)])].filter((key) => JSON.stringify(entry.before[key] ?? null) !== JSON.stringify(entry.after[key] ?? null));
     if (keys.length) return keys.map((key) => `<span class="recent-change-part">${escapeHtml(key)}: ${changeStep(changeValue(entry.before[key]), changeValue(entry.after[key]))}</span>`).join("; ");
@@ -653,7 +705,7 @@ export function render(container, entity, ctx) {
   const needs = [
     ...gates.map((item) => ({
       key: `gate:${item.id}`,
-      row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: KIND_LOOK[item.kind]?.tone ?? "neutral", unread: true, title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, liveHolder(item) ? `${item.claim.label} is waiting on your answer` : item.slice?.title ?? item.initiative?.title].filter(Boolean).join(" · ")), end: escapeHtml(shortAgo(item.askedAt)) },
+      row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: KIND_LOOK[item.kind]?.tone ?? "neutral", unread: true, title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, liveHolder(item) ? `${item.claim.label} is waiting on your answer` : item.slice?.title ?? item.initiative?.title ?? item.artifact?.path].filter(Boolean).join(" · ")), end: escapeHtml(shortAgo(item.askedAt)) },
       detail: gateDetail(item, ctx, drafts[item.id] ?? { choice: null, note: "" })
     })),
     ...notes.map((item, index) => ({ key: `note:${index}`, ...noteEntry(item, ctx) }))
@@ -661,7 +713,7 @@ export function render(container, entity, ctx) {
   // A shipped initiative's open questions can no longer be answered, so they list apart from Needs you and raise no count.
   const shippedRows = (data.shippedGates ?? []).map((item) => ({
     key: `shipped:${item.id}`,
-    row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: "neutral", title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, "Cannot be answered", item.slice?.title ?? item.initiative?.title].filter(Boolean).join(" · ")), end: escapeHtml(shortAgo(item.askedAt)) },
+    row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: "neutral", title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, "Cannot be answered", item.slice?.title ?? item.initiative?.title ?? item.artifact?.path].filter(Boolean).join(" · ")), end: escapeHtml(shortAgo(item.askedAt)) },
     detail: gateDetail(item, ctx, {})
   }));
   const waiting = answered.map((item) => ({

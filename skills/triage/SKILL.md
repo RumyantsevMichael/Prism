@@ -17,7 +17,7 @@ Triage decides whether a reported problem breaks an obligation that already exis
 
 ## 2. Find the broken obligation
 
-1. Read the Approved requirements, relevant ADRs, and feature files for the behavior.
+1. Read the Approved requirements, relevant ADRs, and feature files for the behavior, through `get_artifact` for [store artifacts](../workflow/SKILL.md#common-terms).
 2. Find each Approved requirement whose stated behavior the reproduction contradicts, and cite it as `<file>.md§<number>`.
 3. When that file does not follow the `write-requirements` format, such as having no numbered sections, return `BLOCKED` with the file and what does not conform.
 4. When no Approved requirement states the behavior the report expects, the report is not a defect.
@@ -29,7 +29,7 @@ Take current intent only from Approved requirements, Accepted ADRs, the glossary
 
 1. Read the roadmap with `get_roadmap` and keep its revision, and find the initiative and done slice whose work holds the defect through `get_initiative`.
 2. When that initiative has not shipped, call `update_initiative` with a `report_defect` operation on the done slice with its slug, the requirement references, and a one-sentence summary, then read the defect id that Prism gave it with `get_initiative`.
-3. When that initiative has shipped, call `update_roadmap` with an `add_initiative` operation in band `Now`, an identifier and title that name the defect, a one-sentence intent, the requirement references, and `corrects` with the shipped initiative and each of its slices whose work the fix corrects.
+3. When that initiative has shipped, call `update_roadmap` with an `add_initiative` operation in band `Now`, an identifier that is a [portable name](../workflow/SKILL.md#common-terms) and a title that name the defect, a one-sentence intent, the requirement references, and `corrects` with the shipped initiative and each of its slices whose work the fix corrects.
 4. When no done slice holds the defect, call `update_roadmap` with that `add_initiative` operation without `corrects`.
 
 ## 4. Return the result

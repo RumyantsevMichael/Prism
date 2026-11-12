@@ -303,17 +303,19 @@ for (const [label, names, pair] of [
   });
 }
 
-test("a local artifact whose path differs only in letter case from one the upstream adds stops the merge, and the store stays as it was", async (context) => {
+test("two machines that write artifacts whose paths differ only in letter case keep the first push's and save the other", async (context) => {
   const { storeA, storeB } = await stores(context);
   await writeFile(path.join(storeB, "artifacts", "plans", "Notes.md"), "# Notes from b\n");
-  const crafted = pushCrafted(storeA, ["artifacts", "plans", "notes.md"], "# Notes from a\n");
+  pushCrafted(storeA, ["artifacts", "plans", "notes.md"], "# Notes from a\n");
   const status = await syncRecordStore(storeB);
-  assert.equal(status.state, "merge_failed", JSON.stringify(status));
-  assert.ok(status.message.includes("artifacts/plans/Notes.md"), status.message);
-  assert.equal(isAncestor(storeB, crafted), false, "the branch stays where it was");
-  assert.equal(await readFile(path.join(storeB, "artifacts", "plans", "Notes.md"), "utf8"), "# Notes from b\n");
-  assert.equal(await stored(storeB, "artifacts", "plans", "notes.md"), false);
-  assert.ok(!git(storeA, ["ls-tree", "-r", "--name-only", "origin/main"]).includes("Notes.md"), "no tree with both spellings reaches the remote");
+  assert.equal(status.state, "conflicts", JSON.stringify(status));
+  assert.deepEqual(status.conflicts.map((conflict) => conflict.path), ["artifacts/plans/Notes.md"]);
+  assert.equal(await readFile(path.join(storeB, status.conflicts[0].savedAs), "utf8"), "# Notes from b\n", "the local file is saved");
+  const tree = git(storeB, ["ls-tree", "-r", "--name-only", "origin/main"]).split("\n");
+  assert.ok(tree.includes("artifacts/plans/notes.md") && !tree.includes("artifacts/plans/Notes.md"), tree.join(", "));
+  assert.equal(await readFile(path.join(storeB, "artifacts", "plans", "notes.md"), "utf8"), "# Notes from a\n");
+  assert.equal(await stored(storeB, "artifacts", "plans", "Notes.md"), false);
+  assert.equal((await syncRecordStore(storeA)).state, "ok", "the other machine takes the result");
 });
 
 // The test pulls the entry by hand on a machine whose Git accepts the name, which Windows never is.

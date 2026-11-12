@@ -805,6 +805,47 @@ a.inspect-tile:focus-visible {
   overflow-wrap: anywhere;
 }
 
+/* An approval gate names its file in full, its scope, and the status an approval records; a long path wraps inside the card. */
+.gate-approval .key-values {
+  margin: 0;
+}
+
+.approval-path {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The status that approving writes holds up to 200 characters, so it is wrapping text, never a one-line label that cuts it off. */
+.approval-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--prism-space-1) var(--prism-space-2);
+  max-width: 100%;
+  min-width: 0;
+  padding-block: var(--prism-space-1);
+  line-height: var(--prism-line-height);
+}
+
+.approval-status-value {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.approval-status-value.is-recorded {
+  color: var(--prism-color-ink-muted);
+}
+
+.approval-status-value.is-approved {
+  color: var(--prism-color-success);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.approval-status-arrow {
+  color: var(--prism-color-ink-muted);
+}
+
 .attention-footnote {
   margin: 0;
   font-size: var(--prism-font-size-xs);

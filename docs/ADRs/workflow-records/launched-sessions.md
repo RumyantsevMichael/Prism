@@ -6,7 +6,7 @@ Created: 2026-11-10
 ## Requirements
 
 - [launched-sessions.md§1](../../requirements/launched-sessions.md#1) to [§20](../../requirements/launched-sessions.md#20), where [§20](../../requirements/launched-sessions.md#20) supersedes [§11](../../requirements/launched-sessions.md#11)
-- [review-app-actions.md§15](../../requirements/review-app-actions.md#15)
+- [review-app-actions.md§16](../../requirements/review-app-actions.md#16)
 
 ## Problem
 

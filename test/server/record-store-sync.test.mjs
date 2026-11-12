@@ -15,7 +15,8 @@ Object.assign(process.env, {
   GIT_AUTHOR_NAME: "Prism Test", GIT_AUTHOR_EMAIL: "test@example.invalid", GIT_COMMITTER_NAME: "Prism Test", GIT_COMMITTER_EMAIL: "test@example.invalid"
 });
 delete process.env.CLAUDE_PLUGIN_DATA;
-const { cancelRecordSyncs, configureRecordSync, listSavedConflicts, readSavedConflict, readSyncStatus, syncRecordStore, takeSavedConflicts } = await import("../../dist/server/workflow/record-store-sync.mjs");
+const { cancelRecordSyncs, configureRecordSync, listSavedConflicts, readSavedConflict, readSyncStatus, syncRecordStore, syncRecordStoreNow, takeSavedConflicts } = await import("../../dist/server/workflow/record-store-sync.mjs");
+const { canonicalJson, MergeConflict, nestedDeeperThan, parseVersions } = await import("../../dist/server/workflow/record-merge.mjs");
 const { forgetMigrations, listInitiatives, readRecord, writeRecord } = await import("../../dist/server/workflow/record-store.mjs");
 const { getInitiative, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 const { getRoadmap, updateRoadmap } = await import("../../dist/server/workflow/roadmap.mjs");
@@ -480,6 +481,39 @@ test("keeps the upstream registration whole when both machines change it, even w
   assert.equal(await readFile(path.join(value.storeB, ".prism-sync", "conflicts", stamp, file), "utf8"), local);
   assert.deepEqual(await listSavedConflicts(value.storeB), []);
   assert.deepEqual((await takeSavedConflicts()).filter((item) => item.savedAs.startsWith(value.storeB)), []);
+});
+
+test("keeps the upstream registration and saves this machine's when either side nests it deeper than any registration, so every later sync goes on", async (context) => {
+  const value = await machines(context);
+  const file = "repositories/api.json";
+  const registration = (remotes) => `${JSON.stringify({ schemaVersion: 1, name: "api", remotes, root: null, registeredAt: "2026-11-03T00:00:00.000Z" }, null, 2)}\n`;
+  const write = (store, name, bytes) => mkdir(path.dirname(path.join(store, name)), { recursive: true }).then(() => writeFile(path.join(store, name), bytes));
+  await write(value.storeA, file, registration(["https://github.com/acme/api.git"]));
+  await syncRecordStoreNow(value.storeA);
+  await syncRecordStoreNow(value.storeB);
+  // Nesting this deep exhausts the call stack of any recursive walk over the parsed value.
+  const upstream = `{"schemaVersion":1,"name":"api","remotes":[],"root":null,"registeredAt":"2026-11-03T00:00:00.000Z","x":${"[".repeat(6000)}${"]".repeat(6000)}}\n`;
+  const local = registration(["https://github.com/acme/api.git", "git@github.com:acme/api.git"]);
+  await write(value.storeA, file, upstream);
+  assert.equal((await syncRecordStoreNow(value.storeA)).state, "ok");
+  await write(value.storeB, file, local);
+  await write(value.storeB, "artifacts/plans/notes.md", "# Notes from B\n");
+  const status = await syncRecordStoreNow(value.storeB);
+  assert.equal(status.state, "ok", status.message);
+  assert.equal(await storeBytes(value.storeB, file), upstream);
+  const [stamp] = await readdir(path.join(value.storeB, ".prism-sync", "conflicts"));
+  assert.equal(await readFile(path.join(value.storeB, ".prism-sync", "conflicts", stamp, file), "utf8"), local);
+  assert.ok(git(value.remote, "ls-tree", "-r", "--name-only", "main").split("\n").includes("artifacts/plans/notes.md"), "this machine's other change reaches the remote");
+  assert.equal((await syncRecordStoreNow(value.storeB)).state, "ok");
+});
+
+test("compares and merges record versions of any nesting without exhausting the call stack", () => {
+  const deep = JSON.parse(`${"[".repeat(100000)}${"]".repeat(100000)}`);
+  assert.equal(canonicalJson(deep).length, 200000);
+  assert.equal(canonicalJson({ b: [1, { d: null, c: "x" }], a: undefined }), '{"a":null,"b":[1,{"c":"x","d":null}]}');
+  assert.equal(nestedDeeperThan(deep), true);
+  assert.equal(nestedDeeperThan({ a: [{ b: [1] }] }), false);
+  assert.throws(() => parseVersions({ base: null, local: "{}", upstream: JSON.stringify({ x: JSON.parse(`${"[".repeat(100)}${"]".repeat(100)}`) }) }, () => ({})), MergeConflict);
 });
 
 test("merges a registration added on both machines into the upstream one instead of failing the merge", async (context) => {

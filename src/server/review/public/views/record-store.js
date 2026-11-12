@@ -17,8 +17,17 @@ export function storeItem(store) {
   if (store.kind === "project") return { label: "Records in project", short: "Records in project", title: `Records live in this checkout's ${store.label} folder.`, tone: "muted" };
   const noun = store.kind === "remote" ? "Remote store" : "Store";
   if (store.unavailable) return { label: `${noun} unavailable`, short: "Shared store unavailable", title: store.unavailable, tone: "danger" };
+  const title = [`Records live in the ${store.kind === "remote" ? "store named by its remote" : "store folder"} ${store.label}.`, store.location ? `Folder: ${store.location}` : ""].filter(Boolean).join("\n");
+  // Tracked files that still wait in the checkout for an agent's tool call to move them are named beside the store as a warning, since the browser lists only the store's artifacts,
+  // and files that a move kept for a person to settle as a plain note, since no tool call moves them.
+  const name = store.workspaceName ?? storeName(store.label);
+  const waiting = store.awaitingMove?.files;
+  const kept = store.keptInCheckout?.files;
+  const details = [title, store.awaitingMove?.message, store.keptInCheckout?.message].filter(Boolean).join("\n");
+  if (waiting) return { label: `${noun} ${store.label} · ${plural(waiting, "file")} to move`, short: `Shared store ${name} · ${plural(waiting, "file")} to move`, title: details, tone: "warn" };
+  if (kept) return { label: `${noun} ${store.label} · ${plural(kept, "file")} kept in checkout`, short: `Shared store ${name} · ${plural(kept, "file")} kept in checkout`, title: details, tone: "muted" };
   // The status bar names the shared store at a glance, by the workspace name when it has one; its tip and the details say where it lives.
-  return { label: `${noun} ${store.label}`, short: `Shared store ${store.workspaceName ?? storeName(store.label)}`, title: [`Records live in the ${store.kind === "remote" ? "store named by its remote" : "store folder"} ${store.label}.`, store.location ? `Folder: ${store.location}` : ""].filter(Boolean).join("\n"), tone: "muted" };
+  return { label: `${noun} ${store.label}`, short: `Shared store ${name}`, title, tone: "muted" };
 }
 
 /** The store's sync state, as the status bar names it, or null when nothing syncs: { label, tone, problem }. */
@@ -94,6 +103,8 @@ export function createRecordStoreStatus({ storeButton, storeLabel, syncPart, syn
     const problem = syncItem(store, status)?.problem;
     content.innerHTML = `<div class="store-details-body">
         ${store.unavailable ? `<p class="store-message is-danger">${escapeHtml(store.unavailable)}</p>` : ""}
+        ${store.awaitingMove?.message ? `<p class="store-message is-warn">${escapeHtml(store.awaitingMove.message)}</p>` : ""}
+        ${store.keptInCheckout?.message ? `<p class="store-message" data-kept-in-checkout>${escapeHtml(store.keptInCheckout.message)}</p>` : ""}
         ${problem && status.message ? `<p class="store-message ${status.state === "conflicts" ? "is-warn" : "is-danger"}">${escapeHtml(status.message)}</p>` : ""}
         ${storeFacts(store, status)}
         ${store.kind === "project" ? "" : `<section class="store-conflicts"><h3>Saved conflicts</h3>
@@ -119,6 +130,12 @@ export function createRecordStoreStatus({ storeButton, storeLabel, syncPart, syn
     try {
       const conflict = await fetchJson(`./api/store/conflict?savedAs=${encodeURIComponent(details.dataset.savedAs)}`);
       const record = `.prism/${conflict.path}`;
+      // A copy or record above its kind's bound is named by its size and never read, so no diff can show it.
+      if (conflict.tooLarge) {
+        const sizes = [["saved local copy", conflict.tooLarge.saved], ["current record", conflict.tooLarge.current]].filter(([, size]) => size !== undefined);
+        body.innerHTML = `<p class="muted">${sizes.map(([what, size]) => `The ${what} ${size === null ? "is no regular file" : `holds ${size} bytes`}, above the ${conflict.bound} bytes that a record of its kind may hold, so Prism does not read it.`).join(" ")} The saved copy stays at ${escapeHtml(details.dataset.savedAs)}.</p>`;
+        return;
+      }
       body.innerHTML = `${conflict.current === null ? '<p class="muted">The record no longer exists, so every saved line shows as added.</p>' : ""}
         ${diffHtml(conflict.current, conflict.saved, { beforeLabel: "current record", afterLabel: "saved local copy" })}
         ${conflict.current !== null && hasArtifact(record) ? `<p><prism-button size="sm" data-record="${escapeHtml(record)}">Open the current record</prism-button></p>` : ""}`;
