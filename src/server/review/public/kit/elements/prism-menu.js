@@ -40,7 +40,12 @@ export class PrismMenu extends Base {
       if (path.includes(this) || (this.trigger && path.includes(this.trigger))) return;
       this.close();
     };
-    this.onViewport = () => this.place();
+    // The menu follows its button when the window resizes or the page scrolls, but not when the menu scrolls its own items:
+    // placing it again resets its height, which would throw a long menu back to its top on every scroll.
+    this.onViewport = (event) => {
+      if (event?.type === "scroll" && event.target instanceof Node && this.contains(event.target)) return;
+      this.place();
+    };
     this.addEventListener("keydown", (event) => this.onKey(event));
     this.addEventListener("click", (event) => {
       const item = this.itemFrom(event);
@@ -203,6 +208,8 @@ export class PrismMenu extends Base {
     const anchor = this.trigger.getBoundingClientRect();
     const gap = pixels(this, GAP);
     const margin = pixels(this, "--prism-space-3");
+    // Measuring the menu at its full height lets a browser clamp its scroll position, so the position is kept across the measurement.
+    const scrolled = this.scrollTop;
     this.style.removeProperty("max-height");
     const width = globalThis.innerWidth;
     const height = globalThis.innerHeight;
@@ -221,6 +228,7 @@ export class PrismMenu extends Base {
     const left = Math.min(Math.max(margin, anchor.left), Math.max(margin, width - margin - box.width));
     this.style.setProperty("top", `${Math.max(margin, top)}px`);
     this.style.setProperty("left", `${left}px`);
+    this.scrollTop = scrolled;
   }
 
   rove(target) {

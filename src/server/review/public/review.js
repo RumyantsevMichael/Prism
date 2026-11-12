@@ -137,6 +137,7 @@ function welcome() {
   empty.className = "welcome";
   empty.setAttribute("heading", "Nothing is open");
   empty.append(element("p", "", "Choose Attention, the roadmap, or a library section, or press Ctrl K to jump."));
+  writeArtifact("");
   artifact.replaceChildren(empty);
   setBusy(false);
 }
@@ -842,7 +843,13 @@ async function refreshProjects() {
     group.append(...members.sort(compareMembers).map((member) => projectItem(member, listing.current)));
     groups.push(group);
   }
+  // A list that changes while the menu is open keeps the menu's scroll position and its place under the button.
+  const scrolled = projectMenu.scrollTop;
   projectMenu.replaceChildren(...groups);
+  if (projectMenu.isOpen) {
+    projectMenu.place();
+    projectMenu.scrollTop = scrolled;
+  }
 }
 
 function setProjectLabel(identity, projectRoot, store = null) {
@@ -1038,6 +1045,8 @@ function setDiagramScale(section, scale) {
   svg.style.width = `${Number(section.dataset.naturalWidth) * nextScale}px`;
   svg.style.height = `${Number(section.dataset.naturalHeight) * nextScale}px`;
   section.querySelector("[data-scale-label]").textContent = `${Math.round(nextScale * 100)}%`;
+  // The canvas's dotted grid scales with the diagram.
+  section.querySelector(".diagram-output")?.setAttribute("scale", String(nextScale));
 }
 
 function configureDiagram(section, source) {
@@ -1187,7 +1196,7 @@ function diagramCard(diagram, { compact = false } = {}) {
       <prism-button variant="ghost" size="sm" data-action="source" aria-expanded="false">Show source</prism-button>
       <prism-button variant="ghost" size="sm" data-action="copy" tip="Copy PlantUML source">Copy</prism-button>
     </div>
-    <div class="diagram-output"><prism-spinner label="Rendering diagram"></prism-spinner></div>
+    <prism-canvas class="diagram-output"><prism-spinner label="Rendering diagram"></prism-spinner></prism-canvas>
     <div class="diagram-source" hidden><prism-code language="plantuml"><pre><code>${highlight(diagram.source, "plantuml")}</code></pre></prism-code></div>`;
   return section;
 }
@@ -1909,10 +1918,36 @@ function beginRebuild(path) {
   }
   rebuilding = true;
   linkPreview?.hide();
+  // The new view is built out of sight beside the one showing and replaces it whole once it is drawn, graphs and diagrams included,
+  // so a refresh changes the page without showing it empty or half drawn.
+  dropStages();
+  memory.generation = stageGeneration;
+  memory.stage = element("div", "artifact-view artifact-stage");
+  memory.stage.setAttribute("aria-hidden", "true");
+  memory.stage.inert = true;
+  workspace.append(memory.stage);
   return memory;
 }
 
-function scrollToAnchor(anchor) {
+// Each rebuild, and each page written straight into the artifact area, starts a new generation, so a slower build that an earlier one began is dropped rather than shown over it.
+let stageGeneration = 0;
+
+function dropStages() {
+  stageGeneration += 1;
+  for (const stage of workspace.querySelectorAll(":scope > .artifact-stage")) stage.remove();
+}
+
+// A page written straight into the artifact area, such as an error or a missing page, ends any build in progress.
+function writeArtifact(html) {
+  dropStages();
+  rebuilding = false;
+  artifact.innerHTML = html;
+}
+
+// A reader who asks for less motion gets the jump; everyone else sees the page travel to the section, so they keep track of where they went.
+const reducedMotion = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)");
+
+function scrollToAnchor(anchor, { smooth = false } = {}) {
   const target = anchorTarget(artifact, anchor);
   if (!target) return false;
   revealInDocument(target);
@@ -1922,7 +1957,10 @@ function scrollToAnchor(anchor) {
   if (range?.[2]) {
     for (let line = target; line && Number(line.id.slice(HEADING_PREFIX.length + 1)) <= Number(range[2]); line = line.nextElementSibling) line.classList.add("in-range");
   }
-  workspace.scrollTop += target.getBoundingClientRect().top - workspace.getBoundingClientRect().top - 16;
+  // A maximized document scrolls itself; any other page scrolls the workspace.
+  const scroller = target.closest(".is-maximized") ?? workspace;
+  const top = scroller.scrollTop + target.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 16;
+  scroller.scrollTo({ top, behavior: smooth && !reducedMotion?.matches ? "smooth" : "instant" });
   target.classList.remove("is-target");
   void target.offsetWidth;
   target.classList.add("is-target");
@@ -2009,11 +2047,21 @@ function markClippedChips(root) {
 }
 
 function endRebuild(memory) {
+  // A build that a later one replaced leaves the page to the later one.
+  if (memory.generation !== stageGeneration) {
+    memory.stage.remove();
+    return;
+  }
   rebuilding = false;
   if (memory.path !== selectedPath) {
+    memory.stage.remove();
     artifact.style.minHeight = "";
     return;
   }
+  // The reader may have scrolled the page while the new view was built, so a refresh of the same page keeps where they are now.
+  if (renderedPath === memory.path) memory.top = workspace.scrollTop;
+  artifact.replaceChildren(...memory.stage.childNodes);
+  memory.stage.remove();
   const state = viewState(memory.path);
   state.folds ??= new Map();
   decorateDocuments(artifact, state.folds);
@@ -2056,6 +2104,7 @@ function showMissing(path) {
     renderedPath = null;
     document.body.classList.remove("has-maximized");
     pageBar.setActions([]);
+    writeArtifact("");
     renderMissing(artifact, path, { entity: Boolean(parseEntityRef(path)), label: pageLabel(path), onClose: () => closeTab(path) });
   }
   setBusy(false);
@@ -2070,7 +2119,8 @@ function updateMissingTabs(reported) {
 // A page that could not load says why in the artifact area, and the area is no longer busy.
 async function showError(response) {
   pageBar.setActions([]);
-  artifact.innerHTML = `<div class="document-sheet"><p class="error">${escapeHtml(await response.text())}</p></div>`;
+  const message = await response.text();
+  writeArtifact(`<div class="document-sheet"><p class="error">${escapeHtml(message)}</p></div>`);
   setBusy(false);
 }
 
@@ -2114,14 +2164,14 @@ async function showEntity(path) {
   const label = entityLabel(entity);
   const state = viewState(path);
   const memory = beginRebuild(path);
-  artifact.innerHTML = `
+  memory.stage.innerHTML = `
     <header class="artifact-header">
       <div>
         <h1>${escapeHtml(label.title)}</h1>
         ${label.lead ? `<div class="artifact-lead${state.leadExpanded ? " is-expanded" : ""}"><p>${escapeHtml(label.lead)}</p><prism-button variant="ghost" size="sm" data-lead-toggle hidden>${state.leadExpanded ? "Less" : "More"}</prism-button></div>` : ""}
       </div>
     </header>`;
-  const lead = artifact.querySelector(".artifact-lead");
+  const lead = memory.stage.querySelector(".artifact-lead");
   if (lead) {
     const text = lead.querySelector("p");
     const toggle = lead.querySelector("[data-lead-toggle]");
@@ -2135,7 +2185,7 @@ async function showEntity(path) {
   pageBar.setActions([]);
   const container = document.createElement("div");
   container.className = "structured-view";
-  artifact.appendChild(container);
+  memory.stage.appendChild(container);
   await renderEntity(container, entity, { ...viewContext(path, state), renderMarkdown: (source, basePath = null) => renderText("document.md", source, markdownOptions(basePath)) });
   endRebuild(memory);
 }
@@ -2231,7 +2281,7 @@ async function showArtifact(path) {
   const named = describe(data.path);
   const heading = named.code ? fileName(data.path) : named.label === named.kind ? named.kind : named.label;
   const kind = structured ? KIND_LABELS[data.kind] ?? "JSON" : named.code ? fileType(data.path) : named.kind;
-  artifact.innerHTML = `
+  memory.stage.innerHTML = `
     <header class="artifact-header">
       <div>
         ${named.code ? "" : `<p class="eyebrow">${escapeHtml(named.kind)}</p>`}
@@ -2249,14 +2299,14 @@ async function showArtifact(path) {
   if (structured) {
     const container = document.createElement("div");
     container.className = "structured-view";
-    artifact.appendChild(container);
+    memory.stage.appendChild(container);
     await renderView(container, data, viewContext(data.path, state));
     endRebuild(memory);
     return;
   }
   for (const diagram of data.diagrams) {
     const section = diagramCard(diagram);
-    artifact.appendChild(section);
+    memory.stage.appendChild(section);
     await renderDiagram(diagram.source, section.querySelector(".diagram-output"), section);
   }
   endRebuild(memory);
@@ -2725,9 +2775,20 @@ async function initialize() {
     const target = docLink.dataset.docLink;
     const anchor = docLink.dataset.docAnchor;
     if (!target || target === selectedPath) {
-      if (!scrollToAnchor(anchor)) showToast(`No heading #${anchor} in this document.`);
+      if (!scrollToAnchor(anchor, { smooth: true })) showToast(`No heading #${anchor} in this document.`);
       else if (docLink.closest("prism-contents")) {
-        requestAnimationFrame(() => docLink.closest("prism-contents").markCurrent?.(docLink));
+        // The contents follow the scroll on their way to the section, so the chosen link is marked again once the scroll ends,
+        // for a last section too short to reach the top of the page.
+        const contents = docLink.closest("prism-contents");
+        const scroller = docLink.closest(".is-maximized") ?? workspace;
+        const mark = () => contents.markCurrent?.(docLink);
+        requestAnimationFrame(mark);
+        if ("onscrollend" in scroller) {
+          // A scroll that had no distance to go never ends, so the wait gives up rather than mark the link after a later scroll of the reader's.
+          const waiting = new AbortController();
+          scroller.addEventListener("scrollend", () => requestAnimationFrame(mark), { once: true, signal: waiting.signal });
+          setTimeout(() => waiting.abort(), 2000);
+        }
       }
       return;
     }
@@ -2849,6 +2910,6 @@ async function initialize() {
 }
 
 initialize().catch((error) => {
-  artifact.innerHTML = `<div class="document-sheet"><p class="error">${escapeHtml(error.message)}</p></div>`;
+  writeArtifact(`<div class="document-sheet"><p class="error">${escapeHtml(error.message)}</p></div>`);
   setBusy(false);
 });

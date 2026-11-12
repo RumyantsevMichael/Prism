@@ -419,7 +419,7 @@ function changeWhere(entry, ctx) {
   const parts = [];
   if (entry.initiative) parts.push(artifactChip(`initiative:${entry.initiative}`, ctx, entry.initiative));
   if (kind === "index") parts.push(`<code class="recent-change-target" data-code-subject>${escapeHtml(rest)}</code>`);
-  if (kind === "gate") parts.push('<span class="muted">question</span>');
+  if (kind === "gate" && !entry.question) parts.push('<span class="muted">question</span>');
   return parts.join('<span class="crumb-separator" aria-hidden="true">›</span>');
 }
 
@@ -449,6 +449,7 @@ export function changeHtml(entry, ctx) {
   const values = changeValues(entry);
   return `<li class="recent-change" data-change="${escapeHtml(entry.id)}">
     <div class="attention-head">${badge(changeLabel(entry.action))}<span class="attention-where">${changeWhere(entry, ctx)}</span>${when(entry.at)}</div>
+    ${entry.question ? `<p class="recent-change-question">${escapeHtml(entry.question)}</p>` : ""}
     <p class="recent-change-values">${values}</p>
     <p class="recent-change-by muted"><span>${authorText(entry.by)}</span> · <span>${escapeHtml(entry.by?.checkout ?? "an unknown checkout")}</span></p>
   </li>`;
@@ -459,11 +460,11 @@ const RECENT_LIMIT = 20;
 // A change applied while the page is open joins the top of the list at once; the next load brings the list as the records hold it.
 let following = null;
 
-function followChanges(container, ctx) {
+function followChanges(container, ctx, questions) {
   if (!following) document.addEventListener("prism:action", (event) => following?.(event));
   following = (event) => {
     if (!container.isConnected) return;
-    const entry = event.detail;
+    const entry = event.detail?.action === "gate.answer" && !event.detail.question && questions.has(event.detail.target) ? { ...event.detail, question: questions.get(event.detail.target) } : event.detail;
     const slot = container.querySelector("[data-recent-changes]");
     if (!slot || !entry?.id || slot.querySelector(`[data-change="${CSS.escape(entry.id)}"]`)) return;
     let list = slot.querySelector("ul");
@@ -746,7 +747,9 @@ export function render(container, entity, ctx) {
   });
   bindLinks(container, ctx);
   bindAnswers(container, ctx, gates);
-  followChanges(container, ctx);
+  // A change applied while the page is open names its question from the questions the page shows.
+  const questions = new Map([...gates, ...(data.shippedGates ?? []), ...answered, ...earlier].filter((item) => item.initiative?.id).map((item) => [`gate:${item.initiative.id}/${item.id}`, item.question]));
+  followChanges(container, ctx, questions);
   container.querySelector("[data-notify]")?.addEventListener("click", () => {
     void Notification.requestPermission().finally(() => ctx.rerender());
   });

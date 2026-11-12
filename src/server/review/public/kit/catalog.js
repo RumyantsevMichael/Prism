@@ -8,6 +8,9 @@ import { ICON_NAMES } from "./elements/prism-icon.js";
 
 const LONG = "A caption that is far longer than the room the control gives it, so it ends early with an ellipsis";
 const UNBROKEN = "a-record-name-with-no-spaces-anywhere-that-cannot-wrap-and-keeps-going-on";
+
+// A canvas specimen: a small drawing at a zoom, whose dotted grid follows that zoom.
+const canvasOf = (scale, extra = "") => `<prism-canvas class="catalog-canvas" scale="${scale}"${extra}><svg class="catalog-canvas-drawing" viewBox="0 0 120 48" data-zoom="${Math.round(scale * 100)}" aria-hidden="true" focusable="false"><rect x="1" y="1" width="118" height="46" rx="6"/><text x="60" y="29" text-anchor="middle">Drawing at ${Math.round(scale * 100)}%</text></svg></prism-canvas>`;
 const TONES = ["neutral", "accent", "danger", "warning", "success", "info"];
 const html = escapeHtml;
 
@@ -497,6 +500,13 @@ const SPECIMENS = {
     rich: `<prism-doc><h2>Retries</h2><p>A request retries with <code>backoff</code> until <a href="#entry-prism-doc">a total deadline</a>.</p><ul><li>Each retry waits longer.</li><li>No retry outlives the deadline.</li></ul><blockquote><p>Retries never hide a failure.</p></blockquote><table><tr><th>Term</th><th>Meaning</th></tr><tr><td>Deadline</td><td>The time the last retry must end by.</td></tr></table><pre><code><span class="tok-keyword">const</span> deadline = <span class="tok-number">30</span>;</code></pre></prism-doc>`,
     "long-text": `<prism-doc><h3>${LONG}</h3><p>${LONG} ${LONG}</p></prism-doc>`,
     "unbroken-name": `<prism-doc><h3>${UNBROKEN}</h3><p><code>${UNBROKEN}</code></p><table><tr><th>${UNBROKEN}</th><td>${UNBROKEN}</td></tr></table></prism-doc>`
+  },
+  "prism-canvas": {
+    default: canvasOf(1),
+    "zoomed-out": canvasOf(0.4),
+    "zoomed-in": canvasOf(2.2),
+    pannable: canvasOf(1, " pannable"),
+    empty: `<prism-canvas class="catalog-canvas"></prism-canvas>`
   },
   "prism-code": {
     default: `<prism-code language="js"><pre><code>export const KIT_ELEMENTS = [];</code></pre></prism-code>`,

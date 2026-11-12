@@ -84,6 +84,9 @@
   --prism-mark-size: 20px;
   --prism-glyph-size: 10px;
   --prism-dot-size: 7px;
+  /* A canvas's dotted grid: the spacing at 100% zoom and the radius of each dot. */
+  --prism-canvas-grid: 20px;
+  --prism-canvas-dot: 1px;
   --prism-badge-size-sm: 14px;
 
   /* Claims: a person is a circle with initials, an agent is a rounded square with the agent glyph. */
@@ -193,6 +196,12 @@
   --prism-color-group-4: var(--prism-color-info);
   --prism-color-group-5: var(--prism-color-on-person-3);
   --prism-color-group-6: var(--prism-color-on-agent);
+  --prism-color-group-1-tint: var(--prism-color-accent-soft);
+  --prism-color-group-2-tint: var(--prism-color-success-soft);
+  --prism-color-group-3-tint: var(--prism-color-warning-soft);
+  --prism-color-group-4-tint: var(--prism-color-info-soft);
+  --prism-color-group-5-tint: var(--prism-color-person-3);
+  --prism-color-group-6-tint: var(--prism-color-agent);
   --prism-color-avatar-edge: rgb(19 18 25 / 0.1);
   --prism-gradient-canvas: radial-gradient(1100px 280px at 50% 0%, rgb(122 92 255 / 0.07), transparent 72%);
   --prism-shadow-island: 0 1px 2px rgb(19 18 25 / 0.05), 0 4px 14px rgb(19 18 25 / 0.05);
@@ -212,6 +221,7 @@
   --prism-color-phase-review-fill: #fd4d00;
   --prism-color-phase-shipped-fill: #bf8000;
   --prism-color-diagram-paper: #ffffff;
+  --prism-color-canvas-dot: #d2d0dc;
   --prism-color-diagram-ink: #131219;
   --prism-color-diagram-line: #6b6980;
   --prism-color-diagram-surface: #f4f3f8;
@@ -289,6 +299,12 @@
   --prism-color-group-4: var(--prism-color-info);
   --prism-color-group-5: var(--prism-color-on-person-3);
   --prism-color-group-6: var(--prism-color-on-agent);
+  --prism-color-group-1-tint: var(--prism-color-accent-soft);
+  --prism-color-group-2-tint: var(--prism-color-success-soft);
+  --prism-color-group-3-tint: var(--prism-color-warning-soft);
+  --prism-color-group-4-tint: var(--prism-color-info-soft);
+  --prism-color-group-5-tint: var(--prism-color-person-3);
+  --prism-color-group-6-tint: var(--prism-color-agent);
   --prism-color-avatar-edge: rgb(255 255 255 / 0.1);
   --prism-gradient-canvas: radial-gradient(1100px 280px at 50% 0%, rgb(140 121 255 / 0.1), transparent 72%);
   --prism-shadow-island: 0 0 0 1px rgb(0 0 0 / 0.35), 0 6px 20px rgb(0 0 0 / 0.3);
@@ -308,6 +324,7 @@
   --prism-color-phase-review-fill: #ff9a6e;
   --prism-color-phase-shipped-fill: #ffd37a;
   --prism-color-diagram-paper: #121218;
+  --prism-color-canvas-dot: #3a3947;
   --prism-color-diagram-ink: #ececf3;
   --prism-color-diagram-line: #9d9bb2;
   --prism-color-diagram-surface: #1f1e2b;

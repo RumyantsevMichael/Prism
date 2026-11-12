@@ -178,8 +178,13 @@ export function shownActionEntries() {
  * and confirm to true only after the person confirms. drafts keeps unsent input per action across re-renders.
  * notice false leaves out the read-only notice, for a page that shows many lists and says it once for all of them.
  */
+// The last listing of each target, per API, so a list drawn again when its page refreshes starts from what it showed rather than from Loading, and the page does not jump while the listing is read again.
+const lastListings = new WeakMap();
+
 export function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, notice = true, onRender = null }) {
-  const listings = new Map();
+  if (!lastListings.has(api)) lastListings.set(api, new Map());
+  const known = lastListings.get(api);
+  const listings = new Map(targets.filter((target) => known.has(target)).map((target) => [target, known.get(target)]));
   const entries = new Map();
   let failure = null;
   let rendered = "";
@@ -239,7 +244,10 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     failure = null;
     for (const { target, listing, error } of results) {
       if (error) failure = error.message;
-      else listings.set(target, listing);
+      else {
+        listings.set(target, listing);
+        known.set(target, listing);
+      }
     }
     if (root.isConnected) render();
   });
