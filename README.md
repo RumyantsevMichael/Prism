@@ -85,8 +85,23 @@ In Codex, pick the same skills from the skill picker or mention them in your req
 
 In Codex, run `codex plugin marketplace upgrade prism`, review changed hooks through `/hooks`, and start a new task.
 
+Both commands install the latest release, and an update moves you only when a new release is published.
 Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 Before 1.0, a minor release can include a breaking migration, and [Upgrading to managed records](docs/user-guide/upgrading-to-managed-records.md) covers the one in 0.10.0.
+
+## Pin a version
+
+Each release is also tagged `prism--v<version>`, such as `prism--v0.23.0`, and a marketplace added at that tag installs exactly that release:
+
+```text
+/plugin marketplace add RumyantsevMichael/Prism@prism--v<version>
+```
+
+```bash
+codex plugin marketplace add RumyantsevMichael/Prism --ref prism--v<version>
+```
+
+A pinned marketplace receives no updates, so add it again at a newer tag to move.
 
 ## Enable Prism for a team
 

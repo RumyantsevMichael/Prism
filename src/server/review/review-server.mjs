@@ -26,6 +26,7 @@ import { readStoredPreferences, writePreferences } from "./review-preferences.mj
 import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
 import { createViewerHub, openEventStream, writeEvent } from "./viewer-hub.mjs";
+import { createCachedValue } from "./cached-value.mjs";
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -112,10 +113,11 @@ async function walkArtifacts(projectRoot, relativeRoot, results) {
 }
 
 const SOURCE_SIZE_LIMIT = 512 * 1024;
-const SOURCE_CACHE_MS = 2000;
+const SOURCE_CHECKS = 8;
+const LISTING_MIN_MS = 5000;
+const LISTING_FACTOR = 5;
 const SECRET_NAME = /^(\.env(\..*)?|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.npmrc|\.pypirc|\.netrc|credentials(\.json)?)$|\.(pem|key|p12|pfx|jks|keystore|kdbx|gpg|asc)$/i;
 const BINARY_EXTENSION = /\.(png|jpe?g|gif|webp|ico|bmp|pdf|zip|gz|tgz|bz2|xz|7z|rar|jar|war|class|pyc|so|dylib|dll|exe|wasm|woff2?|ttf|otf|eot|mp3|mp4|mov|avi|sqlite|db)$/i;
-const sourceCache = new Map();
 
 function gitListFiles(projectRoot) {
   return new Promise((resolve) => {
@@ -126,14 +128,17 @@ function gitListFiles(projectRoot) {
 }
 
 // Source files are shown read-only: tracked or unignored files only, without secrets, binaries, or very large files.
+// A few file checks run at once, which shortens the listing on a file system where each check waits, such as a Windows drive under WSL.
 export async function listSourceFiles(projectRoot) {
-  const hit = sourceCache.get(projectRoot);
-  if (hit && Date.now() - hit.at < SOURCE_CACHE_MS) return hit.value;
-  const value = (async () => {
-    const files = [];
-    for (const file of await gitListFiles(projectRoot)) {
-      const name = path.posix.basename(file);
-      if (SECRET_NAME.test(name) || BINARY_EXTENSION.test(name)) continue;
+  const candidates = (await gitListFiles(projectRoot)).filter((file) => {
+    const name = path.posix.basename(file);
+    return !SECRET_NAME.test(name) && !BINARY_EXTENSION.test(name);
+  });
+  const files = [];
+  let next = 0;
+  const check = async () => {
+    while (next < candidates.length) {
+      const file = candidates[next++];
       try {
         const metadata = await stat(path.join(projectRoot, file));
         if (metadata.isFile() && metadata.size <= SOURCE_SIZE_LIMIT) files.push(file);
@@ -141,9 +146,42 @@ export async function listSourceFiles(projectRoot) {
         // A file deleted after git listed it is skipped.
       }
     }
-    return files.sort();
-  })();
-  sourceCache.set(projectRoot, { at: Date.now(), value });
+  };
+  await Promise.all(Array.from({ length: SOURCE_CHECKS }, check));
+  return files.sort();
+}
+
+// The review page polls the project's listing every few seconds, so the server answers from its last listing and renews it behind,
+// at most as often as five times the time a listing took, so a project whose listing is slow is not listed again and again.
+const listings = new Map();
+function reviewListing(projectRoot) {
+  let listing = listings.get(projectRoot);
+  if (!listing) {
+    listing = createCachedValue(async () => {
+      const [artifacts, sources] = await Promise.all([listArtifacts(projectRoot), listReviewSources(projectRoot)]);
+      return { artifacts, sources };
+    }, { ttlMs: (ms) => Math.max(LISTING_MIN_MS, LISTING_FACTOR * ms) });
+    listings.set(projectRoot, listing);
+  }
+  return listing;
+}
+
+// A wanted file whose presence on disk disagrees with the kept listing, such as one an agent has just written, moved, or deleted, lists the project again,
+// so a few checked files keep the listing honest without listing the whole project on every request.
+async function listedFiles(projectRoot, wanted = []) {
+  const listing = reviewListing(projectRoot);
+  let value = await listing.get();
+  const files = wanted.filter((file) => typeof file === "string" && file !== "attention" && !parseEntityRef(file));
+  const listed = (file) => value.artifacts.includes(file) || value.sources.includes(file);
+  // A store artifact is there when a scope of the store holds it, whatever the checkout holds at its path; a store that cannot answer leaves the listing as it is.
+  const isArtifact = files.length ? await artifactPathTest(projectRoot) : () => false;
+  const present = await Promise.all(files.map((file) => isArtifact(file)
+    ? readStoreArtifact(projectRoot, file).then((found) => found !== null, () => listed(file))
+    : stat(path.join(projectRoot, file)).then((info) => info.isFile(), () => false)));
+  if (files.some((file, index) => listed(file) !== present[index])) {
+    listing.invalidate();
+    value = await listing.get();
+  }
   return value;
 }
 
@@ -732,8 +770,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     return count;
   }
 
-  async function reviewableFiles() {
-    return new Set([...await listArtifacts(projectRoot), ...await listReviewSources(projectRoot)]);
+  async function reviewableFiles(wanted = []) {
+    const { artifacts, sources } = await listedFiles(projectRoot, wanted);
+    return new Set([...artifacts, ...sources]);
   }
 
   async function assertAvailable(tabs, availableArtifacts) {
@@ -797,7 +836,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     if (Object.hasOwn(request, "agentTabs")) body.agentTabs = [...new Set(normalizeTabs(request.agentTabs).map(follow))];
     const requestedTabs = body.openTabs;
     // A tab that is already open may name a file that is gone, so the page can keep it open and offer to close it.
-    await assertAvailable(requestedTabs.filter((tab) => !session.openTabs.includes(tab)), available);
+    const added = requestedTabs.filter((tab) => !session.openTabs.includes(tab));
+    await assertAvailable(added, added.length ? await reviewableFiles(added) : available);
     let nextActiveTab;
     if (Object.hasOwn(body, "activeTab")) {
       if (body.activeTab !== null && (typeof body.activeTab !== "string" || !requestedTabs.includes(body.activeTab))) {
@@ -843,7 +883,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   async function presentTabs(tabs, { group } = {}) {
     const requestedTabs = normalizeTabs(tabs);
     const groupName = group === undefined || group === null ? null : groupNameOf(group);
-    const available = await reviewableFiles();
+    const available = await reviewableFiles(requestedTabs);
     await assertAvailable(requestedTabs, available);
     await followMovedRecords(available);
     if (requestedTabs.length === 0) {
@@ -929,7 +969,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         sendJson(response, 404, { code: "stream_gone", message: "The event stream closed; join the stream that replaced it." });
       }
     } else if (route === "/api/index") {
-      const artifacts = await listArtifacts(projectRoot), sources = await listReviewSources(projectRoot);
+      const { artifacts, sources } = await listedFiles(projectRoot, session.openTabs);
       const available = new Set([...artifacts, ...sources]);
       const snapshot = await followMovedRecords(available);
       const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref) => entityExists(projectRoot, ref));
@@ -1050,7 +1090,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         send(response, 503, refusal);
         return;
       }
-      if (!(await listArtifacts(projectRoot)).includes(artifactPath) && !(await listReviewSources(projectRoot)).includes(artifactPath)) {
+      const { artifacts, sources } = await listedFiles(projectRoot, [artifactPath]);
+      if (!artifacts.includes(artifactPath) && !sources.includes(artifactPath)) {
         send(response, 404, "The file is not available for review.");
         return;
       }

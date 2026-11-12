@@ -6,19 +6,13 @@ on:
       source_ref:
         required: true
         type: string
-      publish:
-        type: boolean
-        default: false
+      release_tag:
+        description: The release whose assets the bundles' metadata names
+        required: true
+        type: string
   pull_request:
-    paths: ['src/**', 'dist/server/**', 'dist/native-runtime/**', 'dist/hooks/**', 'test/**', 'bin/**', 'hooks/**', '.claude-mcp.json', '.codex-mcp.json', 'package.json', 'tsconfig.native.json', 'scripts/build-native-runtime.mjs', 'scripts/native-build/**', 'vendor/native-runtime/**', '.github/workflows/native-runtime.yml', '.github/workflows/native-default.yml', '.github/workflows/release.yml']
-  push:
-    branches: ['codex/native-runtime-assets']
+    paths: ['src/**', 'dist/server/**', 'dist/native-runtime/**', 'dist/hooks/**', 'test/**', 'bin/**', 'hooks/**', '.claude-mcp.json', '.codex-mcp.json', 'package.json', 'tsconfig.native.json', 'scripts/build-native-runtime.mjs', 'scripts/native-build/**', 'vendor/native-runtime/**', '.github/workflows/native-runtime.yml', '.github/workflows/release.yml']
   workflow_dispatch:
-    inputs:
-      publish:
-        type: boolean
-        default: false
-        description: Publish verified immutable runtime assets
 
 permissions:
   contents: read
@@ -68,7 +62,8 @@ jobs:
           node --test --test-reporter=tap --test-timeout=120000 scripts/native-build/*.test.mjs test/server/native-semantics.test.mjs test/server/conservation.test.mjs test/server/change-map-mcp.test.mjs
       - name: Build an immutable runtime archive
         env:
-          PRISM_NATIVE_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/native-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          # Bundles are published only as assets of the release they ship in, so their metadata names that release.
+          PRISM_NATIVE_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/${{ inputs.release_tag || 'unreleased' }}
         run: node scripts/build-native-runtime.mjs
       - name: Test the packaged runtime without external indexers
         run: |
@@ -81,37 +76,3 @@ jobs:
             dist/native/*.tar.gz
             dist/native/${{ matrix.platform }}.json
           compression-level: 0
-  publish:
-    if: inputs.publish || (github.event_name == 'push' && github.ref == 'refs/heads/codex/native-runtime-assets')
-    needs: runtime
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.source_ref || github.sha }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24.16.0'
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: native-*
-          path: assets
-          merge-multiple: true
-      - name: Mirror the pinned model files
-        run: node scripts/native-build/model-mirror.mjs assets
-      - name: Publish assets before manifest promotion
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: native-runtime-${{ github.run_id }}-${{ github.run_attempt }}
-          SOURCE_COMMIT: ${{ inputs.source_ref || github.sha }}
-        run: gh release create "$RELEASE_TAG" assets/* --target "$SOURCE_COMMIT" --prerelease --title "$RELEASE_TAG" --notes "Pinned native semantic runtime assets. Platform parser and packaged inference checks passed before publication."
-  verify-default:
-    needs: publish
-    uses: ./.github/workflows/native-default.yml
-    with:
-      source_ref: ${{ inputs.source_ref || github.sha }}
-      release_tag: native-runtime-${{ github.run_id }}-${{ github.run_attempt }}
-      manifest_artifact: verified-native-manifest
