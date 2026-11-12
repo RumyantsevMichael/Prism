@@ -23,7 +23,7 @@ A launch MUST take only an initiative identifier, checked against the identifier
 A launch, and a resume that the person asks for, MUST be confirmed in a native dialog of the operating system whose default answer refuses, unless the person confirmed one within the last 30 minutes on that machine.
 Where the machine offers no native dialog, every launch MUST be refused with the reason, and no confirmation given in the page MAY replace it.
 A resume that a gate answer given on this machine causes MUST NOT ask again, because it continues a session the person already confirmed, with the same host and the same fixed arguments.
-Launch, stop, and resume MUST pass through the action registry and be recorded in the initiative's history like every other action, and these three actions and the index rebuild MUST be the only actions that start or end processes.
+Launch, stop, and resume MUST pass through the action registry and be recorded in the initiative's history like every other action, except that a stop of a session whose initiative has shipped MUST still apply and MUST NOT add to that immutable history, since its stop request is its record, and these three actions and the index rebuild MUST be the only actions that start or end processes.
 Each launched session MUST run under its own supervisor process, detached from the review app, that starts each run of the host, holds the host's input, reads its event stream, keeps the session's record in a private folder of the review app folder on that machine, and records each run's end with the host's exit status.
 A session's state MUST be derived from that record, the supervisor's liveness, and the initiative's coordination state, so any later review app on the machine shows the same state.
 A host MUST run under its own automatic permission handling with the project's own host settings, and Prism MUST NOT grant, ask for, or answer any permission itself.
@@ -67,6 +67,7 @@ Marking a gate on the machine that launched its session needs no new field in th
 - A supervisor killed from outside leaves its host unsupervised; the page then shows the session failed and says that its host may still run.
 - A process that the host or its agent deliberately detached may keep running after a stop, as it does after the hosts' own Stop buttons.
 - A gate answer that the running host already received may still cause one resume when the run ends while the gate stays open, which spends a short turn.
+- A running session stays stoppable after its orchestration ships the initiative, but it cannot be resumed afterwards.
 - An answer from a teammate's machine waits until the person resumes the session here.
 - Codex resumes do not keep the launch's permission policy by themselves, so every Codex run passes the policy again.
 
@@ -77,7 +78,7 @@ The review app lists a launch action per host on each initiative and a stop and 
 Applying a launch checks the action as every action is checked, asks the native dialog unless the window is open, creates the session's private folder, and starts its supervisor, which starts the host in the initiative's checkout with fixed arguments and the session's id in the host's environment.
 The supervisor reads the host's events for the host session identifier, refusals, and errors, renews a heartbeat, and records the run's end.
 Prism's server in the launched session reads the session's id from its environment and marks each gate it asks in the session's folder.
-Applying a gate answer on this machine records the answer in the folder of the session that marked the gate and resumes the session when no run of it runs; a supervisor whose run ends while an answer it received stays open resumes once.
+Applying a gate answer on this machine records the answer in the folder of the session that marked the gate and resumes the session when no run of it runs; a supervisor whose run exits with code 0 without a stop request while an answer it received stays open resumes once, and a run the person stopped is never resumed for an answer.
 Claude Code gets its prompt as a streamed JSON message on its input, which the supervisor keeps open while a turn or a background task of the host runs and closes when the host's work is over, so the host exits by itself.
 Codex runs as its app server, to which the supervisor sends the thread start or resume with the fixed permission policy and one turn with the prompt, closing the input once that turn completes; the supervisor answers every request the host sends it with an error, so it grants nothing.
 A stop is a request in the session's folder for the running run, which its supervisor carries out with the host's own interrupt: Claude Code's interrupt control request on its input, or Codex's turn interrupt for the running turn.

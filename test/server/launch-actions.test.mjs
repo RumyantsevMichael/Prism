@@ -165,6 +165,28 @@ test("a launched session's page lists stop and resume, and a stop is recorded an
   assert.equal((await listing(s.base, "launch:launch-0000000000000000", s.headers)).status, 404);
 });
 
+test("a session whose initiative shipped while it runs stays stoppable, records no stop, and cannot resume", { skip: posixOnly }, async (t) => {
+  const s = await setup(t, { plans: { claude: [{ hold: "forever" }] } });
+  const id = (await launch(s)).json.launch.id;
+  // The orchestrate run ships its own initiative while its host still runs.
+  const { readRecord, writeRecord } = await import("../../dist/server/workflow/record-store.mjs");
+  const roadmap = JSON.parse((await readRecord(s.root, { kind: "roadmap" })).bytes.toString("utf8"));
+  const at = new Date().toISOString();
+  for (const entry of roadmap.initiatives) if (entry.id === INITIATIVE) entry.decision = { kind: "shipped", at };
+  await writeRecord(s.root, { kind: "roadmap" }, `${JSON.stringify(roadmap, null, 2)}\n`);
+  const listed = await listing(s.base, `launch:${id}`, s.headers);
+  assert.deepEqual([actionOf(listed, "launch.stop").available, actionOf(listed, "launch.stop").reason], [true, null]);
+  assert.equal(actionOf(listed, "launch.resume").reason, "The session is running.");
+  const stopped = await apply(s.base, { action: "launch.stop", target: `launch:${id}`, input: {}, revision: null }, s.headers);
+  assert.equal(stopped.status, 200, stopped.text);
+  assert.equal(stopped.json.launch.state, "stopped");
+  assert.ok(stopped.json.applied && Array.isArray(stopped.json.actions));
+  assert.deepEqual((await history(s.root)).map((entry) => entry.action), ["launch.claude-code"]);
+  const after = await listing(s.base, `launch:${id}`, s.headers);
+  assert.equal(actionOf(after, "launch.resume").available, false);
+  assert.equal(actionOf(after, "launch.resume").reason, `The initiative shipped on ${at.slice(0, 10)}, so its state is history.`);
+});
+
 test("the person's resume runs the session again, confirming outside the page once the window ended", { skip: posixOnly }, async (t) => {
   const s = await setup(t, { plans: { claude: [{ hold: 50 }, { hold: 50 }, { hold: 50 }] } });
   const id = (await launch(s)).json.launch.id;
