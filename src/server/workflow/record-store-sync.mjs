@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import { copyFile, lstat, mkdir, open, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, IDENTITY_FILE_MAX, identityContent, identityOf, letterCaseKey, locationIdentity, STATUS_RECORD_NAME, uniqueIdentities, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
 import { renameWhenFree, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { commitProblem, gitFileName, isLinkMode, LINK_TARGET_BYTES_MAX, linkTargetProblem, TREE_DEPTH_MAX, TREE_DEPTH_TEXT, tooDeepTree, treeEntries, treeProblems } from "./git-objects.mjs";
@@ -48,6 +49,28 @@ export function cancelRecordSyncs() {
   scheduled.clear();
   lastFetch.clear();
   rerun.clear();
+}
+
+// The script that finishes the syncs a process hands off when it ends.
+const HANDOFF_SCRIPT = new URL("./record-store-handoff.mjs", import.meta.url);
+
+/**
+ * Hand every store whose debounced sync has not run, or whose sync is running or due again, to a detached process that syncs it and exits, then cancel this process's syncs.
+ * A host can end a session within a fraction of a second, before the debounce comes due, so a process that ends calls this to push the records it wrote; it returns the stores handed off.
+ */
+export function handOffRecordSyncs() {
+  const bases = [...new Set([...scheduled.keys(), ...running.keys(), ...rerun])];
+  cancelRecordSyncs();
+  // A test suite turns the hand-off off, so no detached process writes a folder that a test removes.
+  if (!bases.length || process.env.PRISM_STORE_HANDOFF === "off") return [];
+  try {
+    const child = spawn(process.execPath, [fileURLToPath(HANDOFF_SCRIPT), JSON.stringify(bases.map((base) => ({ base, managed: managed.has(base) })))], { detached: true, stdio: "ignore", windowsHide: true });
+    child.on("error", () => {});
+    child.unref();
+  } catch {
+    // The next Prism process to sync the store pushes what this one wrote.
+  }
+  return bases;
 }
 
 // The notice every view that Prism generates from a record carries, as generatedNotice in projection.mjs writes it.

@@ -90,6 +90,7 @@ A clone that Prism 0.16 made under a host's plugin data directory moves to the a
 Store sync is on by default for a remote store, so Prism keeps the clone in step with the remote without you running Git in it:
 
 - A few seconds after a record write, Prism commits the change, merges the remote's branch, and pushes.
+  When the session ends sooner, as when a host stops Prism's server right after the agent's last write, a small background process that the server starts on its way out does that sync and exits, so the write still reaches the remote.
 - A record read starts a background fetch when the last one is older than 30 seconds, and it never waits for the network.
   A hook, such as the one that delivers gate answers with your next message, reads the clone as it is and starts no fetch, so it answers within the host's few-second hook limit; the session's server and the review app keep the clone current.
 - An empty remote starts an empty store, and the first sync pushes its branch.

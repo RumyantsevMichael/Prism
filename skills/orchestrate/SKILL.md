@@ -16,6 +16,7 @@ To run a skill in a child, start a fresh child agent whose prompt asks it to use
 - Don't
   - Load or follow `setup`, `design`, `implement`, `review`, `triage`, or `ideate` yourself; only their child agents do.
   - Run git, hash files, or read code while slices run; children commit their own work and Prism checks the frozen tests.
+  - Read a [store artifact](../workflow/SKILL.md#common-terms), such as a requirement, from a checkout file or from git; read it with `get_artifact`, and treat a checkout file that Prism moved into the store as moved, not deleted.
   - Keep a child's transcript; keep its status.
 
 ## 1. Settings

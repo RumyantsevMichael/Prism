@@ -44,7 +44,7 @@ import { keptExplanation, shownPath } from "./workflow/artifact-migration.mjs";
 import { ARTIFACT_MIGRATIONS, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX } from "./workflow/artifact-paths.mjs";
 import { forgetAskedGates, recordAskedGates } from "./workflow/approval-deliveries.mjs";
 import { VERIFY_SLICE_SCHEMA, cancelVerifications, verificationBrief, verifySlice } from "./workflow/verification.mjs";
-import { cancelRecordSyncs } from "./workflow/record-store-sync.mjs";
+import { handOffRecordSyncs } from "./workflow/record-store-sync.mjs";
 import { stopClaimRenewals } from "./workflow/slice-claims.mjs";
 import { managedStoresDirectory } from "./workflow/remote-url.mjs";
 import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
@@ -154,11 +154,21 @@ async function server(argumentsValue, metadata) {
   return reviewServers.get(projectRoot, id);
 }
 
+// Claude Code gives its agent only the structured content of a result that has one, so the text items after the first, which carry notes such as a move report or a saved conflict,
+// also go into the structured content as notes, in their order, after any notes it already holds.
+function withNotesInStructure(value) {
+  const structured = value?.structuredContent;
+  if (!structured || typeof structured !== "object" || Array.isArray(structured) || !Array.isArray(value.content) || value.content.length < 2) return value;
+  const notes = value.content.slice(1).filter((item) => item?.type === "text" && typeof item.text === "string" && item.text).map((item) => item.text);
+  if (!notes.length) return value;
+  return { ...value, structuredContent: { ...structured, notes: [...(Array.isArray(structured.notes) ? structured.notes : []), ...notes] } };
+}
+
 // Write a result to the host: whether the write reached standard output.
 function result(id, value) {
   return new Promise((resolve) => {
     try {
-      process.stdout.write(jsonLine({ jsonrpc: "2.0", id, result: value }), (error) => resolve(!error));
+      process.stdout.write(jsonLine({ jsonrpc: "2.0", id, result: withNotesInStructure(value) }), (error) => resolve(!error));
     } catch {
       resolve(false);
     }
@@ -1630,23 +1640,29 @@ input.on("line", async (line) => {
   }
 });
 
-// The host ends the session by closing input, so the server exits once its cleanup ends, or after a short grace period,
+// The host ends the session by closing input or by a signal, so the server exits once its cleanup ends, or after a short grace period,
 // even when index preparation, a store sync, or a child process started meanwhile would keep it alive.
+// Claude Code sends SIGINT and then SIGTERM about a tenth of a second apart, and ends the process soon after, so the stores' pending syncs go to a detached process first.
 const CLOSE_GRACE_MS = 5000;
 let closing = false;
-input.on("close", async () => {
+async function stop(reason) {
+  if (closing) return;
   closing = true;
-  log.info("process_stopping", { reason: "input closed" });
+  handOffRecordSyncs();
+  log.info("process_stopping", { reason });
   const deadline = setTimeout(() => process.exit(0), CLOSE_GRACE_MS);
   deadline.unref();
   try {
     for (const controller of pendingWaits.values()) controller.abort();
     cancelVerifications();
-    cancelRecordSyncs();
     stopClaimRenewals();
     await Promise.all([nativeSemanticRuntime.close(), reviewServers.close(), Promise.allSettled([...endingWaits])]);
+    // A write that the cleanup finished has its sync handed off too.
+    handOffRecordSyncs();
   } finally {
     await log.flush();
     process.exit(0);
   }
-});
+}
+input.on("close", () => void stop("input closed"));
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => void stop(signal));

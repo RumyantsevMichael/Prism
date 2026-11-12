@@ -3,6 +3,7 @@ import { pluginURL } from "./plugin-root.mjs";
 import { reviewAppDirectory } from "./review/review-app-discovery.mjs";
 import { startReviewApp } from "./review/review-app-server.mjs";
 import { errorFields, log, startProcessLog } from "./log.mjs";
+import { handOffRecordSyncs } from "./workflow/record-store-sync.mjs";
 
 // The detached review app that no agent session owns; a start that loses the lock exits quietly, so concurrent starts leave one app.
 const { version } = JSON.parse(await readFile(pluginURL(".claude-plugin", "plugin.json"), "utf8"));
@@ -20,6 +21,8 @@ log.info("review_app_started", { port: app.port ?? null });
 process.once("SIGINT", () => void app.close());
 process.once("SIGTERM", () => void app.close());
 await app.closed;
+// A record that the app wrote in its last seconds is pushed by a detached process, since this one exits now.
+handOffRecordSyncs();
 log.info("process_stopping", { reason: "closed" });
 await log.flush();
 process.exit(0);
