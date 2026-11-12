@@ -129,10 +129,11 @@ While a question waits, the tab title starts with the number of waiting question
 Choose "Notify me about new questions" on Attention to also get a desktop notification when a question arrives while the page is in the background.
 The browser keeps that permission per review app address, and a restarted review app uses a new address, so it can ask again.
 In Claude Code a waiting agent resumes on its own shortly after your answer.
-When you resume a session with open questions, Prism lists them for the agent with your first message, and the agent waits on them again, so later browser answers still resume it on its own.
+When you resume a session with open questions, Prism lists the ones that session asked for the agent with your first message, and the agent waits on them again, so later browser answers still resume it on its own.
 In Codex the agent ends its turn, and Prism's Stop hook keeps the turn open for up to 55 minutes and continues it with your answer.
 Codex runs that hook only after you trust Prism's current hook definition through `/hooks`.
 Elsewhere, or after the 55 minutes, the agent receives the answer with your next message, even a short one such as "go".
+An answer reaches only the session whose agent or sub-agents asked the question, so another session working in the same project, on the same initiative or another, never receives it.
 Attention also lists blocked slices, open findings, failed verifications, and active work.
 A slice that is not done is a failed verification while its latest verification run failed, with the reason in words, such as `The tests failed, 2 tests failed`, until a later run passes or the slice is done.
 Choosing a kind or an initiative in the sidebar opens Attention filtered to it, at an address such as `attention:failed` or `attention:work/<initiative>`, which shows only those items, says above them the filter and its count, such as `Failed verifications · 1 of 13 items`, and offers **Show everything**.
