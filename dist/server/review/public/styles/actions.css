@@ -160,6 +160,20 @@
   .action-row {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  /* A compact row puts its control under its name, so a long reason beside the name never squeezes it to a letter a line. */
+  .action-list.is-compact .action-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .action-list.is-compact .action-control {
+    justify-items: start;
+  }
+
+  .action-list.is-compact .action-error,
+  .action-list.is-compact .action-reason {
+    text-align: start;
+  }
 }
 
 /* The confirmation dialog says what the change lets agents do. */
