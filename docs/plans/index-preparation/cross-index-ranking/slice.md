@@ -1,5 +1,8 @@
 # Ranking a search across indexes
 
+> Shipped history: initiative `index-preparation` shipped on 2026-11-12, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 A search across several indexes ranks with lexical and vector evidence.

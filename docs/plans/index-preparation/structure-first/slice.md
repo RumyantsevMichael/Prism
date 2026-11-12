@@ -1,5 +1,8 @@
 # Structure before embeddings
 
+> Shipped history: initiative `index-preparation` shipped on 2026-11-12, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 Structural callers answer from a published structure while embeddings fill, and concept search answers lexically and says so.

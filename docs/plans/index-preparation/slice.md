@@ -1,5 +1,8 @@
 # Index preparation that finishes
 
+> Shipped history: initiative `index-preparation` shipped on 2026-11-12, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 Every native index build finishes while it makes progress, publishes structure before embeddings, keeps a stopped build's work, keeps scoped calls fast, and ranks searches across indexes as well as inside one.

@@ -1,5 +1,8 @@
 # Builds that run until they stall and resume from saved work
 
+> Shipped history: initiative `index-preparation` shipped on 2026-11-12, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 A build runs while it makes progress, stops as stalled when it makes none, and a later build reuses every embedding it saved.

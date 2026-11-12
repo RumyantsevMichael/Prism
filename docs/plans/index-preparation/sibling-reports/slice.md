@@ -1,5 +1,8 @@
 # Sibling components in scoped reports
 
+> Shipped history: initiative `index-preparation` shipped on 2026-11-12, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 A scoped cross-file report includes the members of its groups in sibling components.

@@ -1,5 +1,8 @@
 # Rebuild only what changed
 
+> Shipped history: initiative `index-preparation` shipped on 2026-11-12, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 A rebuild copies, parses, and fragments only the changed files.

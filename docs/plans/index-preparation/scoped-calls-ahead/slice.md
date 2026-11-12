@@ -1,5 +1,8 @@
 # Scoped calls ahead of unrelated builds
 
+> Shipped history: initiative `index-preparation` shipped on 2026-11-12, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 A call that needs a missing component pauses an unrelated build, and a waiting component names what it waits behind.

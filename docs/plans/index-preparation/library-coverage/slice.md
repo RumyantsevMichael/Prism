@@ -1,5 +1,8 @@
 # Coverage of calls into libraries
 
+> Shipped history: initiative `index-preparation` shipped on 2026-11-12, so this document records finished work.
+> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.
+
 ## Outcome
 
 A file whose unresolved references all point outside the indexed source counts as covered.
