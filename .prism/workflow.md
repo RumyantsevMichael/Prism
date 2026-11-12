@@ -42,6 +42,7 @@
 - Review browser: auto
 
 ## Constraints
+- Requirements, ADRs, plans, and the roadmap view live in the record store; read and change them with get_artifact and update_artifact, never as checkout files.
 - Keep one sentence per line in Markdown files.
 - Do not edit CHANGELOG.md manually.
 - Do not bump plugin versions manually.

@@ -10,7 +10,7 @@ import { ROOT, skip } from "./fixtures/kit-browser.mjs";
 // These tests check the comparison against the mockup itself, through --app-mockup, so they hold before and after the app matches it.
 
 const SCRIPT = path.join(ROOT, "scripts/review-demo/places-compare.mjs");
-const MOCKUP = path.join(ROOT, "docs/plans/review-app-places/mockup/mockup.html");
+const MOCKUP = path.join(ROOT, "scripts/review-demo/mockups/review-app-places/mockup.html");
 
 async function folder(context) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "prism-places-compare-"));
