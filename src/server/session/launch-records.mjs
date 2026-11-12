@@ -21,6 +21,14 @@ export const RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 const UNSTARTED_STALE_MS = 60000;
 const STDERR_LINE_MAX = 300;
 export const SUPERVISION_LOST = "Prism stopped supervising this session; its host process may still run.";
+export const ANSWER_WAITS = "An answer given on another machine waits; resume this session here to continue.";
+// The gates a launched session asked and the answers given to them on this machine, kept beside the record and written only under the launch lock.
+const GATES_FILE = "gates.json";
+export const GATE_ID_PATTERN = /^gate-[0-9a-f]{8,32}$/;
+const ENTRY_ID_PATTERN = /^[0-9a-f]{32}$/;
+const TOKEN_PATTERN = /^[0-9a-f]{16}$/;
+// The marks and answers kept, the newest last; an older one gives way, so the file stays bounded whatever an agent asks.
+export const GATES_KEPT = 100;
 export const DEFAULT_STOP_GRACE_MS = 10000;
 
 /** The grace period of a stop: PRISM_LAUNCH_STOP_GRACE_MS milliseconds, and 10000 without a valid value. */
@@ -123,6 +131,53 @@ export async function readStopRequest(folder) {
   }
 }
 
+/**
+ * The gate record of a launch folder: { marks: [{ gate, at }], answers: [{ entry, gate, run, resumed }] }, empty when absent,
+ * keeping only well-formed entries, so nothing else that a file holds reaches a decision.
+ */
+export async function readGateRecord(folder) {
+  let value = null;
+  try {
+    const info = await lstat(path.join(folder, GATES_FILE));
+    if (info.isFile() && info.size <= 1024 * 1024) value = JSON.parse(await readFile(path.join(folder, GATES_FILE), "utf8"));
+  } catch {
+    value = null;
+  }
+  const list = (items) => (Array.isArray(items) ? items : []).slice(-GATES_KEPT);
+  const marks = list(value?.marks)
+    .filter((mark) => mark && typeof mark.gate === "string" && GATE_ID_PATTERN.test(mark.gate) && typeof mark.at === "string" && mark.at.length <= 40)
+    .map((mark) => ({ gate: mark.gate, at: mark.at }));
+  const answers = list(value?.answers)
+    .filter((answer) => answer && typeof answer.entry === "string" && ENTRY_ID_PATTERN.test(answer.entry) && typeof answer.gate === "string" && GATE_ID_PATTERN.test(answer.gate)
+      && (answer.run === null || (typeof answer.run === "string" && TOKEN_PATTERN.test(answer.run))))
+    .map((answer) => ({ entry: answer.entry, gate: answer.gate, run: answer.run, resumed: answer.resumed === true }));
+  return { marks, answers };
+}
+
+/** Writes the gate record of a launch folder, keeping the newest marks and answers; the caller holds the launch lock. */
+export async function writeGateRecord(folder, { marks, answers }) {
+  const value = { marks: marks.slice(-GATES_KEPT), answers: answers.slice(-GATES_KEPT) };
+  await writeAtomically(path.join(folder, GATES_FILE), `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+}
+
+/**
+ * What the coordination state says about the gates a launch marked: { waiting, answerWaits }.
+ * A gate counts as marked while its mark exists and it is pending; it waits while it has no answer, and an answer whose history entry
+ * this machine did not record came through the record store from another machine.
+ */
+export function gateFacts(gates, pending) {
+  const marked = new Set(gates.marks.map((mark) => mark.gate));
+  const recorded = new Set(gates.answers.map((answer) => answer.entry));
+  let waiting = false;
+  let elsewhere = false;
+  for (const gate of Array.isArray(pending) ? pending : []) {
+    if (!gate || typeof gate !== "object" || !marked.has(gate.id)) continue;
+    if (!gate.answer) waiting = true;
+    else if (!(typeof gate.answer.entry === "string" && recorded.has(gate.answer.entry))) elsewhere = true;
+  }
+  return { waiting, answerWaits: elsewhere };
+}
+
 /** Every launch folder on this machine with its record: [{ folder, record }], skipping unreadable ones. */
 export async function listLaunchRecords(env) {
   const directory = launchesDirectory(env);
@@ -197,9 +252,9 @@ function lastEnd(record, status) {
   return null;
 }
 
-function stateOf(record, status, label) {
+function stateOf(record, status, label, gates) {
   const run = record.runs.at(-1);
-  if (status === "running") return { state: "running", reason: null };
+  if (status === "running") return { state: gates.waiting ? "waiting" : "running", reason: null };
   if (status === "lost") return { state: "failed", reason: SUPERVISION_LOST };
   if (run.stopRequestedAt) return { state: "stopped", reason: null };
   // A reported host error comes before the exit code, since Claude Code exits 1 after an error result.
@@ -208,22 +263,27 @@ function stateOf(record, status, label) {
   const tail = stderr ? ` ${stderr}` : "";
   if (run.exit?.signal) return { state: "failed", reason: `${label} ended by signal ${run.exit.signal}.${tail}` };
   if (run.exit && run.exit.code !== 0) return { state: "failed", reason: `${label} ended with exit code ${run.exit.code}.${tail}` };
+  if (gates.waiting) return { state: "waiting", reason: null };
   const refusals = Array.isArray(run.refusals) ? run.refusals : [];
   if (refusals.length) {
     const [first] = refusals;
     // A run records only its first refusals, with the number of all of them; a record without that number counts those it holds.
     const count = Number.isSafeInteger(run.refusalCount) && run.refusalCount > refusals.length ? run.refusalCount : refusals.length;
     const more = count > 1 ? ` (and ${count - 1} more)` : "";
-    return { state: "blocked", reason: `${label} refused ${first.tool}: ${first.reason}${more}` };
+    return { state: "blocked", reason: gates.answerWaits ? ANSWER_WAITS : `${label} refused ${first.tool}: ${first.reason}${more}` };
   }
-  return { state: "finished", reason: null };
+  return { state: "finished", reason: gates.answerWaits ? ANSWER_WAITS : null };
 }
 
-/** The launch view of a record: { id, initiative, host, hostLabel, checkout, launchedAt, runningMs, runs, state, reason, exit, resumeCommand, answerWaits }. */
-export function launchView(record, { now = Date.now() } = {}) {
+/**
+ * The launch view of a record: { id, initiative, host, hostLabel, checkout, launchedAt, runningMs, runs, state, reason, exit, resumeCommand, answerWaits }.
+ * gates is gateFacts of the launch as the page's checkout reads its initiative's coordination state; without it no gate is counted.
+ */
+export function launchView(record, { now = Date.now(), gates = null } = {}) {
   const status = lastRunStatus(record, now);
   const label = hostDefinition(record.host)?.label ?? record.host;
-  const { state, reason: hostText } = stateOf(record, status, label);
+  const facts = { waiting: gates?.waiting === true, answerWaits: status !== "running" && gates?.answerWaits === true };
+  const { state, reason: hostText } = stateOf(record, status, label, facts);
   const reason = redactSessionId(hostText, record.hostSessionId);
   const runningMs = record.runs.reduce((sum, run, index) => {
     const start = time(run.startedAt);
@@ -249,7 +309,7 @@ export function launchView(record, { now = Date.now() } = {}) {
     reason,
     exit,
     resumeCommand,
-    answerWaits: false
+    answerWaits: facts.answerWaits
   };
 }
 

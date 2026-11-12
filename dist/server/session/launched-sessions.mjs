@@ -7,6 +7,7 @@ import { withFileLock } from "../workflow/artifact-store.mjs";
 import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { listInitiatives } from "../workflow/record-store.mjs";
 import { readRoadmap } from "../workflow/roadmap.mjs";
+import { readCoordinationState } from "../workflow/state.mjs";
 import { hostAvailability, hostDefinition, hostEnvironment, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
 import {
   LAUNCH_ID_PATTERN,
@@ -14,6 +15,8 @@ import {
   SUPERVISION_LOST,
   createLaunchFolder,
   expired,
+  GATE_ID_PATTERN,
+  gateFacts,
   lastRunStatus,
   launchFolder,
   launchRunning,
@@ -21,6 +24,7 @@ import {
   launchesDirectory,
   listLaunchRecords,
   newLaunchId,
+  readGateRecord,
   readStopRequest,
   prepareLaunchesDirectory,
   readLaunchRecord,
@@ -29,6 +33,7 @@ import {
   storeLocation,
   voidToken,
   withRunStartLock,
+  writeGateRecord,
   writeLaunchRecord,
   writeStopRequest
 } from "./launch-records.mjs";
@@ -158,20 +163,157 @@ export async function startLaunch({ projectRoot, initiative, host, env = process
   });
 }
 
+const unknownLaunch = (id) => refuse("unknown_launch", `No launched session ${String(id)} exists on this machine.`);
+
+// The checks and the start of a resume; the caller holds the launch lock.
+async function resumeLocked(env, folder, id, cause) {
+  const record = await readLaunchRecord(folder);
+  if (!record) throw unknownLaunch(id);
+  if (launchRunning(record)) throw refuse("launch_running", "The session is running.");
+  if (await otherRunning(env, { initiative: record.initiative, store: record.store, except: id })) throw refuse("launch_running", runningMessage(record.initiative));
+  if (!validHostSessionId(record.hostSessionId)) throw refuse("no_host_session", "The session never reported its host session id, so it cannot be resumed.");
+  const resolved = await resolveHost(record.host, env);
+  if (!resolved?.available) throw refuse("host_unavailable", resolved?.reason ?? `Unknown host ${record.host}.`);
+  return startRun({ folder, record, env, cause: cause === "gate" ? "gate" : "person" });
+}
+
 /** Starts the next run of a launched session with the resume arguments, and answers its view in state running. */
 export async function resumeLaunch({ id, env = process.env, cause = "person" }) {
-  if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) throw refuse("unknown_launch", `No launched session ${String(id)} exists on this machine.`);
+  if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) throw unknownLaunch(id);
   const folder = launchFolder(env, id);
-  if (!(await readLaunchRecord(folder))) throw refuse("unknown_launch", `No launched session ${id} exists on this machine.`);
+  if (!(await readLaunchRecord(folder))) throw unknownLaunch(id);
+  return withLaunchLock(env, () => resumeLocked(env, folder, id, cause));
+}
+
+/**
+ * Why a resume of the launch would be refused now, as clause 17 orders the refusals, or null when it would start:
+ * the reason of an unavailable resume action. It starts nothing.
+ */
+export async function resumeRefusal({ id, env = process.env }) {
+  const folder = typeof id === "string" && LAUNCH_ID_PATTERN.test(id) ? launchFolder(env, id) : null;
+  const record = folder ? await readLaunchRecord(folder) : null;
+  if (!record) return unknownLaunch(id).message;
+  if (launchRunning(record)) return "The session is running.";
+  if (await otherRunning(env, { initiative: record.initiative, store: record.store, except: id })) return runningMessage(record.initiative);
+  if (!validHostSessionId(record.hostSessionId)) return "The session never reported its host session id, so it cannot be resumed.";
+  const resolved = await resolveHost(record.host, env);
+  return resolved?.available ? null : resolved?.reason ?? `Unknown host ${record.host}.`;
+}
+
+/** How the last run of a launch stands: "none", "running", "lost", or "ended", or null for an id that names no launch folder. */
+export async function launchRunStatus({ id, env = process.env }) {
+  if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) return null;
+  const record = await readLaunchRecord(launchFolder(env, id));
+  return record ? lastRunStatus(record) : null;
+}
+
+/** Whether a run of a launched session of the initiative, in the record store of projectRoot, runs on this machine. */
+export async function initiativeRunning({ projectRoot, initiative, env = process.env }) {
+  const store = await storeLocation(await realpath(projectRoot));
+  return otherRunning(env, { initiative, store });
+}
+
+/** The message that a launch refused for a running session of the initiative carries. */
+export { runningMessage as launchRunningMessage };
+
+// The launch that PRISM_LAUNCH names, when its folder exists on this machine for the initiative in the record store of projectRoot.
+async function launchOf(env, id, { projectRoot, initiative }) {
+  if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) return null;
+  const folder = launchFolder(env, id);
+  const record = await readLaunchRecord(folder);
+  if (!record || record.initiative !== initiative) return null;
+  if (record.store !== (await storeLocation(await realpath(projectRoot)))) return null;
+  return { folder, record };
+}
+
+/**
+ * Marks gates as asked by the launched session that env.PRISM_LAUNCH names, in that launch folder only, when the launch is of this
+ * machine, of the same initiative, and in the record store of projectRoot; otherwise it marks nothing. It never changes the gate record.
+ */
+export async function markLaunchGates({ projectRoot, initiative, gates, env = process.env }) {
+  const ids = (Array.isArray(gates) ? gates : []).filter((gate) => typeof gate === "string" && GATE_ID_PATTERN.test(gate));
+  if (!ids.length) return false;
+  const found = await launchOf(env, env.PRISM_LAUNCH, { projectRoot, initiative });
+  if (!found) return false;
+  return withLaunchLock(env, async () => {
+    if (!(await readLaunchRecord(found.folder))) return false;
+    const current = await readGateRecord(found.folder);
+    const at = new Date().toISOString();
+    const known = new Set(current.marks.map((mark) => mark.gate));
+    await writeGateRecord(found.folder, { ...current, marks: [...current.marks, ...ids.filter((gate) => !known.has(gate)).map((gate) => ({ gate, at }))] });
+    return true;
+  });
+}
+
+// The launch of this machine, in the record store of projectRoot, that marked the gate of the initiative: { folder, record }, or null.
+async function markingLaunch(env, { projectRoot, initiative, gate }) {
+  const store = await storeLocation(await realpath(projectRoot));
+  for (const { folder, record } of await listLaunchRecords(env)) {
+    if (!record || record.initiative !== initiative || record.store !== store) continue;
+    if ((await readGateRecord(folder)).marks.some((mark) => mark.gate === gate)) return { folder, record };
+  }
+  return null;
+}
+
+/**
+ * Records the person's answer to a gate on this machine in the launch folder of the session that marked it, and resumes that session
+ * when none of its runs and no other launched session of the initiative runs: { id, resumed, reason }, or null for an unmarked gate.
+ * While one of its runs runs, the answer is kept for that run, whose supervisor resumes the session once if the run ends with the gate pending.
+ */
+export async function answerLaunchGate({ projectRoot, initiative, gate, entry, env = process.env }) {
+  if (typeof gate !== "string" || !GATE_ID_PATTERN.test(gate)) return null;
+  const found = await markingLaunch(env, { projectRoot, initiative, gate });
+  if (!found) return null;
+  const { id } = found.record;
+  try {
+    return await withLaunchLock(env, async () => {
+      const record = await readLaunchRecord(found.folder);
+      if (!record) return { id, resumed: false, reason: unknownLaunch(id).message };
+      const running = launchRunning(record);
+      const current = await readGateRecord(found.folder);
+      const answer = { entry, gate, run: running ? record.runs.at(-1).token : null, resumed: false };
+      await writeGateRecord(found.folder, { ...current, answers: [...current.answers.filter((item) => item.entry !== entry), answer] });
+      if (running) return { id, resumed: false, reason: "The session is running and receives the answer there." };
+      if (await otherRunning(env, { initiative: record.initiative, store: record.store, except: id })) return { id, resumed: false, reason: `Another launched session of ${record.initiative} is running on this machine.` };
+      try {
+        await resumeLocked(env, found.folder, id, "gate");
+        return { id, resumed: true, reason: null };
+      } catch (error) {
+        if (!(error instanceof LaunchError)) throw error;
+        return { id, resumed: false, reason: error.message };
+      }
+    });
+  } catch (error) {
+    return { id, resumed: false, reason: error instanceof LaunchError ? error.message : "Prism could not record the answer for the launched session." };
+  }
+}
+
+/**
+ * After a run that exited 0, resumes the session once with cause gate when an answer recorded for that run on this machine names a gate
+ * that is still pending in the initiative's coordination state; each recorded answer causes at most one resume. Answers whether it resumed.
+ */
+export async function resumeForAnswers({ id, token, env = process.env }) {
+  if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) return false;
+  const folder = launchFolder(env, id);
   return withLaunchLock(env, async () => {
     const record = await readLaunchRecord(folder);
-    if (!record) throw refuse("unknown_launch", `No launched session ${id} exists on this machine.`);
-    if (launchRunning(record)) throw refuse("launch_running", "The session is running.");
-    if (await otherRunning(env, { initiative: record.initiative, store: record.store, except: id })) throw refuse("launch_running", runningMessage(record.initiative));
-    if (!validHostSessionId(record.hostSessionId)) throw refuse("no_host_session", "The session never reported its host session id, so it cannot be resumed.");
-    const resolved = await resolveHost(record.host, env);
-    if (!resolved?.available) throw refuse("host_unavailable", resolved?.reason ?? `Unknown host ${record.host}.`);
-    return startRun({ folder, record, env, cause: cause === "gate" ? "gate" : "person" });
+    const run = record?.runs.find((entry) => entry.token === token);
+    if (!run?.endedAt || run !== record.runs.at(-1) || run.stopRequestedAt || run.exit?.code !== 0 || run.exit?.signal) return false;
+    const current = await readGateRecord(folder);
+    const due = current.answers.filter((answer) => answer.run === token && !answer.resumed);
+    if (!due.length) return false;
+    const read = await readCoordinationState({ projectRoot: record.checkout, initiative: record.initiative }).catch(() => null);
+    const pending = new Set((read?.valid ? read.state?.pending ?? [] : []).filter((gate) => gate && typeof gate === "object").map((gate) => gate.id));
+    // Every answer of the run is spent here, so none causes a second resume, whether or not this one starts.
+    await writeGateRecord(folder, { ...current, answers: current.answers.map((answer) => (answer.run === token ? { ...answer, resumed: true } : answer)) });
+    if (!due.some((answer) => pending.has(answer.gate))) return false;
+    try {
+      await resumeLocked(env, folder, id, "gate");
+      return true;
+    } catch (error) {
+      if (error instanceof LaunchError) return false;
+      throw error;
+    }
   });
 }
 
@@ -230,7 +372,17 @@ export async function stopLaunch({ id, env = process.env }) {
 /** Every launched session of this machine whose checkout shares the record store of projectRoot, the most recently launched first. */
 export async function listLaunches({ projectRoot, env = process.env, now = Date.now() }) {
   const at = typeof now === "number" ? now : Date.parse(now);
-  const store = await storeLocation(await realpath(projectRoot));
+  const checkout = await realpath(projectRoot);
+  const store = await storeLocation(checkout);
+  // Each initiative's pending gates as this page's checkout reads its coordination state, read once per list.
+  const pendingOf = new Map();
+  const pending = (initiative) => {
+    if (!pendingOf.has(initiative)) {
+      pendingOf.set(initiative, readCoordinationState({ projectRoot: checkout, initiative }).then((read) => (read.valid ? read.state?.pending ?? [] : [])).catch(() => []));
+    }
+    return pendingOf.get(initiative);
+  };
+  const viewOf = async (folder, record) => launchView(record, { now: at, gates: gateFacts(await readGateRecord(folder), await pending(record.initiative)) });
   const launches = [];
   const candidates = [];
   for (const { folder, record } of await listLaunchRecords(env)) {
@@ -240,7 +392,7 @@ export async function listLaunches({ projectRoot, env = process.env, now = Date.
       continue;
     }
     if (record.store !== store || !record.runs.length) continue;
-    launches.push(launchView(record, { now: at }));
+    launches.push(await viewOf(folder, record));
   }
   // Removal re-reads each record under the lock that starts and resumes hold, so a run that a resume is starting keeps its folder.
   // When the lock stays busy, the expired folders wait for the next list.
@@ -250,12 +402,12 @@ export async function listLaunches({ projectRoot, env = process.env, now = Date.
       const current = await readLaunchRecord(folder);
       if (!current) continue;
       if (expired(current, at)) await removeLaunchFolder(folder);
-      else still.push(current);
+      else still.push({ folder, record: current });
     }
     return still;
   }).catch(() => []) : [];
-  for (const record of kept) {
-    if (record.store === store && record.runs.length) launches.push(launchView(record, { now: at }));
+  for (const { folder, record } of kept) {
+    if (record.store === store && record.runs.length) launches.push(await viewOf(folder, record));
   }
   return { launches: launches.sort((left, right) => (right.launchedAt ?? "").localeCompare(left.launchedAt ?? "") || right.id.localeCompare(left.id)) };
 }

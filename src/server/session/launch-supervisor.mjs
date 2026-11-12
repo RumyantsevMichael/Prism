@@ -8,6 +8,7 @@
 // process itself through the handle of the child process it started. It starts, watches, and signals only the host process, never
 // a process that the host started.
 // It names its launch folder on its command line, so any process on this machine can find it.
+// After a run that exited 0, it resumes the session once when the person answered here, during the run, a gate that is still pending.
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
@@ -209,6 +210,11 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
   });
   if (started) await started.ended;
   await queue;
+  // A run that exited 0 with an answer given here while it ran, whose gate is still pending, is resumed once for that answer.
+  if (started) {
+    const { resumeForAnswers } = await import("./launched-sessions.mjs");
+    await resumeForAnswers({ id: record.id, token, env }).catch(() => {});
+  }
 }
 
 const [folder, cause, token] = process.argv.slice(2);

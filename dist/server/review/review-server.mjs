@@ -19,6 +19,7 @@ import { nativeSemanticRuntime } from "../repository-intelligence/native-semanti
 import { entityContext, entityExists, forgetWorkspace, loadClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords } from "./workspace-model.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
+import { listLaunches } from "../session/launched-sessions.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 import { readStoredPreferences, writePreferences } from "./review-preferences.mjs";
 import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
@@ -527,7 +528,30 @@ export async function readBody(request) {
 }
 
 // A refusal of the action registry answers with its status and a JSON body of its code, message, and the fields that refusal carries.
-const ACTION_STATUS = { unknown_target: 404, unknown_action: 404, stale_revision: 409, action_unavailable: 409, confirmation_required: 409, invalid_input: 400 };
+const ACTION_STATUS = {
+  unknown_target: 404,
+  unknown_action: 404,
+  stale_revision: 409,
+  action_unavailable: 409,
+  confirmation_required: 409,
+  invalid_input: 400,
+  // The refusals of a launch, a stop, and a resume, and of the confirmation outside the page that comes before a start.
+  confirmation_pending: 409,
+  confirmation_cooldown: 409,
+  confirmation_unavailable: 409,
+  confirmation_declined: 409,
+  confirmation_timeout: 409,
+  unknown_host: 409,
+  unknown_initiative: 409,
+  unknown_launch: 409,
+  host_unavailable: 409,
+  launch_running: 409,
+  launch_not_running: 409,
+  no_host_session: 409,
+  supervision_lost: 409,
+  stop_timeout: 409,
+  launch_failed: 500
+};
 const ACTION_FIELDS = ["current", "reason", "field", "accepted"];
 export const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
 
@@ -904,6 +928,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       } catch (error) {
         sendActionError(response, error);
       }
+    } else if (route === "/api/launches" && request.method === "GET") {
+      // Every launched session of this machine that shares this checkout's record store; reading needs no write session.
+      sendJson(response, 200, await listLaunches({ projectRoot, env: process.env }));
     } else if (route === "/api/actions/targets" && request.method === "GET") {
       try {
         sendJson(response, 200, await listActionTargets({ projectRoot, kind: url.searchParams.get("kind") }));
@@ -930,7 +957,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         sendJson(response, 200, result);
         if (result.applied) {
           const target = parseTarget(result.applied.target);
-          const event = { ...result.applied, initiative: target?.initiative ?? null };
+          const event = { ...result.applied, initiative: target?.initiative ?? (target?.kind === "launch" ? result.launch?.initiative ?? null : null) };
           if (onAction) await Promise.resolve(onAction(event, { shared: target?.kind !== "index" })).catch(() => {});
           else notify("action", event);
         }
