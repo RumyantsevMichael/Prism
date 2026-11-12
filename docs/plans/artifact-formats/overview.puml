@@ -1,0 +1,26 @@
+@startuml artifact-formats-overview
+package "formats" as formats {
+  interface "check_artifacts" as check
+  interface "format references" as refs
+}
+package "attention-formats" as attention {
+  interface "legacy sets" as legacy
+}
+package "citing-refusal" as citing
+package "migration-proposals" as proposals {
+  interface "propose / get / apply_migration" as migrationTools
+  interface "migration.answer" as answerAction
+}
+package "migration-gate" as gate
+package "artifact-skills" as skills
+
+attention ..> check
+citing ..> check
+citing ..> attention
+proposals ..> check
+gate ..> answerAction
+gate ..> attention
+skills ..> refs
+skills ..> migrationTools
+skills ..> citing
+@enduml

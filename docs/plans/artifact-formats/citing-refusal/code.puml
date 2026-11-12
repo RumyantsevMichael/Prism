@@ -1,0 +1,12 @@
+@startuml citing-refusal-code
+component "initiative.mjs\nupdate_initiative" as initiative
+component "roadmap.mjs\nupdate_roadmap" as roadmap
+component "artifact-citations.mjs\ncitedArtifacts, refuseNonconforming" as citations
+component "artifact-check.mjs\ncheckArtifacts" as check
+component "mcp.mjs" as mcp
+mcp --> initiative
+mcp --> roadmap
+initiative --> citations
+roadmap --> citations
+citations --> check
+@enduml

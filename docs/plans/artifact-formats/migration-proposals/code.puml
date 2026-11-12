@@ -1,0 +1,19 @@
+@startuml migration-proposals-code
+component "mcp.mjs\npropose_migration, get_migration, apply_migration" as mcp
+component "migrations.mjs\nproposeMigration, answerMigration, applyMigration" as migrations
+component "statements.mjs\nsplitStatements" as statements
+component "artifact-check.mjs" as check
+component "record-store.mjs" as store
+component "actions.mjs\nmigration.answer" as actions
+component "gate-wait.mjs" as wait
+component "wait-for-gate-answers.mjs" as hook
+mcp --> migrations
+mcp --> wait
+migrations --> statements
+migrations --> check
+migrations --> store
+actions --> migrations
+wait --> migrations
+hook --> wait
+check ..> migrations : applied sources
+@enduml

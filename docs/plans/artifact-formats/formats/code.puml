@@ -1,0 +1,17 @@
+@startuml formats-code
+component "mcp.mjs\ncheck_artifacts" as tool
+component "artifact-check.mjs\ncheckArtifacts" as check
+component "artifact-formats.mjs\nARTIFACT_FORMATS, checkArtifactText" as formats
+component "workflow-config.mjs" as config
+artifact "requirement-format.md" as req
+artifact "adr-format.md" as adr
+artifact "feature-format.md" as feature
+artifact "glossary-format.md" as glossary
+tool --> check
+check --> formats
+check --> config
+formats ..> req : rule ids
+formats ..> adr : rule ids
+formats ..> feature : rule ids
+formats ..> glossary : rule ids
+@enduml

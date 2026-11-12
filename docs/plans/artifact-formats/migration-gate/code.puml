@@ -1,0 +1,16 @@
+@startuml migration-gate-code
+component "workspace-model.mjs\nmigration item and entity" as model
+component "review-server.mjs" as server
+component "migration.js\nmigration page" as page
+component "line-diff.js" as diff
+component "attention.js" as attention
+component "entities.js" as entities
+component "migrations.mjs" as migrations
+component "actions.mjs\nmigration.answer" as actions
+server --> model
+model --> migrations
+entities --> page
+page --> diff
+page --> actions : /api/actions/apply
+attention --> page : link
+@enduml

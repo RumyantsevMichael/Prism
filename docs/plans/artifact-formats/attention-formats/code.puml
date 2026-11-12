@@ -1,0 +1,18 @@
+@startuml attention-formats-code
+component "workspace-model.mjs\nformats, format-findings" as model
+component "artifact-check.mjs\ncheckArtifacts" as check
+component "artifact-marks.mjs\nlegacy sets" as marks
+component "record-store.mjs" as store
+component "actions.mjs\nartifacts.mark-legacy, artifacts.remove-legacy" as actions
+component "attention.js\nformat items" as view
+component "prism-choice.js" as choice
+component "seed.mjs" as seed
+model --> check
+check --> marks
+actions --> marks
+marks --> store
+view --> model : /api/entity
+view --> actions : /api/actions
+view --> choice
+seed ..> model
+@enduml

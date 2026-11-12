@@ -1,0 +1,21 @@
+@startuml artifact-skills-code
+component "migrate/SKILL.md" as migrate
+component "workflow/SKILL.md" as workflow
+component "write-requirements/SKILL.md" as requirements
+component "write-adr/SKILL.md" as adr
+component "write-feature/SKILL.md" as feature
+component "ideate/SKILL.md" as ideate
+component "orchestrate/SKILL.md" as orchestrate
+component "setup/SKILL.md" as setup
+artifact "format references" as refs
+interface "migration tools" as tools
+migrate --> refs
+migrate --> tools
+requirements --> refs
+adr --> refs
+feature --> refs
+setup --> refs
+workflow --> refs
+ideate --> requirements
+orchestrate --> workflow
+@enduml
