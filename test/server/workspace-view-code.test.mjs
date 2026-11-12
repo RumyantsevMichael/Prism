@@ -3,10 +3,11 @@ import http from "node:http";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { alias, artifactConfig, bareRemote, blobOf, commitFiles, eventually, exists, git, isolateGit, networkStore, ok, place, server, sha16, startApp, storeCheckout, workspaceId } from "./fixtures/workspace-view.mjs";
+import { alias, artifactConfig, bareRemote, blobOf, commitFiles, eventually, exists, git, isolateGit, networkStore, ok, place, server, sha16, startApp, storeCheckout, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
 import { repository } from "./fixtures/repository-checkouts.mjs";
+import { launch, settle, skip } from "./fixtures/kit-browser.mjs";
 
-// Contract clauses 41-50 of the workspace-view design: code-repository content of every pushed branch, from blobless clones Prism keeps.
+// Contract clauses 41-50 of the workspace-view design: code-repository content of every pushed branch, from blobless clones Prism keeps, and store artifact links to code files resolved from them.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
@@ -161,4 +162,109 @@ test("clause 50: no code answer names a Git host's URL", async (context) => {
     assert.equal(answer.status, 200, answer.body);
     assert.doesNotMatch(answer.body, /https?:\/\/|github\.com/);
   }
+});
+
+const NOTES = "Billing notes\n";
+const CHECKOUT_TOTAL = "// the checkout's own copy\n";
+const LINKED = "# Billing\n\nSee [total](../../packages/billing/total.js), [notes](../../packages/billing/notes.txt), [page](../../packages/web/page.js), [secret](../../.env), [logo](../../assets/logo.bin), [big](../../assets/big.txt), and [none](../../none.js).\n";
+const LINKED_REF = "store:repositories/api/requirements/billing.md";
+
+// A workspace added from its store URL alone, whose api scope holds a requirement linking to code files; api's code remote holds main and feature-x, its HEAD naming head.
+// The api checkout holds its own copy of packages/billing/total.js and is not registered with the app until a test registers it.
+async function linkedWorkspace(context, { head = "main" } = {}) {
+  const where = await place(context);
+  const store = await networkStore(where);
+  const code = await bareRemote(where.parent, "api-code.git", {
+    files: { "packages/billing/total.js": TOTAL, "packages/billing/notes.txt": NOTES, ".env": "TOKEN=secret\n", "assets/logo.bin": "PNG\u0000\u0001\u0002", "assets/big.txt": "x".repeat(600 * 1024) },
+    branches: { "feature-x": { "packages/web/page.js": "export const page = 1;\n" } }
+  });
+  git(code, "symbolic-ref", "HEAD", `refs/heads/${head}`);
+  alias("https://github.com/acme/api.git", code);
+  const apiRoot = await storeCheckout(context, where, "api", store.url, { files: { "packages/billing/total.js": CHECKOUT_TOTAL } });
+  await writeArtifact(await server(context, where, apiRoot), "docs/requirements/billing.md", LINKED, { scope: "repository" });
+  // Checkout servers push store writes only after the record-sync debounce, so the add waits until the remote holds the artifact.
+  const pushed = () => { try { git(store.bare, "cat-file", "-e", "main:artifacts/repositories/api/requirements/billing.md"); return true; } catch { return false; } };
+  await eventually(pushed, 15000, "the artifact reaching the remote");
+  const prism = await startApp(context, where);
+  await prism.grant();
+  assert.equal((await prism.post("/api/workspaces", { url: store.url })).status, 200);
+  const id = workspaceId(store.identity);
+  const links = async () => {
+    const read = await prism.get(`/w/${id}/api/artifact?ref=${encodeURIComponent(LINKED_REF)}`);
+    assert.equal(read.status, 200, read.body);
+    return Object.fromEntries(read.json.links.map(({ href, ...link }) => [href.replace("../../", ""), link]));
+  };
+  const open = (file) => prism.get(`/w/${id}/api/artifact?ref=${encodeURIComponent(`code:api:${file}`)}`);
+  return { where, code, prism, id, apiRoot, links, open };
+}
+
+const available = (file) => ({ line: 3, target: `code:api:${file}`, resolved: true });
+const unavailable = (file) => ({ line: 3, target: `code:api:${file}`, resolved: null, reason: "code_not_available" });
+
+test("clause 50: with code content on and no checkout, a link to a code file resolves from the clone's default branch", async (context) => {
+  const { code, prism, id, links, open } = await linkedWorkspace(context);
+  assert.deepEqual((await links())["packages/billing/total.js"], unavailable("packages/billing/total.js"), "code content is still off");
+  assert.equal((await enable(prism, id, "api")).status, 200);
+  const on = await links();
+  assert.deepEqual(on["packages/billing/total.js"], available("packages/billing/total.js"));
+  assert.deepEqual(on["packages/billing/notes.txt"], available("packages/billing/notes.txt"));
+  assert.deepEqual(on["packages/web/page.js"], unavailable("packages/web/page.js"), "only feature-x holds it, not the default branch");
+  assert.deepEqual(on["none.js"], unavailable("none.js"));
+  const file = await open("packages/billing/total.js");
+  assert.equal(file.status, 200, file.body);
+  assert.deepEqual(file.json, { ref: "code:api:packages/billing/total.js", repository: "api", branch: "main", commit: git(code, "rev-parse", "main"), path: "packages/billing/total.js", blob: blobOf(TOTAL), bytes: Buffer.byteLength(TOTAL), content: TOTAL });
+  assert.equal((await open("packages/web/page.js")).status, 404);
+  assert.equal((await open("none.js")).status, 404);
+  assert.equal((await enable(prism, id, "api", false)).status, 200);
+  assert.deepEqual((await links())["packages/billing/total.js"], unavailable("packages/billing/total.js"), "code content is off again");
+  assert.equal((await open("packages/billing/total.js")).status, 404);
+});
+
+test("clause 50: a file opened through a link from the clone keeps clause 47's secret, binary, and size checks", async (context) => {
+  const { prism, id, open } = await linkedWorkspace(context);
+  assert.equal((await enable(prism, id, "api")).status, 200);
+  for (const file of [".env", "assets/logo.bin", "assets/big.txt"]) assert.equal((await open(file)).status, 404, file);
+  assert.equal((await open("packages/billing/notes.txt")).json.content, NOTES);
+});
+
+test("clause 50: the default branch is the one the remote's HEAD names", async (context) => {
+  const { code, prism, id, links, open } = await linkedWorkspace(context, { head: "feature-x" });
+  assert.equal((await enable(prism, id, "api")).status, 200);
+  assert.deepEqual((await links())["packages/web/page.js"], available("packages/web/page.js"));
+  const file = await open("packages/web/page.js");
+  assert.equal(file.status, 200, file.body);
+  assert.equal(file.json.branch, "feature-x");
+  assert.equal(file.json.commit, git(code, "rev-parse", "feature-x"));
+});
+
+test("clause 50: a registered checkout that lists the path still answers the link, and the clone answers the paths it does not list", async (context) => {
+  const { prism, id, apiRoot, links, open } = await linkedWorkspace(context);
+  assert.equal((await enable(prism, id, "api")).status, 200);
+  await prism.register(apiRoot);
+  const listed = await links();
+  assert.deepEqual(listed["packages/billing/total.js"], available("packages/billing/total.js"));
+  assert.deepEqual(listed["packages/billing/notes.txt"], available("packages/billing/notes.txt"));
+  assert.deepEqual(listed["packages/web/page.js"], { line: 3, target: null, resolved: false }, "with a checkout registered, a path neither it nor the default branch holds names nothing");
+  const total = await open("packages/billing/total.js");
+  assert.equal(total.status, 200, total.body);
+  assert.equal(total.json.content, CHECKOUT_TOTAL, "the checkout wins over the clone");
+  const notes = await open("packages/billing/notes.txt");
+  assert.equal(notes.json.branch, "main");
+  assert.equal(notes.json.content, NOTES);
+});
+
+test("clause 50: the page opens a link resolved from the clone as a tab with its branch's label", { skip }, async (context) => {
+  const { prism, id } = await linkedWorkspace(context);
+  assert.equal((await enable(prism, id, "api")).status, 200);
+  const browser = await launch(context);
+  const page = await (await browser.newContext()).newPage();
+  await page.goto(`${prism.viewer}/w/${id}/review?artifact=${encodeURIComponent(LINKED_REF)}`);
+  await settle(page);
+  const link = page.locator('a[data-doc-link="code:api:packages/billing/total.js"]');
+  assert.equal(await link.count(), 1, "the link opens the file");
+  assert.equal(await page.locator('[data-link="unavailable"]').count(), 2, "page.js and none.js are not available on this machine");
+  await link.click();
+  await settle(page);
+  assert.match(await page.locator("body").innerText(), /export const total/);
+  assert.ok((await page.locator("[data-branch-label]").allTextContents()).some((label) => label.includes("main")), "the tab shows the default branch's label");
 });

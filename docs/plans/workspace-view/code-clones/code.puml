@@ -6,9 +6,13 @@ component "workspace-sync.mjs\nfetch code clones" as sync
 component "review-server.mjs\ncode routes, repositories" as review
 component "code.js\ncode pages with branch labels" as page
 component "components.mjs\nparse a branch's declaration" as components
+component "artifact-links.mjs\nresolveLinks, clone fallback" as links
+component "review.js\nstore artifact code tab, branch label" as artifactPage
 app ..> clones
 sync ..> clones
 review ..> clones
 clones ..> components
 page ..> review
+review ..> links
+artifactPage ..> review
 @enduml
