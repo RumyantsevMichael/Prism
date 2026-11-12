@@ -117,3 +117,28 @@ test("a component waiting for another session's lock names the session that hold
   control.release("packages/net/timeout.ts");
   await settled(first, root);
 });
+
+test("a session that took the lock after waiting for it no longer waits, so a session that waits next names it as the holder", async (t) => {
+  const { root, storage, control } = await runningNet(t);
+  const entryOf = async (runtime) => (await runtime.status(root)).components?.find((item) => item.component === NET.identity);
+  const second = await stagedRuntime(storage);
+  await search(root, second.runtime, ["packages/net"]);
+  await until(async () => (await entryOf(second.runtime))?.waitingFor, "The second session never waited for net's lock.");
+  // The second session stops while it reads the index that the first session stored, which it does while holding the lock.
+  let entered = false, release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const read = second.runtime.store.read.bind(second.runtime.store);
+  second.runtime.store.read = async (...args) => { entered = true; await gate; return read(...args); };
+  control.release("packages/net/timeout.ts");
+  await until(async () => entered, "The second session never read the stored index.");
+  const holding = await entryOf(second.runtime);
+  assert.equal(holding.waitingFor, undefined, "the session that holds the lock waits for nothing");
+  assert.match(holding.preparationId ?? "", /^[a-f\d]{64}$/);
+  const third = await stagedRuntime(storage);
+  await search(root, third.runtime, ["packages/net"]);
+  const waiting = await until(async () => (await entryOf(third.runtime))?.waitingFor, "The third session never waited for net's lock.");
+  assert.deepEqual(waiting, { component: NET.identity, preparationId: holding.preparationId, reason: "lock" });
+  release();
+  await settled(second.runtime, root);
+  await settled(third.runtime, root);
+});

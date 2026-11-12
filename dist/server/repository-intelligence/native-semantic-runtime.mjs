@@ -753,6 +753,7 @@ class NativeSemanticRuntime {
       return await withArtifactLock(directory, () => withFileLock(directory, async () => {
         clearTimeout(waiting);
         current();
+        if (job.progress?.phase === "waiting") report({ phase: "loading" });
         let previous;
         try {
           let pointer = await optionalJson(generation);

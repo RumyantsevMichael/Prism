@@ -649,6 +649,8 @@ export class NativeSemanticRuntime implements ComponentRuntime {
       return await withArtifactLock(directory, () => withFileLock(directory, async () => {
         clearTimeout(waiting);
         current();
+        // A build that holds the lock no longer waits, so a wait it reported ends here, before it reads the stored index, rather than at the copy.
+        if (job.progress?.phase === "waiting") report({ phase: "loading" });
         let previous: { index: IndexMetadata; indexPath: string; revision: string } | undefined;
         try {
           // A structure-only index answers structure but is never reused as complete, and its fragments hold no embedding that a build could reuse.
