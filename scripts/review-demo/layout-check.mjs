@@ -1,6 +1,7 @@
 // Check the review browser layout on every page of the demo, edge-case, and empty projects at several window sizes, and the component catalog at each of them.
 // The check fails on content that escapes its container, a page that scrolls the whole window, a control cut off by its container, and browser errors.
-// Usage: node scripts/review-demo/layout-check.mjs [--viewports phone,tablet,laptop,wide] [--themes light,dark] [--screenshots directory] [--catalog url]
+// Usage: node scripts/review-demo/layout-check.mjs [--viewports phone,tablet,laptop,wide] [--themes light,dark] [--part k/n] [--screenshots directory] [--catalog url]
+// With --part k/n it checks only every n-th page and overlay, starting at the k-th, and part 1 also checks the catalog, so n runs together check everything once.
 // With --catalog it checks only the catalog at that URL. Each catalog problem prints as `catalog <entry>: <problem> at <viewport> (<width>px), <theme>`.
 // Playwright is not a dependency of this repository; the check uses an installed copy, local or global.
 import { execFileSync } from "node:child_process";
@@ -14,10 +15,17 @@ import { auditPage as audit, checkCatalog, checkNames, loadPlaywright as install
 
 const PLACES = ["attention", "roadmap", "requirements", "decisions", "glossary"];
 
-const { values } = parseArgs({ options: { viewports: { type: "string", default: "phone,tablet,laptop,wide" }, themes: { type: "string", default: "light" }, screenshots: { type: "string" }, catalog: { type: "string" } } });
+const { values } = parseArgs({ options: { viewports: { type: "string", default: "phone,tablet,laptop,wide" }, themes: { type: "string", default: "light" }, screenshots: { type: "string" }, catalog: { type: "string" }, part: { type: "string", default: "1/1" } } });
 const viewports = values.viewports.split(",");
 const themes = values.themes.split(",");
 checkNames({ viewports, themes });
+const [part, parts] = /^\d+\/\d+$/.test(values.part) ? values.part.split("/").map(Number) : [];
+if (!(parts >= 1 && part >= 1 && part <= parts)) {
+  process.stderr.write(`layout-check: --part takes k/n with 1 <= k <= n, not ${values.part}.\n`);
+  process.exit(2);
+}
+// Every check has a fixed position in the same order at each viewport and theme, and a part takes the positions that fall to it.
+const inPart = (position) => position % parts === part - 1;
 
 function loadPlaywright() {
   const playwright = installedPlaywright();
@@ -52,6 +60,7 @@ const browser = await chromium.launch();
 const findings = new Map();
 let pages = 0;
 let catalogProblems = [];
+let catalogChecks = 0;
 
 function record(finding, where) {
   if (!findings.has(finding)) findings.set(finding, []);
@@ -115,8 +124,10 @@ try {
           await page.screenshot({ path: path.join(values.screenshots, `${viewport}-${theme}-${project.name}-${label.replace(/[^a-z0-9]+/gi, "_").slice(-80)}.png`) });
         }
       };
+      let position = 0;
       for (const project of projects) {
         for (const ref of project.refs) {
+          if (!inPart(position++)) continue;
           await visit(project, ref);
           await check(project, ref);
         }
@@ -142,6 +153,7 @@ try {
         }]
       };
       for (const [name, [ref, open]] of Object.entries(states)) {
+        if (!inPart(position++)) continue;
         await visit(stress, ref, name);
         // A page still settling under load can miss the first attempt, so an overlay that does not open gets one more visit before it counts.
         for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -160,8 +172,12 @@ try {
     }
   })));
   // The component catalog of the empty project, at every checked viewport and theme.
-  const emptyProject = projects.find((project) => project.name === "empty");
-  catalogProblems = await checkCatalog({ url: new URL("kit/catalog", emptyProject.url).href, viewports, themes, browser });
+  // The first part checks it.
+  if (part === 1) {
+    const emptyProject = projects.find((project) => project.name === "empty");
+    catalogProblems = await checkCatalog({ url: new URL("kit/catalog", emptyProject.url).href, viewports, themes, browser });
+    catalogChecks = viewports.length * themes.length;
+  }
 } finally {
   await browser.close();
   await Promise.all(held.map((server) => server?.close?.()));
@@ -184,5 +200,5 @@ for (const [finding, places] of findings) {
 }
 // A catalog problem counts as one finding per entry and problem, whatever the viewports and themes it shows at.
 const distinct = findings.size + new Set(catalogProblems.map((problem) => `${problem.entry}\n${problem.problem}`)).size;
-process.stdout.write(`${pages} page checks, ${viewports.length * themes.length} catalog checks, ${distinct} distinct ${distinct === 1 ? "finding" : "findings"}.\n`);
+process.stdout.write(`${pages} page checks, ${catalogChecks} catalog checks, ${distinct} distinct ${distinct === 1 ? "finding" : "findings"}.\n`);
 process.exit(distinct ? 1 : 0);
