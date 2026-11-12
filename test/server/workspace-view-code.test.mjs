@@ -210,6 +210,9 @@ test("clause 50: with code content on and no checkout, a link to a code file res
   assert.deepEqual(on["packages/billing/notes.txt"], available("packages/billing/notes.txt"));
   assert.deepEqual(on["packages/web/page.js"], unavailable("packages/web/page.js"), "only feature-x holds it, not the default branch");
   assert.deepEqual(on["none.js"], unavailable("none.js"));
+  assert.deepEqual(on[".env"], unavailable(".env"), "a secret by its path never resolves from the clone");
+  assert.deepEqual(on["assets/logo.bin"], available("assets/logo.bin"), "a binary file is told apart only on open");
+  assert.deepEqual(on["assets/big.txt"], available("assets/big.txt"), "a large file is told apart only on open");
   const file = await open("packages/billing/total.js");
   assert.equal(file.status, 200, file.body);
   assert.deepEqual(file.json, { ref: "code:api:packages/billing/total.js", repository: "api", branch: "main", commit: git(code, "rev-parse", "main"), path: "packages/billing/total.js", blob: blobOf(TOTAL), bytes: Buffer.byteLength(TOTAL), content: TOTAL });
@@ -245,6 +248,7 @@ test("clause 50: a registered checkout that lists the path still answers the lin
   assert.deepEqual(listed["packages/billing/total.js"], available("packages/billing/total.js"));
   assert.deepEqual(listed["packages/billing/notes.txt"], available("packages/billing/notes.txt"));
   assert.deepEqual(listed["packages/web/page.js"], { line: 3, target: null, resolved: false }, "with a checkout registered, a path neither it nor the default branch holds names nothing");
+  assert.deepEqual(listed[".env"], { line: 3, target: null, resolved: false }, "with a checkout registered, a secret names nothing");
   const total = await open("packages/billing/total.js");
   assert.equal(total.status, 200, total.body);
   assert.equal(total.json.content, CHECKOUT_TOTAL, "the checkout wins over the clone");
@@ -262,7 +266,8 @@ test("clause 50: the page opens a link resolved from the clone as a tab with its
   await settle(page);
   const link = page.locator('a[data-doc-link="code:api:packages/billing/total.js"]');
   assert.equal(await link.count(), 1, "the link opens the file");
-  assert.equal(await page.locator('[data-link="unavailable"]').count(), 2, "page.js and none.js are not available on this machine");
+  assert.equal(await page.locator('[data-link="unavailable"]').count(), 3, "page.js, none.js, and the secret .env are not available on this machine");
+  assert.equal(await page.locator('a[data-doc-link="code:api:.env"]').count(), 0, "the page offers no link to a secret");
   await link.click();
   await settle(page);
   assert.match(await page.locator("body").innerText(), /export const total/);
