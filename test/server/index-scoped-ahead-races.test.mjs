@@ -7,11 +7,12 @@ import path from "node:path";
 import { manifestPath, project } from "./fixtures/component-indexes.mjs";
 import { stagedRuntime, until } from "./fixtures/staged-runtime.mjs";
 
-// Races between a call that pauses an unrelated build and the queue that build runs in, for the index-preparation contract's clause 20.
+// Races between a call that pauses an unrelated build and the queue that build runs in, and the lock holder that a waiting component names,
+// for the index-preparation contract's clauses 20 and 21.
 process.env.PLUGIN_DATA ||= mkdtempSync(path.join(os.tmpdir(), "prism-index-ahead-races-data-"));
 process.env.PRISM_NATIVE_ASSET_MANIFEST ||= manifestPath;
 const { searchRepositoryConcepts } = await import("../../dist/server/repository-intelligence/semantic-native-provider.mjs");
-const { ProgressRecorder } = await import("../../dist/server/repository-intelligence/index-progress.mjs");
+const { ProgressRecorder, readProgressRecords } = await import("../../dist/server/repository-intelligence/index-progress.mjs");
 
 const NET_FILES = ["packages/net/retry.ts", "packages/net/timeout.ts"];
 const APP_FILES = ["packages/app/client.ts"];
@@ -99,4 +100,20 @@ test("a call for the running build's component at changed content never pauses t
   control.release("packages/net/timeout.ts");
   await settled(runtime, root);
   assert.equal(control.stops, 0);
+});
+
+test("a component waiting for another session's lock names the session that holds it, never a session that only waits for it", async (t) => {
+  const { root, storage, runtime: first, control } = await runningNet(t);
+  const net = (await first.location(root, NET)).directory;
+  const [holder] = await until(async () => { const records = await readProgressRecords(net); return records.length && records; }, "The holding session wrote no progress record.");
+  // Another live process whose session only waits for net's lock, preparing different content.
+  const now = new Date().toISOString();
+  await writeFile(path.join(net, `progress-${process.ppid}.json`), JSON.stringify({ schemaVersion: 1, pid: process.ppid, preparationId: "f".repeat(64), state: "preparing",
+    startedAt: now, updatedAt: now, progress: { phase: "waiting" }, diagnostics: [] }), { mode: 0o600 });
+  const later = await stagedRuntime(storage);
+  await search(root, later.runtime, ["packages/net"]);
+  const waiting = await until(async () => { const value = (await later.runtime.status(root)).components?.find((item) => item.component === NET.identity); return value?.waitingFor && value; }, "The later session's net component names nothing it waits for.");
+  assert.deepEqual(waiting.waitingFor, { component: NET.identity, preparationId: holder.preparationId, reason: "lock" });
+  control.release("packages/net/timeout.ts");
+  await settled(first, root);
 });

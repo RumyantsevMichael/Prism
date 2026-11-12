@@ -135,8 +135,9 @@ async function readProgressRecords(directory) {
   return records;
 }
 async function lockHolder(directory, self) {
-  for (const record of await readProgressRecords(directory)) if (record.pid !== process.pid && record.state === "preparing" && processAlive(record.pid)) return record.preparationId;
-  for (const recorder of live.get(directory) ?? []) if (recorder !== self) return recorder.record.preparationId;
+  const holding = (progress) => progress?.phase !== "waiting";
+  for (const recorder of live.get(directory) ?? []) if (recorder !== self && holding(recorder.record.progress)) return recorder.record.preparationId;
+  for (const record of await readProgressRecords(directory)) if (record.pid !== process.pid && record.state === "preparing" && holding(record.progress) && processAlive(record.pid)) return record.preparationId;
   return null;
 }
 function git(root, args) {

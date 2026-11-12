@@ -123,10 +123,12 @@ export async function readProgressRecords(directory: string): Promise<ProgressRe
 /**
  * The preparation id of the build that another session runs in a storage directory: a live progress record of another process that is still preparing,
  * or a recorder of this process other than `self` that has not finished, as another runtime in the same process has; null when there is none.
+ * A session whose progress phase is `waiting` only waits for the same lock, so it is passed over and never named as the holder.
  */
 export async function lockHolder(directory: string, self?: ProgressRecorder): Promise<string | null> {
-  for (const record of await readProgressRecords(directory)) if (record.pid !== process.pid && record.state === "preparing" && processAlive(record.pid)) return record.preparationId;
-  for (const recorder of live.get(directory) ?? []) if (recorder !== self) return recorder.record.preparationId;
+  const holding = (progress: Progress | null | undefined) => progress?.phase !== "waiting";
+  for (const recorder of live.get(directory) ?? []) if (recorder !== self && holding(recorder.record.progress)) return recorder.record.preparationId;
+  for (const record of await readProgressRecords(directory)) if (record.pid !== process.pid && record.state === "preparing" && holding(record.progress) && processAlive(record.pid)) return record.preparationId;
   return null;
 }
 
