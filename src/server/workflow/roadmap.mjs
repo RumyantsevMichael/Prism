@@ -6,16 +6,19 @@ import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
 import { fitScopes, normalizeRequirementReference, readInitiative, scopeDependents, scopeLeaves, unfinishedFixes, unfinishedFixesMessage, withInitiativeWriteLocks } from "./initiative.mjs";
 import { generatedNotice, writeProjection } from "./projection.mjs";
-import { readCoordinationState } from "./state.mjs";
+import { closeShipGate, readCoordinationState } from "./state.mjs";
 import { readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 import { resolveArtifactPath } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { revisionMismatch } from "./revision.mjs";
-import { locateRecord, moveLegacyRecords, readRecord, writeRecord } from "./record-store.mjs";
+import { inArtifactStore, locateRecord, moveLegacyRecords, oversizedRevision, readRecord, readStoreFileBytes, writeRecord } from "./record-store.mjs";
 import { mergeHistory, mergeKeyed, mergeOrder, mergeScalars, MergeConflict, parseVersions } from "./record-merge.mjs";
 import { ComponentError, listComponents, listsComponents, readComponents } from "./components.mjs";
 import { latestDependentsRun, verifiedAt } from "./slice-design.mjs";
+import { initiativePlan } from "./ship-standing.mjs";
+import { acceptLinkedAdrs } from "./store-artifacts.mjs";
 import { proposeComponents } from "./workspace-manifests.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 import { documentDigests, entryShippedDecision, hasOpenWork, openWork, openWorkMessage, readSliceDocuments, recordEarlierShips, ShippedHistoryError, writeHistoryMarks } from "./shipped-history.mjs";
 
 export const BANDS = Object.freeze(["Now", "Next", "Later", "Parked"]);
@@ -66,7 +69,7 @@ export const UPDATE_ROADMAP_SCHEMA = object({
     object({ op: { const: "update_initiative" }, id, title: text, intent: text, pillar: text, requirements: references, rationale: text, corrects }, ["op", "id"]),
     object({ op: { const: "place" }, id, band, position }, ["op", "id", "band"]),
     object({ op: { const: "set_requires" }, id, requires: ids }),
-    object({ op: { const: "ship" }, id }),
+    object({ op: { const: "ship" }, id, afterGate: id }, ["op", "id"]),
     object({ op: { const: "supersede" }, id, by: id, reason: text }),
     object({ op: { const: "set_open_questions" }, questions: { type: "array", maxItems: 100, items: text } }),
     object({ op: { const: "replace_hand_written_projection" } }),
@@ -87,8 +90,10 @@ async function resolveRoadmap(projectRoot, createParent = false) {
   const paths = roadmapPaths(config);
   if (!paths) throw fail("invalid_config", "The workflow config disables the roadmap path.");
   const record = await locateRecord(projectRoot, { kind: "roadmap" });
-  const projection = await resolveArtifactPath(projectRoot, paths.projection, createParent, path.posix.basename(paths.projection));
-  return { root: record.root, config, recordPath: record.path, target: record.target, projectionPath: projection.deltaPath, projectionTarget: projection.target, recordName: path.posix.basename(paths.record) };
+  // With a store the roadmap view is a store artifact, so the checkout gets no folder for it.
+  const inStore = await inArtifactStore(projectRoot, paths.projection);
+  const projection = inStore ? { deltaPath: paths.projection } : await resolveArtifactPath(projectRoot, paths.projection, createParent, path.posix.basename(paths.projection));
+  return { root: record.root, config, recordPath: record.path, target: record.target, projectionPath: projection.deltaPath, inStore, recordName: path.posix.basename(paths.record) };
 }
 
 function emptyRoadmap() {
@@ -193,16 +198,17 @@ export function mergeRoadmapRecord(versions) {
 async function loadRoadmap(resolved) {
   let contents;
   try {
-    contents = await readFile(resolved.target);
+    // The record is read without following a link and only within its 1 MiB bound, so a larger file reads as a damaged record, unread.
+    contents = await readStoreFileBytes(resolved.target, RECORD_MAX_BYTES);
   } catch (error) {
-    if (error.code === "ENOENT") return { exists: false, revision: null, record: null, valid: true, errors: [] };
+    if (error.tooLarge) return { exists: true, revision: oversizedRevision(error), record: null, valid: false, errors: [error.message] };
     throw error;
   }
-  if (contents.length > RECORD_MAX_BYTES) throw fail("artifact_too_large", "The roadmap record exceeds 1 MiB.");
+  if (contents === null) return { exists: false, revision: null, record: null, valid: true, errors: [] };
   const revision = createHash("sha256").update(contents).digest("hex");
   let raw;
   try {
-    raw = JSON.parse(contents.toString("utf8"));
+    raw = parseStoreJson(contents.toString("utf8"));
   } catch {
     return { exists: true, revision, record: null, valid: false, errors: ["The roadmap record must contain valid JSON."] };
   }
@@ -252,17 +258,33 @@ export async function dependentsBlockers(projectRoot, config, initiative, record
 
 const dependentsMessage = (scopes) => `The initiative cannot ship while the dependents of a finished scope are red or have not run: ${scopes.map((item) => `${item.scope} (${item.reason === "stale" ? `the run ${item.run} predates the scope's latest verified change` : item.reason === "failed" ? "failed or declined" : "not run"}: ${item.blocked.join(", ")})`).join("; ")}. Run verify_slice with dependents for each scope, and fix or allow what it reports.`;
 
+const withoutGates = (work, exempt) => exempt.size ? { ...work, gates: work.gates.filter((gate) => !exempt.has(gate.id)) } : work;
+
 // Open work refuses ship before any leaf check, so it is reported whether or not the leaves are done or the initiative record is readable.
-async function withOpenWork(projectRoot, item, result, options = {}) {
-  const work = await openWork(projectRoot, item.id, options).catch(() => null);
+// exempt names the pending gates that are not open work, as the correctness gate that confirms a ship with a record store.
+async function withOpenWork(projectRoot, item, result, options = {}, exempt = new Set()) {
+  const found = await openWork(projectRoot, item.id, options).catch(() => null);
+  const work = found && withoutGates(found, exempt);
   if (!work || !hasOpenWork(work)) return null;
   const { derived } = result;
   const diagnostic = { code: "open_work", message: openWorkMessage(item.id, work), ...work };
   return { derived: { ...derived, readyToShip: false, diagnostics: [...derived.diagnostics, diagnostic] }, blocker: derived.readyToShip ? { open: work } : result.blocker };
 }
 
+// The pending gates that a ship does not count as open work: the gate it names in afterGate, which confirms it and closes with it.
+// Read for readyToShip, where no ship names one yet, that is the newest pending correctness gate in a project with a record store, which a ship then names,
+// so an older pending gate, such as an unanswered correctness gate asked before it, stays open work for both.
+function confirmingGates(config, state, ship) {
+  if (ship) return new Set(ship.afterGate === undefined ? [] : [ship.afterGate]);
+  if (!hasStore(config) || !Array.isArray(state?.pending)) return new Set();
+  const newest = state.pending.filter((gate) => isGate(gate) && gate.kind === "correctness")
+    .reduce((latest, gate) => latest && String(latest.askedAt ?? "") > String(gate.askedAt ?? "") ? latest : gate, null);
+  return new Set(newest ? [newest.id] : []);
+}
+
 // The facts of an initiative and what keeps it from shipping: blocker is null, { leaves: true } while a leaf is not done, { open } for open work, { fixes } for unfinished fixes, { problem } for an invalid declaration, or { scopes } for blocked dependents.
-async function deriveItem(projectRoot, config, item) {
+// ship is { afterGate } when a ship asks, so the gate it names is the one pending gate that is not open work, with or without a record store.
+async function deriveItem(projectRoot, config, item, ship = null) {
   const base = { id: item.id, band: item.band, state: "envisioned", readyToShip: false, progress: null, active: [], diagnostics: [] };
   const leaves = { leaves: true };
   if (item.decision?.kind === "shipped") return { derived: { ...base, band: "Shipped", state: "shipped" }, blocker: null };
@@ -296,7 +318,8 @@ async function deriveItem(projectRoot, config, item) {
   const started = analysis.leaves.some((slug) => analysis.slices[slug].status !== "not-started") || active.length > 0;
   const derived = { ...base, state: started ? "in-progress" : "planned", readyToShip: analysis.complete[analysis.root] === true, progress, active, root: analysis.root };
   if (state) {
-    const open = await withOpenWork(projectRoot, item, { derived, blocker: leaves }, { record: loaded.record, state });
+    // With a record store, a ship waits on a correctness gate, so the newest pending one leaves the initiative ready to ship with that gate as afterGate.
+    const open = await withOpenWork(projectRoot, item, { derived, blocker: leaves }, { record: loaded.record, state }, confirmingGates(config, state.state, ship));
     if (open) return open;
   }
   // Unfinished fixes to done work refuse ship after open work and before the leaf check, since an unfinished fix slice is also a leaf that is not done.
@@ -363,7 +386,7 @@ export async function readWorkspaceName(projectRoot) {
   try {
     const { bytes } = await readRecord(projectRoot, { kind: "roadmap" });
     if (!bytes) return null;
-    const name = JSON.parse(bytes.toString("utf8"))?.workspaceName;
+    const name = parseStoreJson(bytes.toString("utf8"))?.workspaceName;
     return typeof name === "string" && !workspaceNameProblem(name) ? name : null;
   } catch {
     return null;
@@ -381,6 +404,18 @@ export async function getRoadmap(input) {
   if (recorded.length) ({ resolved, loaded, derived } = await readRoadmap(input.projectRoot));
   const markedHistory = recorded.filter((item) => item.marked.length);
   return { ...publicResult(resolved, loaded, derived), components: await roadmapComponents(resolved.root, resolved.config), ...(markedHistory.length ? { markedHistory } : {}) };
+}
+
+/**
+ * The roadmap view generated from the bytes of a stored roadmap record, exactly as update_roadmap writes it, or null when the record is not one that get_roadmap reports valid.
+ * The move of a checkout's artifacts writes it into the store before it compares the checkout's view with it.
+ */
+export function roadmapViewOf(bytes, recordName) {
+  if (!bytes || bytes.length > RECORD_MAX_BYTES) return null;
+  let raw;
+  try { raw = parseStoreJson(bytes.toString("utf8")); }
+  catch { return null; }
+  return validateRoadmap(raw).length ? null : markdown(raw, recordName);
 }
 
 function markdown(record, recordName) {
@@ -440,6 +475,84 @@ function roadmapRequirements(resolved, references) {
   });
 }
 
+const hasStore = (config) => (config.workspace?.store ?? null) !== null;
+
+const isGate = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+
+const HOW_TO_CONFIRM = "Ask the person with an update_coordination_state gateOperations ask of kind correctness, wait for the answer with wait_for_user_gate, and ship with afterGate set to that gate's id once the person approves it in the review browser.";
+const unconfirmed = (reason, details) => fail("ship_unconfirmed", `${reason} ${HOW_TO_CONFIRM}`, details);
+
+// What changed since a correctness gate was asked, in words: the leaves verified again, the slice.md files that changed, the slices whose links resolve in other repositories, and the ADRs that the ship would accept.
+function changesText(changed) {
+  const names = (repositories) => repositories.length ? repositories.join(", ") : "no repository";
+  const adr = { added: "the ship would now also accept the ADR", changed: "the ADR", removed: "the ship would no longer accept the ADR" };
+  const parts = changed.slice(0, 10).map((item) => item.slice !== undefined
+    ? `${item.slice} ${item.run === null ? "has no passing verification run" : `passed verification again in run ${item.run}`}`
+    : item.folder !== undefined
+      ? `the links of the slice in ${item.folder} resolve in ${names(item.repositories)} rather than ${names(item.before)}`
+      : item.kind === "adrs"
+        ? `${adr[item.change]} ${item.path} in scope ${item.scope}${item.change === "changed" ? " was changed" : ""}`
+        : `${item.path} in scope ${item.scope} was ${item.change}`);
+  return `${parts.join("; ")}${changed.length > 10 ? `; and ${changed.length - 10} more` : ""}`;
+}
+
+/**
+ * Refuse a ship with ship_unconfirmed unless afterGate names a correctness gate of the initiative that the person answered approve in the review browser,
+ * which is the only writer of a gate's answer, so no agent confirms a ship on the person's behalf.
+ * With a record store the gate must also have been asked after each leaf's latest passing verification run, which runs, from initiativePlan, gives: returns the gate.
+ */
+async function confirmShip(projectRoot, initiative, afterGate, runs = null) {
+  const refuse = (reason, details = {}) => unconfirmed(reason, { ...(afterGate === undefined ? {} : { afterGate }), ...details });
+  if (afterGate === undefined) throw refuse(`With a record store, ship needs afterGate, a correctness gate of ${initiative} that the person approved in the review browser, since shipping accepts the initiative's Proposed ADRs.`);
+  let state = null;
+  try { state = (await readCoordinationState({ projectRoot, initiative })).state; }
+  catch { state = null; }
+  const gate = [...(Array.isArray(state?.pending) ? state.pending : []), ...(Array.isArray(state?.closed) ? state.closed : [])].find((candidate) => isGate(candidate) && candidate.id === afterGate);
+  if (!gate) throw refuse(`${afterGate} is no gate of the initiative ${initiative}, so nothing confirms the ship.`);
+  if (gate.kind !== "correctness") throw refuse(`${afterGate} is a ${gate.kind} gate, and only a correctness gate confirms a ship.`);
+  if (!isGate(gate.answer)) throw refuse(`The correctness gate ${afterGate} has no answer yet, so the initiative does not ship until the person approves it.`);
+  if (gate.answer.via !== "browser" || gate.answer.choice !== "approve") {
+    const note = typeof gate.answer.note === "string" && gate.answer.note ? `: ${gate.answer.note}` : "";
+    throw refuse(`The person answered the correctness gate ${afterGate} with ${gate.answer.choice ?? "no choice"}${note}, so the initiative does not ship; address the answer and ask again.`);
+  }
+  if (runs === null) return gate;
+  // The gate confirms the initiative as it stood when it was asked, which it recorded then, so a gate asked before Prism recorded that confirms no ship.
+  if (!isGate(gate.standing) || !["runs", "slices", "repositories", "adrs"].every((key) => Array.isArray(gate.standing[key]))) {
+    throw refuse(`The correctness gate ${afterGate} records nothing of what the initiative stood at when it was asked, so it cannot confirm what the ship accepts; ask a new one.`);
+  }
+  const asked = new Map(gate.standing.runs.map((item) => [item.slice, item.run]));
+  const changed = runs.filter((item) => !asked.has(item.slice) || asked.get(item.slice) !== item.run).map((item) => ({ slice: item.slice, run: item.run }));
+  if (changed.length) throw refuse(`The correctness gate ${afterGate} was asked before what the ship accepts: since then ${changesText(changed)}, so the person has not confirmed the initiative as it stands; ask a new one.`, { changed });
+  return gate;
+}
+
+/**
+ * Accept the Proposed ADRs that the slice.md files of shipped initiatives link, each with its correctness gate and the commits of each leaf slice's latest passing verification run,
+ * under one hold of the store's artifact lock, refusing every ship before anything changes when a slice.md, the repositories its links resolve in, or an ADR it would accept changed since its gate was asked,
+ * when a link could name ADRs in two scopes, or when a linked ADR waits on an approval:
+ * returns the accepted ADRs as { path, scope, verifiedBy }.
+ */
+async function acceptShippedAdrs(resolved, shipped, at) {
+  const ships = shipped.filter((ship) => ship.plan !== null).map((ship) => {
+    const verifiedBy = ship.runs.filter((item) => item.checkout?.head).map((item) => ({ slice: item.slice, repository: item.checkout.repository ?? null, commit: item.checkout.head }));
+    return { plan: ship.plan, standing: ship.standing, ship: { gate: ship.gate, initiative: ship.initiative, at, verifiedBy } };
+  });
+  if (!ships.length) return [];
+  const outcome = await acceptLinkedAdrs(resolved.root, ships);
+  if (outcome.refused === "ship_unconfirmed") {
+    throw unconfirmed(`The correctness gate ${outcome.gate} was asked before what the ship accepts: since then ${changesText(outcome.changed)}, so the person has not confirmed the initiative as it stands; ask a new one.`, { afterGate: outcome.gate, changed: outcome.changed });
+  }
+  if (outcome.refused === "adr_ambiguous") {
+    const named = outcome.adrs.map((adr) => `${adr.path} in scopes ${adr.scopes.join(", ")}`).join("; ");
+    throw fail("adr_ambiguous", `A link in a slice.md could name ADRs at the same path in two or more scopes, none of them the scope of that slice.md, so the ship cannot tell which one it accepts and nothing changed: ${named}. Keep the ADR in one of those scopes, or keep the slice.md in the scope of the one it means, then ask a new correctness gate and ship.`, { adrs: outcome.adrs });
+  }
+  if (outcome.refused === "adr_pending") {
+    const named = outcome.adrs.map((adr) => `${adr.path} in scope ${adr.scope.label} (${adr.gates.join(", ")})`).join("; ");
+    throw fail("adr_pending", `The ship would accept ADRs that wait on the person's answer to an approval, so nothing changed: ${named}. Wait for the person to answer each approval in the review browser, or withdraw it by asking again, then ship.`, { adrs: outcome.adrs });
+  }
+  return outcome.accepted;
+}
+
 /**
  * The corrects field of an add_initiative or update_initiative operation, checked: the named initiative is another roadmap entry that has shipped,
  * and every named slice is a slice of its initiative record, so a record that is missing or unreadable holds none.
@@ -463,7 +576,7 @@ async function checkedCorrects(resolved, record, operation) {
   return { initiative, slices: [...new Set(slices)] };
 }
 
-async function applyOperation(resolved, record, operation, actor, at, marks) {
+async function applyOperation(resolved, record, operation, actor, at, marks, shipped) {
   // A shipped entry keeps its content as history, so a change to it is refused before its arguments are normalized.
   if (operation.op === "update_initiative" || operation.op === "set_requires") {
     const shipped = entryShippedDecision(record.initiatives.find((candidate) => candidate.id === operation.id));
@@ -514,18 +627,27 @@ async function applyOperation(resolved, record, operation, actor, at, marks) {
       const item = findInitiative(record, operation.id);
       if (item.decision) throw fail("validation_failed", `Initiative ${item.id} already has a ${item.decision.kind} decision.`);
       // Work still open when an initiative ships could never be finished, because its state is then history.
-      const work = await openWork(resolved.root, item.id);
+      // The correctness gate that the ship names confirms this ship and closes with it, so it is the one pending gate that is not open work,
+      // and a named gate that the person did not approve as a correctness gate refuses the ship first; what it confirms is checked below.
+      if (operation.afterGate !== undefined) await confirmShip(resolved.root, item.id, operation.afterGate);
+      const work = withoutGates(await openWork(resolved.root, item.id), confirmingGates(resolved.config, null, operation));
       if (hasOpenWork(work)) throw fail("open_work", openWorkMessage(item.id, work), work);
-      const { derived, blocker } = await deriveItem(resolved.root, resolved.config, item);
+      const { derived, blocker } = await deriveItem(resolved.root, resolved.config, item, operation);
       if (blocker?.open) throw fail("open_work", openWorkMessage(item.id, blocker.open), blocker.open);
       if (blocker?.fixes) throw fail("fixes_unfinished", unfinishedFixesMessage(item.id, blocker.fixes), { fixes: blocker.fixes });
       if (blocker?.leaves) throw fail("gate_blocked", "Every leaf slice in the initiative record must be done before the initiative ships.", { state: derived.state, progress: derived.progress, diagnostics: derived.diagnostics });
       // Shipping reads the components after the leaf check: an invalid declaration refuses with its own code and fields, and a red or unproven dependent blocks it.
       if (blocker?.problem) throw blocker.problem;
       if (blocker?.scopes) throw fail("dependents_blocked", dependentsMessage(blocker.scopes), { scopes: blocker.scopes });
+      // With a store, a ship accepts ADRs, so it waits for a person's approval of a correctness gate; a given gate is checked without a store too.
+      if (hasStore(resolved.config)) {
+        const { plan, runs } = await initiativePlan(resolved.root, item.id);
+        const gate = await confirmShip(resolved.root, item.id, operation.afterGate, runs);
+        shipped.push({ initiative: item.id, gate: operation.afterGate, plan, runs, standing: gate.standing });
+      } else if (operation.afterGate !== undefined) await confirmShip(resolved.root, item.id, operation.afterGate);
       // Ship records each slice document's content without the mark; the marks are written once the record is.
       const { documents, problems } = await readSliceDocuments(resolved.root, item.id);
-      item.decision = { kind: "shipped", at, actor, documents: documentDigests(documents), documentsRecordedAt: at, documentsFrom: "ship" };
+      item.decision = { kind: "shipped", at, actor, ...(operation.afterGate === undefined ? {} : { gate: operation.afterGate }), documents: documentDigests(documents), documentsRecordedAt: at, documentsFrom: "ship" };
       marks.push({ initiative: item.id, decision: item.decision, documents, problems });
       break;
     }
@@ -552,7 +674,7 @@ export async function updateRoadmap(input) {
   validateInput(UPDATE_ROADMAP_SCHEMA, input);
   await moveLegacyRecords(input.projectRoot);
   const resolved = await resolveRoadmap(input.projectRoot, true);
-  const managed = [resolved.projectionPath].filter((file) => path.posix.basename(file) === "roadmap.md");
+  const managed = [resolved.projectionPath].filter((file) => !resolved.inStore && path.posix.basename(file) === "roadmap.md");
   if (managed.length) await conservationStore.registerCoordinationOutputs(resolved.root, managed);
   await mkdir(path.dirname(resolved.target), { recursive: true });
   // A ship holds the write locks of each initiative it ships, in id order and before the roadmap lock, from its open-work read until its decision is written,
@@ -569,30 +691,32 @@ export async function updateRoadmap(input) {
     const at = new Date().toISOString();
     const actor = input.actor ?? "agent";
     const marks = [];
-    for (const operation of input.operations) await applyOperation(resolved, record, operation, actor, at, marks);
+    const shipped = [];
+    for (const operation of input.operations) await applyOperation(resolved, record, operation, actor, at, marks, shipped);
     const errors = validateRoadmap(record);
     if (errors.length) throw fail("invalid_roadmap", `The proposed roadmap is invalid and was not written: ${errors[0]}`, { errors });
+    // The ADRs are accepted before the ship is recorded, so a store that refuses the acceptance leaves the initiative unshipped and a later ship tries again.
+    const acceptedAdrs = await acceptShippedAdrs(resolved, shipped, at);
+    // The ship holds each shipped initiative's state lock, so it closes the gate that confirmed it before the decision is written, and a shipped initiative keeps no pending gate.
+    for (const operation of input.operations.filter((candidate) => candidate.op === "ship" && candidate.afterGate !== undefined)) await closeShipGate(resolved.root, operation.id, operation.afterGate);
     const mutating = input.operations.filter((operation) => !["regenerate_markdown", "replace_hand_written_projection"].includes(operation.op));
     for (const operation of mutating) record.history.push({ actor, operation: operation.op, ...(operation.id ? { id: operation.id } : {}), at });
     record.history = record.history.slice(-HISTORY_LIMIT);
     const contents = serializeRoadmap(record);
-    if (mutating.length && contents !== (await readFile(resolved.target, "utf8").catch(() => null))) {
+    if (mutating.length && contents !== ((await readStoreFileBytes(resolved.target, RECORD_MAX_BYTES).catch(() => null))?.toString("utf8") ?? null)) {
       await writeRecord(resolved.root, { kind: "roadmap" }, contents);
     }
     const projection = markdown(record, resolved.recordName);
     let projectionStale = false;
     try {
-      if (input.operations.some((operation) => operation.op === "replace_hand_written_projection")) {
-        await conservationStore.writeManaged(resolved.root, resolved.projectionTarget, projection);
-      } else {
-        projectionStale = !(await writeProjection(resolved.root, resolved.projectionTarget, projection, resolved.recordName)).written;
-      }
+      const replace = input.operations.some((operation) => operation.op === "replace_hand_written_projection");
+      projectionStale = !(await writeProjection(resolved.root, resolved.projectionPath, projection, resolved.recordName, { replace })).written;
     } catch {
       projectionStale = true;
     }
     const history = await markShipped(resolved.root, marks);
     const { loaded, derived } = await readRoadmap(input.projectRoot);
-    return { ...publicResult(resolved, loaded, derived), created: !current.exists, previousRevision: current.revision, projectionStale, ...history };
+    return { ...publicResult(resolved, loaded, derived), created: !current.exists, previousRevision: current.revision, projectionStale, ...(shipped.length ? { acceptedAdrs } : {}), ...history };
   }, fail)));
 }
 
@@ -613,13 +737,13 @@ async function markShipped(root, marks) {
 export const ROADMAP_TOOLS = [
   {
     name: "get_roadmap",
-    description: "Read the MCP-managed roadmap record with each initiative's derived lifecycle state, band, slice progress, active work, and readiness to ship, and the repository's components: its repository name, the declared components by identity <repository>/<component> with their folder, test command, and dependencies, the declaration's problem when it is invalid, and, when the configuration lists no component and a root workspace manifest (package.json, pnpm-workspace.yaml, Cargo.toml, or go.work) gives workspace patterns, a proposal of a ## Components block with its components, shared paths, skipped manifests, and problem. Reads never create files, and the proposal is never written; offer it to the person to commit. The one exception is a shipped entry whose decision has not recorded its slice documents: the read records them with documentsFrom first-read, writes the history mark into each, and lists them under markedHistory ({ initiative, marked }) to commit apart from the task's changes.",
+    description: "Read the MCP-managed roadmap record with each initiative's derived lifecycle state, band, slice progress, active work, and readiness to ship, and the repository's components: its repository name, the declared components by identity <repository>/<component> with their folder, test command, and dependencies, the declaration's problem when it is invalid, and, when the configuration lists no component and a root workspace manifest (package.json, pnpm-workspace.yaml, Cargo.toml, or go.work) gives workspace patterns, a proposal of a ## Components block with its components, shared paths, skipped manifests, and problem. Reads never create files, and the proposal is never written; offer it to the person to commit. The one exception is a shipped entry whose decision has not recorded its slice documents: the read records them with documentsFrom first-read, writes the history mark into each, and lists them under markedHistory ({ initiative, marked }); a document in the checkout is to be committed apart from the task's changes, while one in the record store is shared by its sync and needs no commit.",
     inputSchema: GET_ROADMAP_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "update_roadmap",
-    description: "Apply revision-checked roadmap operations: set what the roadmap serves, set the workspace name that every checkout sharing the record store shows (one line of at most 64 characters, an empty name clears it), add or update initiatives, place them in Now, Next, Later, or Parked, set required initiatives, record ship or supersede decisions, and set open questions. add_initiative and update_initiative take corrects ({ initiative, slices }) for a fix to shipped work: the entry names the shipped initiative and each of its recorded slices whose work it corrects, the roadmap Markdown shows it, and the shipped initiative's shippedHistory lists the entry under laterFixes; corrects refuses with validation_failed an initiative that has not shipped (fix its done work inside it with update_initiative report_defect), an unknown initiative, the entry's own id, an empty slices list, and a slice the shipped initiative's record does not hold. A shipped initiative's entry keeps its title, intent, requirements, and required initiatives: update_initiative and set_requires naming it refuse with initiative_shipped, with its initiative and shippedAt. Ship refuses an existing decision with validation_failed, then refuses with open_work, listing gates ({ id, slice, question, answered }), claims ({ slice, label, activity, expiresAt }), and proposals (scope slugs), while the initiative has a pending user gate, answered or not, a live slice claim, or a pending design proposal. Ship then refuses with fixes_unfinished, listing fixes ({ slice, defect, fix, status }), while a defect reported on a done slice has no fix slice or its fix slice is not done. Ship then requires every leaf slice to be done, refusing with gate_blocked first; it then reads the ## Components declaration, refusing an invalid one with its own code, and refuses with dependents_blocked, listing each scope with its blocked dependents and reason failed or not_run, while a finished scope has dependents without a passing dependents' run of every one of them, or reason stale with run naming the dependents' run's record path while that latest run started before a leaf of the scope last passed verification, as when a fix slice changed the scope after it; readyToShip in get_roadmap is true only when ship would succeed, with a diagnostic saying why otherwise. Ship records each slice document of the initiative in its decision as documents ({ path, sha256 } of its content without the history mark), with documentsRecordedAt and documentsFrom ship, writes the history mark into each, and lists the marked paths under historyMarks and each document it could not read or write under historyMarkProblems ({ path, reason }) without failing. Every write regenerates the roadmap Markdown without overwriting a hand-written file.",
+    description: "Apply revision-checked roadmap operations: set what the roadmap serves, set the workspace name that every checkout sharing the record store shows (one line of at most 64 characters, an empty name clears it), add or update initiatives, place them in Now, Next, Later, or Parked, set required initiatives, record ship or supersede decisions, and set open questions. add_initiative and update_initiative take corrects ({ initiative, slices }) for a fix to shipped work: the entry names the shipped initiative and each of its recorded slices whose work it corrects, the roadmap Markdown shows it, and the shipped initiative's shippedHistory lists the entry under laterFixes; corrects refuses with validation_failed an initiative that has not shipped (fix its done work inside it with update_initiative report_defect), an unknown initiative, the entry's own id, an empty slices list, and a slice the shipped initiative's record does not hold. A shipped initiative's entry keeps its title, intent, requirements, and required initiatives: update_initiative and set_requires naming it refuse with initiative_shipped, with its initiative and shippedAt. Ship refuses an existing decision with validation_failed, then refuses with ship_unconfirmed an afterGate that is not a correctness gate of the initiative that the person answered approve in the review browser, then refuses with open_work, listing gates ({ id, slice, question, answered }), claims ({ slice, label, activity, expiresAt }), and proposals (scope slugs), while the initiative has a pending user gate, answered or not, other than the correctness gate that the ship names in afterGate, a live slice claim, or a pending design proposal. Ship then refuses with fixes_unfinished, listing fixes ({ slice, defect, fix, status }), while a defect reported on a done slice has no fix slice or its fix slice is not done. Ship then requires every leaf slice to be done, refusing with gate_blocked first; it then reads the ## Components declaration, refusing an invalid one with its own code, and refuses with dependents_blocked, listing each scope with its blocked dependents and reason failed or not_run, while a finished scope has dependents without a passing dependents' run of every one of them, or reason stale with run naming the dependents' run's record path while that latest run started before a leaf of the scope last passed verification, as when a fix slice changed the scope after it. With a record store, ship takes afterGate, the id of a correctness gate of the initiative that the person answered approve in the review browser and that was asked after each leaf slice's latest passing verification run and while every slice.md of the initiative, the repositories its links resolve in, and every ADR that ship would accept read as they do at ship, and is refused with ship_unconfirmed without one, naming what changed after an earlier gate was asked; it is refused with adr_ambiguous, naming the path and the scopes and changing nothing, where a link could name ADRs at the same path in two or more scopes none of which holds its slice.md, and with adr_pending, naming each ADR and its gate and changing nothing, while a linked Proposed ADR has an open approval; it then sets each ADR whose recorded status is Proposed and that a Markdown link in any slice.md of the initiative names, as CommonMark reads it, to Accepted, a link in a slice's slice.md naming an ADR of the workspace scope or of that slice's own repository and its components, whichever checkout ships, rewriting its Status: line and recording acceptance with the gate and verifiedBy, the slice, repository, and commit of each leaf slice's latest passing verification run, which get_artifact returns, and the result lists them under acceptedAdrs with path, scope, and verifiedBy, while a cited ADR with another recorded status stays as it is, and the ship closes the correctness gate it names. readyToShip in get_roadmap is true only when ship would succeed, except that with a record store the newest pending correctness gate, which the ship then names in afterGate, and an open approval of a linked ADR leave it true, while every other pending gate, an older correctness gate included, is open work, with a diagnostic saying why otherwise; asking a correctness gate closes each earlier one that the person answered. Ship records each slice document of the initiative in its decision as documents ({ path, sha256 } of its content without the history mark), with documentsRecordedAt and documentsFrom ship, writes the history mark into each, and lists the marked paths under historyMarks and each document it could not read or write under historyMarkProblems ({ path, reason }) without failing; with a record store the marked documents are store artifacts that its sync shares, so they need no commit. Every write regenerates the roadmap Markdown without overwriting a hand-written file.",
     inputSchema: UPDATE_ROADMAP_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }

@@ -32,7 +32,7 @@ Only the record store MAY map a record address to a physical file.
 The store MUST hold the same layout as `.prism`, without the leading `.prism` segment.
 A configured store folder that does not exist, is not a folder, or resolves inside or contains the project root MUST make every record operation fail, and Prism MUST NOT create the store or fall back to `.prism`.
 Containment and symbolic link checks MUST apply against the store folder when a store is set.
-The workflow configuration and every human document MUST stay in the project.
+The workflow configuration MUST stay in the project, and human documents stay there unless the [store artifacts decision](store-artifacts.md) moves them into the store.
 When a store is configured, the project's in-repo and legacy records MUST move into it under the existing migration rules, and a differing record already in the store MUST NOT be overwritten.
 Each record path MUST move into a store at most once, from whichever checkout brings it first, because committed records exist in every checkout and a later copy would bring back records removed since.
 This rule MUST NOT depend on a repository identity, because shallow clones, forks, and rewritten histories make one repository look like several or several look like one.
@@ -99,3 +99,4 @@ A marker from before the ledger, named by a repository's root commit, still make
 2026-11-02: A two-machine test showed that a shallow cloud clone and a full clone got different root commits, so the move ran twice; the per-repository marker gave way to a ledger of moved record paths.
 2026-11-02: `Store` may name the store's Git remote, and Prism keeps one clone of it per machine in its plugin data directory, because a hand-made clone at an agreed path was easy to get wrong and differed between machines and cloud sessions.
 2026-11-03: Clones moved from each host's plugin data directory to Prism's application folder, because Codex gives a plugin's MCP server no plugin data directory, and Prism is becoming an application that several hosts share.
+2026-11-07: Descriptive human documents of a repository whose configuration names a store move into the store under the [store artifacts decision](store-artifacts.md), while the workflow configuration and executable documents stay in the project.

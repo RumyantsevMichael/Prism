@@ -4,6 +4,7 @@ import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { isRemoteStore, managedStoreId, managedStoresDirectory } from "./remote-url.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 // Each machine lists where its checkouts of each named repository are, in Prism's application folder beside the managed store clones.
 // The list holds local paths, so it stays on this machine and never reaches a record store.
@@ -31,7 +32,7 @@ async function readEntries(file) {
   catch (error) { if (error.code === "ENOENT") return []; throw error; }
   if (info.isSymbolicLink() || !info.isFile()) return null;
   let parsed;
-  try { parsed = JSON.parse(await readFile(file, "utf8")); } catch { return []; }
+  try { parsed = parseStoreJson(await readFile(file, "utf8")); } catch { return []; }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed) || !Object.hasOwn(parsed, "schemaVersion")) return [];
   if (parsed.schemaVersion !== SCHEMA_VERSION) return null;
   return Array.isArray(parsed.checkouts) ? parsed.checkouts.filter(validEntry) : [];

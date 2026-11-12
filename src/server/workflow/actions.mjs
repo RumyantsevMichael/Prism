@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import os from "node:os";
 import { realpath } from "node:fs/promises";
 import { listComponents } from "./components.mjs";
 import { appendIndexHistory } from "./index-history.mjs";
@@ -9,6 +10,7 @@ import { REPOSITORY_NAME } from "./repository-names.mjs";
 import { readRoadmap } from "./roadmap.mjs";
 import { shippedActionReason, shippedDecision } from "./shipped-history.mjs";
 import { INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction } from "./state.mjs";
+import { ambiguousApprovalMessage, answerArtifactApproval, commentOnArtifact, pendingApprovalGates, storeArtifactTarget } from "./store-artifacts.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
 import { confirmLaunch } from "../session/launch-confirmation.mjs";
@@ -32,8 +34,12 @@ import {
 // The module needs no HTTP, so any transport serves the same registry, and a new action joins by adding a definition below.
 
 const GATE_ID = /^gate-[0-9a-f]{8,32}$/;
+const APPROVAL_ID = /^approval-[0-9a-f]{8,32}$/;
 const TEXT_LIMIT = 200;
 const NOTE_LIMIT = 4000;
+// A scope label is workspace, a repository name, or <repository>/<component>, and neither a label nor an artifact path holds a ":".
+const SCOPE_LABEL = /^[A-Za-z0-9][A-Za-z0-9._-]*(\/[A-Za-z0-9][A-Za-z0-9._-]*)?$/;
+const LINE_LIMIT = 16;
 
 export class ActionError extends Error {
   constructor(code, message, details = {}) {
@@ -67,6 +73,10 @@ export function parseTarget(reference) {
   if (match && SLUG_PATTERN.test(match[1]) && SLUG_PATTERN.test(match[2])) return { kind: "slice", reference, initiative: match[1], slice: match[2] };
   match = /^gate:([^/]+)\/([^/]+)$/.exec(reference);
   if (match && SLUG_PATTERN.test(match[1]) && GATE_ID.test(match[2])) return { kind: "gate", reference, initiative: match[1], gate: match[2] };
+  match = /^approval:(.+)$/.exec(reference);
+  if (match && APPROVAL_ID.test(match[1])) return { kind: "approval", reference, gate: match[1] };
+  match = /^artifact:([^:]+):([^:]+)$/.exec(reference);
+  if (match && SCOPE_LABEL.test(match[1])) return { kind: "artifact", reference, scope: match[1], path: match[2] };
   match = /^launch:(.+)$/.exec(reference);
   if (match && LAUNCH_ID_PATTERN.test(match[1])) return { kind: "launch", reference, launch: match[1] };
   match = /^index:([^/]+)\/([^/]+)$/.exec(reference);
@@ -97,8 +107,42 @@ async function initiativeExists(projectRoot, initiative, record) {
   return Boolean(roadmap?.loaded?.record?.initiatives?.some((item) => item.id === initiative));
 }
 
-// Reads what a target's actions need: the initiative's coordination state and record, or the index component, and refuses a target that does not exist.
+// A store that cannot be used refuses an approval target with its own code and message, as an artifact read is refused, and the review app answers it as unavailable.
+const storeRefusal = (error) => fail(error.code, error.message, { unavailable: true });
+const storeRefused = (error) => error?.name === "ArtifactError" && typeof error.code === "string";
+
+// The pending approval gates of the requirements and ADRs that the checkout sees whose id is the given one; a project without a store has none.
+// More than one names no single gate: a copied status record or a move between scopes that stopped halfway leaves such a copy.
+async function pendingApprovals(projectRoot, id) {
+  const config = await readWorkflowConfig(projectRoot);
+  if ((config.workspace?.store ?? null) === null) return [];
+  const gates = await pendingApprovalGates(projectRoot).catch((error) => {
+    if (error?.code === "store_not_configured") return [];
+    throw storeRefused(error) ? storeRefusal(error) : error;
+  });
+  return gates.filter((gate) => gate.id === id);
+}
+
+// The store artifact that an artifact target names, as { path, scope, kind, version }, or null; a project without a store holds none.
+async function seenArtifact(projectRoot, parsed) {
+  return storeArtifactTarget(projectRoot, parsed.scope, parsed.path).catch((error) => {
+    throw storeRefused(error) ? storeRefusal(error) : error;
+  });
+}
+
+// Reads what a target's actions need: the initiative's coordination state and record, the index component, the approval gate, the store artifact, or the launched session, and refuses a target that does not exist.
 async function readTarget(projectRoot, parsed, indexer, state = undefined, env = process.env) {
+  if (parsed.kind === "artifact") {
+    const artifact = await seenArtifact(projectRoot, parsed);
+    if (!artifact) throw unknownTarget(parsed.reference);
+    return { ...parsed, artifact };
+  }
+  if (parsed.kind === "approval") {
+    // An approval gate lives in its artifact's status record in the store, so an answered or replaced one is no target.
+    const gates = await pendingApprovals(projectRoot, parsed.gate);
+    if (!gates.length) throw unknownTarget(parsed.reference);
+    return { ...parsed, gateRecord: gates[0], ambiguous: gates.length > 1 ? ambiguousApprovalMessage(parsed.gate, gates) : null };
+  }
   if (parsed.kind === "launch") {
     // A launched session is a target while this machine lists it for the page's checkout.
     const view = (await listLaunches({ projectRoot, env })).launches.find((item) => item.id === parsed.launch);
@@ -233,7 +277,7 @@ const SETTING_ACTIONS = SETTING_DEFINITIONS.filter((definition) => INITIATIVE_SE
 // A gate's answer fields follow its kind: a review approves or asks for changes with a reason, a decision picks an option or explains, and assistance is done.
 function gateFields(gate) {
   const note = (extra) => text("note", "Note", NOTE_LIMIT, { multiline: true, ...extra });
-  if (gate.kind === "visual-review" || gate.kind === "correctness") {
+  if (gate.kind === "visual-review" || gate.kind === "correctness" || gate.kind === "approval") {
     return [choice("choice", "Answer", [option("approve", "Approve"), option("request-changes", "Request changes")], { required: true }), note({ requiredWhen: { field: "choice", values: ["request-changes"] } })];
   }
   if (gate.kind === "decision" && Array.isArray(gate.options) && gate.options.length) {
@@ -266,6 +310,48 @@ const GATE_ANSWER = {
   unavailable: (context) => context.gateRecord.answer ? "The question already has an answer." : null,
   after: (values) => ({ choice: values.choice ?? null, note: values.note ?? null }),
   change: (context, after) => ({ answer: { id: context.gate, choice: after.choice, note: after.note } })
+};
+
+// A requirement's or ADR's approval gate is answered as a review is, against the artifact's current version, and refused while the artifact differs from the version the gate asked about.
+const APPROVAL_CHANGED = "The file changed since this approval was asked, so approving it would approve a version nobody asked about. The agent asks again for the current version.";
+
+const APPROVAL_ANSWER = {
+  ...GATE_ANSWER,
+  kinds: ["approval"],
+  effect: "Records your answer; approving sets the file's status, and the agent that asked resumes with it.",
+  fields: () => gateFields({ kind: "approval" }),
+  context: (context) => context.ambiguous ? null : GATE_ANSWER.context(context),
+  recommended: () => null,
+  // An id that several pending gates hold names no version to answer against.
+  revision: (context) => context.ambiguous ? null : context.gateRecord.current,
+  unavailable: (context) => context.ambiguous ?? (context.gateRecord.changed ? APPROVAL_CHANGED : null),
+  unavailableCode: (context) => context.ambiguous ? "approval_ambiguous" : "artifact_changed",
+  change: undefined
+};
+
+// A comment names a line by its number, so it is refused unless it is decimal digits naming a whole number of at least 1.
+function commentLine(value) {
+  const line = /^[0-9]+$/.test(value ?? "") ? Number(value) : NaN;
+  if (!Number.isSafeInteger(line) || line < 1) throw invalid("line", "Decimal digits naming a whole number of at least 1.", "Line must be a whole number of at least 1.");
+  return line;
+}
+
+// A comment on a store artifact is made against the version the page shows, so a page that read an older version is refused as stale.
+const ARTIFACT_COMMENT = {
+  id: "artifact.comment",
+  kinds: ["artifact"],
+  label: "Comment",
+  group: "Review",
+  effect: "Adds your comment on that line for everyone whose checkout sees this file; the file itself does not change.",
+  target: (context) => context.reference,
+  fields: () => [text("line", "Line", LINE_LIMIT, { required: true }), text("text", "Comment", NOTE_LIMIT, { required: true, multiline: true })],
+  value: () => null,
+  context: () => null,
+  recommended: () => null,
+  confirm: () => null,
+  revision: (context) => context.artifact.version,
+  unavailable: () => null,
+  after: (values, context) => ({ version: context.artifact.version, line: commentLine(values.line), text: values.text })
 };
 
 const INDEX_REBUILD = {
@@ -362,7 +448,7 @@ const LAUNCH_RESUME = {
 };
 
 /** Every action, in listing order; a later action joins by adding its definition here. */
-const ACTIONS = [...SETTING_ACTIONS, ...LAUNCH_ACTIONS, GATE_ANSWER, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME];
+const ACTIONS = [...SETTING_ACTIONS, ...LAUNCH_ACTIONS, GATE_ANSWER, APPROVAL_ANSWER, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME];
 
 /** The sentence on when an action's change takes effect, or null for an action the registry does not define. */
 export const actionEffect = (id) => ACTIONS.find((definition) => definition.id === id)?.effect ?? null;
@@ -499,7 +585,7 @@ async function authorOf(projectRoot) {
 function check(definition, context, { revision, input, confirmed }) {
   const current = view(definition, context);
   if ((revision ?? null) !== current.revision) throw fail("stale_revision", "The record changed since the page read it.", { current });
-  if (!current.available) throw fail("action_unavailable", current.reason, { reason: current.reason, current });
+  if (!current.available) throw fail(definition.unavailableCode?.(context) ?? "action_unavailable", current.reason, { reason: current.reason, current });
   const values = readInput(current.fields, input, definition.ignores ?? (() => []));
   const after = definition.after(values, context);
   if (current.value !== null && sameValue(after, current.value)) return null;
@@ -509,7 +595,10 @@ function check(definition, context, { revision, input, confirmed }) {
   return { current, after };
 }
 
-/** Applies one action to a target: { applied, actions }, where applied is the history entry or null for an unchanged value, and actions the target's listing after it. */
+/**
+ * Applies one action to a target: { applied, actions }, where applied is the history entry or null for an unchanged value, and actions the target's listing after it;
+ * an approval's or a comment's result also names its artifact as artifact { path, scope }, since its entry belongs to no initiative, and a comment's result names its stored comment's id as comment.
+ */
 export async function applyAction({ projectRoot, target, action, input, revision, confirmed, via = "review-app", indexer = prismIndexer, env = process.env }) {
   const parsed = parseTarget(target);
   if (!parsed) throw unknownTarget(target);
@@ -529,7 +618,38 @@ export async function applyAction({ projectRoot, target, action, input, revision
   });
   if (definition.launch) return applyLaunchAction({ projectRoot, definition, context: read, request, entryOf, env, target, indexer });
   let applied = null;
-  if (parsed.kind === "index") {
+  // The comment as stored, whose id names its own file, so the review app hands it to another checkout's tabs by reading that one file.
+  let stored = null;
+  if (parsed.kind === "approval") {
+    // An ambiguous id is refused before any other check, whatever revision and input the request holds.
+    if (read.ambiguous) throw fail("approval_ambiguous", read.ambiguous, { reason: read.ambiguous });
+    const checked = check(definition, read, request);
+    applied = await entryOf(checked, read);
+    // An approval records who gave it, so a checkout whose Git names no user is refused rather than recording an anonymous one.
+    if (!applied.by.name) throw fail("author_unknown", "Git names no user.name for this checkout, so the answer cannot record who approved; set one with git config user.name and answer again.");
+    const gate = read.gateRecord;
+    // The store update repeats the gate and version checks under the artifact lock, so a change that lands after the read above is refused, never overwritten.
+    await answerArtifactApproval(projectRoot, { path: gate.artifact.path, scope: gate.artifact.scope, id: gate.id, choice: checked.after.choice, note: checked.after.note, by: { name: applied.by.name, host: os.hostname() }, entry: applied }).catch((error) => {
+      if (error?.code === "unknown_gate" || error?.code === "gate_answered") throw unknownTarget(target);
+      if (error?.code === "artifact_changed") throw fail("artifact_changed", APPROVAL_CHANGED);
+      if (error?.code === "invalid_answer") throw fail("invalid_input", error.message, { field: null });
+      if (error?.code === "approval_ambiguous") throw fail("approval_ambiguous", error.message, { reason: error.message });
+      throw storeRefused(error) ? storeRefusal(error) : error;
+    });
+  } else if (parsed.kind === "artifact") {
+    const checked = check(definition, read, request);
+    applied = await entryOf(checked, read);
+    // A comment records who wrote it, so a checkout whose Git names no user is refused rather than storing an anonymous one.
+    if (!applied.by.name) throw fail("author_unknown", "Git names no user.name for this checkout, so the comment cannot record who wrote it; set one with git config user.name and comment again.");
+    // The store write repeats the artifact and version checks under the artifact lock, so a change that lands after the read above is refused as stale.
+    const { artifact } = read;
+    stored = await commentOnArtifact(projectRoot, { path: artifact.path, label: artifact.scope.label, version: checked.after.version, line: checked.after.line, text: checked.after.text, author: { name: applied.by.name, host: os.hostname().slice(0, 255) }, entry: applied }).catch((error) => {
+      if (error?.code === "artifact_not_found") throw unknownTarget(target);
+      if (error?.code === "comment_limit") throw fail("comment_limit", error.message);
+      if (error?.code === "version_conflict") throw fail("stale_revision", "The file changed since the page read it.", { current: view(definition, { ...read, artifact: { ...artifact, version: error.version ?? null } }) });
+      throw storeRefused(error) ? storeRefusal(error) : error;
+    });
+  } else if (parsed.kind === "index") {
     const checked = check(definition, read, request);
     if (checked) {
       applied = await entryOf(checked, read);
@@ -547,6 +667,10 @@ export async function applyAction({ projectRoot, target, action, input, revision
     } });
     applied = written.entry;
   }
+  // An answered approval gate leaves its artifact's pending gates, so its target has no actions left, and the result names the artifact the answer applied to.
+  if (parsed.kind === "approval") return { applied, actions: [], artifact: { path: read.gateRecord.artifact.path, scope: read.gateRecord.artifact.scope } };
+  // A comment leaves its artifact unchanged, so the target lists its action again, and the result names the artifact it commented on.
+  if (parsed.kind === "artifact") return { applied, actions: [view(definition, read)], artifact: { path: read.artifact.path, scope: read.artifact.scope }, comment: stored.id };
   const actions = (await listActions({ projectRoot, target, indexer, env })).actions;
   // An answer to a gate that a launched session of this machine asked is recorded for that session, which it may resume.
   if (parsed.kind === "gate") {

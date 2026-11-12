@@ -167,3 +167,20 @@ export function roadmapPaths(config) {
 export function initiativeDirectory(config, initiative) {
   return config.paths.plans === null ? null : path.posix.join(config.paths.plans, initiative);
 }
+
+// The configured paths whose files are descriptive artifacts: three folders and two files, each with the kind it names.
+const ARTIFACT_KIND_SHAPES = Object.freeze([["requirements", true], ["adrs", true], ["plans", true], ["glossary", false], ["roadmap", false]]);
+
+/**
+ * The configured artifact kinds of a parsed workflow configuration: { kinds, excluded }.
+ * kinds lists { kind, path, folder } for each configured kind, a key set to n/a left out, longest path first so the first kind that contains a path names it;
+ * excluded lists the configured feature file and user guide folders, whose files stay in the checkout even inside an artifact folder.
+ */
+export function artifactKinds(config) {
+  const kinds = ARTIFACT_KIND_SHAPES
+    .filter(([kind]) => typeof config?.paths?.[kind] === "string")
+    .map(([kind, folder]) => ({ kind, path: config.paths[kind], folder }))
+    .sort((left, right) => right.path.length - left.path.length);
+  const excluded = [config?.paths?.features, config?.paths?.userGuide].filter((value) => typeof value === "string");
+  return { kinds, excluded };
+}

@@ -33,3 +33,15 @@ test("the status bar names where records live and the sync state", () => {
   assert.deepEqual(syncItem({ kind: "remote", sync: true }, { state: "fetch_failed", at: "2026-11-03T01:59:30Z" }, now), { label: "Records not fetched · just now", tone: "danger", problem: true });
   assert.equal(syncItem({ kind: "remote", sync: true }, { state: "conflicts", at: "2026-11-03T01:00:00Z" }, now).tone, "warn");
 });
+
+test("the status bar warns of checkout files a tool call still moves and notes plainly the files a move kept", () => {
+  const store = { kind: "folder", label: "../store", location: "/x/store", sync: false };
+  const awaitingMove = { files: 2, message: "2 files wait for a tool call." };
+  const keptInCheckout = { files: 1, message: "1 file stays until a person settles it." };
+  const kept = storeItem({ ...store, keptInCheckout });
+  assert.deepEqual([kept.label, kept.tone], ["Store ../store · 1 file kept in checkout", "muted"]);
+  assert.match(kept.title, /person settles/);
+  const both = storeItem({ ...store, awaitingMove, keptInCheckout });
+  assert.deepEqual([both.label, both.tone], ["Store ../store · 2 files to move", "warn"]);
+  assert.match(both.title, /tool call[\s\S]*person settles/);
+});

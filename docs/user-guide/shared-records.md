@@ -7,13 +7,64 @@ Name the store by its Git remote to share records between machines, or by a fold
 
 ## What moves and what stays
 
-Only machine records move into the store.
-`.prism/workflow.md`, requirements, ADRs, slice plans, diagrams, generated Markdown views, feature files, and tests stay in the project and travel with its branches as before.
-Tools, tool results, review browser links, and stored references keep naming records by their `.prism/...` address, so nothing that agents or people see changes.
+A record store holds Prism's machine records and the project's requirements, ADRs, plans, glossary, and roadmap view.
+`.prism/workflow.md`, feature files, step definitions, tests, executable contracts, user documentation, and code stay in the project and travel with its branches as before.
+Tools, tool results, review browser links, and stored references keep naming records by their `.prism/...` address and those files by their path in the project, such as `docs/requirements/billing.md`, although the file lives in the store.
+[Requirements, ADRs, and plans in the store](#requirements-adrs-and-plans-in-the-store) says how agents and people read, change, approve, and ship them.
 Each verified slice records where its code lives, the repository, branch, and commit of its latest passing run, and the review browser shows it on the slice page and beside each slice on the initiative page.
 On GitHub, GitLab, and Bitbucket the branch, commit, and repository link to their web pages.
 The review browser's project menu lists every checkout that shares one record store under that store as one workspace, named after the store, whichever repository each checkout belongs to, and lists projects in name order.
 Choosing the workspace there opens its records, which every checkout shares.
+
+## Requirements, ADRs, and plans in the store
+
+In a project whose `.prism/workflow.md` names a record store, the files under the configured `Requirements`, `ADRs`, and `Plans` folders and at the `Glossary` and `Roadmap` paths live in the store instead of the checkout.
+They include requirements, ADRs, slice designs, diagrams, recovery notes, and the generated `initiative.md`, `review.md`, and roadmap views.
+Feature files and the user guide stay in the checkout, also when their configured folders lie inside one of those folders.
+In a project without a record store, all of these files stay in the checkout, and agents edit them there as before.
+
+### Scopes
+
+Each file in the store belongs to a scope: the whole workspace, one repository, or one component of a repository, labeled `workspace`, `<repository>`, or `<repository>/<component>`.
+A checkout sees the workspace's files, its own repository's files, and the files of its repository's components, and the review browser shows each file's scope.
+A new file takes the scope that the agent names, else the scope that holds the nearest folder above it, else the workspace scope.
+An agent moves a file to another scope with the `move_scope` operation of `update_artifact`, which takes its status and comments with it.
+Two scopes can hold a file at the same path, such as `docs/ADRs/storage.md` in the workspace and in a repository; the agent then names the scope it means, and a read or change without one is refused with `artifact_ambiguous`, which lists both scopes.
+
+### How agents read and change them
+
+Agents read these files with the `get_artifact` tool and change them with `update_artifact`, by their path in the project, never by editing files in the checkout.
+Ask an agent for a change to one of them, or comment on it in the review browser, rather than editing the store's copy yourself.
+A read returns the file's text in pages of at most 2000 lines and 64 KiB, with its scope, its version, its comments from the review browser, whether it changed since a person last accepted it, and, for a requirement or ADR, its recorded status and your latest answer to its approval.
+Without a path, or with a folder, `get_artifact` lists the files that the checkout sees there.
+One update writes, edits, removes, or moves up to 50 files, each against the version that the agent last read, so a change that someone else made in the meantime refuses the whole update with `version_conflict` and changes nothing.
+A file holds at most 1 MiB of UTF-8 text, and a larger one is refused with `artifact_too_large`.
+A name below a configured folder begins with an ASCII letter or digit, holds only ASCII letters, digits, `.`, `_`, and `-`, does not end in `.` or `.lock`, and is no Windows device name such as `con`, `aux`, `nul`, `com1`, or `lpt1` before its first `.`, in any letter case, or Prism refuses it with `artifact_name_invalid`.
+A new file whose path differs from a file the checkout sees only in letter case is refused with `artifact_name_conflict`, and one whose place in the store would take more than 120 characters with `artifact_path_too_long`.
+Prism's skills choose every file, folder, and identifier name within that form, with at most 100 characters in a path, in every project, so a repository checks out on Windows, macOS, and Linux alike.
+Both tools refuse a file outside these paths, such as a feature file or a test, with `not_an_artifact`, refuse in a project without a record store with `store_not_configured`, and while the store cannot be used refuse with its reason, such as `store_unavailable`, without reading or writing the checkout's copies.
+
+### Statuses change only at gates
+
+Prism records each requirement's and ADR's status in the store: `Draft` for a new requirement, `Proposed` for a new ADR, and the status written in a file that moved in from the checkout.
+After that, only your answer at a gate changes it.
+An agent's edit of a `Status:` line is kept, but Prism still reads the file with its recorded status and tells the agent which gate changes it.
+To approve a requirement, or an amendment of an Approved one, the agent asks for your approval with the `ask_approval` operation of `update_artifact`, and the question appears on [Attention](review-browser.md#attention).
+Approving writes the status, `Approved` unless the agent asked for another such as `Withdrawn`, into the file's `Status:` line, sets its `Approved:` line to the day you answered, and records your checkout's Git `user.name` and your machine's host name as the approver.
+Request changes with a note when the file needs another revision, and the agent revises it and asks again.
+An ADR becomes `Accepted` only when its initiative ships, never through an approval, which can still give it another status, such as `Superseded`.
+[Review a file in the record store](review-browser.md#review-a-file-in-the-record-store) shows a file's changes since you last accepted it and its comments.
+
+### Shipping accepts ADRs
+
+An initiative of a project with a record store ships only after you approve its correctness review in the review browser, and shipping sets to `Accepted` each Proposed ADR that its slice designs link, as [Ship an initiative](workflow.md#ship-an-initiative) describes.
+
+### Existing files move into the store
+
+The first Prism tool call of an agent session in a checkout moves each file that Git tracks under those paths into its repository's scope and removes it from the checkout, so commit those removals.
+Its result lists each moved file with its place in the store, each file that stayed and why, such as a copy in the store with other text, and each tracked file left in the checkout that still names a moved file's former path, with its line numbers, so you can update those references.
+Frozen tests of accepted designs stay in the checkout.
+[Sync status](#sync-status) says when a move happens and what an interrupted move leaves behind.
 
 ## Share records between machines
 
@@ -47,7 +98,7 @@ Store sync is on by default for a remote store, so Prism keeps the clone in step
 
 `- Store sync: off` keeps the clone but never fetches, commits, or pushes after the first clone.
 Prism never deletes, replaces, or rewrites the history of a clone it made.
-Prism shares the regular files at the paths it writes in a store: the records under `initiatives/`, `roadmap.json`, the registrations under `repositories/`, the migration files under `migrations/`, the store's `.gitignore` and `.gitattributes`, and the files under `artifacts/` that a later Prism writes there, whose every name begins with an ASCII letter or digit and holds only ASCII letters, digits, `.`, `_`, and `-`.
+Prism shares the regular files at the paths it writes in a store: the records under `initiatives/`, `roadmap.json`, the registrations under `repositories/`, the migration files under `migrations/`, the ledgers of moved artifacts under `artifact-migrations/`, the artifacts under `artifacts/` whose every name follows the artifact name form, the comments on them under `artifact-comments/`, and the store's `.gitignore` and `.gitattributes`.
 It also shares a `README`, `README.md`, `README.txt`, `LICENSE`, `LICENSE.md`, `LICENSE.txt`, or `COPYING` at the store's root, spelled exactly so, which Prism never reads.
 Prism uses Git in the store only to keep these files' bytes: the clone and every sync write each file as the remote's branch holds it, and every commit holds each file as it is on disk.
 So no `.gitignore` or `.gitattributes` line, in the store or in your Git configuration, and no line-ending setting such as `core.autocrlf`, changes what Prism commits, merges, or writes.
@@ -111,17 +162,84 @@ A sync never commits a file that another machine could not take, and every other
 
 - A file Prism shares whose name holds more than 200 bytes or whose path holds more than 512 stays on disk and out of every commit.
 - A file whose Git object fails the checks that another machine's fetch or first clone applies, such as a `.gitattributes` with a line over 2048 bytes, stays on disk, and the branch keeps its earlier version.
+- A file larger than its kind's limit in the table below stays on disk, and the branch keeps its earlier version, if it has one.
+  This holds also for a file that grows past its limit while a sync reads it, so no commit that a sync makes holds a file above its limit.
+- A comment folder that holds more than 1000 comment files commits every comment the store already shares and then this machine's other comments by file name up to 1000, and the rest stay on disk.
 
-The sync's status lists each such file under `withheld` with the reason, and its message names the path, so rename, shorten, or fix the file, and the next sync commits it.
+The sync's status lists each such file under `withheld` with the reason, and its message names the path and the fix that fits the reason.
+Give a file whose name or path is too long a shorter one, make a file above its kind's limit smaller than that limit, or fix a file that Git's object checks refuse, and the next sync commits it.
+A comment file left out of a folder past 1000 is different: no sync ever commits it, and while it is there no reader shows any of that file's comments, so move it out of its comment folder, keeping what it says if that matters, and the folder's other comments show again.
+
+A store holds at most 250000 files in all, a sync never leaves a file out to stay within that bound, and no commit of the store's branch holds more.
+A sync always fetches and judges the tree it would push, this machine's changes merged with the other machine's as fetched, so where this machine's own changes alone would pass 250000 files but the other machine removed enough, the sync commits only the merge of both and pushes it.
+When the merged tree would pass 250000 files, the sync commits, merges, and pushes nothing and ends with `merge_failed` and a message that gives that count and the bound.
+The store's branch and every file on disk stay as they were, and no file is listed under `withheld` for that bound.
+The one exception is a sync whose first push lost to another machine that pushed first: it keeps the merge it already made, which is within the bound, and its message says so, while this machine's later changes stay on disk.
+Remove files that the store no longer needs, on this machine or another, until it holds at most 250000, and the first sync after that shares every change of both machines, moved artifacts and the comments and status records of each artifact among them.
+
+Every kind of file that a store shares has a size limit well above the largest file of that kind that Prism or a Git host writes:
+
+| Kind | Store path | Limit |
+| --- | --- | --- |
+| Artifact | `artifacts/<location>` | 16 MiB |
+| Accepted bytes | `artifact-accepted/<hash>` | 16 MiB |
+| Status record | `artifact-status/<location>/status.json` | 16 MiB |
+| Identity file | `artifact-identity/<location>` | 256 bytes |
+| Comment | `artifact-comments/<location>/<name>.json` | 64 KiB |
+| Move ledger | `artifact-migrations/<name>.json` | 16 MiB |
+| Record migration file | `migrations/<name>.json` | 16 MiB |
+| Registration | `repositories/<repository>.json` | 64 KiB |
+| Roadmap record, initiative record, coordination state, change map | `roadmap.json`, `initiatives/<initiative>/initiative.json`, `initiatives/<initiative>/state.json`, `initiatives/<initiative>/slices/<slice>/change-map.json` | 1 MiB |
+| Review ledger, design view, kept frozen tests, run entry | `review.json`, `design-view.json`, `frozen-tests.json`, and `runs/<id>.json` below `initiatives/<initiative>/slices/<slice>/` | 4 MiB |
+| Claim | `initiatives/<initiative>/claims/<slice>.json` | 64 KiB |
+| Root README or license | `README`, `README.md`, `README.txt`, `LICENSE`, `LICENSE.md`, `LICENSE.txt`, `COPYING` | 1 MiB |
+| Root Git file | `.gitattributes`, `.gitignore` | 64 KiB |
+
+A file's comments are limited too: a file takes at most 1000 comments, so its comment folder holds at most 1000 comment files.
+The `README` and license files at the store's root and the `.gitattributes` and `.gitignore` there take their limits as every other kind does, although Prism never reads them, because every sync writes, merges, and saves them as it does every other file.
+A sync refuses an upstream that holds one above its limit and withholds a local one above it, as for every other kind.
+When both machines change one of them, a sync merges their lines as it merges other files, and when the same lines changed, or the merged file would pass its limit, it keeps the other machine's version and saves this machine's copy under `.prism-sync/conflicts/`.
+The next tool result names the file and its saved copy and says that the other machine also changed it.
+When this machine removed one of them while the other machine changed it, the sync puts the other machine's version back, and the next tool result lists the file under a line that begins `Store sync undid this machine's removal of`, as `- <path> in the record store at <store>`.
+Prism treats a file larger than its limit as a damaged file of its kind and reads none of it: a status record reads as one that no gate changed, a ledger or record migration file lists nothing, a comment is no comment, a comment folder of more than 1000 entries holds no comment, and `get_artifact` refuses such an artifact with `artifact_too_large`.
+No Prism write makes a file larger than its limit, and a move whose ledger would pass 16 MiB writes it as several ledger files, which its report names.
+
+A sync refuses an upstream whose branch holds a file larger than its kind's limit, or a comment folder of more than 1000 comment files, with `merge_failed` and a message that names the path, and the store stays as it was, so no reader on this machine ever loads the file.
+To recover, shrink or remove that file, or remove comment files from that folder, on the remote's branch from a separate clone, as for an entry that no store may hold, and the next sync of each machine merges again.
+A sync also lists no more of a branch than 250000 files whose paths hold at most 512 bytes each, and refuses an upstream whose branch holds more files, or whose listing holds more bytes, in the same way, with a message that gives that bound, so remove files, or shorten their paths, on the remote's branch to recover.
+An upstream that holds an entry whose path holds more than 32767 bytes, the most that any supported machine holds, ends the listing at that entry and is refused in the same way, with a message that shows the start of that path.
+A first clone checks the remote's branch in the same way, and a push checks this store's history for such a path before it sends it.
+A commit you made by hand that takes this store's branch past 250000 files is refused before the sync merges, with the command that takes that commit off, as for a file larger than its limit.
+Once you run that command, the files of that commit are this machine's changes on disk, so the sync treats them as described above and stops at the bound until enough files are removed on this machine or another.
+When both machines made one file larger and their merge would pass its limit, the file keeps the other machine's version, and this machine's is saved under `.prism-sync/conflicts/` and named as a line conflict is.
+When the version of a file that both machines last shared is larger than its kind's limit, as a commit made elsewhere can leave in the remote's history, and both machines changed it since, the sync never reads that version: the file keeps the other machine's version, and this machine's is saved under `.prism-sync/conflicts/` and named as a line conflict is.
+When the comments that both machines added would take a comment folder past 1000, the folder keeps every comment of the other machine and then this machine's by file name up to 1000, and each of the rest is saved under `.prism-sync/conflicts/` and named to the agent.
 When another machine changes or removes a file whose version this machine withheld, the next sync takes the other machine's version, saves this machine's under `.prism-sync/conflicts/`, names it as a conflict, and keeps syncing.
+The next tool result names a saved file that was larger than its kind's limit for that cause: this machine held it back for its size, the other machine then changed or removed it, and the store keeps the other machine's version.
+A sync never reads a withheld file that is larger than its kind's limit, whatever its size, and never adds it to Git: when the other machine changes or removes that file, the sync moves this machine's file into `.prism-sync/conflicts/` by renaming it there, and every other change syncs.
 Prism keeps sharing the store's `.gitattributes`, which Git hosts read to collapse records in pull request diffs, because this check keeps every version of it that a sync commits one that every machine can fetch.
 Before every push, Prism also checks every object that the push would send with those checks, because an object the remote holds stays in its history even after a later commit removes the file.
+Each sync records under `refs/prism-checked/branch` the commit up to which the store's branch passed these checks, also while fetches or pushes fail, so a later check walks only the commits after it, and a store whose pushes failed for a long time checks each sync's commits once.
+Prism reads every listing of the history that the remote lacks as Git writes it, a batch of commits at a time, within 256 MiB for each batch, and the commits and trees of that history pack within 1 GiB, so a sync takes bounded memory however long that history is.
+A merge's own changes are only the files that it holds differently from every parent, so merging another machine's changes adds nothing to that listing.
+A push with a single commit whose listing passes 256 MiB, which only a commit made by hand makes, is refused with `merge_failed` and a message that names that commit, and taking it off the store's branch, such as with `git reset --soft` and the commit before it, or with `git update-ref -d HEAD` when that commit is the branch's first, lets the next sync push again.
+A sync also lists at most 4096 branches of a remote, and refuses a remote that holds more in the same way.
 Prism applies Git's own checks of every commit and tree in those objects itself, as Git 2.43 and later make them, so the check holds on an older Git that checks less, such as Git before 2.43, which takes a name over 4096 bytes and a folder nested more than 2048 folders deep, which Git 2.43 and later refuse to walk, Git before 2.40, which takes a commit date after a carriage return, or Git before 2.27, which takes a tree that holds a file and a folder of one name.
 It also checks the `.gitattributes` at the root of every tree in those objects as Git 2.43 does, refuses every other entry in them whose name Git reads as `.gitmodules` or `.gitattributes`, since Git before 2.39.1 does not check a `.gitattributes` and Git before 2.30.1 takes more `.gitmodules` URLs, and refuses a symbolic link whose target leads into Git's folder or holds more than 260 bytes, which Git 2.39.4, 2.43.4, 2.45.1, and the other releases of May 2024 refuse.
-A push whose objects fail them, such as one of a commit you made by hand, is refused with `merge_failed`, and the message names the file; fix the file, then move the store's branch back to the remote's with `git reset --soft @{upstream}` in the store, and the next sync commits the store's files again without that commit.
+A push whose objects fail them, such as one of a commit you made by hand, is refused with `merge_failed`, and the message names the file and the exact command that takes that commit off the store's branch while every file stays on disk.
+The command is `git reset --soft` with the tip of the remote's branch when the remote holds the branch, else with the commit before the first commit that the remote lacks and that holds the file, or `git update-ref -d HEAD` when that commit is the branch's first, as on a store's first publish.
+After each fetch and push the store records under `refs/prism-store/shared/` the latest commits of its own branch that the remote's branches held, which is the commit this machine pushed, a fetched tip that its branch holds, or the last commit its branch shares with a fetched tip that it has not merged.
+It counts those commits as ones that the remote and other machines already hold, also after the remote's branch is deleted, and keeps only commits that its branch holds, so these refs stay few and never lose a commit of its branch that other machines share.
+So the command never takes off a commit that other machines share, and where the commit before that first commit would, it goes back to the last commit of the branch that other machines share instead.
+Where no single commit does that, the message gives no command and says what to change instead, such as moving the comment files past the first 1000 out of their folder, after which the next sync commits their removal.
+Run the command in the store as the message gives it and fix the file, and the next sync commits the store's files again without that commit, withholding the file while Git's object checks still refuse it.
+A push is refused in the same way when the branch, or a commit of it that the remote does not hold yet, holds a file larger than its kind's limit, such as a 2 MiB `README.md` committed by hand, since every other machine's sync would then refuse the remote's branch.
+The message names the file, says that the store's other changes are committed on this machine only, and gives the command for that commit in the same way; run it in the store, which keeps every file on disk, and the next sync commits and pushes the other changes and withholds the large file until it is smaller than its limit.
+When the other machine changed the remote's branch meanwhile, the sync refuses such a file in a commit that this machine made before it merges anything, by its size alone, so a file of any size, such as one of 70 MiB, is named in the same way and never read.
+The command then goes back to the commit before the first commit that holds the file rather than to the tip of the remote's branch, since the other machine's changes are not on disk yet, and the next sync merges them as usual.
 A clone that an earlier Prism checked out with CR LF line endings is migrated once, on its first record access or sync after the upgrade, before Prism writes anything to it.
 The migration gives each file at a path Prism shares whose only difference from the branch's version is CR LF line endings the branch's bytes again, and records in `.prism-sync/raw-files.json` that the clone is migrated.
-From then on, a change of line endings alone, such as a file rewritten with CR LF line endings, is a change like any other, and the next sync pushes it.
+From then on, a change of line endings alone, such as an artifact rewritten with CR LF line endings, is a change like any other, and the next sync pushes it.
 Syncing requires Git 2.25 or later, so the Git that Xcode's command line tools, Ubuntu 22.04, or Debian 12 installs syncs.
 On an older Git, every record operation of a remote store, or of a path store with sync on, fails with `store_unavailable`, and the message names this machine's Git version and the minimum.
 SSH runs in batch mode unless you configured an SSH command, and Git never prompts, so a remote that needs a passphrase or password prompt fails instead of hanging.
@@ -156,7 +274,8 @@ The first record access from a checkout moves its existing records into the stor
 A `Store` path is relative to the project root or absolute.
 It must not resolve inside the project or contain it, and Prism never creates it.
 A missing or misplaced store makes every record operation fail with `store_unavailable`, because silently falling back to `.prism` would split state between checkouts.
-The review browser still lists the project's human documents while the store is unavailable.
+While the store is unavailable, the review browser opens without the project's requirements, ADRs, plans, glossary, and roadmap view, which live in the store, and never shows the checkout's copies of them in their place.
+It names the store as the reason, and opening one of those files answers with the same reason.
 
 The first record access from a checkout moves its existing records into the store, and each record moves only once, from whichever checkout brings it first.
 Prism lists every moved record in the store's `migrations` folder, together with any record whose bytes differed from a copy already in the store, and it leaves both copies of such a record in place.
@@ -223,7 +342,7 @@ These refusals make every record operation of the checkout fail, and each error'
 | `repository_unconfirmed` | Store sync is on, and the sync that confirms a new registration failed, for example because the store's remote cannot be reached, so the registration was withdrawn; or, whatever the checkout's own store sync setting, another check's new registration that decides this check is still being confirmed. The message names the sync state, and `proposed` is the name itself. | Try again once the remote is reachable, or in a moment while a registration is being confirmed. |
 
 The proposed name is the registered name that would accept the checkout, or else the last part of its remote's path without `.git`, or its folder name without a network remote, made valid and given a suffix such as `-2` when another repository holds it.
-The review browser hides the records of a refused checkout as it does for an unavailable store, shows the refusal's message as the reason, and still lists its documents.
+The review browser hides the records and artifacts of a refused checkout as it does for an unavailable store, and shows the refusal's message as the reason.
 
 Each machine remembers where its checkouts of each named repository are, in `checkouts.json` in Prism's application folder, beside the store clones.
 A server lists its checkout once its name is first accepted: at start when the host names the project, as Claude Code does, or else at its first tool call, as in Codex.
@@ -234,6 +353,7 @@ With store sync on, the operation that registers a new name waits for one sync b
 Until that sync settles, the registration is pending, and any other check that it would decide, by any checkout that shares the store folder, whatever its own store sync setting, is refused with `repository_unconfirmed` without waiting, so no operation records anything under a registration that may still be withdrawn.
 The registration pushed first stays, and the other machine's checkout is then accepted or refused against it, as if it had been in the store all along.
 The registration that lost is saved under `.prism-sync/conflicts/` like a record, but neither the sync status nor a tool result lists it, because the acceptance or refusal already tells the agent.
+Two registrations that differ only in when each machine registered the name, as the first accesses of two machines to a new store write them, lose nothing, so the sync keeps the upstream one and saves neither.
 A remote or root commit added to an existing registration does not wait: the next sync pushes it, and the next check that needs it adds it again if a sync lost it.
 Each name is a file of its own, so two machines that register one remote under two different names at the same time both keep their registrations, because `repository_remote_registered` refuses a second name for a remote only once the store holds the first.
 
@@ -260,7 +380,50 @@ The machine whose push lost keeps the upstream version and saves its own version
 The next Prism tool result on that machine names the record and the saved file, so the agent that made the change learns of it.
 Compare the saved file with the current record, and redo the change through Prism's tools if it still matters.
 Prism never replaces a record that changed while a merge was running: it leaves the branch where it was and resolves the change on the next sync.
+Prism reads every JSON file of the store, whether a record, a status record, a comment, an artifact's identity, a move ledger, or a repository registration, as damaged when it nests arrays and objects more than 64 levels deep, which Prism never writes, so a file that a sync brings in such a form stops no tool call and no review page: each reader leaves it out as it leaves out any file that is not valid JSON, and a merge of such a record collides.
 Two records whose paths differ only in letter case settle the same way on file systems that ignore letter case, as macOS and Windows use by default: a sync removes the spelling that lost before it writes the upstream's, and gives a folder that still holds other files the upstream's spelling.
+A sync saves the local versions that lost under `.prism-sync/saving/` before it replaces any file, so a sync that stops partway, for example because its server exits when the host closes, loses none of them.
+The next sync on that machine moves the versions of the files the stopped sync replaced to `.prism-sync/conflicts/` and drops the others, which the merge saves again when it runs, even when such a file changed in between, so each lost version is saved once.
+Each saved version stays pending in `.prism-sync/notices/` until a tool result has named it, so a sync that stops after it saved a version and before its status was written still has the version named by the next server's tool result.
+Only a result that the server writes to its host counts, so any call that the host cancels before its result is written, such as a `wait_for_user_gate` or a slow `update_coordination_state` you stop with Esc, gets no response and leaves the version pending for the next result, and so does a call that the session's end aborts.
+
+## When two people change the same artifact
+
+With store sync on, each `update_artifact` that changes a file, and each plan file or view that Prism writes into the store, is committed and pushed by the next sync without a further call.
+Changes to different lines of one artifact on two machines merge, so in a file with one sentence per line, edits to different sentences both survive.
+A file that is not text, such as an image, has no lines to merge, so a change to it on both machines counts as a change to the same line.
+When both machines change the same line differently, one machine makes a file where the other made a folder of the same name, or the two machines write paths that differ only in letter case, the first push wins.
+This holds on file systems that ignore letter case, as macOS and Windows use by default, as well: a sync removes the spelling that lost before it writes the upstream's, and gives a folder that still holds other files the upstream's spelling.
+A change of a file's or folder's letter case on another machine, such as a removal of `plans/Foo` and a write of `plans/foo`, reaches every machine the same way.
+The machine whose push lost keeps the upstream artifact and saves its own files under `.prism-sync/conflicts/<time>/artifacts/` in the store, so no bytes are lost.
+Every artifact in the store has an identity, kept beside it in the file `artifact-identity/<location>`, which syncs like a status record.
+Writing a file where the store holds none gives it a new identity, also when an earlier file at that path was removed, while editing or rewriting a file keeps its identity.
+Moving a file to another scope with `move_scope`, or a generated view's move to its plans folder's scope, takes its identity, status record, and comments to the new place and leaves nothing of it at the old one.
+Removing a file removes its identity with it.
+A file stored before Prism wrote identities, or whose identity file is damaged or copied from another file, has the identity that its place in the store gives, so an older store needs no migration.
+No two files of a store share an identity, also when copied identity files would chain one onto another, so a merge never removes a file that neither machine removed.
+A sync refuses an upstream that holds anything below `artifact-identity/` other than the identity file of an artifact's place, such as a file at `artifact-identity/plans`, where Prism keeps folders of identity files.
+An entry at a file's identity path that is no identity file, such as a folder a sync brought, belongs to no file, so creating, moving, or removing that file replaces or removes it in the same update.
+A sync merges each file by its identity rather than by its path, so a change that the other machine made at the old place before it synced, to the file's text, its status record, or its comments, lands on the moved file as if it had been made there.
+So an approval answered on one machine while another moved the requirement approves the moved requirement, and a comment made meanwhile shows on it.
+The text and the status record merge by lines there, so a change that only one machine made is kept, and one that both machines made to the same line keeps the upstream version and saves this machine's, as for any artifact; a status record is one line, so an approval answered on one machine while the other asked a new approval keeps the other machine's record, merges the approved status lines into the text, and saves and names the answered record.
+A change made on a file that the other machine removed, whether or not that machine then wrote or moved another file to its path, never lands on that later file: the later file keeps its text, status, and comments, and the changed text, status record, and comments are saved under `.prism-sync/conflicts/<time>/` of the machine whose sync met the two changes and named in its next tool result.
+A removal stands against every change of the other machine that left the file's text as it was, such as a comment, an approval asked, a request for changes, a status change alone, or a move to another scope, whichever machine synced first, so a file that the removing machine wrote or moved to that path keeps it.
+Only an edit of the file's text that reached the store first, such as an approval, which rewrites the file's status lines, undoes the other machine's removal: the file comes back with the edit, a file that the removing machine moved to its path goes back to the scope it came from, and one that it wrote there is saved and named.
+Every removal, move, or edit of this machine that a sync does not keep is named once in the next tool result: a saved copy names an edit, and a later file saved at the path also names the removal that gave way there.
+Any other removal that a sync undid is listed under a line that begins `Store sync undid this machine's removal of`, as `- <path> in scope <scope>`.
+A move to another scope that a sync sent elsewhere, as when both machines moved one file to different scopes, which keeps the other machine's scope, or when the path it was moved to keeps the other machine's file, is listed under a line that begins `Store sync undid this machine's move of`, as `- <path> in scope <scope>, which this machine moved to scope <scope>`, naming first the scope that the file stays in.
+An artifact that one machine moved by removing it and writing similar text at another path is a new file there, so a change the other machine made at the old path is saved, and a file it added to a moved folder stays where it was written.
+A status record or comment that a merge leaves where the store holds no artifact, such as one written on one machine while another removed the artifact, leaves the store and is saved under `.prism-sync/conflicts/<time>/`, and the next tool result names the file's path, its scope, and the saved copy.
+The result quotes a saved comment's line and text only when the saved file is a comment in the exact form Prism writes, and names any other file there by its path, scope, and saved copy alone, so a file that a sync brings puts no other text before the agent.
+A status record or comment whose place at the moved file would need a path longer than a store can share, a name of more than 200 bytes or a path of more than 512, is saved under `.prism-sync/conflicts/<time>/` too, while the rest of the change is placed.
+The sync's message and the next tool result name it for that cause: they say whose change it holds, that its path would be too long at the file's new place, and name that place, where the store keeps the file without it.
+Each file merges by itself, so a file that only one machine wrote stays, even in a folder that takes the place of a file both machines removed.
+The next tool result of each running Prism server on that machine that uses the store names the artifact's path, its scope, and the saved copy, and a server started later names it too until a tool result has carried it.
+The notes that name saved files and undone changes hold at most 32 KiB in one result: the lists of undone removals and moves come first, each list keeps the line that says what was saved or undone and why, entries past the bound are left out from the end, and a last line counts them, whether they name saved files or undone changes, and names the store's sync folder, which holds every saved copy.
+Read the artifact again with `get_artifact`, and redo the change with `update_artifact` if it still matters.
+A sync that starts while an artifact update is still writing commits, merges, and pushes nothing, so it never merges the upstream over a change in progress or over an artifact file, status record, or comment that no commit holds yet.
+That is no failure: the store's last status stays as it was, so the review app shows no error, a slice start or a repository registration that waits for its confirming sync tries again, and the next sync, which the update's write schedules, syncs every change.
 A sync saves the local versions that lost under `.prism-sync/saving/` before it replaces any file, so a sync that stops partway, for example because its server exits when the host closes, loses none of them.
 The next sync on that machine moves the versions of the files the stopped sync replaced to `.prism-sync/conflicts/` and drops the others, which the merge saves again when it runs, even when such a file changed in between, so each lost version is saved once.
 Each saved version stays pending in `.prism-sync/notices/` until a tool result has named it, so a sync that stops after it saved a version and before its status was written still has the version named by the next server's tool result.
@@ -302,18 +465,25 @@ Anyone may release any claim, and the initiative's history records who released 
 ## Sync status
 
 The review browser's status bar names the record store and when it last synced, and `.prism-sync/status.json` in the store holds the details.
+While files that Git tracks under a checkout's requirements, ADRs, plans, glossary, or roadmap paths still wait in the checkout, the status bar warns of them beside the store, and an agent's Prism tool call in the checkout moves them into the store and reports each move or why a file stays, while the review browser itself never moves them and lists only the store's copies.
+An agent session moves a checkout's files once, so a file that Git starts tracking after that move waits for the next session.
+A moved file leaves the checkout only right before Prism writes the result that reports it, so a tool call that Prism refuses or that you interrupt writes the store's copies but leaves the files in the checkout, and the next tool call whose result is written removes them and reports the move.
+An interruption that comes after a file left the checkout but before the result was written can leave that removal unreported, so the first Prism tool call of each later agent session reports such a file as moved earlier, with the tracked files that still name its old path, until you stage or commit its removal.
+Files that a move kept in the checkout, such as an image in a plan folder or a file whose store copy differs, are counted apart beside the store as a plain note, without names, since they stay until a person settles each as the move's report said, and no tool call moves them.
 When the last sync did not succeed, clicking the sync state opens its message, its time, and every saved conflict.
 Each saved conflict shows the saved local copy against the current record as a diff, so you can ask an agent to redo the change that lost.
+A saved copy or current record larger than its kind's limit, or one that is a link, shows its size and where the copy stays instead, because Prism reads none of its bytes.
+The list shows saved records, while a saved artifact is named in the next tool result as described above.
 
 | State | Meaning | What to do |
 | --- | --- | --- |
-| `ok` | The last sync committed, merged, and pushed; a file it left out is listed under `withheld`, and its message names it. | Nothing, or rename, shorten, or fix each withheld file. |
-| `conflicts` | A record changed on both sides in a way that does not merge; the local version is saved under `.prism-sync/conflicts/`. | Review the saved file. |
+| `ok` | The last sync committed, merged, and pushed; a file it left out is listed under `withheld`, and its message names it with the fix that fits its reason. | Nothing, or give each withheld file the fix that the message names for it. |
+| `conflicts` | A record, an artifact, or a README, license, `.gitattributes`, or `.gitignore` at the store's root changed on both sides in a way that does not merge, so this machine's version is saved under `.prism-sync/conflicts/`; where this machine's removal of an artifact stands against the other machine's comment or status record, that change of the other machine is saved there instead, a comment or status record of either machine whose path would be too long at its moved artifact's new place is saved there too, and a local removal that gave way saves nothing. The message says whose copy each saved file holds and why. | Review the saved file. |
 | `no_upstream` | A path store's branch has no upstream, so Prism only commits locally; a remote store sets its upstream on its first sync instead. | Set an upstream with `git branch --set-upstream-to`. |
 | `not_a_repository` | Sync is on, but the store is not the top of a Git checkout. | Clone the store, or turn sync off. |
 | `fetch_failed` or `push_rejected` | The remote could not be reached, sent an object that fails Git's object checks, refused the push, or kept moving for three attempts. | Check access to the remote; Prism retries on the next write or read, and a commit whose objects fail the checks needs removing from the remote's history. |
-| `merge_failed` | A file other than a record conflicted, a record stayed locked through every attempt, the store's branch and its upstream share no commit, the merge would hold two paths that differ only in letter case, or the upstream's branch or the branch to push holds an entry that no store may hold, such as a symbolic link, a submodule link, the sync folder, a name that Windows refuses, a path that is not UTF-8, a name too long for some machine, or two paths that differ only in letter case, or the push would send an object that fails Git's object checks. | Read the status message; a busy record clears on its own, an entry that no store may hold needs a commit on the remote's branch, made from a separate clone, that removes the path the message names, and an object that fails the checks needs the commit that holds it taken off the store's branch. |
-| `git_failed` | Git failed for another reason, such as a leftover `.git/index.lock`, or this machine's Git is older than 2.25. | Fix the store with Git, or update Git; Prism never deletes Git's locks. |
+| `merge_failed` | A file other than a record, an artifact, or a README, license, `.gitattributes`, or `.gitignore` at the store's root conflicted, a record or an artifact stayed locked through every attempt, the store's branch and its upstream share no commit, the merge would hold a file Prism does not write and a file Prism writes whose paths differ only in letter case, or the upstream's branch holds a file larger than its kind's limit or a comment folder of more than 1000 comment files, the branch to push, or a commit of it that the remote lacks, holds a file larger than its kind's limit, the upstream's branch or the branch to push holds an entry that no store may hold, such as a symbolic link, a submodule link, the sync folder, a name that Windows refuses, a path that is not UTF-8, a name too long for some machine, or two paths that differ only in letter case, the push would send an object that fails Git's object checks or a history that lists more than a sync reads, or the tree to push, this machine's changes merged with the other machine's as fetched, would hold more than 250000 files. | Read the status message; a busy record clears on its own, a store past 250000 files needs files that it no longer needs removed from it, an entry that no store may hold, a file over its limit, or a comment folder over 1000 needs a commit on the remote's branch, made from a separate clone, that removes or shrinks the path the message names, and an object that fails the checks, or a file over its limit that a commit made by hand put on the branch to push, needs the commit that holds it taken off the store's branch with the `git reset --soft` or `git update-ref -d HEAD` command that the message gives, or, where the message gives no command, the change it names instead. |
+| `git_failed` | Git failed for another reason, such as a leftover `.git/index.lock`, or this machine's Git is older than 2.25; any other error inside a sync is reported this way too, and never stops the server. | Fix the store with Git, or update Git; Prism never deletes Git's locks. |
 
 ## Cloud sessions
 

@@ -5,6 +5,7 @@ import http from "node:http";
 import { homedir } from "node:os";
 import { pluginPath, pluginVersion as installedVersion } from "../plugin-root.mjs";
 import { REVIEW_APP_PROTOCOL, appAlive, lockPath, olderVersion, readDiscovery, reviewAppDirectory, signRequest, trustedDirectory, verifyResponse } from "./review-app-discovery.mjs";
+import { parseStoreJson } from "../workflow/store-json.mjs";
 
 const REQUEST_TIMEOUT_MS = 2000;
 // A running app that misses the usual deadline is busy, not gone, so a request to it waits this much longer before the session gives up on it.
@@ -55,7 +56,7 @@ function controlRequest(discovery, method, route, body, timeoutMs = REQUEST_TIME
         }
         let value;
         try {
-          value = answer ? JSON.parse(answer) : {};
+          value = answer ? parseStoreJson(answer) : {};
         } catch {
           reject(failure("The review app returned an invalid response.", true));
           return;

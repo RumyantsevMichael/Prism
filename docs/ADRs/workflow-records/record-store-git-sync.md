@@ -125,8 +125,8 @@ Every one of those settings except `maintenance.auto` and the `hook.*` switches 
 An SSH server or a Git daemon would take that command as the service to run and refuse it, and HTTP ignores it, so no other transport gets it.
 A `remote.<name>.uploadpack` or `remote.<name>.receivepack` that the user set in the store is a transport setting of the user's, so it runs as set.
 Every sync writes its outcome, ahead and behind counts, and saved conflicts to a status file in the ignored sync folder, and the review index includes it.
-A sync that saves local versions, of records or of a store file it had withheld, first writes a pending notice for that save under `.prism-sync/notices/`, then moves the copies to `.prism-sync/conflicts/`.
-Each server remembers the stores it synced or pulled, and the next tool result it writes to its host names each saved version that it has not named yet and that was saved since it started or still has a pending notice.
+A sync that saves local versions, of records, of [artifacts](store-artifacts.md), or of a store file it had withheld, first writes a pending notice for that save under `.prism-sync/notices/`, then moves the copies to `.prism-sync/conflicts/`.
+Each server remembers the stores it synced or pulled, and the next tool result it writes to its host names each saved version that it has not named yet and that was saved since it started or still has a pending notice, artifacts by their path in the checkout.
 Writing that result clears the notices it carried, so a server started later names a version only when no written result has named it, and a result that is never written, such as a cancelled call's, clears nothing.
 A call that the host cancels before its result is written gets no response, as MCP asks of a cancelled request, so it takes no notes and clears nothing.
 
