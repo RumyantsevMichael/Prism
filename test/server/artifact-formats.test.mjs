@@ -103,12 +103,35 @@ test("clause 5: Prism's own requirement files written to the template conform", 
   assert.deepEqual(entry.findings, []);
 });
 
-test("clause 6: an ADR reports a missing section, an unknown status, and a requirement that is not a link", async (context) => {
-  const broken = ADR.replace("Status: Accepted", "Status: Superseded").replace("## Alternatives\n\nA fixed number of attempts was rejected because attempts vary in length.\n\n", "").replace("- [retries.md§1](../../requirements/retries.md#1)", "- the retries requirement");
+test("clause 6: an ADR reports a missing section, an unknown status, and a requirement link that is not a relative .md link", async (context) => {
+  const broken = ADR.replace("Status: Accepted", "Status: Superseded").replace("## Alternatives\n\nA fixed number of attempts was rejected because attempts vary in length.\n\n", "").replace("- [retries.md§1](../../requirements/retries.md#1)", "- [the retries requirement](https://example.invalid/retries)");
   const entry = await single(context, PATHS.adr, broken);
   assert.deepEqual(rulesOf(entry), ["adr.requirements", "adr.sections", "adr.status"]);
   const declined = await single(context, PATHS.adr, ADR.replace("Status: Accepted", "Status: Declined").replace("- [retries.md§1](../../requirements/retries.md#1)", "n/a"));
   assert.deepEqual(declined.findings, []);
+});
+
+test("clauses 5, 6: the shapes that Prism's templates before the formats produced conform, and other breaks still do not", async (context) => {
+  const supersedes = REQUIREMENT
+    .replace("Disposition: Active\n\nRequirement: When a request exceeds", "Disposition: Active\n\nSupersedes: [retries.md§2](#2)\n\nRequirement: When a request exceeds")
+    .replace("Related: n/a\n", "Supersedes: [retries.md§1](#1)\n\nRelated: [Stop at the total deadline](#1).\n");
+  assert.deepEqual((await single(context, PATHS.requirements, supersedes)).findings, [], "Supersedes: anywhere after Disposition:, and a period after the last Related link");
+  const twice = REQUIREMENT.replace("Related: n/a\n", "Supersedes: [retries.md§1](#1)\n\nRelated: n/a\n\nSupersedes: [retries.md§1](#1)\n");
+  assert.deepEqual(rulesOf(await single(context, PATHS.requirements, twice)), ["requirements.fields"], "a second Supersedes: line");
+  const early = REQUIREMENT.replace("Pattern: Event-driven\n\nDisposition: Active\n\nRequirement: When a request exceeds", "Supersedes: [retries.md§2](#2)\n\nPattern: Event-driven\n\nDisposition: Active\n\nRequirement: When a request exceeds");
+  assert.deepEqual(rulesOf(await single(context, PATHS.requirements, early)), ["requirements.fields"], "Supersedes: before Disposition:");
+  const trailing = REQUIREMENT.replace("Related: [retries.md§2](#2)", "Related: [retries.md§2](#2) and the transport");
+  assert.deepEqual(rulesOf(await single(context, PATHS.requirements, trailing)), ["requirements.links"], "text after the last Related link other than a period");
+  const prose = ADR
+    .replace("- [retries.md§1](../../requirements/retries.md#1)", "[Stop at the total deadline](../../requirements/retries.md#1) requires a bound on retries.\nThe [retries requirements](../../requirements/retries.md) hold the rest.")
+    .replace("## Decision Log\n\nn/a\n", "## Decision Log\n");
+  assert.deepEqual((await single(context, PATHS.adr, prose)).findings, [], "prose with relative .md links in Requirements, and an empty Decision Log");
+  const none = ADR.replace("- [retries.md§1](../../requirements/retries.md#1)", "No Approved requirement governs this decision yet.");
+  assert.deepEqual((await single(context, PATHS.adr, none)).findings, [], "a Requirements section that says in prose that no requirement governs the decision");
+  const emptyProblem = ADR.replace("## Problem\n\nRetries without a bound can hold a connection forever.\n", "## Problem\n");
+  assert.deepEqual(rulesOf(await single(context, PATHS.adr, emptyProblem)), ["adr.sections"], "an empty section other than the Decision Log");
+  const emptyRequirements = ADR.replace("- [retries.md§1](../../requirements/retries.md#1)\n", "");
+  assert.deepEqual(rulesOf(await single(context, PATHS.adr, emptyRequirements)), ["adr.sections"], "an empty Requirements section");
 });
 
 test("clause 7: a feature reports an example outside a rule, a rule without a requirement link, and an example with two whens", async (context) => {

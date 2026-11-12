@@ -213,11 +213,19 @@ export async function reference(type) {
   }
 }
 
-/** A reference's example: the only fenced block under its Example heading, and its example path. */
+/** A reference's example: the only fenced block under its Example heading, and its example path; the section ends at the first `## ` line outside a fence, since a complete example holds `## ` headings of its own. */
 export function exampleOf(source) {
-  const section = source.split(/^## Example\s*$/m)[1]?.split(/^## /m)[0] ?? "";
-  const fence = /^(`{3,}|~{3,})[^\n]*\n([\s\S]*?)^\1\s*$/m.exec(section);
-  return { text: fence ? fence[2] : null, path: /^Example path: `?([^`\s]+)`?\s*$/m.exec(source)?.[1] ?? null, fences: section.match(/^(`{3,}|~{3,})/gm)?.length ?? 0 };
+  const lines = (source.split(/^## Example\s*$/m)[1] ?? "").split("\n");
+  const blocks = [];
+  let open = null;
+  for (const [index, line] of lines.entries()) {
+    const marker = /^(`{3,}|~{3,})/.exec(line)?.[1];
+    if (open) {
+      if (marker && marker[0] === open.marker[0] && marker.length >= open.marker.length && line.trim() === marker) { blocks.push(lines.slice(open.from + 1, index).join("\n") + "\n"); open = null; }
+    } else if (marker) open = { marker, from: index };
+    else if (/^## /.test(line)) break;
+  }
+  return { text: blocks.length === 1 && !open ? blocks[0] : null, path: /^Example path: `?([^`\s]+)`?\s*$/m.exec(source)?.[1] ?? null, fences: blocks.length * 2 + (open ? 1 : 0) };
 }
 
 /** The rule ids that a reference lists as `- \`<id>\`: <rule>` lines. */
