@@ -128,4 +128,5 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 
 - Read [delegation.md](references/delegation.md) before starting child agents.
 - Read [visual-review.md](references/visual-review.md) before human artifact review.
+- Read [glossary-format.md](references/glossary-format.md) before writing or converting a glossary.
 - Ask only at a real gate or unresolved choice, as a [blocker](#common-terms) in plain language before its artifact reference.

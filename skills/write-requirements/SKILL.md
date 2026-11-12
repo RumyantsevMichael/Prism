@@ -27,6 +27,8 @@ Each requirement file covers one product capability, independent of components, 
   2. For a replacement obligation, use the next unused number.
   3. For an obligation that ends without replacement, propose `Disposition: Withdrawn`.
 
+The [requirement format](references/requirement-format.md) states the rules that `check_artifacts` checks and a complete example.
+
 ```markdown
 # <Capability>
 

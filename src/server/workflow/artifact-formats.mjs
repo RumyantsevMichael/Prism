@@ -474,13 +474,13 @@ function format(type, version, reference, rules, defaults, inspect) {
 export const ARTIFACT_FORMATS = Object.freeze([
   format("requirements", 1, "skills/write-requirements/references/requirement-format.md",
     ["requirements.text", "requirements.title", "requirements.header", "requirements.status", "requirements.dates", "requirements.sections", "requirements.numbering", "requirements.fields", "requirements.pattern", "requirements.disposition", "requirements.links"],
-    { Status: "Draft", Approved: "n/a", "Design questions": "- n/a", Disposition: "Active", Related: "n/a" }, inspectRequirements),
+    { Status: "Draft", Approved: "n/a", "Design questions": "n/a", Disposition: "Active", Related: "n/a" }, inspectRequirements),
   format("adr", 1, "skills/write-adr/references/adr-format.md",
     ["adr.text", "adr.title", "adr.header", "adr.status", "adr.dates", "adr.sections", "adr.requirements"],
     { Status: "Proposed", Requirements: "n/a", "Decision Log": "n/a" }, inspectAdr),
   format("glossary", 1, "skills/workflow/references/glossary-format.md",
     ["glossary.text", "glossary.title", "glossary.purpose", "glossary.identity", "glossary.definition", "glossary.fields", "glossary.source", "glossary.source-decided", "glossary.source-withdrawn"],
-    { Title: "# Glossary" }, inspectGlossary),
+    { Title: "Glossary" }, inspectGlossary),
   format("feature", 1, "skills/write-feature/references/feature-format.md",
     ["feature.text", "feature.header", "feature.rules", "feature.requirement", "feature.examples", "feature.steps"],
     {}, inspectFeature)

@@ -22,7 +22,7 @@ Existing code and tests do not authorize new behavior.
 ## 2. Write the feature
 
 1. Create or update `F-<capability>.feature` in the configured feature directory, defaulting to `docs/Features/`.
-2. Use this shape for each invariant:
+2. Use this shape for each invariant, and read the [feature format](references/feature-format.md) for the rules that `check_artifacts` checks and a complete example:
 
    ```gherkin
    Feature: <observable capability>

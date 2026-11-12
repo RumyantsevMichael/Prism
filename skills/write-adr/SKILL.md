@@ -26,6 +26,7 @@ Design can record decisions that child slices share before it splits a slice.
   2. Keep related decisions in the same topic.
   3. For supersession, link the replacement and original without changing the original status.
 
+The [ADR format](references/adr-format.md) states the rules that `check_artifacts` checks and a complete example.
 New ADRs use this shape:
 
 ```markdown

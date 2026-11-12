@@ -43,6 +43,27 @@ A short resume note records settings, active work, pending questions, next actio
 Requirements preserve intent, ADRs preserve decisions, and feature files preserve acceptance examples.
 Tests and consumed contracts enforce behavior, and code supplies implementation details.
 
+## Artifact formats
+
+Requirement files, ADRs, the glossary, and feature files each have one format with a version, a list of rules, and a complete example that conforms to it.
+Each format's reference sits beside the skill that writes the artifact:
+
+| Artifact | Reference | What it requires |
+|---|---|---|
+| Requirement file | `skills/write-requirements/references/requirement-format.md` | A `# <capability>` title, `Status:`, `Created:`, and `Approved:` lines, the Problem, Goals, Non-goals, and Design questions sections, and numbered sections with anchors and the Pattern, Disposition, Requirement, Rationale, and Related fields |
+| ADR | `skills/write-adr/references/adr-format.md` | A `# <decision>` title, `Status:` and `Created:` lines, and the eight sections from Requirements to Decision Log, where Requirements lists links to requirement sections |
+| Glossary | `skills/workflow/references/glossary-format.md` | A `# <name>` title and a purpose paragraph, then terms, each a `## <term>` heading after an `<a id="<id>"></a>` anchor, a definition whose first sentence stands on its own, and a `Source:` line that links the Approved requirement section or Accepted ADR that introduced it |
+| Feature file | `skills/write-feature/references/feature-format.md` | A `Feature:` line, and Rules that each link a requirement and hold examples with Given, one When, and Then steps |
+
+Any required value or section body may be the single word `unknown` when nobody knows it yet, except a title, a status, or an identity.
+A glossary term whose sources are a Draft requirement, a Proposed or Declined ADR, or a missing file is reported, and so is a term whose every source was withdrawn or superseded.
+
+Agents check artifacts with the `check_artifacts` tool.
+Without paths it checks every `.md` file other than `README.md` up to four folders below the configured Requirements and ADRs paths, every `.feature` file up to four folders below the Feature files path, and the configured Glossary file.
+A path set to `n/a` in `.prism/workflow.md` is not checked.
+For each artifact it reports whether it conforms, each broken rule by its id, such as `requirements.fields`, with its line and a message, and each value written as `unknown`.
+A path that lies under none of the configured paths is refused with `artifact_type_unknown`, and a path that does not exist with `artifact_missing`.
+
 ## Verification
 
 A slice whose design is accepted lists its frozen acceptance tests and says whether its implementation needs independent review.
