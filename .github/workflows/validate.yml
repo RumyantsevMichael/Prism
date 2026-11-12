@@ -36,6 +36,7 @@ jobs:
           node --version
           npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
           npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          npm run build:native
           npm test
 
   # The server tests, browser tests included, run in four shards on Linux and on Windows, since one runner takes about half an hour for them.
@@ -82,6 +83,7 @@ jobs:
         run: |
           npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
           npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          npm run build:native
           node scripts/test-shard.mjs --shard ${{ matrix.shard }}/4 -- --test-timeout=1200000 ${{ runner.os == 'Windows' && '--test-concurrency=2' || '' }}
 
   checks:
@@ -95,6 +97,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      # dist/ is generated from src/ and not committed, so every job that runs the plugin builds it first.
+      - name: Build the runtime
+        run: |
+          npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          npm run build:native
 
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
@@ -113,14 +122,24 @@ jobs:
 
       - name: Test the native build and release automation
         run: |
-          npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
-          npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
-          npm run check:native
           node --test scripts/native-build/*.test.mjs scripts/*.test.mjs
 
       - name: Check manifest versions
         run: |
           node -e "const fs=require('fs'); const a=JSON.parse(fs.readFileSync('.claude-plugin/plugin.json')); const b=JSON.parse(fs.readFileSync('.codex-plugin/plugin.json')); if(a.version!==b.version) process.exit(1)"
+
+      # main holds no built runtime, so a catalog entry that installs this repository would install a plugin that cannot start.
+      - name: Check that both catalog entries pin a release package
+        run: |
+          node -e '
+            const fs = require("fs");
+            for (const file of [".claude-plugin/marketplace.json", ".agents/plugins/marketplace.json"]) {
+              const { source } = JSON.parse(fs.readFileSync(file, "utf8")).plugins[0];
+              if (typeof source !== "object" || !/^prism--v\d+\.\d+\.\d+$/.test(source.ref || "") || !/^[0-9a-f]{40}$/.test(source.sha || "")) {
+                console.error(file + " must pin a prism--v<version> package tag and its commit, not " + JSON.stringify(source));
+                process.exit(1);
+              }
+            }'
 
       - name: Check explicit-only skill policies
         run: |
@@ -169,10 +188,11 @@ jobs:
       - name: Install Claude Code and Codex
         run: npm install -g @anthropic-ai/claude-code @openai/codex@0.147.0
 
-      - name: Install the native build dependencies
+      - name: Build the runtime
         run: |
           npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
           npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          npm run build:native
 
       # npm starts both CLIs through .cmd shims, which Node cannot spawn without a shell, so the smoke test runs their real entry points.
       - name: Smoke-test Prism tools and hooks in real Claude Code and Codex on Windows
