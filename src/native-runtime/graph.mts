@@ -15,14 +15,22 @@ let sdk: typeof import("@colbymchenry/codegraph") | undefined;
 // A kept graph and the hashes of the files it was built from, which an incremental build syncs for changed paths instead of indexing every file.
 // `changes` names what changed since the build that wrote `state`; without it, or without a usable state, the graph is built in full.
 export interface GraphState { directory: string; changes?: { changedFiles: string[]; removedFiles: string[] } }
-interface StoredGraph { schemaVersion: 1; sdk: string; files: Record<string, string> }
+interface StoredGraph { schemaVersion: 1; sdk: string; files: Record<string, string>; frameworks: string[] }
 const GRAPH_STATE = "graph.json";
 type Graph = Awaited<ReturnType<typeof extractOnce>>;
+// The code graph also reads files that are not code to decide how every file is indexed: ignore files and its own `codegraph.json` set the scope,
+// and manifests such as `package.json`, `go.mod`, or `requirements.txt` decide which frameworks it detects.
+// That set is the SDK's and grows with it, so only code files and prose documents outside dot folders count as files a sync can take alone,
+// and a change to any other path builds the graph in full.
+const PROSE = /\.(md|mdx|markdown|rst|adoc)$/i;
+const syncable = (file: string) => !file.split("/").some(part => part.startsWith("."))
+  && (CODE_EXTENSIONS.has(path.extname(file).toLowerCase()) || PROSE.test(file));
 
 async function readGraphState(directory: string): Promise<StoredGraph | undefined> {
   try {
     const stored = JSON.parse(await readFile(path.join(directory, GRAPH_STATE), "utf8"));
-    return stored?.schemaVersion === 1 && typeof stored.sdk === "string" && stored.files && typeof stored.files === "object" ? stored : undefined;
+    return stored?.schemaVersion === 1 && typeof stored.sdk === "string" && stored.files && typeof stored.files === "object"
+      && Array.isArray(stored.frameworks) && stored.frameworks.every((name: unknown) => typeof name === "string") ? stored : undefined;
   } catch { return undefined; }
 }
 
@@ -42,11 +50,13 @@ export async function extractGraph(mirror: string, files: Pick<SourceFile, "file
     const current = new Map(files.map(file => [file.file, file.hash]));
     paths = [...new Set([...state.changes.changedFiles, ...state.changes.removedFiles, ...files.filter(file => stored.files[file.file] !== file.hash).map(file => file.file),
       ...Object.keys(stored.files).filter(file => !current.has(file))])].sort();
+    if (!paths.every(syncable)) paths = undefined;
   }
   // The record is removed while the graph changes, so a build that stops part way leaves the next one to build in full.
   if (state) await rm(path.join(state.directory, GRAPH_STATE), { force: true });
   let graph = paths ? await extractOnce(mirror, files, runtimeDirectory, progress, paths) : undefined;
-  if (graph && !graph.clean) graph = undefined;
+  // Frameworks are detected from the whole file set, so a sync that changes which ones the graph detects would leave the other files indexed under the old ones.
+  if (graph && (!graph.clean || graph.frameworks.join("\n") !== stored!.frameworks.join("\n"))) graph = undefined;
   if (!graph) {
     await rm(path.join(mirror, ".codegraph"), { recursive: true, force: true });
     graph = await extractOnce(mirror, files, runtimeDirectory, progress);
@@ -55,11 +65,11 @@ export async function extractGraph(mirror: string, files: Pick<SourceFile, "file
     try {
       await mkdir(state.directory, { recursive: true, mode: 0o700 });
       const temporary = path.join(state.directory, `${GRAPH_STATE}.${process.pid}.tmp`);
-      await writeFile(temporary, JSON.stringify({ schemaVersion: 1, sdk: version, files: Object.fromEntries(files.map(file => [file.file, file.hash])) } satisfies StoredGraph), { mode: 0o600 });
+      await writeFile(temporary, JSON.stringify({ schemaVersion: 1, sdk: version, files: Object.fromEntries(files.map(file => [file.file, file.hash])), frameworks: graph.frameworks } satisfies StoredGraph), { mode: 0o600 });
       await rename(temporary, path.join(state.directory, GRAPH_STATE));
     } catch { /* A record that cannot be written leaves the next build a full one. */ }
   }
-  const { clean: _clean, ...result } = graph;
+  const { clean: _clean, frameworks: _frameworks, ...result } = graph;
   return result as Graph;
 }
 
@@ -67,12 +77,12 @@ export async function extractGraph(mirror: string, files: Pick<SourceFile, "file
 // `clean` is true when nothing went wrong that an incremental build could report differently from a full one, which is when the kept graph may serve the next build.
 async function extractOnce(mirror: string, files: Pick<SourceFile, "file" | "content" | "hash">[], runtimeDirectory: string, progress: (value: Progress) => void, paths?: string[]) {
   const codeFiles = files.filter(file => CODE_EXTENSIONS.has(path.extname(file.file).toLowerCase()));
-  if (!codeFiles.length) return { nodes: [] as SourceUnit[], edges: [] as Relationship[], references: [] as UnresolvedReference[], unresolvedByFile: {} as Record<string, FileReference[]>, diagnostics: [] as Diagnostic[], files: [] as string[], parsedFiles: [] as string[], clean: false };
+  if (!codeFiles.length) return { nodes: [] as SourceUnit[], edges: [] as Relationship[], references: [] as UnresolvedReference[], unresolvedByFile: {} as Record<string, FileReference[]>, diagnostics: [] as Diagnostic[], files: [] as string[], parsedFiles: [] as string[], frameworks: [] as string[], clean: false };
   const diagnostics: Diagnostic[] = [], nodes: SourceUnit[] = [], edges: Relationship[] = [], references: UnresolvedReference[] = [];
   // Every reference the graph could not resolve, by the file that makes it, so that Prism can tell a call into a library from a missing link.
   const unresolvedByFile: Record<string, FileReference[]> = {};
   const failedFiles = new Set<string>();
-  let graph: CodeGraph | null = null, connection: DatabaseConnection | undefined, indexedFiles: FileRecord[] = [], clean = true;
+  let graph: CodeGraph | null = null, connection: DatabaseConnection | undefined, indexedFiles: FileRecord[] = [], frameworks: string[] = [], clean = true;
   boundary.begin({ readRoots: [mirror, runtimeDirectory], writeRoots: [path.join(mirror, ".codegraph")] });
   try {
     const onProgress = (value: { phase: string; current: number; total: number }) => progress({ phase: `graph:${value.phase}`, current: value.current, total: value.total });
@@ -86,6 +96,9 @@ async function extractOnce(mirror: string, files: Pick<SourceFile, "file" | "con
       if (!result.success && codeFiles.length) diagnostics.push({ code: "incomplete_structure", message: "The graph SDK did not complete indexing." });
       if ((result.errors || []).length || !result.success) clean = false;
     }
+    // Detected again from the files the graph now holds, as a full build of them would detect them.
+    graph.reinitializeResolver();
+    frameworks = [...graph.getDetectedFrameworks()].sort();
     await graph.close(); graph = null;
     connection = sdk!.DatabaseConnection.open(sdk!.getDatabasePath(mirror));
     const queries = new sdk!.QueryBuilder(connection.getDb());
@@ -164,5 +177,5 @@ async function extractOnce(mirror: string, files: Pick<SourceFile, "file" | "con
       denied: denied.map(item => ({ path: path.relative(mirror, item.path), write: item.write })),
       message: "The graph requested files outside its snapshot, including suppressed access failures." });
   }
-  return { nodes, edges, references, unresolvedByFile, diagnostics, files: indexedFiles.map(file => file.path), parsedFiles: indexedFiles.filter(file => !file.errors?.length && !failedFiles.has(file.path)).map(file => file.path), clean };
+  return { nodes, edges, references, unresolvedByFile, diagnostics, files: indexedFiles.map(file => file.path), parsedFiles: indexedFiles.filter(file => !file.errors?.length && !failedFiles.has(file.path)).map(file => file.path), frameworks, clean };
 }
