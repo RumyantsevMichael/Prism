@@ -63,7 +63,11 @@ export function auditPage() {
     if (!parent || parent === document.body || getComputedStyle(parent).overflowX !== "visible") continue;
     const box = el.getBoundingClientRect();
     const limit = parent.getBoundingClientRect();
-    if (box.width && box.right > limit.right + 2 && box.left < limit.right) out.push(`${describe(el)} overflows ${describe(parent)}`);
+    if (box.width && box.right > limit.right + 2 && box.left < limit.right) {
+      out.push(`${describe(el)} overflows ${describe(parent)}`);
+      const host = el.closest("prism-claim");
+      if (host) out.push(`DIAG ${describe(el)} ${box.left.toFixed(1)}-${box.right.toFixed(1)} in ${describe(parent)} ${limit.left.toFixed(1)}-${limit.right.toFixed(1)} display=${getComputedStyle(parent).display} pdisplay=${getComputedStyle(parent.parentElement).display} variant=${host.getAttribute("variant")} font=${getComputedStyle(el).fontFamily} fonts=${[...document.fonts].map((f) => `${f.family}:${f.status}`).join(",")} text=[${host.textContent.trim()}] html=${host.outerHTML.slice(0, 600)}`);
+    }
   }
   for (const el of document.querySelectorAll("button, a[href], input, textarea, select")) {
     if (!shown(el)) continue;

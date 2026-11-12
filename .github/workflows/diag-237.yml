@@ -1,0 +1,31 @@
+name: Diagnose claim overflow
+
+on:
+  pull_request:
+
+jobs:
+  layout:
+    name: layout (${{ matrix.round }})
+    strategy:
+      fail-fast: false
+      matrix:
+        round: [1, 2, 3, 4, 5, 6]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install -g playwright@1.63.0 && npx playwright install --with-deps chromium
+      - run: |
+          npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          npm run build:native
+      - run: fc-match sans-serif; fc-match Inter; fc-match system-ui
+      - name: Layout check part 1 at phone, twice
+        run: |
+          for i in 1 2; do
+            node scripts/review-demo/layout-check.mjs --viewports phone,laptop --themes light,dark --part 1/2 > out$i.txt 2>&1 || true
+            grep -E "claim|distinct" out$i.txt | cut -c1-1500 | head -20
+          done
