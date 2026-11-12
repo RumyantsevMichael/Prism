@@ -104,6 +104,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24.16.0'
+      - name: Build the runtime
+        run: |
+          npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          npm run build:native
       - uses: actions/download-artifact@v4
         with:
           pattern: native-*
@@ -172,6 +177,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24.16.0'
+      - name: Build the runtime
+        run: |
+          npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          npm run build:native
       - name: Check the draft and its tag
         run: |
           [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true ] || { echo "::error::$TAG is not a draft."; exit 1; }
@@ -203,6 +213,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24.16.0'
+      - name: Build the runtime
+        run: |
+          npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+          npm run build:native
       - uses: actions/download-artifact@v4
         with:
           pattern: native-*
