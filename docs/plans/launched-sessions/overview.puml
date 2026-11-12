@@ -1,0 +1,25 @@
+@startuml
+title launched-sessions - slices
+package "launch-supervisor" as Sup {
+  interface "startLaunch, listLaunches,\nresumeLaunch, hostAvailability" as ApiI
+  interface "launch folder:\nrecord, runs, heartbeat" as FolderI
+}
+package "launch-stop" as Stop {
+  interface "stopLaunch" as StopI
+}
+package "launch-confirmation" as Conf {
+  interface "confirmLaunch,\nlaunches/window.json" as ConfI
+}
+package "launch-actions" as Act {
+  interface "launch.*, launch:<id> actions,\nGET api/launches" as ActI
+}
+package "launches-place" as Place {
+  component "Launched sessions place" as View
+}
+Stop ..> FolderI : stop request
+Act ..> ApiI
+Act ..> StopI
+Act ..> ConfI
+View ..> ActI
+Sup -[hidden]-> Stop
+@enduml

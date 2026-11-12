@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import os from "node:os";
+import { realpath } from "node:fs/promises";
 import { listComponents } from "./components.mjs";
 import { appendIndexHistory } from "./index-history.mjs";
 import { readInitiativeWithClaims } from "./initiative.mjs";
@@ -12,6 +13,22 @@ import { INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction } from "
 import { ambiguousApprovalMessage, answerArtifactApproval, commentOnArtifact, pendingApprovalGates, storeArtifactTarget } from "./store-artifacts.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
+import { confirmLaunch } from "../session/launch-confirmation.mjs";
+import { HOSTS } from "../session/launch-hosts.mjs";
+import { LAUNCH_ID_PATTERN } from "../session/launch-records.mjs";
+import {
+  answerLaunchGate,
+  hostAvailability,
+  initiativeRunning,
+  launchRunStatus,
+  launchRunningMessage,
+  LaunchError,
+  listLaunches,
+  resumeLaunch,
+  resumeRefusal,
+  startLaunch,
+  stopLaunch
+} from "../session/launched-sessions.mjs";
 
 // The review app's actions: one registry of definitions that lists and applies every change a person makes to Prism records from a page.
 // The module needs no HTTP, so any transport serves the same registry, and a new action joins by adding a definition below.
@@ -60,6 +77,8 @@ export function parseTarget(reference) {
   if (match && APPROVAL_ID.test(match[1])) return { kind: "approval", reference, gate: match[1] };
   match = /^artifact:([^:]+):([^:]+)$/.exec(reference);
   if (match && SCOPE_LABEL.test(match[1])) return { kind: "artifact", reference, scope: match[1], path: match[2] };
+  match = /^launch:(.+)$/.exec(reference);
+  if (match && LAUNCH_ID_PATTERN.test(match[1])) return { kind: "launch", reference, launch: match[1] };
   match = /^index:([^/]+)\/([^/]+)$/.exec(reference);
   if (match && REPOSITORY_NAME.test(match[1]) && REPOSITORY_NAME.test(match[2])) return { kind: "index", reference, identity: `${match[1]}/${match[2]}` };
   return null;
@@ -111,8 +130,8 @@ async function seenArtifact(projectRoot, parsed) {
   });
 }
 
-// Reads what a target's actions need: the initiative's coordination state and record, the index component, the approval gate, or the store artifact, and refuses a target that does not exist.
-async function readTarget(projectRoot, parsed, indexer, state = undefined) {
+// Reads what a target's actions need: the initiative's coordination state and record, the index component, the approval gate, the store artifact, or the launched session, and refuses a target that does not exist.
+async function readTarget(projectRoot, parsed, indexer, state = undefined, env = process.env) {
   if (parsed.kind === "artifact") {
     const artifact = await seenArtifact(projectRoot, parsed);
     if (!artifact) throw unknownTarget(parsed.reference);
@@ -123,6 +142,16 @@ async function readTarget(projectRoot, parsed, indexer, state = undefined) {
     const gates = await pendingApprovals(projectRoot, parsed.gate);
     if (!gates.length) throw unknownTarget(parsed.reference);
     return { ...parsed, gateRecord: gates[0], ambiguous: gates.length > 1 ? ambiguousApprovalMessage(parsed.gate, gates) : null };
+  }
+  if (parsed.kind === "launch") {
+    // A launched session is a target while this machine lists it for the page's checkout.
+    const view = (await listLaunches({ projectRoot, env })).launches.find((item) => item.id === parsed.launch);
+    if (!view) throw unknownTarget(parsed.reference);
+    const status = await launchRunStatus({ id: parsed.launch, env });
+    const resumeReason = status === "running" ? "The session is running." : await resumeRefusal({ id: parsed.launch, env });
+    // A shipped initiative's state is history, so its sessions cannot resume; they stay stoppable, since orchestrate ships while its host runs.
+    const shipped = await shippedDecision(projectRoot, view.initiative).catch(() => null);
+    return { ...parsed, view, initiative: view.initiative, running: status === "running", resumeReason, shipped };
   }
   if (parsed.kind === "index") {
     const component = (await indexComponents(projectRoot)).find((item) => item.identity === parsed.identity);
@@ -137,6 +166,10 @@ async function readTarget(projectRoot, parsed, indexer, state = undefined) {
   const shipped = await shippedDecision(projectRoot, parsed.initiative).catch(() => null);
   const context = { ...parsed, coordination, record, shipped, initiativeTarget: `initiative:${parsed.initiative}` };
   if (parsed.kind === "initiative" && !(await initiativeExists(projectRoot, parsed.initiative, record))) throw unknownTarget(parsed.reference);
+  if (parsed.kind === "initiative") {
+    context.hosts = await hostAvailability({ env });
+    context.launchRunning = await initiativeRunning({ projectRoot, initiative: parsed.initiative, env });
+  }
   if (parsed.kind === "slice" && !(record?.slices && Object.hasOwn(record.slices, parsed.slice))) throw unknownTarget(parsed.reference);
   if (parsed.kind === "gate") {
     const gate = (coordination.state?.pending ?? []).find((item) => isRecord(item) && item.id === parsed.gate);
@@ -338,14 +371,90 @@ const INDEX_REBUILD = {
   after: () => "started"
 };
 
+// Launched sessions: a launch per host on an initiative, and stop and resume on each launched session. Each runs through its own step
+// after the common checks, the launch and the person's resume behind the confirmation outside the page, and is recorded only once it took effect.
+const LAUNCH_GROUP = "Launched session";
+const launchBase = {
+  group: LAUNCH_GROUP,
+  fields: () => [],
+  value: () => null,
+  context: () => null,
+  recommended: () => null,
+  confirm: () => null,
+  revision: () => null
+};
+
+const LAUNCH_ACTIONS = HOSTS.map(({ host, label }) => ({
+  ...launchBase,
+  id: `launch.${host}`,
+  kinds: ["initiative"],
+  label: `Launch with ${label}`,
+  effect: `Starts a headless ${label} session on this computer that runs the orchestrate skill for this initiative; you confirm it outside the browser unless you confirmed in the last 30 minutes.`,
+  target: (context) => context.initiativeTarget,
+  unavailable: (context) => {
+    const availability = context.hosts.find((item) => item.host === host);
+    if (!availability?.available) return availability?.reason ?? `${label} was not found.`;
+    return context.launchRunning ? launchRunningMessage(context.initiative) : null;
+  },
+  after: () => null,
+  async launch({ projectRoot, context, env }) {
+    const checkout = await realpath(projectRoot);
+    await confirmLaunch({ initiative: context.initiative, host, checkout, env });
+    const { launch } = await startLaunch({ projectRoot: checkout, initiative: context.initiative, host, env });
+    return { launch, after: { launch: launch.id, host }, initiative: context.initiative, started: launch.id };
+  }
+}));
+
+const LAUNCH_STOP = {
+  ...launchBase,
+  id: "launch.stop",
+  kinds: ["launch"],
+  label: "Stop",
+  effect: "Interrupts the host's turn as the host's own Stop button does, and ends the host process if it still runs after the grace period.",
+  target: (context) => context.reference,
+  // The shipped state never decides a stop.
+  ownsShipped: true,
+  unavailable: (context) => (context.running ? null : "The session is not running."),
+  after: () => null,
+  async launch({ projectRoot, context, env }) {
+    const launch = await stopLaunch({ id: context.launch, env });
+    // After the initiative shipped, its state is history: the stop request in the launch folder is the stop's only record.
+    const shipped = await shippedDecision(projectRoot, context.initiative).catch(() => null);
+    return { launch, after: "stopped", initiative: context.initiative, started: null, record: !shipped };
+  }
+};
+
+const LAUNCH_RESUME = {
+  ...launchBase,
+  id: "launch.resume",
+  kinds: ["launch"],
+  label: "Resume",
+  effect: "Starts the host session again headless; you confirm it outside the browser unless you confirmed in the last 30 minutes.",
+  target: (context) => context.reference,
+  ownsShipped: true,
+  unavailable: (context) => {
+    if (context.running) return "The session is running.";
+    return context.shipped ? shippedActionReason(context.shipped) : context.resumeReason;
+  },
+  after: () => null,
+  async launch({ projectRoot, context, env }) {
+    await confirmLaunch({ initiative: context.view.initiative, host: context.view.host, checkout: context.view.checkout, env });
+    // The initiative may have shipped while the dialog was open; then nothing starts.
+    const shipped = await shippedDecision(projectRoot, context.initiative).catch(() => null);
+    if (shipped) throw fail("action_unavailable", shippedActionReason(shipped), { reason: shippedActionReason(shipped) });
+    const launch = await resumeLaunch({ id: context.launch, env, cause: "person" });
+    return { launch, after: { launch: launch.id, run: launch.runs }, initiative: context.initiative, started: launch.id };
+  }
+};
+
 /** Every action, in listing order; a later action joins by adding its definition here. */
-const ACTIONS = [...SETTING_ACTIONS, GATE_ANSWER, APPROVAL_ANSWER, ARTIFACT_COMMENT, INDEX_REBUILD];
+const ACTIONS = [...SETTING_ACTIONS, ...LAUNCH_ACTIONS, GATE_ANSWER, APPROVAL_ANSWER, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME];
 
 /** The sentence on when an action's change takes effect, or null for an action the registry does not define. */
 export const actionEffect = (id) => ACTIONS.find((definition) => definition.id === id)?.effect ?? null;
 
 function view(definition, context) {
-  const reason = context.shipped ? shippedActionReason(context.shipped) : definition.unavailable(context);
+  const reason = context.shipped && !definition.ownsShipped ? shippedActionReason(context.shipped) : definition.unavailable(context);
   return {
     id: definition.id,
     label: definition.label,
@@ -391,10 +500,10 @@ export const prismIndexer = Object.freeze({
 // ---- Listing ----
 
 /** The actions that apply to a target: { target, actions }, available or not. */
-export async function listActions({ projectRoot, target, indexer = prismIndexer }) {
+export async function listActions({ projectRoot, target, indexer = prismIndexer, env = process.env }) {
   const parsed = parseTarget(target);
   if (!parsed) throw unknownTarget(target);
-  const context = await readTarget(projectRoot, parsed, indexer);
+  const context = await readTarget(projectRoot, parsed, indexer, undefined, env);
   return { target, actions: definitionsFor(parsed.kind).map((definition) => view(definition, context)) };
 }
 
@@ -490,11 +599,11 @@ function check(definition, context, { revision, input, confirmed }) {
  * Applies one action to a target: { applied, actions }, where applied is the history entry or null for an unchanged value, and actions the target's listing after it;
  * an approval's or a comment's result also names its artifact as artifact { path, scope }, since its entry belongs to no initiative, and a comment's result names its stored comment's id as comment.
  */
-export async function applyAction({ projectRoot, target, action, input, revision, confirmed, via = "review-app", indexer = prismIndexer }) {
+export async function applyAction({ projectRoot, target, action, input, revision, confirmed, via = "review-app", indexer = prismIndexer, env = process.env }) {
   const parsed = parseTarget(target);
   if (!parsed) throw unknownTarget(target);
   const definition = definitionsFor(parsed.kind).find((item) => item.id === action);
-  const read = await readTarget(projectRoot, parsed, indexer);
+  const read = await readTarget(projectRoot, parsed, indexer, undefined, env);
   if (!definition) throw fail("unknown_action", `The target ${target} has no action ${JSON.stringify(String(action ?? ""))}.`);
   const request = { revision, input, confirmed };
   const entryOf = async (checked, context) => ({
@@ -507,6 +616,7 @@ export async function applyAction({ projectRoot, target, action, input, revision
     by: await authorOf(projectRoot),
     via: typeof via === "string" && via ? via : "review-app"
   });
+  if (definition.launch) return applyLaunchAction({ projectRoot, definition, context: read, request, entryOf, env, target, indexer });
   let applied = null;
   // The comment as stored, whose id names its own file, so the review app hands it to another checkout's tabs by reading that one file.
   let stored = null;
@@ -561,5 +671,36 @@ export async function applyAction({ projectRoot, target, action, input, revision
   if (parsed.kind === "approval") return { applied, actions: [], artifact: { path: read.gateRecord.artifact.path, scope: read.gateRecord.artifact.scope } };
   // A comment leaves its artifact unchanged, so the target lists its action again, and the result names the artifact it commented on.
   if (parsed.kind === "artifact") return { applied, actions: [view(definition, read)], artifact: { path: read.artifact.path, scope: read.artifact.scope }, comment: stored.id };
-  return { applied, actions: (await listActions({ projectRoot, target, indexer })).actions };
+  const actions = (await listActions({ projectRoot, target, indexer, env })).actions;
+  // An answer to a gate that a launched session of this machine asked is recorded for that session, which it may resume.
+  if (parsed.kind === "gate") {
+    const launch = applied ? await answerLaunchGate({ projectRoot, initiative: parsed.initiative, gate: parsed.gate, entry: applied.id, env }).catch(() => null) : null;
+    return { applied, actions, launch };
+  }
+  return { applied, actions };
+}
+
+// A launched session's refusal answers as an action refusal with its own code and message.
+const launchRefusal = (error) => (error instanceof LaunchError ? fail(error.code, error.message) : error);
+
+// Applies a launch, stop, or resume: the common checks, then the action's own step, which confirms outside the page where it starts a
+// session, and only once that took effect the history entry, which names the launch id and never the host session id.
+async function applyLaunchAction({ projectRoot, definition, context, request, entryOf, env, target, indexer }) {
+  const checked = check(definition, context, request);
+  let outcome;
+  try {
+    outcome = await definition.launch({ projectRoot, context, env });
+  } catch (error) {
+    throw launchRefusal(error);
+  }
+  const entry = await entryOf({ ...checked, after: outcome.after }, context);
+  if (outcome.record === false) return { applied: entry, actions: (await listActions({ projectRoot, target, indexer, env })).actions, launch: outcome.launch };
+  try {
+    await recordPersonAction({ projectRoot, initiative: outcome.initiative, prepare: async () => ({ entry }) });
+  } catch (error) {
+    // A launch or resume that cannot be recorded does not stay started.
+    if (outcome.started) await stopLaunch({ id: outcome.started, env }).catch(() => {});
+    throw error;
+  }
+  return { applied: entry, actions: (await listActions({ projectRoot, target, indexer, env })).actions, launch: outcome.launch };
 }

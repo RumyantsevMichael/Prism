@@ -1037,11 +1037,25 @@ export async function updateCoordinationState({ projectRoot, initiative, expecte
   const resolved = await resolveState(projectRoot, initiative);
   await mkdir(path.dirname(resolved.path), { recursive: true });
   const standing = await askedStanding(resolved, changes);
-  return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
+  const result = await withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
     // A ship that landed after the first check refuses the change too, so the state never changes after the initiative shipped.
     await refuseShipped(projectRoot, initiative);
     return applyStateChange(resolved, expectedRevision, changes, standing);
   }, error, { renew: Boolean(changes.activeOperations?.length) }));
+  await markLaunchedGates(projectRoot, initiative, result.openedGates);
+  return result;
+}
+
+// A gate asked by a launched session of this machine, whose environment names its launch, is marked in that launch folder once the
+// ask is written; the gate record stays as it is, and a mark that cannot be written leaves the ask as it succeeded.
+async function markLaunchedGates(projectRoot, initiative, opened) {
+  if (typeof process.env.PRISM_LAUNCH !== "string" || !process.env.PRISM_LAUNCH || !Array.isArray(opened) || !opened.length) return;
+  try {
+    const { markLaunchGates } = await import("../session/launched-sessions.mjs");
+    await markLaunchGates({ projectRoot, initiative, gates: opened.map((gate) => gate?.id), env: process.env });
+  } catch {
+    // The launched session then shows no wait for the gate, and the person resumes it after answering.
+  }
 }
 
 // Resolving a gate by its id removes only that gate, so it holds after any other change, such as the browser answer that prompted it.
@@ -1240,7 +1254,7 @@ export async function checkpointPause({ projectRoot, initiative, expectedRevisio
   if (!inStore) await assertNearestExistingPathInside(resolved.root, path.dirname(recovery));
   await mkdir(path.dirname(resolved.path), { recursive: true });
   const standing = await askedStanding(resolved, changes);
-  return withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
+  const paused = await withStateLock(resolved.path, () => withFileLock(resolved.path, async () => {
     // A ship that landed after the first check refuses the pause too, before the recovery note is written.
     await refuseShipped(projectRoot, initiative);
     const current = await loadState(resolved.path);
@@ -1280,4 +1294,6 @@ export async function checkpointPause({ projectRoot, initiative, expectedRevisio
       throw caught;
     }
   }, error));
+  await markLaunchedGates(projectRoot, initiative, paused.openedGates);
+  return paused;
 }

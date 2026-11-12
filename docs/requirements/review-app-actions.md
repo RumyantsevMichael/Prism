@@ -22,7 +22,7 @@ A change the person makes in the page also reaches a running agent only when ski
 
 ## Non-goals
 
-- Actions that run commands, change project files, or run Git.
+- Actions that run commands, change project files, or run Git, other than the launched sessions that [launched-sessions.md](launched-sessions.md) defines.
 - Separating the person from an agent that runs as the same operating-system user with full access to that user's files.
 - Any particular action beyond gate answers and the index rebuild, which other requirement files define.
 - Serving the review app to another machine or another operating-system user.
@@ -156,13 +156,13 @@ Related: [§6](#6), [§7](#7), [§10](#10), [§15](#15)
 
 Pattern: Ubiquitous
 
-Disposition: Active
+Disposition: Superseded by [§15](#15)
 
 Requirement: Prism shall apply an action only by changing Prism records, and shall run no command, change no project file, and run no Git operation for it, except that the index rebuild runs Prism's own repository indexer.
 
 Rationale: A page credential that can only change records cannot be turned into a way to run code.
 
-Related: [§9](#9)
+Related: [§9](#9), [§15](#15)
 
 <a id="11"></a>
 ## 11. Require the page's write credential
@@ -231,3 +231,17 @@ Requirement: When Prism applies an action, Prism shall record the action, its ta
 Rationale: Agents and people can then see who changed what, and when, after the page closes, and an approval, which is asked before any initiative exists, keeps its history with the requirement or ADR it concerns.
 
 Related: [§8](#8), [§9](#9), [workspace-artifacts.md§11](workspace-artifacts.md#11)
+
+## 16. Change only Prism records, except launched sessions
+
+Pattern: Ubiquitous
+
+Disposition: Active
+
+Supersedes: [§10](#10)
+
+Requirement: Prism shall apply an action only by changing Prism records, and shall run no command, change no project file, and run no Git operation for it, except that the index rebuild runs Prism's own repository indexer and the launch, stop, and resume of a launched session start or end the host process that [launched-sessions.md](launched-sessions.md) defines.
+
+Rationale: A page credential that can only change records, name an initiative, and pick a host cannot be turned into a way to run arbitrary code, and a launch also needs the person's confirmation outside the page.
+
+Related: [§9](#9), [launched-sessions.md§4](launched-sessions.md#4), [launched-sessions.md§5](launched-sessions.md#5)

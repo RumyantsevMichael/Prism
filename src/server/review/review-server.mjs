@@ -21,6 +21,7 @@ import { nativeSemanticRuntime } from "../repository-intelligence/native-semanti
 import { entityContext, entityExists, forgetWorkspace, loadClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords } from "./workspace-model.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
+import { listLaunches } from "../session/launched-sessions.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 import { readStoredPreferences, writePreferences } from "./review-preferences.mjs";
 import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
@@ -619,7 +620,34 @@ export async function readBody(request) {
 // An approval of an artifact that changed since it was asked, of an id that more than one pending gate holds, an approval or comment by a checkout whose Git names no user,
 // or a comment on a file that already holds the comments a file may hold, conflicts with the store as it is,
 // and a store that cannot be used answers an approval or comment target with its own refusal as unavailable, as an artifact read does.
-const ACTION_STATUS = { unknown_target: 404, unknown_action: 404, stale_revision: 409, action_unavailable: 409, confirmation_required: 409, artifact_changed: 409, approval_ambiguous: 409, author_unknown: 409, comment_limit: 409, invalid_input: 400 };
+const ACTION_STATUS = {
+  unknown_target: 404,
+  unknown_action: 404,
+  stale_revision: 409,
+  action_unavailable: 409,
+  confirmation_required: 409,
+  artifact_changed: 409,
+  approval_ambiguous: 409,
+  author_unknown: 409,
+  comment_limit: 409,
+  invalid_input: 400,
+  // The refusals of a launch, a stop, and a resume, and of the confirmation outside the page that comes before a start.
+  confirmation_pending: 409,
+  confirmation_cooldown: 409,
+  confirmation_unavailable: 409,
+  confirmation_declined: 409,
+  confirmation_timeout: 409,
+  unknown_host: 409,
+  unknown_initiative: 409,
+  unknown_launch: 409,
+  host_unavailable: 409,
+  launch_running: 409,
+  launch_not_running: 409,
+  no_host_session: 409,
+  supervision_lost: 409,
+  stop_timeout: 409,
+  launch_failed: 500
+};
 const ACTION_FIELDS = ["current", "reason", "field", "accepted"];
 export const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
 
@@ -1001,6 +1029,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       } catch (error) {
         sendActionError(response, error);
       }
+    } else if (route === "/api/launches" && request.method === "GET") {
+      // Every launched session of this machine that shares this checkout's record store; reading needs no write session.
+      sendJson(response, 200, await listLaunches({ projectRoot, env: process.env }));
     } else if (route === "/api/actions/targets" && request.method === "GET") {
       try {
         sendJson(response, 200, await listActionTargets({ projectRoot, kind: url.searchParams.get("kind") }));
@@ -1024,11 +1055,12 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       try {
         const result = await applyAction({ projectRoot, target: body.target, action: body.action, input: body.input, revision: body.revision, confirmed: body.confirmed, via: "review-app", indexer });
         if (result.applied) forgetWorkspace();
-        sendJson(response, 200, { applied: result.applied, actions: result.actions });
+        // A launch, stop, or resume also answers with the launched session it changed; an approval's or comment's artifact stays in the event alone.
+        sendJson(response, 200, { applied: result.applied, actions: result.actions, ...(result.launch !== undefined ? { launch: result.launch } : {}) });
         if (result.applied) {
           const target = parseTarget(result.applied.target);
           // An approval or a comment belongs to no initiative, so its event names its artifact, as Attention's recent changes list it.
-          const event = { ...result.applied, initiative: target?.initiative ?? null, ...(result.artifact ? { artifact: result.artifact } : {}) };
+          const event = { ...result.applied, initiative: target?.initiative ?? (target?.kind === "launch" ? result.launch?.initiative ?? null : null), ...(result.artifact ? { artifact: result.artifact } : {}) };
           if (onAction) await Promise.resolve(onAction(event, { shared: target?.kind !== "index", comment: result.comment ?? null })).catch(() => {});
           else notify("action", event);
         }

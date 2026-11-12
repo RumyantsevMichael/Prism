@@ -40,8 +40,8 @@ export function forgetWorkspace() {
   memo.clear();
 }
 
-export const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary"]);
-const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary" });
+export const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary", "launches"]);
+const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary", launches: "Launched sessions" });
 
 // A record is read where it lives: under .prism, or beside its Markdown until the first write moves it there.
 async function recordFile(root, key) {
@@ -1148,6 +1148,8 @@ export async function entityContext(projectRoot, ref) {
   if (ref === "attention" || ref === "roadmap") return { trail: [placeCrumb(ref, ref)], scope: { kind: "global" }, place: ref };
   if (parsed?.kind === "requirements" || parsed?.kind === "decisions") return { trail: [placeCrumb("knowledge"), { ref, label: SECTION_LABELS[parsed.kind] }], scope: await libraryScope(projectRoot, parsed.kind), place: "knowledge" };
   if (parsed?.kind === "glossary") return { trail: [placeCrumb("knowledge"), { ref, label: "Glossary" }], scope: { kind: "global" }, place: "knowledge" };
+  // The Launched sessions place belongs to no place of the rail, so its trail is its own name.
+  if (parsed?.kind === "launches") return { trail: [{ ref, label: SECTION_LABELS.launches }], scope: { kind: "global" }, place: null };
   if (parsed?.kind === "initiative" || parsed?.kind === "slice") return initiativeContext(projectRoot, parsed.id, { slug: parsed.kind === "slice" ? parsed.slug : null });
   if (typeof ref !== "string" || !ref) throw new Error("A tab reference is required.");
   const prefixed = /^(attention|knowledge):(.+)$/.exec(ref);
@@ -1231,6 +1233,14 @@ async function initiativeCode(projectRoot, view) {
   return code;
 }
 
+// Each initiative's title by its id: the roadmap's titles, and the id itself for an initiative that has only a record.
+async function initiativeTitles(projectRoot) {
+  const roadmap = await loadRoadmapView(projectRoot).catch(() => ({ items: [], unlisted: [] }));
+  const titles = Object.fromEntries((roadmap.unlisted ?? []).map((id) => [id, id]));
+  for (const item of roadmap.items ?? []) titles[item.id] = item.title;
+  return titles;
+}
+
 export async function loadEntity(projectRoot, ref, options = {}) {
   const parsed = parseEntityRef(ref);
   if (!parsed) throw new Error(`Unknown entity reference: ${ref}`);
@@ -1238,6 +1248,8 @@ export async function loadEntity(projectRoot, ref, options = {}) {
   if (parsed.kind === "roadmap") return { ref, kind: "roadmap", data: await loadRoadmapView(projectRoot) };
   if (parsed.kind === "requirements" || parsed.kind === "decisions") return { ref, kind: parsed.kind, data: await loadLibrary(projectRoot, parsed.kind) };
   if (parsed.kind === "glossary") return { ref, kind: "glossary", data: await loadGlossary(projectRoot) };
+  // The place reads its sessions from api/launches itself; the page carries only the initiatives' titles, so a running time never redraws it.
+  if (parsed.kind === "launches") return { ref, kind: "launches", data: { titles: await initiativeTitles(projectRoot) } };
   if (parsed.kind === "knowledge" && parsed.page === "diagrams") return { ref, kind: "diagrams", data: { diagrams: (await loadDiagrams(projectRoot)).map(({ path: file, name, owner }) => ({ path: file, name, owner })) } };
   if (parsed.kind === "knowledge" && parsed.page === "touched") return { ref, kind: "touched", data: { inProgress: await slicesInProgress(projectRoot) } };
   if (parsed.kind === "knowledge") return { ref, kind: "changed", data: await loadRecordChanges(projectRoot) };

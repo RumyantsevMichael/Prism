@@ -2413,7 +2413,8 @@ function paletteEntries() {
     { ref: "requirements", label: "Requirements", kind: "place", detail: "Library" },
     { ref: "decisions", label: "Decisions", kind: "place", detail: "Library" },
     { ref: "glossary", label: "Glossary", kind: "place", detail: "Library" },
-    { ref: "knowledge:diagrams", label: "Diagrams", kind: "place", detail: "Library" }
+    { ref: "knowledge:diagrams", label: "Diagrams", kind: "place", detail: "Library" },
+    { ref: "launches", label: "Launched sessions", kind: "place", detail: "Headless sessions on this computer" }
   ];
   const indexed = navigation.index ?? [];
   const known = new Set(indexed.map((entry) => entry.ref));

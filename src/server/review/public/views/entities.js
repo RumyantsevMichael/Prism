@@ -5,7 +5,8 @@ export const ENTITY_LABELS = Object.freeze({
   roadmap: "Roadmap",
   requirements: "Requirements",
   decisions: "Decisions",
-  glossary: "Glossary"
+  glossary: "Glossary",
+  launches: "Launched sessions"
 });
 
 const SECTIONS = Object.keys(ENTITY_LABELS);
@@ -17,6 +18,7 @@ const VIEWS = {
   requirements: () => import("./library.js"),
   decisions: () => import("./library.js"),
   glossary: () => import("./library.js"),
+  launches: () => import("./launched-sessions.js"),
   diagrams: () => import("./library.js"),
   touched: () => import("./knowledge.js"),
   changed: () => import("./knowledge.js")
@@ -101,6 +103,7 @@ export function entityLabel(entity) {
   if (entity.kind === "roadmap") return { eyebrow: "Roadmap", title: "Roadmap", lead: data.serves || null, subtitle: data.recordPath ?? null };
   if (entity.kind === "initiative") return { eyebrow: "Initiative", title: data.roadmapItem?.title ?? data.id, subtitle: data.recordPath };
   if (entity.kind === "slice") return { eyebrow: `Slice · ${data.initiativeTitle}`, title: data.slice.title, subtitle: data.artifacts?.folder ?? null };
+  if (entity.kind === "launches") return { title: ENTITY_LABELS.launches, lead: null, subtitle: null };
   if (entity.kind === "glossary") return { eyebrow: "Library", title: "Glossary", subtitle: data.path };
   if (Object.hasOwn(KNOWLEDGE_PAGES, entity.kind)) return { eyebrow: "Knowledge", title: KNOWLEDGE_PAGES[entity.kind], subtitle: null };
   return { eyebrow: "Library", title: ENTITY_LABELS[entity.kind], subtitle: data.directory };

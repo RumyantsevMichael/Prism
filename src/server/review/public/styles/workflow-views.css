@@ -1441,6 +1441,105 @@ a.inspect-tile:focus-visible {
   font-size: var(--prism-font-size-xs);
 }
 
+/* ---------- Launched sessions: one card per session, its facts, its terminal command, and its actions ---------- */
+
+.launches,
+.launches-list {
+  display: grid;
+  gap: var(--prism-space-5);
+  min-width: 0;
+}
+
+.launches-notice:empty,
+.launches-error[hidden] {
+  display: none;
+}
+
+.launch-info {
+  display: grid;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.launch-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-3) var(--prism-space-4);
+  min-width: 0;
+}
+
+.launch-title {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--prism-font-size-lg);
+  overflow-wrap: anywhere;
+}
+
+.view-section .launch-reason {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.launch-info .key-values {
+  margin: 0;
+}
+
+.launch-running {
+  font-variant-numeric: tabular-nums;
+}
+
+.launch-resume {
+  display: grid;
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+.view-section .launch-resume-lead {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.launch-folder {
+  color: var(--prism-color-ink);
+  font-family: var(--prism-font-code);
+  font-size: var(--prism-font-size-code);
+  overflow-wrap: anywhere;
+}
+
+.launch-command {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+/* The command takes the room its Copy button leaves, so a long command scrolls inside its block and the button keeps its width. */
+.launch-code {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.launch-actions {
+  min-width: 0;
+  margin-top: var(--prism-space-3);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.launch-actions:empty {
+  display: none;
+}
+
+.launch-action-effect {
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  font-weight: var(--prism-font-weight-regular);
+}
+
 /* ---------- Narrow windows ---------- */
 
 @media (max-width: 1100px) {
