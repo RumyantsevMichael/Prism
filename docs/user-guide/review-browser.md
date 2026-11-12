@@ -170,7 +170,7 @@ A slice whose design waits for your answer at its design gate shows as in design
 The list shows the slice tree, and the graph orders leaf slices by execution order.
 A slice that records a [component](workflow.md#components) carries a small label with its `<repository>/<component>` identity in the slice tree, on its board card, and on its slice page, and a slice without one, such as a split scope or a slice accepted before components existed, has no label.
 Below them, the page lists the unstarted leaves that can be designed next, leaving out those in design review.
-A slice page shows the slice's diagrams, its design from `slice.md`, the verification run, the review ledger, and every file in the slice folder.
+A slice page shows the slice's diagrams, its design from `slice.md`, the verification run, the review ledger, its [verified files](#a-slices-files-after-verification), and every file in the slice folder.
 It is the page to read at a design gate.
 
 Every PlantUML file directly in the slice folder gets a tab above the design, with `code.puml` first when it exists.
@@ -343,6 +343,18 @@ It shows no secret, binary file, or file over 512 KiB, and it never names the Gi
 Choose **Turn code content off** to delete the repository's clone from this machine.
 Removing an added workspace that leaves the switcher also turns code content off for each of its repositories and deletes each clone that no other workspace on this machine still uses.
 Code clones never show a password prompt or a credential dialog, because a teammate can change the remote they fetch from; they sign in only through a credential helper or SSH key that answers without asking.
+
+### A slice's files after verification
+
+The **Files** tab of a slice page lists, under **Verified files**, every file that the slice's latest passing verification run recorded: each file whose content differs from the slice's start content, and its frozen tests.
+Each run records only a fingerprint of each file, its Git blob hash, and never its content.
+While the repository's code content is on, the page reads each file at the verified commit when a branch of the repository holds that commit.
+After a squash merge or force push removes the verified commit, the page reads the files at the commit of the default branch that Prism recorded when the initiative shipped.
+Each file is marked **same as verified** when its content at that commit is the content the run tested, and **changed after verification** when it differs, as for a file the run tested with an uncommitted change.
+When neither commit is in the repository's code clone, or the repository's code content is off or unreachable, each file is **not available** and the card says why; a slice without a passing run has no verified files yet.
+
+Work on a slice that exists only on the machine that holds it, unpushed or uncommitted, shows only as its presence under **Work in progress**, such as `in progress in feature-x on vm, not pushed`, named from the slice's latest verification run and its live claim, and never as its content.
+The review app shows no content of a commit that no branch of a code clone holds.
 
 ### Add a workspace from its store
 

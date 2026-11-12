@@ -311,6 +311,8 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
           file: (repository, at) => code.file(view.id, repository, at),
           defaultFile: (repository, file) => code.defaultFile(view.id, repository, file),
           defaultFiles: (repository) => code.defaultFiles(view.id, repository),
+          reachable: (repository, commit) => code.reachable(view.id, repository, commit),
+          blobs: (repository, commit, paths) => code.blobs(view.id, repository, commit, paths),
           components: (repository) => code.components(view.id, repository)
         } } });
     workspaces.set(view.id, view);

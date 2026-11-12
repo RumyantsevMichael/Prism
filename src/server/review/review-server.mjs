@@ -19,7 +19,8 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { entityContext, entityExists, forgetWorkspace, loadEntity, loadNavigation, parseEntityRef } from "./workspace-model.mjs";
+import { entityContext, entityExists, forgetWorkspace, loadEntity, loadNavigation, parseEntityRef, slicePresence } from "./workspace-model.mjs";
+import { shippedCommit, sliceFiles } from "./slice-files.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 import { readPreferences, writePreferences } from "./review-preferences.mjs";
@@ -1041,6 +1042,17 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     return [...names].sort();
   }
 
+  // A workspace's code clones as a slice's files and presence read them, for the workspace's own repositories only, or null for a checkout's own page.
+  async function sliceCode() {
+    if (!workspace?.code) return null;
+    const known = new Set(await storeRepositories());
+    return {
+      state: async (repository) => known.has(repository) ? workspace.code.state(repository) : { state: "off" },
+      reachable: async (repository, commit) => known.has(repository) ? workspace.code.reachable(repository, commit) : null,
+      blobs: async (repository, commit, paths) => known.has(repository) ? workspace.code.blobs(repository, commit, paths) : null
+    };
+  }
+
   // Each repository of the workspace with its code content state.
   async function codeRepositories() {
     return Promise.all((await storeRepositories()).map(async (name) => ({ name, code: workspace?.code ? await workspace.code.state(name) : { state: "off" } })));
@@ -1264,6 +1276,14 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, ...scoped, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
     } else if (["/api/code/tree", "/api/code/file", "/api/code/components"].includes(route) && request.method === "GET") {
       await serveCode(response, route, url);
+    } else if (route === "/api/slice-files" && request.method === "GET") {
+      const ref = `slice:${url.searchParams.get("initiative") ?? ""}/${url.searchParams.get("slice") ?? ""}`;
+      const parsed = parseEntityRef(ref);
+      if (parsed?.kind !== "slice" || !(await entityExists(projectRoot, ref))) {
+        sendJson(response, 404, { code: "slice_unknown", message: "The project has no slice of that initiative and slug." });
+        return;
+      }
+      sendJson(response, 200, await sliceFiles(projectRoot, parsed.id, parsed.slug, await sliceCode()));
     } else if (route === "/api/store/conflicts" && request.method === "GET") {
       // Saved local record versions are read-only here; a person redoes a lost change through an agent.
       send(response, 200, JSON.stringify({ conflicts: await listRecordStoreConflicts(projectRoot).catch(() => []) }), "application/json; charset=utf-8");
@@ -1331,7 +1351,13 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         sendJson(response, 200, { ref, kind: "code", data: { repositories: await codeRepositories() } });
         return;
       }
-      send(response, 200, JSON.stringify(await loadEntity(projectRoot, ref, { intelligenceDirectories: intelligenceDirectories() })), "application/json; charset=utf-8");
+      const entity = await loadEntity(projectRoot, ref, { intelligenceDirectories: intelligenceDirectories() });
+      // A slice names work that exists only on the machine that holds it, unpushed or uncommitted, by its branch and host and never by its content.
+      if (entity.kind === "slice") {
+        const code = await sliceCode();
+        entity.presence = await slicePresence(projectRoot, entity.data.id, entity.data.slug, { reachable: code ? code.reachable : undefined, shipped: await shippedCommit(projectRoot, entity.data.id, entity.data.slug) });
+      }
+      send(response, 200, JSON.stringify(entity), "application/json; charset=utf-8");
     } else if (route === "/api/evidence") {
       send(response, 200, JSON.stringify(await loadEvidence(projectRoot, url.searchParams.get("id"), evidenceStore())), "application/json; charset=utf-8");
     } else if (route === "/api/indexing" && request.method === "GET") {

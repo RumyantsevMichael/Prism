@@ -837,6 +837,17 @@
   min-width: 0;
 }
 
+/* Each verified file names its path, which wraps when long, and then its state. */
+.slice-verified-files {
+  min-width: 0;
+}
+
+.slice-file-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .slice-tab-pane {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

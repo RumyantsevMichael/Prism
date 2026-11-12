@@ -394,6 +394,36 @@ export async function loadSliceView(projectRoot, id, slug, { intelligenceDirecto
   };
 }
 
+// A slice's presence line, such as "in progress in feature-x on vm, not pushed", which names where work is without showing any of it.
+function presenceText(where, branch, host, suffix) {
+  return `in progress${branch ? ` in ${branch}` : ""}${where ?? (host ? ` on ${host}` : "")}${suffix}`;
+}
+
+/**
+ * Work on a slice that exists only on the machine that holds it, as { source, branch, host, text } entries:
+ * the latest verification run when no branch of the repository's code clone holds its verified commit or its checkout was dirty,
+ * and the live implementation claim, which names its holder and host.
+ * reachable(repository, commit) answers whether a branch of the repository's code clone holds a commit, or null where no clone says;
+ * a run whose files the commit recorded at ship holds, which a branch holds, is pushed work and shows no presence.
+ */
+export async function slicePresence(projectRoot, id, slug, { reachable = async () => null, shipped = null } = {}) {
+  const presence = [];
+  const run = await latestVerification(projectRoot, id, slug).catch(() => null);
+  const checkout = run?.checkout;
+  if (checkout && typeof checkout.head === "string") {
+    const repository = typeof checkout.repository === "string" ? checkout.repository : null;
+    const held = repository ? await reachable(repository, checkout.head).catch(() => null) : null;
+    const landed = repository && shipped ? await reachable(repository, shipped).catch(() => null) === true : false;
+    const branch = typeof checkout.branch === "string" && checkout.branch ? checkout.branch : null;
+    const host = typeof checkout.host === "string" && checkout.host ? checkout.host : null;
+    if (!landed && (held === false || checkout.dirty === true)) presence.push({ source: "run", branch, host, text: presenceText(null, branch, host, held === false ? ", not pushed" : ", not committed") });
+  }
+  const initiative = await loadInitiativeView(projectRoot, id).catch(() => null);
+  const claim = initiative?.record?.slices?.[slug]?.claim;
+  if (claim && typeof claim.label === "string" && claim.activity !== "design") presence.push({ source: "claim", branch: null, host: null, text: presenceText(` on ${claim.label}`, null, null, "") });
+  return presence;
+}
+
 async function initiativeReferences(projectRoot, config) {
   const references = new Map();
   for (const id of await initiativeFolders(projectRoot)) {

@@ -135,6 +135,19 @@ export async function createCodeClones({ directory }) {
     await writeFile(temporary, `${JSON.stringify({ schemaVersion: 1, repositories: entries }, null, 2)}\n`, { mode: 0o600 });
     await rename(temporary, savedFile);
   };
+  // The commits that the branches of a clone hold, by clone folder and branch tips, so a page that asks about many commits lists the history once.
+  const heldCommits = new Map();
+  async function commitsOf(folder) {
+    const tips = (await branchesOf(folder)).map((branch) => branch.commit).join(" ");
+    const cached = heldCommits.get(folder);
+    if (cached?.tips === tips) return cached.commits;
+    // rev-list reads only commits the clone holds, so no question about a commit that no branch holds reaches the remote.
+    const listed = await git(folder, ["rev-list", "--branches"]);
+    const commits = listed.ok ? new Set(listed.text.split("\n").filter(Boolean)) : new Set();
+    heldCommits.set(folder, { tips, commits });
+    return commits;
+  }
+  const isCommit = (value) => typeof value === "string" && /^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(value);
   const entryOf = (workspace, repository) => entries.find((entry) => entry.workspace === workspace && entry.repository === repository) ?? null;
   const folderOf = (entry) => path.join(codeDirectory, entry.clone);
   // Reads of the default branch's files, by clone folder and commit, so a link check lists a commit's tree once.
@@ -190,6 +203,7 @@ export async function createCodeClones({ directory }) {
     if (entries.some((item) => item.clone === entry.clone)) return;
     await serial(entry.clone, () => rm(folderOf(entry), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
     for (const key of defaultFiles.keys()) if (key.startsWith(`${folderOf(entry)}\0`)) defaultFiles.delete(key);
+    heldCommits.delete(folderOf(entry));
   }
 
   // A repository's code state: off, on with its branches, or unreachable with Git's reason.
@@ -275,11 +289,8 @@ export async function createCodeClones({ directory }) {
       const branches = await branchesOf(base);
       let at = null;
       if (branch !== null) at = branches.find((item) => item.name === branch)?.commit ?? null;
-      else if (typeof commit === "string" && /^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(commit)) {
-        // Only a commit on a branch of the clone is read, so no read asks the remote for a commit that no branch holds.
-        const held = await git(base, ["rev-list", "--branches"]);
-        if (held.ok && held.text.split("\n").includes(commit)) at = commit;
-      }
+      // Only a commit on a branch of the clone is read, so no read asks the remote for a commit that no branch holds.
+      else if (isCommit(commit) && (await commitsOf(base)).has(commit)) at = commit;
       if (at === null) return null;
       const blob = await blobAt(base, at, codeFolder(file));
       if (!blob) return null;
@@ -293,6 +304,24 @@ export async function createCodeClones({ directory }) {
       if (bytes === null) return null;
       if (bytes.includes(0)) return { ...held, withheld: "binary" };
       return { ...held, bytes: bytes.length, content: bytes.toString("utf8") };
+    },
+
+    /** Whether a branch of the repository's clone holds a commit: true or false, or null without a clone. */
+    async reachable(workspace, repository, commit) {
+      const base = await cloneOf(workspace, repository);
+      if (!base) return null;
+      return isCommit(commit) && (await commitsOf(base)).has(commit);
+    },
+
+    /**
+     * The blob of each path at a commit that a branch of the clone holds, read from trees alone: a Map of path to blob, null where the commit holds no file there,
+     * or null without a clone or for a commit that no branch holds.
+     */
+    async blobs(workspace, repository, commit, paths) {
+      const base = await cloneOf(workspace, repository);
+      if (!base || !isCommit(commit) || !(await commitsOf(base)).has(commit)) return null;
+      const files = new Map((await treeEntries(base, commit, "", { recursive: true })).filter((entry) => entry.type === "file").map((entry) => [entry.path, entry.blob]));
+      return new Map(paths.map((file) => [file, files.get(file) ?? null]));
     },
 
     /** A file read from the clone at the remote's default branch, as file reads one, or null where file answers null. */
