@@ -218,7 +218,7 @@ const readScope = new AsyncLocalStorage();
 
 /** Runs `action` as one burst of record reads: what it reads is resolved as of its start, and writes it makes resolve the store again. */
 export async function withRecordReads(action) {
-  const scope = { open: true, stores: new Map(), synced: new Map(), folderChecks: folderChecks() };
+  const scope = { open: true, stores: new Map(), synced: new Map(), configs: new Map(), folderChecks: folderChecks() };
   try {
     return await readScope.run(scope, action);
   } finally {
@@ -226,10 +226,18 @@ export async function withRecordReads(action) {
     scope.open = false;
     scope.stores.clear();
     scope.synced.clear();
+    scope.configs.clear();
     scope.folderChecks = null;
   }
 }
 
+/** The workflow configuration of a project, read once for a burst of record reads and afresh outside one. */
+async function scopedWorkflowConfig(projectRootPath) {
+  const scope = currentScope();
+  if (!scope) return readWorkflowConfig(await projectRoot(projectRootPath));
+  if (!scope.configs.has(projectRootPath)) scope.configs.set(projectRootPath, projectRoot(projectRootPath).then(readWorkflowConfig));
+  return scope.configs.get(projectRootPath);
+}
 const currentScope = () => {
   const scope = readScope.getStore();
   return scope?.open ? scope : null;
@@ -1200,7 +1208,7 @@ export const folderChecks = () => ({ folders: new Set(), missing: new Set(), rea
 export async function resolveArtifactFile(seen, location, { fresh = false } = {}) {
   const target = path.join(seen.base, ...location.split("/"));
   if (!inside(seen.base, target) || target === seen.base) throw fail("invalid_path", "The artifact location resolves outside the store's artifacts folder.");
-  const checks = fresh ? null : seen.folderChecks ?? null;
+  const checks = fresh ? null : seen.folderChecks ?? currentScope()?.folderChecks ?? null;
   await assertUnlinked(seen.store.base, target, checks);
   await assertContained(seen.store.contain, target, "the record store", checks);
   return target;
@@ -1212,7 +1220,7 @@ export async function resolveStatusFile(seen, relative, { fresh = false } = {}) 
   if (![ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY].includes(relative.split("/")[0])) throw fail("invalid_path", "A status file lies outside the store's status folders.");
   const target = path.join(seen.store.base, ...relative.split("/"));
   if (!inside(folder, target) || target === folder) throw fail("invalid_path", "The status location resolves outside the store's status folders.");
-  const checks = fresh ? null : seen.folderChecks ?? null;
+  const checks = fresh ? null : seen.folderChecks ?? currentScope()?.folderChecks ?? null;
   await assertUnlinked(seen.store.base, target, checks);
   await assertContained(seen.store.contain, target, "the record store", checks);
   return target;
@@ -1286,7 +1294,7 @@ export async function inArtifactStore(projectRootPath, file) {
 
 /** A test of whether a project-relative path is an artifact path, as inArtifactStore decides, reading the configuration once; it accepts no path in a project without a store. */
 export async function artifactPathTest(projectRootPath) {
-  const config = await readWorkflowConfig(await projectRoot(projectRootPath));
+  const config = await scopedWorkflowConfig(projectRootPath);
   if ((config.workspace?.store ?? null) === null) return () => false;
   const kinds = artifactKinds(config);
   return (file) => {
@@ -1344,7 +1352,7 @@ export async function writeArtifactText(projectRootPath, file, decide, { write =
 
 /** The artifact paths the store holds below a project-relative folder, as { path, scope, kind }, or null when the project names no store, so its files are listed in the checkout. */
 export async function listStoreArtifacts(projectRootPath, folder = "") {
-  const config = await readWorkflowConfig(await projectRoot(projectRootPath));
+  const config = await scopedWorkflowConfig(projectRootPath);
   if ((config.workspace?.store ?? null) === null) return null;
   return (await storeArtifacts()).storeArtifactPaths(projectRootPath, folder);
 }
