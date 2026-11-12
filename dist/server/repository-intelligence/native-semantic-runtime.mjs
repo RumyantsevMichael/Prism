@@ -572,9 +572,11 @@ class NativeSemanticRuntime {
       });
       try {
         const prepared = await Promise.race([this.build(source, snapshot, location, job, attempt), stalled, paused]);
+        job.pause = void 0;
         if (job.freshness !== void 0) await writeFreshness(location.directory, job.snapshot, job.freshness);
         await started;
         await recorder.succeed();
+        if (job.pausedAttempt === attempt) this.queue = this.queue.filter((item) => item !== job);
         job.prepared = prepared;
         job.status = "ready";
       } catch (error) {

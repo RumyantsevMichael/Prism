@@ -508,8 +508,11 @@ export class NativeSemanticRuntime implements ComponentRuntime {
         // A stalled or paused build ends at once, without waiting for its stopped request to end.
         // The complete index is set together with the ready status, so a call that its published structure answers meanwhile still reads that structure.
         const prepared = await Promise.race([this.build(source, snapshot, location, job, attempt), stalled, paused]);
+        // A build that returned its index can no longer be paused, and a pause that landed just as it returned leaves no queued run behind.
+        job.pause = undefined;
         if (job.freshness !== undefined) await writeFreshness(location.directory, job.snapshot, job.freshness);
         await started; await recorder.succeed();
+        if (job.pausedAttempt === attempt) this.queue = this.queue.filter(item => item !== job);
         job.prepared = prepared; job.status = "ready";
       } catch (error) {
         // A paused run records no failure and leaves the job waiting in the queue, unless a newer read replaced the job meanwhile.

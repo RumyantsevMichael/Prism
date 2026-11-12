@@ -10,9 +10,11 @@ import { stagedRuntime, until } from "./fixtures/staged-runtime.mjs";
 process.env.PLUGIN_DATA ||= mkdtempSync(path.join(os.tmpdir(), "prism-index-ahead-races-data-"));
 process.env.PRISM_NATIVE_ASSET_MANIFEST ||= manifestPath;
 const { searchRepositoryConcepts } = await import("../../dist/server/repository-intelligence/semantic-native-provider.mjs");
+const { ProgressRecorder } = await import("../../dist/server/repository-intelligence/index-progress.mjs");
 
 const NET_FILES = ["packages/net/retry.ts", "packages/net/timeout.ts"];
 const APP_FILES = ["packages/app/client.ts"];
+const NET = { name: "net", identity: "root/net", folder: "packages/net" };
 const APP = { name: "app", identity: "root/app", folder: "packages/app" };
 const search = (root, runtime, paths) => searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...(paths ? { filters: { paths } } : {}) }, { runtime, waitMs: 0 });
 const runs = (control, files) => control.builds.filter((build) => build.files.join() === files.join()).length;
@@ -52,5 +54,30 @@ test("a needed build that starts while a call checks for stored indexes is not q
   runtime.published = published;
   await settled(runtime, root);
   assert.equal(runs(control, APP_FILES), 1, "the app build ran once");
+  assert.equal(runs(control, NET_FILES), 1);
+});
+
+test("a pause that arrives after the running build returned its index leaves the job ready and out of the queue, so it runs once", async (t) => {
+  const { root, runtime, control } = await runningNet(t);
+  const net = (await runtime.location(root, NET)).directory;
+  const succeed = ProgressRecorder.prototype.succeed;
+  let entered, leave;
+  const inside = new Promise((resolve) => { entered = resolve; }), left = new Promise((resolve) => { leave = resolve; });
+  // The net run's final progress record is written only once the test lets it, after its build already returned.
+  ProgressRecorder.prototype.succeed = async function () {
+    if (this.directory === net) { entered(); await left; }
+    return succeed.call(this);
+  };
+  t.after(() => { ProgressRecorder.prototype.succeed = succeed; });
+  control.release("packages/net/timeout.ts");
+  await inside;
+  // The root component has no index, so this call would pause an unrelated build that is still building.
+  await search(root, runtime, ["README.md"]);
+  leave();
+  const job = await until(() => { const value = runtime.jobs.get(net); return value?.status === "ready" && runtime.running !== value && value; }, "The net build did not end ready.");
+  assert.equal(runtime.queue.includes(job), false, "the ready net job is not queued again");
+  ProgressRecorder.prototype.succeed = succeed;
+  await settled(runtime, root);
+  assert.equal(job.attempt, 1, "the net job ran once");
   assert.equal(runs(control, NET_FILES), 1);
 });
