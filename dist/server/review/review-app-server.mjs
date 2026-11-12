@@ -472,6 +472,8 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
     await forgetAddedView(id);
     const removed = await added.remove(id, { checkoutsNaming });
     addedUsage.delete(id);
+    // A workspace that leaves the list has no page left to turn its code content off from, so its code content goes with it.
+    if (!(await workspaceList()).some((entry) => entry.id === id)) await code.disableWorkspace(id);
     sendJson(response, 200, { removed: true, clone: removed.clone, message: removed.message });
   }
 
@@ -759,7 +761,13 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
         }
         const codeSwitch = /^\/api\/code\/([^/]+)$/.exec(inWorkspace[2]);
         if (codeSwitch && request.method === "PUT") {
-          await setCode(request, response, view, decodeURIComponent(codeSwitch[1]));
+          let repository;
+          try { repository = decodeURIComponent(codeSwitch[1]); }
+          catch {
+            sendJson(response, 400, { code: "invalid_request", message: "The repository name in the address is not a valid percent-encoded name." });
+            return;
+          }
+          await setCode(request, response, view, repository);
           return;
         }
         if (inWorkspace[2] === "/api/projects" && request.method === "GET") {

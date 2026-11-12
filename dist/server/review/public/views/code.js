@@ -6,7 +6,7 @@ import { badge, card, chip, emptyState, escapeHtml } from "./util.js";
 
 const STATES = { on: ["On", "success"], off: ["Off", "neutral"], unreachable: ["Unreachable", "warning"] };
 
-const branchLabels = (branches) => `<span class="chip-row code-branches">${branches.map((branch) => chip(escapeHtml(branch), { attributes: " data-branch-label" })).join("")}</span>`;
+const branchLabels = (branches) => `<span class="chip-row code-branches">${branches.map((branch) => chip(escapeHtml(branch), { tip: branch, attributes: " data-branch-label" })).join("")}</span>`;
 const parentOf = (folder) => folder.includes("/") ? folder.slice(0, folder.lastIndexOf("/")) : "";
 const nameOf = (file) => file.slice(file.lastIndexOf("/") + 1);
 
@@ -32,7 +32,8 @@ async function browse(body, repository, place, rerender) {
   let listing;
   try { listing = await readJson(query("tree", { folder: place.folder })); }
   catch (error) {
-    body.innerHTML = emptyState("No code to show", error.message);
+    // A repository whose first clone failed has no clone yet, which its Unreachable state already explains.
+    body.innerHTML = repository.code.state === "unreachable" ? emptyState("No code fetched yet", "Prism has no clone of this repository's code yet and tries again at the next fetch.") : emptyState("No code to show", error.message);
     return;
   }
   const up = place.folder ? `<li><prism-button size="sm" variant="ghost" data-code-folder="${escapeHtml(parentOf(place.folder))}">..</prism-button></li>` : "";

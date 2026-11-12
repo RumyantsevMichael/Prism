@@ -56,8 +56,15 @@ export async function registeredRemotes(folder) {
   return remotes;
 }
 
-// One Git command in a clone, with the sanitized store environment and timeout.
-const git = (folder, args) => runGit(folder, args);
+// A code clone's remote comes from the store's registration, which any teammate can change, and it is fetched in the background,
+// so no Git command of a code clone ever asks for a password: an empty GIT_ASKPASS ends Git's search for a prompt program before core.askPass and SSH_ASKPASS,
+// with terminal prompts already off, SSH never asks, and Git Credential Manager runs without its dialogs; a credential helper that answers without asking still works.
+// Git passes the -c settings and the environment on to the fetch that a blobless clone starts when a file is opened.
+const NO_PROMPT_ENV = { GIT_ASKPASS: "", SSH_ASKPASS: "", SSH_ASKPASS_REQUIRE: "never", GCM_INTERACTIVE: "never" };
+const NO_PROMPT_CONFIG = ["-c", "core.askPass=", "-c", "credential.interactive=false"];
+
+// One Git command in a clone, with the sanitized store environment and timeout, and never a password prompt.
+const git = (folder, args) => runGit(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV });
 
 // The branches of a clone, { name, commit } sorted by name.
 async function branchesOf(folder) {
@@ -165,10 +172,13 @@ export async function createCodeClones({ directory }) {
   // Bring one repository's clone up to date, cloning it when it is not there yet, and record whether its remote could be reached.
   function refresh(entry) {
     return serial(entry.clone, async () => {
-      const outcome = await exists(folderOf(entry)) ? await fetchInto(entry) : await cloneInto(entry);
+      const cloned = await exists(folderOf(entry));
+      const outcome = cloned ? await fetchInto(entry) : await cloneInto(entry);
       if (!entries.includes(entry)) return;
       if (outcome.ok) Object.assign(entry, { state: "on", message: null, fetchedAt: new Date().toISOString() });
-      else Object.assign(entry, { state: "unreachable", message: `Prism could not fetch the code of ${entry.repository}, so it shows what it fetched last: ${outcome.message}` });
+      else Object.assign(entry, { state: "unreachable", message: cloned
+        ? `Prism could not fetch the code of ${entry.repository}, so it shows what it fetched last: ${outcome.message}`
+        : `Prism could not clone the code of ${entry.repository} and tries again at the next fetch: ${outcome.message}` });
       await save();
     });
   }
@@ -222,6 +232,13 @@ export async function createCodeClones({ directory }) {
         if (entry) await forget(entry);
       });
       return { state: "off" };
+    },
+
+    /** Turn code content off for every repository of a workspace, as disable does for each. */
+    async disableWorkspace(workspace) {
+      await serial(SAVED, async () => {
+        for (const entry of entries.filter((item) => item.workspace === workspace)) await forget(entry);
+      });
     },
 
     /** The code state of a repository of a workspace. */
