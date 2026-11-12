@@ -65,6 +65,16 @@ A path set to `n/a` in `.prism/workflow.md` is not checked.
 For each artifact it reports whether it conforms, each broken rule by its id, such as `requirements.fields`, with its line and a message, and each value written as `unknown`.
 A path that lies under none of the configured paths is refused with `artifact_type_unknown`, and a path that does not exist with `artifact_missing`.
 
+In a project whose `.prism/workflow.md` names a record store, requirement files, ADRs, and glossaries live in the store, and `check_artifacts` reads them from every scope the checkout sees: the workspace, its repository, and that repository's components.
+Feature files stay in the checkout and are read there.
+Each result names its artifact by path and scope, where the scope is the one `get_artifact` returns, or `null` for a checkout file, and a path that several scopes hold is listed once for each scope.
+To check one copy, pass a paths entry as `{ "path": "docs/Glossary.md", "scope": "workspace" }`, with `scope` set to `workspace`, `repository`, or `component` together with `component`.
+A path that two scopes hold is refused with `artifact_ambiguous`, listing their scopes, until you name one, and a scope on a feature file, or in a project without a store, is refused with `scope_invalid`.
+When the store cannot be used, the check is refused with the store's own refusal, such as `store_unavailable`, and never falls back to copies in the checkout.
+A glossary source counts by the status Prism recorded for the requirement or ADR, so a `Status:` line that differs from it is no finding.
+Each glossary resolves its sources in its own scope first, then in its repository's scope for a component, then in the workspace, so a glossary has the same findings in every checkout that sees it, and a source that only another scope holds is reported as outside the glossary's scope.
+Each scope's glossary is checked on its own, so one term id in two glossaries is no finding.
+
 ## Verification
 
 A slice whose design is accepted lists its frozen acceptance tests and says whether its implementation needs independent review.

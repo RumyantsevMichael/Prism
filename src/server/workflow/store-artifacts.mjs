@@ -1110,6 +1110,56 @@ export async function storedArtifactIn(seen, scope, address) {
   return { target, location, record: await readStored(target, seen.base) };
 }
 
+// The kinds whose artifacts have a format that check_artifacts reads from the store; feature files stay in the checkout.
+const FORMAT_KINDS = new Set(["requirements", "adrs", "glossary"]);
+
+// Every scope the store holds, the workspace and each repository with its component scopes, so a lookup that must not depend on the checkout sees them all.
+async function storeScopes(seen) {
+  let names = [];
+  try { names = (await readdir(path.join(seen.base, "repositories"), { withFileTypes: true })).filter((entry) => entry.isDirectory() && wellFormedName(entry.name)).map((entry) => entry.name).sort(); }
+  catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
+  const scopes = [WORKSPACE_SCOPE];
+  for (const name of names) scopes.push(...await repositoryScopes(seen, name));
+  return scopes;
+}
+
+/**
+ * The requirements, ADRs, and glossaries that every scope the checkout sees holds, read under the store's own checks and refusals, after the move of the checkout's files:
+ * { repository, artifacts, copiesOf }, where artifacts lists { path, scope, kind, bytes, size, version, status } sorted by path and then scope label,
+ * with bytes null for a file above the bound a read takes and status the recorded status of a requirement or ADR, else null,
+ * and copiesOf(path) lists the copies that any scope of the store holds at a project-relative requirement or ADR path, as { scope, bytes, status }, whichever checkout asks.
+ */
+export async function seenArtifactTexts(projectRoot) {
+  return refusing(async () => {
+    const { kinds } = await configuration(projectRoot);
+    const seen = await seenScopes(projectRoot);
+    const resolve = manyReads(seen);
+    const statusOf = async (scope, file, kind) => hasStatus(kind) ? (await statusRecordOf(seen, scope, artifactAddress(kinds, file), resolve)).status : null;
+    const artifacts = [];
+    for (const entry of await holdings(seen, "", null)) {
+      if (!FORMAT_KINDS.has(entry.kind)) continue;
+      const record = await readStored(entry.target);
+      if (record === null) continue;
+      artifacts.push({ path: entry.path, scope: entry.scope, kind: entry.kind, bytes: record.bytes, size: record.size, version: record.version, status: await statusOf(entry.scope, entry.path, entry.kind) });
+    }
+    let everyScope = null;
+    const copies = new Map();
+    const copiesOf = (file) => {
+      if (!copies.has(file)) copies.set(file, (async () => {
+        const address = normalizeArtifactPath(file) === file ? artifactAddress(kinds, file) : null;
+        if (!address || !hasStatus(address.kind) || address.rest === "" || malformedArtifactName(address) !== null) return [];
+        everyScope ??= storeScopes(seen);
+        const held = await holders(seen, address, (await everyScope).filter((scope) => kindInScope(address.kind, scope)));
+        const found = [];
+        for (const { scope, record } of held) found.push({ scope, bytes: record.bytes, status: await statusOf(scope, file, address.kind) });
+        return found;
+      })());
+      return copies.get(file);
+    };
+    return { repository: seen.repository, artifacts, copiesOf: (file) => refusing(() => copiesOf(file)) };
+  });
+}
+
 /** The most characters an artifact's location may hold when Prism creates it. */
 export const ARTIFACT_LOCATION_MAX = LOCATION_MAX;
 

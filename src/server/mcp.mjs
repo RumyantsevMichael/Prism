@@ -514,12 +514,15 @@ const tools = [
   },
   {
     name: "check_artifacts",
-    description: "Check the project's requirement files, ADRs, glossary, and feature files against Prism's artifact formats. Without paths it checks every .md file other than README.md up to four folders below the configured Requirements and ADRs paths, every .feature file up to four folders below the Feature files path, and the configured Glossary file. It returns each format's type, version, and reference file, and for each artifact whether it conforms, each finding with its rule id, line, and message, each value written as unknown, the newest earlier format version it conforms to, and any legacy mark. A path under none of the configured paths is refused with artifact_type_unknown, and a path that does not exist with artifact_missing. This tool reads files and changes nothing.",
+    description: "Check the project's requirement files, ADRs, glossary, and feature files against Prism's artifact formats. Without paths it checks every .md file other than README.md up to four folders below the configured Requirements and ADRs paths, every .feature file up to four folders below the Feature files path, and the configured Glossary file. In a project whose .prism/workflow.md names a record store, requirements, ADRs, and glossaries are store artifacts, read from every scope this checkout sees (the workspace, its repository, and that repository's components), each listed once per scope that holds it, while feature files are read from the checkout. It returns each format's type, version, and reference file, and for each artifact its path, its scope (the scope object get_artifact returns, or null for a checkout file), whether it conforms, each finding with its rule id, line, and message, each value written as unknown, the newest earlier format version it conforms to, and any legacy mark. A glossary source counts by the requirement's or ADR's recorded status and resolves in the glossary's own scope, else in the nearest scope above it. Each paths entry is a project-relative path or { path, scope, component }, with scope \"workspace\", \"repository\", or \"component\" and component as get_artifact takes them. Refusals: artifact_type_unknown for a path under none of the configured paths, artifact_missing for a path that no checkout file or seen scope holds, artifact_ambiguous with scopes when two seen scopes hold a path until its scope is named, scope_invalid for a scope on a feature file or in a project without a store, component_unknown for an undeclared component, and the store's own refusal, such as store_unavailable, when the store cannot be used; it never falls back to checkout copies. This tool reads files and changes nothing.",
     inputSchema: {
       type: "object",
       properties: {
         projectRoot: { type: "string", description: "The absolute path to the active project root." },
-        paths: { type: "array", maxItems: MAX_CHECK_PATHS, items: { type: "string", minLength: 1, maxLength: 1024 }, description: "Project-relative artifact files to check; omit to check every configured artifact." },
+        paths: { type: "array", maxItems: MAX_CHECK_PATHS, items: { oneOf: [
+          { type: "string", minLength: 1, maxLength: 1024 },
+          { type: "object", additionalProperties: false, properties: { path: { type: "string", minLength: 1, maxLength: 1024 }, scope: { type: "string", maxLength: 64 }, component: { type: "string", maxLength: 200 } }, required: ["path"] }
+        ] }, description: "Artifacts to check, each a project-relative path or { path, scope, component } naming a store artifact's scope; omit to check every configured artifact." },
         type: { type: "string", enum: [...ARTIFACT_TYPES], description: "Check only artifacts of this format type." }
       },
       required: ["projectRoot"],
@@ -1235,7 +1238,8 @@ async function callCheckArtifacts(argumentsValue) {
     return { content: [{ type: "text", text: `${summary}\n${JSON.stringify(value)}` }], structuredContent: value };
   } catch (error) {
     if (!(error instanceof ArtifactCheckError)) throw error;
-    const value = { code: error.code, message: error.message, ...(error.path === undefined ? {} : { path: error.path }) };
+    const details = Object.fromEntries(["path", "scopes", "store", "components", "component"].filter((key) => error[key] !== undefined).map((key) => [key, error[key]]));
+    const value = { code: error.code, message: error.message, ...details };
     return { content: [{ type: "text", text: error.message }], structuredContent: value, isError: true };
   }
 }
