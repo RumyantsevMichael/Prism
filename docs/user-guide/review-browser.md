@@ -151,9 +151,9 @@ See [Upgrading to managed records](upgrading-to-managed-records.md#answering-in-
 
 ## Changes you make in the page
 
-Every change that the review page makes to Prism's records is an action: answering a question, changing an initiative setting, or rebuilding an index.
+Every change that the review page makes is an action: answering a question, changing an initiative setting, rebuilding an index, or launching, stopping, or resuming a launched session.
 The page sends each action with the version of the record it showed you, so when an agent or another tab changed that record in the meantime, Prism refuses your action and changes nothing.
-An action changes only Prism's records, and apart from a rebuild starting Prism's own indexer, it never runs a command, changes a project file, or writes to Git.
+Apart from a rebuild, which starts Prism's own indexer, and the launched-session actions of [Launched sessions](#launched-sessions), an action changes only Prism's records, and it never runs a command, changes a project file, or writes to Git.
 
 ### Which tabs can make changes
 
@@ -209,6 +209,81 @@ Each component that `## Components` declares has its own index target, named `<r
 Rebuilding a component's index prepares only that component, also one that has no index yet, retries it when its last build failed, and reuses its index without a build while it is up to date.
 A rebuild is refused while that component's index is already being built, and a rebuild of another component waits for the running build without stopping it.
 In a repository without components, the root component's rebuild prepares the checkout's one index.
+
+## Launched sessions
+
+A launched session is a headless Claude Code or Codex session that runs Prism's orchestrate skill for one initiative on this computer, started from the review page.
+It works on the initiative as an agent you started in a terminal would, and you watch, stop, and resume it from the page.
+
+### Launch an initiative
+
+The initiative page's **Initiative settings** card ends with **Launch with Claude Code** and **Launch with Codex** under **Launched session**; a slice page offers no launch.
+A launch action is unavailable with a reason such as `Claude Code was not found: no claude executable on PATH.` while its host's executable, `claude` or `codex`, is not on the review app's `PATH`, and with `A launched session of <initiative> is running on this machine.` while a launched session of the initiative runs on this computer.
+Checkouts whose records live in the same place, such as two checkouts of one shared store, count as one initiative here, so only one launched session of an initiative runs on this computer at a time.
+Like every action, a launch needs a tab that can make changes.
+
+Before anything starts, Prism asks you in a dialog of the operating system, outside the browser, so a script that drives the page cannot launch on its own.
+The dialog says `Start a <host> session on this computer that runs Prism's orchestrate skill for the initiative <initiative> in <checkout>? Further launches in the next 30 minutes will start without asking.`, offers **Launch** and **Cancel**, and Cancel is its default answer.
+When you choose **Launch**, the session starts and the launch window opens: for the next 30 minutes, further launches and resumes on this computer start without asking, and the window's end stops no running session.
+When you choose **Cancel**, or nobody answers within 2 minutes, nothing starts and nothing is recorded, and for 30 seconds after that a new launch is refused with `You declined a launch moments ago; wait a little before launching again.`.
+While one dialog is open, another launch is refused with `Another launch is waiting for your confirmation.`.
+
+| System | The dialog |
+| --- | --- |
+| Linux, FreeBSD, OpenBSD | `zenity`, or `kdialog` without it, on the display that `DISPLAY` or `WAYLAND_DISPLAY` names for the review app |
+| macOS | `osascript` |
+| Windows | `powershell.exe` |
+
+A computer that cannot show the dialog refuses every launch with `This computer cannot show a confirmation outside the browser:` and what is missing, such as `no graphical display (DISPLAY or WAYLAND_DISPLAY) is set for the review app` or `neither zenity nor kdialog is installed`.
+
+### What runs
+
+Claude Code runs as `claude -p --verbose --session-id <session id> --input-format stream-json --output-format stream-json --permission-mode auto --permission-prompts none` with the prompt `/prism:orchestrate <initiative>`.
+Codex runs as `codex app-server` with the approval policy `on-request`, the automatic approval reviewer, and the `workspace-write` sandbox, and the prompt `$prism:orchestrate <initiative>`.
+Each runs in the checkout's folder with the review app's environment, without the variables of an agent session that the review app may have inherited, and with `PRISM_LAUNCH` set to the launch's id.
+The host's own permission handling and the project's own host settings apply: Prism grants no permission and answers no question of the host itself, so an action the host's automatic handling refuses ends as a refusal that the session shows.
+A session keeps running when the review app exits, idles out, restarts, or is replaced by a newer release, because a supervisor process of its own starts and watches the host.
+Each launched session keeps its record in `launches/<launch id>/` in the review app folder, readable only by you, and Prism removes it 14 days after the session's last run ended.
+The host's session id stays in that record on this computer: no shared record, history entry, or log holds it, and only this computer's page shows it, in the command that continues the session in a terminal.
+
+### The Launched sessions place
+
+Open **Launched sessions** from the Jump palette, where its detail reads `Headless sessions on this computer`, or at the address `review?artifact=launches`.
+It lists every launched session on this computer whose checkout shares this checkout's records, the most recently launched first.
+Each session shows its initiative's title, which opens the initiative page, the host, when it was launched, its running time, which counts every second while a run runs, its state, the reason for the state, how its last run ended, and its **Stop** and **Resume** actions.
+**Runs** shows how many times the session ran when it ran more than once.
+While no run runs and the host reported its session id, the session also shows the command that continues it in a terminal, `claude --resume <session id>` or `codex resume <thread id>`, with the folder to run it in, and **Copy** copies the command.
+The place reads the list again every 5 seconds and after each action you apply there.
+Without a launched session it says `Nothing launched on this computer yet. Launch an initiative from its page.`.
+
+| State | Meaning |
+| --- | --- |
+| Running | The host is working. |
+| Waiting for you | A question that the session asked waits for your answer. |
+| Blocked | The host refused an action that the session needed, with a reason such as `Claude Code refused Bash: <the host's reason>`. |
+| Finished | The last run ended by itself. |
+| Failed | The host reported an error, its process ended with an exit code other than 0 or by a signal, or Prism stopped supervising it, each with its reason. |
+| Stopped | You stopped the last run. |
+
+A session whose supervisor ended without recording the run's end shows `Prism stopped supervising this session; its host process may still run.`.
+
+### Stop, resume, or continue a session
+
+**Stop** interrupts the host's turn as the host's own Stop button does, after which the host ends its turn and exits by itself.
+When the host still runs 10 seconds after you stopped it, Prism ends the host process; `PRISM_LAUNCH_STOP_GRACE_MS` sets another wait in milliseconds.
+A stop ends only the host process, so a process that the host or its agent started and detached may keep running, as after the host's own Stop button.
+**Stop** stays available while a run runs, also after the initiative shipped.
+
+**Resume** starts the same host session again headless, with the dialog unless the launch window is open.
+It is unavailable while the session runs, after the initiative shipped, while another launched session of the initiative runs, while the host's executable is not on `PATH`, and when the host never reported its session id.
+To continue a session in a terminal instead, run its command in its folder once no run runs.
+
+When you answer, on this computer, a question that a launched session asked, Prism resumes that session without asking, unless it still runs.
+A session that still runs receives the answer itself, and when that run then ends by itself with the question still open, Prism resumes it once; a run you stopped is never resumed for an answer.
+An answer that a teammate gives on another computer reaches the records but starts nothing here: the session then says `An answer given on another machine waits; resume this session here to continue.`, and **Resume** continues it.
+
+Each launch, resume, and stop goes into the initiative's history, except a stop after the initiative shipped, which only the session's own record keeps.
+Only the review page launches, stops, or resumes a session: no agent tool and no Prism command does.
 
 ## Roadmap, initiatives, and slices
 

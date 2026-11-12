@@ -7,8 +7,7 @@ sdm: "0.3"
 # Prism workflow
 
 - Read `.prism/workflow.md` when present for project paths, the test command, and settings.
-- Use project procedures before Prism fallbacks.
-- Make small changes directly when project conventions supply enough guidance.
+- Use project procedures before Prism fallbacks, and make small changes directly when project conventions supply enough guidance.
 
 ## Choose the activity
 
@@ -103,9 +102,10 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Gate | A user decision that controls progress. |
 | User gate record | A pending coordination state entry for a question to the user, with its kind, slice, question, context, artifacts, optional options with consequences, a recommendation for a decision, and any answer that the person recorded in the review browser as a review app action, with its author and history entry, or the option that `resolve` keeps as `choice` for an answer given in conversation; Prism refuses a decision or assistance gate without context, and a decision gate without consequences or a recommendation. |
 | Blocker | A question for the person that stands on its own: the question in one or two plain sentences; context with what happened, what was tried, and a concrete example; for a choice, each option with what happens if the person picks it; and the recommended answer with why. |
-| Review app action | A change to Prism records that the review app lists and applies through one registry of declared actions, such as an initiative setting, a gate answer, or a component's index rebuild, refused when the record changed since the page read it. |
+| Review app action | A change that the review app lists and applies through one registry of declared actions, such as an initiative setting, a gate answer, a component's index rebuild, or the launch, stop, or resume of a launched session, refused when the record changed since the page read it; only the index rebuild and the launched-session actions start or end processes. |
 | Action history | The entries of applied review app actions, each with a unique id, the values before and after, the time, and its author as the applying checkout's Git identity and checkout label, a claim that nothing verifies; the coordination state keeps an initiative's history, and each checkout keeps its index rebuilds on its own machine. |
 | Write session | The credential with which one browser tab applies review app actions: a token that the tab takes once from the one-time grant in the URL fragment of a review page that Prism opened, keeps for itself, and sends with each change; a tab opened from a review URL without a grant, such as one an agent printed, can only read. |
+| Launched session | A headless Claude Code or Codex session of one initiative's orchestration that Prism started on the person's machine because the person launched it in the review app, run by a detached supervisor under the host's automatic permission handling and the project's host settings; the review app's Launched sessions place shows its state and the terminal command that continues it and stops or resumes it, a gate answer given on that machine resumes it, and its host session identifier never leaves that machine; the person confirms a launch in a native dialog of the operating system, which opens the launch window: the 30 minutes in which further launches and resumes on that machine start without asking, whose end stops no running launched session. |
 | Orchestrator | The agent that coordinates an initiative, its coordinator from its first claim: it runs design, implementation, and review in child sessions, starts slices, and keeps gates, while Prism records progress from its calls. |
 | Child status | The short fixed result a child session returns: result, last commit, a one-sentence summary, and questions written as blockers. |
 | Fresh context | A session that starts without the conversation that authored its inputs. |

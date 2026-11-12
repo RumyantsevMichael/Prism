@@ -19,6 +19,9 @@ test.after(() => rm(privateData, { recursive: true, force: true }));
 
 const SETTINGS = ["autonomy", "commit", "push", "continuation", "review", "models"];
 const NEXT_CHILD = "Applies to child sessions started after the change.";
+// An initiative lists the launch actions of launched sessions after its settings; these tests read the settings alone.
+const LAUNCHES = ["launch.claude-code", "launch.codex"];
+const settingsOnly = (actions) => actions.filter((action) => action.group === "Initiative settings");
 
 async function setup(context, options) {
   const { root, gateIds } = await actionProject(context, options);
@@ -35,7 +38,8 @@ test("an initiative lists its six settings in order with their fields, defaults,
   assert.equal(list.status, 200, list.text);
   assert.equal(list.json.target, `initiative:${INITIATIVE}`);
   assert.equal(typeof list.json.writable, "boolean");
-  assert.deepEqual(list.json.actions.map((action) => action.id), SETTINGS.map((name) => `initiative.${name}`));
+  assert.deepEqual(list.json.actions.map((action) => action.id), [...SETTINGS.map((name) => `initiative.${name}`), ...LAUNCHES]);
+  list.json.actions = settingsOnly(list.json.actions);
   for (const action of list.json.actions) {
     assert.equal(action.group, "Initiative settings");
     assert.equal(action.target, `initiative:${INITIATIVE}`);
@@ -119,12 +123,12 @@ test("every setting stays available once work starts, and a setting that coordin
   const current = await getInitiative({ projectRoot: root, initiative: INITIATIVE });
   await updateInitiative({ projectRoot: root, initiative: INITIATIVE, expectedRevision: current.revision, operations: [{ op: "claim", slug: INITIATIVE }] });
   const started = await listing(base, `initiative:${INITIATIVE}`, headers);
-  assert.deepEqual(started.json.actions.map((action) => [action.id, action.available, action.reason]), SETTINGS.map((name) => [`initiative.${name}`, true, null]));
+  assert.deepEqual(settingsOnly(started.json.actions).map((action) => [action.id, action.available, action.reason]), SETTINGS.map((name) => [`initiative.${name}`, true, null]));
   // agentFlow is a setting that coordination state accepted once and now drops on read and write.
   const stored = await state(root);
   await writeRecord(root, { kind: "state", initiative: INITIATIVE }, `${JSON.stringify({ ...stored, settings: { ...stored.settings, agentFlow: "mono" } }, null, 2)}\n`);
   const retired = await listing(base, `initiative:${INITIATIVE}`, headers);
-  assert.deepEqual(retired.json.actions.map((action) => action.id), SETTINGS.map((name) => `initiative.${name}`), "a retired setting is never listed");
+  assert.deepEqual(settingsOnly(retired.json.actions).map((action) => action.id), SETTINGS.map((name) => `initiative.${name}`), "a retired setting is never listed");
   const refused = await apply(base, { action: "initiative.agentFlow", target: `initiative:${INITIATIVE}`, input: { value: "multi" }, revision: actionOf(retired, "initiative.push").revision }, headers);
   assert.deepEqual([refused.status, refused.json.code], [404, "unknown_action"]);
   assert.equal((await state(root)).history, undefined, "a refusal records nothing");
@@ -346,7 +350,7 @@ test("the registry works without HTTP and keeps the newest 200 history entries",
   const { root } = await actionProject(context, { gates: false });
   const { applyAction, listActions } = await import("../../dist/server/workflow/actions.mjs");
   const listed = await listActions({ projectRoot: root, target: `initiative:${INITIATIVE}` });
-  assert.deepEqual(listed.actions.map((action) => action.id), SETTINGS.map((name) => `initiative.${name}`));
+  assert.deepEqual(listed.actions.map((action) => action.id), [...SETTINGS.map((name) => `initiative.${name}`), ...LAUNCHES]);
   assert.equal(Object.hasOwn(listed, "writable"), false, "write access is the transport's concern");
   await assert.rejects(applyAction({ projectRoot: root, target: `initiative:${INITIATIVE}`, action: "initiative.push", input: { value: "on" }, revision: null, via: "review-app" }), (error) => error.code === "confirmation_required");
   await assert.rejects(applyAction({ projectRoot: root, target: "initiative:missing", action: "initiative.push", input: { value: "off" }, revision: null, via: "review-app" }), (error) => error.code === "unknown_target");
