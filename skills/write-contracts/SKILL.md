@@ -14,7 +14,7 @@ Prose and duplicate representations of implementation details are not contracts.
 ## 1. Select the contract
 
 1. If `.prism/workflow.md` exists, read it first.
-2. Read applicable Approved requirements, ADRs, and the boundary's consuming code and tests.
+2. Read applicable Approved requirements, ADRs, and the boundary's consuming code and tests, through `get_artifact` for [store artifacts](../workflow/SKILL.md#common-terms).
 3. Check existing and required production, generation, and verification consumers.
 4. If no consumer needs the contract:
    1. Remove any obsolete contract.
@@ -22,7 +22,7 @@ Prose and duplicate representations of implementation details are not contracts.
    3. Return through [Return the decision](#3-return-the-decision).
 5. Otherwise:
    1. Reuse an existing governing type or schema.
-   2. When none exists, select the canonical source, API, schema, or test path using existing ownership and generation conventions.
+   2. When none exists, select the canonical source, API, schema, or test path using existing ownership and generation conventions, giving a new file a [portable name](../workflow/SKILL.md#common-terms).
 
 Final contracts do not belong in slice folders.
 

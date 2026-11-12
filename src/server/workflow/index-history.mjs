@@ -4,6 +4,7 @@ import path from "node:path";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { HISTORY_LIMIT, historyEntryProblem, historyOrder, insertHistoryEntry } from "./state.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 // A checkout's index belongs to this machine, so the history of its rebuilds stays in Prism's application folder and never reaches a record store.
 const SCHEMA_VERSION = 1;
@@ -24,7 +25,7 @@ async function readEntries(file, checkout) {
   try { info = await lstat(file); } catch (error) { if (error.code === "ENOENT") return []; throw error; }
   if (info.isSymbolicLink() || !info.isFile()) return [];
   let parsed;
-  try { parsed = JSON.parse(await readFile(file, "utf8")); } catch { return []; }
+  try { parsed = parseStoreJson(await readFile(file, "utf8")); } catch { return []; }
   if (parsed?.schemaVersion !== SCHEMA_VERSION || parsed.checkout !== checkout || !Array.isArray(parsed.history)) return [];
   return parsed.history.filter((entry) => historyEntryProblem(entry) === null).sort(historyOrder).slice(-HISTORY_LIMIT);
 }

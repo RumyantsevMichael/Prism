@@ -262,13 +262,15 @@ test("records a migration conflict in the store's migration record and keeps bot
   assert.equal(await readFile(path.join(store, "initiatives/other/state.json"), "utf8"), "store state");
 });
 
-test("still lists human documents in the review browser when the store is missing", async (context) => {
+test("opens the review browser without the checkout's copy of an artifact when the store is missing", async (context) => {
   const { root } = await workspace(context, { store: false });
   await put(root, "docs/plans/reports/slice.md", "# Reports\n");
   const review = await startReviewServer({ projectRoot: root });
   try {
     const index = JSON.parse((await fetchJson(`${review.baseUrl}/api/index`)).body);
-    assert.equal(index.artifacts.includes("docs/plans/reports/slice.md"), true);
+    // An unavailable store refuses every artifact read rather than show the checkout's copy.
+    assert.equal(index.artifacts.includes("docs/plans/reports/slice.md"), false);
+    assert.equal(typeof index.recordStore.unavailable, "string");
   } finally {
     await review.close();
   }

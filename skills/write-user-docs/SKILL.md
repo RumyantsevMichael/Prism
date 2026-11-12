@@ -13,12 +13,12 @@ Guide pages use the configured user-guide directory, defaulting to `docs/user-gu
 
 1. If `.prism/workflow.md` exists, read it first.
 2. Read the verified interface, affected guide pages, their index entries, and any supplied slice `runbook-draft.md`.
-3. Read requirements or ADRs that govern the guidance.
+3. Read requirements or ADRs that govern the guidance, and the runbook draft, through `get_artifact` for [store artifacts](../workflow/SKILL.md#common-terms).
 4. If no installation, interface, configuration, capability, failure, or operator behavior changed, return the reason no update is needed.
 
 ## 2. Write the update
 
-1. Update affected guide pages using exact verified commands, names, defaults, and paths.
+1. Update affected guide pages using exact verified commands, names, defaults, and paths, giving each new page a [portable name](../workflow/SKILL.md#common-terms).
 2. Put prerequisites before numbered procedures and expected results after verification commands.
 3. Replace stale guidance and update affected index entries and links.
 4. When operators need build, deployment, migration, rotation, recovery, or diagnostic procedures:

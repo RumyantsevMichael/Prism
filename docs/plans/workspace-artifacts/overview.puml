@@ -1,0 +1,33 @@
+@startuml
+title Workspace artifacts in the store: slices and shared interfaces
+
+package "artifact-tools" as tools
+package "artifact-consumers" as consumers
+package "artifact-sync" as sync
+package "artifact-status" as status
+package "artifact-migration" as migration
+package "artifact-review" as review
+package "adr-acceptance" as adr
+package "artifact-guidance" as guidance
+
+interface "artifact path to store location" as address
+interface "get_artifact / update_artifact" as artifactTools
+interface "recorded status and accepted version" as statusRecord
+
+tools -- address
+tools -- artifactTools
+status -- statusRecord
+
+consumers ..> address
+consumers ..> tools
+sync ..> tools
+status ..> consumers
+migration ..> statusRecord
+migration ..> address
+review ..> statusRecord
+adr ..> statusRecord
+guidance ..> migration
+guidance ..> review
+guidance ..> adr
+guidance ..> artifactTools
+@enduml

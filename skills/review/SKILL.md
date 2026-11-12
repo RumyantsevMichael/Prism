@@ -13,7 +13,7 @@ It reviews the result that the slice's last passing verification run tested.
 
 1. Read `.prism/workflow.md` and the project instructions.
 2. Read the inputs that orchestration supplies: the initiative and slice identifiers, the wave and lane, your reviewer identifier, and the base commit.
-3. Read the contract's `slice.md`, the slice's own `slice.md`, its assigned Approved requirements, and the ADRs they link, and cite a shipped initiative's contracts, slice documents, frozen tests, and reviews only as history, because current intent lives only in Approved requirements, Accepted ADRs, the glossary, and feature files.
+3. Read the contract's `slice.md`, the slice's own `slice.md`, its assigned Approved requirements, and the ADRs they link, through `get_artifact` when they are [store artifacts](../workflow/SKILL.md#common-terms), and cite a shipped initiative's contracts, slice documents, frozen tests, and reviews only as history, because current intent lives only in Approved requirements, Accepted ADRs, the glossary, and feature files.
 4. Read the current findings through `get_review`.
 5. Read the complete diff from the base commit, or from `HEAD` when orchestration supplies none, to the working tree.
 

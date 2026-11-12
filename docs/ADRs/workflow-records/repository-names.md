@@ -19,6 +19,7 @@ Stores and checkouts from before names exist already hold records, ledger entrie
 ## Decision
 
 A checkout that names a store MAY name its repository with a `Repository` entry beside `Store` in its committed workflow configuration, and a name MUST be 1 to 64 lowercase letters, digits, hyphens, or underscores that starts and ends with a letter or digit.
+A name MUST NOT be a Windows device name, `con`, `prn`, `aux`, `nul`, `com0` to `com9`, or `lpt0` to `lpt9`, because it names the store's registration file and the store folders of the repository's artifacts, which Git for Windows refuses to check out under such a name, and a registration that a store already holds under such a name MUST accept no checkout and MUST NOT keep its remotes from registering under another name.
 A store MUST register each name in its own file `repositories/<name>.json`, holding the name, the remotes it is known by, the repository's root commit when one is known, and when it was registered.
 A remote MUST be stored as scheme, host, and path only, and two remotes MUST be the same remote when their lowercase host without a port and their path without surrounding slashes and a trailing `.git` are equal.
 A local path or `file://` origin MUST count as no network remote.

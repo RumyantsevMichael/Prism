@@ -10,6 +10,7 @@ sdm: "0.3"
 Design does the quality work of the [workflow](../workflow/SKILL.md).
 It designs one contract scope: the root slice of an initiative, or a part that an earlier design split off.
 Implementers later work from its output in fresh sessions, and they are judged on correct behavior, not on passing its tests, so a contract or suite that is easy to pass but misses required behavior is a design defect.
+Every slug, folder, test, probe, and diagram that design creates has a [portable name](../workflow/SKILL.md#common-terms), and in a project with a store, design reads requirements, ADRs, and `slice.md` files through `get_artifact` and writes each `slice.md` and diagram through `update_artifact`, as [store artifacts](../workflow/SKILL.md#common-terms), while its tests stay in the checkout.
 
 ## 1. Prepare
 
@@ -45,7 +46,7 @@ Implementers later work from its output in fresh sessions, and they are judged o
 11. Recommend review `required` for a slice when an independent implementation review pays off, such as for authentication, authorization, secrets, untrusted input, or data loss risk, and `none` otherwise.
 12. When the project keeps Gherkin feature files, use `write-feature` for the scenarios and list them as frozen tests.
 13. When production code, generated code, or verification consumes a changed boundary, use `write-contracts` after reusing governing types or schemas.
-14. Use `write-adr` for each settled architectural decision that outlives the initiative.
+14. Use `write-adr` for each settled architectural decision that outlives the initiative, and link each ADR that the contract relies on from the scope's `slice.md`, because with a store a ship accepts only the Proposed ADRs that the initiative's `slice.md` files link.
 15. Commit the design when commits are on.
 
 - Don't

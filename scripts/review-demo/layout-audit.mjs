@@ -18,6 +18,10 @@ export const VIEWPORTS = {
 
 export const THEMES = ["light", "dark"];
 
+// Chromium on Windows gives each connection a random local port (its TcpPortRandomizationWin feature), and a port that collides fails a load from the local review server with net::ERR_NO_BUFFER_SPACE.
+// The checks launch Chromium without that feature, so a collision does not show as a broken page.
+export const CHROMIUM_OPTIONS = process.platform === "win32" ? { args: ["--disable-features=TcpPortRandomizationWin"] } : {};
+
 /** The installed Playwright, local or global, or null when there is none. */
 export function loadPlaywright() {
   const bases = [ROOT];
@@ -160,7 +164,7 @@ export async function checkCatalog({ url, viewports = ["phone", "laptop"], theme
   if (!browser) {
     const playwright = loadPlaywright();
     if (!playwright) throw new Error("Playwright is not installed; run npm install -g playwright and npx playwright install chromium");
-    owned = await playwright.chromium.launch();
+    owned = await playwright.chromium.launch(CHROMIUM_OPTIONS);
   }
   const problems = [];
   try {

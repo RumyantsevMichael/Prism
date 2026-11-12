@@ -172,16 +172,17 @@ export function shownActionEntries() {
   return entries;
 }
 
+// The last listing of each target, per API, so a list drawn again when its page refreshes starts from what it showed rather than from Loading, and the page does not jump while the listing is read again.
+const lastListings = new WeakMap();
+
 /**
  * Draws the actions of one or more targets into root, keeps them current, and applies them.
  * api is { list(target), apply(request), confirm({ title, message }), toast(message) }: list resolves to a listing, apply to { status, json },
  * and confirm to true only after the person confirms. drafts keeps unsent input per action across re-renders.
+ * keepStaleDrafts keeps the person's input when the record changed under it, for input such as a comment that stays meaningful against the current record.
  * notice false leaves out the read-only notice, for a page that shows many lists and says it once for all of them.
  */
-// The last listing of each target, per API, so a list drawn again when its page refreshes starts from what it showed rather than from Loading, and the page does not jump while the listing is read again.
-const lastListings = new WeakMap();
-
-export function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, notice = true, onRender = null }) {
+export function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, notice = true, onRender = null, keepStaleDrafts = false }) {
   if (!lastListings.has(api)) lastListings.set(api, new Map());
   const known = lastListings.get(api);
   const listings = new Map(targets.filter((target) => known.has(target)).map((target) => [target, known.get(target)]));
@@ -317,8 +318,8 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
       return false;
     }
     if (result.code === "stale_revision" || result.code === "action_unavailable") {
-      // The page shows the action as it is now and drops the draft made against the old value.
-      setDraft(entry, null);
+      // The page shows the action as it is now and drops the draft made against the old value, unless the draft stays meaningful against the new one.
+      if (!keepStaleDrafts) setDraft(entry, null);
       replaceAction(target, result.current);
       api.toast(STALE_MESSAGE);
       render();
@@ -416,19 +417,44 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
       wanted = [...next];
       return refresh();
     },
+    // Moves the list from one target to another that names the same record, as a file that moved to another scope, keeping each action's unsent input,
+    // its drawn controls, and the focused control with its cursor in place while the new target's listing loads.
+    retarget(from, to) {
+      if (from === to || !wanted.includes(from)) return refresh();
+      const prefix = `${from}|`;
+      const moved = (key) => key?.startsWith(prefix) ? `${to}|${key.slice(prefix.length)}` : key;
+      for (const key of Object.keys(drafts)) if (key.startsWith(prefix)) { drafts[moved(key)] = drafts[key]; delete drafts[key]; }
+      for (const [key, entry] of [...entries]) if (key.startsWith(prefix)) { entries.delete(key); entries.set(moved(key), Object.assign(entry, { key: moved(key), target: to })); }
+      const listing = listings.get(from);
+      listings.delete(from);
+      if (listing) listings.set(to, { ...listing, actions: (listing.actions ?? []).map((action) => action.target === from ? { ...action, target: to } : action) });
+      wanted = wanted.map((target) => target === from ? to : target);
+      for (const element of root.querySelectorAll("[data-action-key], [data-focus-key]")) {
+        if (element.dataset.actionKey) element.dataset.actionKey = moved(element.dataset.actionKey);
+        if (element.dataset.focusKey) element.dataset.focusKey = moved(element.dataset.focusKey);
+      }
+      waitingFocus = moved(waitingFocus);
+      // The drawn controls now carry the new keys, so the next render replaces them only when the new listing differs.
+      rendered = html();
+      return refresh();
+    },
     refresh,
     render
   };
   panels.add(panel);
   // Another tab's change, or the page's periodic check, refreshes the listing; a list whose element left the page stops listening.
-  const onChange = () => {
+  // A periodic check that comes while the last one still reads is skipped, so slow listings never pile up requests.
+  let checking = null;
+  const onChange = (event) => {
     if (!root.isConnected) {
       document.removeEventListener("prism:action", onChange);
       document.removeEventListener("prism:poll", onChange);
       panels.delete(panel);
       return;
     }
-    void refresh();
+    if (event?.type !== "prism:poll") { void refresh(); return; }
+    if (checking) return;
+    checking = refresh().catch(() => {}).finally(() => { checking = null; });
   };
   document.addEventListener("prism:action", onChange);
   document.addEventListener("prism:poll", onChange);

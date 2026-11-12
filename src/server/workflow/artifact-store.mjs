@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { open, lstat, readFile, rm, rename, utimes } from "node:fs/promises";
 import path from "node:path";
+import { parseStoreJson } from "./store-json.mjs";
 
 const LOCK_TIMEOUT_MS = 5000;
 const LOCK_STALE_MS = 30000;
@@ -30,7 +31,7 @@ async function removeAbandonedLock(lockPath, token) {
   }
   try {
     // Only the judged owner's file is removed, since another starter may have reclaimed the lock since it was read.
-    const current = await readFile(lockPath, "utf8").then(JSON.parse).catch(() => ({}));
+    const current = await readFile(lockPath, "utf8").then(parseStoreJson).catch(() => ({}));
     if (current.token === token) await rm(lockPath, { force: true });
   } finally {
     await rm(reclaimPath, { force: true });
@@ -62,7 +63,7 @@ async function acquireFileLock(artifactPath, makeError, options) {
         const lockInfo = await lstat(lockPath);
         if (lockInfo.isSymbolicLink() || !lockInfo.isFile()) throw makeError("invalid_path", "The artifact lock must be a regular file.");
         let live = false;
-        const owner = await readFile(lockPath, "utf8").then(JSON.parse).catch(() => ({}));
+        const owner = await readFile(lockPath, "utf8").then(parseStoreJson).catch(() => ({}));
         if (options.renew) {
           if (Number.isSafeInteger(owner.pid) && owner.pid > 0) {
             try { process.kill(owner.pid, 0); live = true; }
@@ -92,7 +93,7 @@ async function acquireFileLock(artifactPath, makeError, options) {
 export async function withFileLock(artifactPath, action, makeError = defaultError, options = {}) {
   const lock = await acquireFileLock(artifactPath, makeError, options);
   const heartbeat = options.renew ? setInterval(async () => {
-    const owner = await readFile(lock.lockPath, "utf8").then(JSON.parse).catch(() => null);
+    const owner = await readFile(lock.lockPath, "utf8").then(parseStoreJson).catch(() => null);
     const now = new Date();
     if (owner?.token === lock.token) await utimes(lock.lockPath, now, now).catch(() => {});
     options.onRenew?.(owner?.token === lock.token);
@@ -102,7 +103,7 @@ export async function withFileLock(artifactPath, action, makeError = defaultErro
     return await action();
   } finally {
     clearInterval(heartbeat);
-    const owner = await readFile(lock.lockPath, "utf8").then(JSON.parse).catch(() => null);
+    const owner = await readFile(lock.lockPath, "utf8").then(parseStoreJson).catch(() => null);
     if (owner?.token === lock.token) await rm(lock.lockPath, { force: true }).catch(() => {});
   }
 }

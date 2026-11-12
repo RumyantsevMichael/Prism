@@ -36,7 +36,7 @@ The person cannot start or continue an initiative's orchestration from the revie
 - How the review app, which idles out and hands off to newer releases, keeps launched sessions supervised, listed, and stoppable across its own exit, replacement, and restart.
 - Which native confirmation each supported platform offers, and what fallback outside the web page applies where none exists; probe it before design freezes the contract.
 - Which Codex sandbox and approval policy matches Claude Code's automatic permission mode, and how each host reports an action it refuses in a headless session; probe both hosts.
-- How a launch, a stop, and a resume pass through the review app action registry under [review-app-actions.md§15](review-app-actions.md#15).
+- How a launch, a stop, and a resume pass through the review app action registry under [review-app-actions.md§16](review-app-actions.md#16).
 - How a launched session's host session identifier is kept on the person's machine while shared records keep at most its digest.
 - How Prism sends each host's own interrupt and ends the host process on each platform, including npm command shims on Windows.
 
@@ -90,7 +90,7 @@ Requirement: Prism shall start a launched session with no instruction text, comm
 
 Rationale: A page that can only name an initiative and a host cannot be turned into a way to run arbitrary prompts or commands.
 
-Related: [§1](#1), [review-app-actions.md§15](review-app-actions.md#15)
+Related: [§1](#1), [review-app-actions.md§16](review-app-actions.md#16)
 
 <a id="5"></a>
 ## 5. Confirm a launch outside the web page

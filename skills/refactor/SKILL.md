@@ -69,7 +69,7 @@ Implementation retains the accepted design and returns material deviations to de
 
 1. For analysis only, report the proposed transformation and verification plan, then return without applying changes.
 2. For an authorized transformation, record relevant deterministic baseline measurements using [complexity evidence](references/analysis.md#complexity-evidence).
-3. Restructure the bounded target according to the desired model.
+3. Restructure the bounded target according to the desired model, giving each new file or folder a [portable name](../workflow/SKILL.md#common-terms) and changing [store artifacts](../workflow/SKILL.md#common-terms) only through `update_artifact`.
 4. Compare observable behavior against the retained baseline using applicable tests, contracts, static checks, or obligation review.
 5. For resynthesized text, map each original obligation to its resulting source and compare its conditions, exceptions, and authority.
 6. Repeat the same measurements over comparable final source and scope.

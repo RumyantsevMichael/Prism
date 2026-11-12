@@ -17,6 +17,10 @@ const SUITES = [
   "record-store-sync-git-settings.test.mjs",
   "record-store-sync-remote-side.test.mjs",
   "record-store-sync-letter-case.test.mjs",
+  "artifact-sync-layout.test.mjs",
+  "artifact-sync-line-endings.test.mjs",
+  "artifact-sync-moves.test.mjs",
+  "workspace-artifacts-sync.test.mjs",
   "remote-record-store.test.mjs"
 ];
 
