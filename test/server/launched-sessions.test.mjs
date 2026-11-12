@@ -51,10 +51,12 @@ test("each host is unavailable with its reason while its executable is not on PA
     { host: "claude-code", label: "Claude Code", available: false, executable: null, reason: "Claude Code was not found: no claude executable on PATH." },
     { host: "codex", label: "Codex", available: false, executable: null, reason: "Codex was not found: no codex executable on PATH." }
   ]);
-  const bin = await stubBin(t, ["codex"]);
+  // Windows finds an executable by its extension, so there the host is codex.exe.
+  const name = process.platform === "win32" ? "codex.exe" : "codex";
+  const bin = await stubBin(t, [name]);
   const listed = await hostAvailability({ env: { PATH: `${empty}${path.delimiter}${bin}` } });
   assert.equal(listed[0].available, false);
-  assert.deepEqual(listed[1], { host: "codex", label: "Codex", available: true, executable: path.join(bin, "codex"), reason: null });
+  assert.deepEqual(listed[1], { host: "codex", label: "Codex", available: true, executable: path.join(bin, name), reason: null });
 });
 
 test("a Claude Code launch sends the orchestrate prompt as a stream-json message, with a session id Prism chose, the fixed flags, the checkout as folder, and no foreign session variables", { skip: posixOnly }, async (t) => {
