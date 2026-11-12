@@ -73,6 +73,26 @@ jobs:
           fi
           node scripts/host-smoke.mjs --marketplace "$catalog" claude codex
 
+      # A Release's assets can answer 404 for a short time after it becomes public, so the check waits until every URL the package names answers.
+      - name: Wait for the public assets
+        if: inputs.phase == 'public'
+        run: |
+          node -e '
+            const manifest = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            const urls = [...Object.values(manifest.bundles).map(bundle => bundle.url), ...manifest.model.files.map(file => file.url || `${manifest.modelMirror}/model-${file.path.split("/").join("-")}`)];
+            (async () => {
+              for (const url of urls) {
+                for (let attempt = 1; ; attempt++) {
+                  const response = await fetch(url, { method: "HEAD", redirect: "follow" });
+                  if (response.ok) break;
+                  if (attempt === 30) throw new Error(`${url} still answers HTTP ${response.status}.`);
+                  await new Promise(resolve => setTimeout(resolve, 10000));
+                }
+              }
+              console.log(`${urls.length} public assets answer.`);
+            })().catch(error => { console.error(error.message); process.exit(1); });
+          ' "$RUNNER_TEMP/package/vendor/native-runtime/manifest.json"
+
       # The package's own manifest names the public assets, so this is the runtime a user downloads.
       - name: Verify default discovery and managed addition readiness from the public assets
         if: inputs.phase == 'public'

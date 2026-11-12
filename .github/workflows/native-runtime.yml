@@ -49,8 +49,8 @@ jobs:
         run: |
           npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
           npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
-      - name: Check TypeScript and generated JavaScript
-        run: npm run check:native
+      - name: Build the runtime from TypeScript
+        run: npm run build:native
       - name: Patch the embedded SDK
         run: node dist/native-runtime/patch-codegraph.mjs src/native-runtime/node_modules/@colbymchenry/codegraph-${{ matrix.platform }}/lib/dist
       - name: Stage native dependencies
