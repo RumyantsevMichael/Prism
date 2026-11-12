@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { access, constants, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
@@ -33,9 +33,15 @@ export const MAX_LINE_BYTES = 1024 * 1024;
 // What a run keeps of host text: each refusal reason and host error is cut to REFUSAL_REASON_MAX characters, a run records its
 // first RECORDED_REFUSALS refusals with the number of all of them, and a Claude Code run holds the cut text of only its
 // KEPT_TOOL_RESULTS most recent error tool results, so a long run's memory and record stay bounded.
+// A refusal's tool name is cut to TOOL_NAME_MAX characters, so `<tool> was refused.` and the blocked reason stay short; a Codex
+// run keeps only the KEPT_EARLY_COMPLETIONS most recent turn completions that arrive before the turn/start answer, with their cut
+// error text; and a Claude Code run tracks at most TRACKED_TASKS running background tasks by a fixed-size digest of their ids.
 const REFUSAL_REASON_MAX = 500;
 export const RECORDED_REFUSALS = 20;
 const KEPT_TOOL_RESULTS = 100;
+export const TOOL_NAME_MAX = 100;
+export const KEPT_EARLY_COMPLETIONS = 8;
+export const TRACKED_TASKS = 1000;
 export const HOST_ERROR_FALLBACK = "The turn failed without a message.";
 // A host session id that may reach a command line: letters, digits, `_`, and `-`, never first, so no host reads it as an option and no shell splits it.
 export const HOST_SESSION_ID_PATTERN = /^[0-9A-Za-z_][0-9A-Za-z_-]*$/;
@@ -248,6 +254,7 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
   // The id is replaced before the text is cut, so no cut leaves part of it behind.
   const cut = (value) => redact(value).slice(0, REFUSAL_REASON_MAX);
   const hostError = (value) => cut(value || HOST_ERROR_FALLBACK);
+  const toolName = (value, fallback) => (typeof value === "string" && value ? redact(value).slice(0, TOOL_NAME_MAX) : fallback);
   const write = (message) => {
     if (inputOpen) send(message);
   };
@@ -260,9 +267,13 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
 
   // Claude Code: the prompt is one stream-json user message, and the input closes at a result event once every background task
   // that the host reported as started has been reported as ended.
+  // Running tasks are held by digest, at most TRACKED_TASKS of them; a start past that is only counted, and a notification of a
+  // task that is not held ends one counted task, so the input never closes while the host still reports more starts than ends.
   function claudeHandler() {
     const toolResults = new Map();
     const tasks = new Set();
+    let untrackedTasks = 0;
+    const taskKey = (id) => createHash("sha256").update(id).digest("base64");
     let interruptId = null;
     return {
       start: () => write(claudePrompt(initiative)),
@@ -277,8 +288,13 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
           return;
         }
         if (event.type === "system" && typeof event.task_id === "string") {
-          if (event.subtype === "task_started") tasks.add(event.task_id);
-          if (event.subtype === "task_notification") tasks.delete(event.task_id);
+          const key = taskKey(event.task_id);
+          if (event.subtype === "task_started") {
+            if (tasks.has(key)) return;
+            if (tasks.size < TRACKED_TASKS) tasks.add(key);
+            else untrackedTasks += 1;
+          }
+          if (event.subtype === "task_notification" && !tasks.delete(key) && untrackedTasks > 0) untrackedTasks -= 1;
           return;
         }
         if (event.type === "user" && Array.isArray(event.message?.content)) {
@@ -296,12 +312,12 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
         const denials = (Array.isArray(event.permission_denials) ? event.permission_denials : []).filter((denial) => denial && typeof denial === "object");
         facts.refusalCount = denials.length;
         facts.refusals = denials.slice(0, RECORDED_REFUSALS).map((denial) => {
-          const tool = typeof denial.tool_name === "string" && denial.tool_name ? denial.tool_name : "a tool";
+          const tool = toolName(denial.tool_name, "a tool");
           const reason = toolResults.get(denial.tool_use_id)?.trim();
           return { tool, reason: reason || cut(`${tool} was refused.`) };
         });
         facts.hostError = event.is_error === true ? hostError(claudeErrorText(event)) : null;
-        if (tasks.size === 0) close();
+        if (tasks.size === 0 && untrackedTasks === 0) close();
       }
     };
   }
@@ -401,7 +417,7 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
         }
         const params = message.params ?? {};
         if (message.method === "item/completed" && params.item?.status === "declined") {
-          const tool = typeof params.item.type === "string" && params.item.type ? params.item.type : "an action";
+          const tool = toolName(params.item.type, "an action");
           facts.refusalCount += 1;
           if (facts.refusals.length >= RECORDED_REFUSALS) return;
           const command = typeof params.item.command === "string" && params.item.command ? params.item.command : tool;
@@ -409,8 +425,15 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
           return;
         }
         if (message.method === "turn/completed" && typeof params.turn?.id === "string") {
-          // A completion that arrives before the turn/start answer is kept until the answer names the run's turn.
-          if (facts.turnId === null) completed.set(params.turn.id, params.turn);
+          // A completion that arrives before the turn/start answer is kept, as its status and cut error text, until the answer
+          // names the run's turn; only the KEPT_EARLY_COMPLETIONS most recent ones are kept, the oldest going first.
+          if (facts.turnId === null) {
+            const { status, error } = params.turn;
+            const kept = status === "failed" ? { status, error: { message: hostError(text(error?.message)) } } : {};
+            completed.delete(params.turn.id);
+            completed.set(params.turn.id, kept);
+            if (completed.size > KEPT_EARLY_COMPLETIONS) completed.delete(completed.keys().next().value);
+          }
           else if (params.turn.id === facts.turnId) turnEnded(params.turn);
         }
       }

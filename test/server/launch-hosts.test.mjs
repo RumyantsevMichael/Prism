@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { HOST_REQUEST_REFUSAL, MAX_LINE_BYTES, hostArguments, hostConversation, hostEnvironment } from "../../dist/server/session/launch-hosts.mjs";
+import { HOST_REQUEST_REFUSAL, KEPT_EARLY_COMPLETIONS, MAX_LINE_BYTES, TOOL_NAME_MAX, TRACKED_TASKS, hostArguments, hostConversation, hostEnvironment } from "../../dist/server/session/launch-hosts.mjs";
 
 // The conversations of launched hosts over their standard input and output: which lines count, what Prism writes,
 // when it closes the host's input, and what a run reports.
@@ -176,4 +176,42 @@ test("a Codex resume continues the kept thread with the fixed policy", () => {
   feed(answer(1, {}), answer(2, { thread: { id: "t-9" } }));
   assert.deepEqual(sent.find((message) => message.method === "thread/resume").params, { threadId: "t-9", cwd: "/work/demo", approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write" });
   assert.equal(sent.at(-1).params.threadId, "t-9");
+});
+
+test("a refusal's tool name is cut at 100 characters, for both hosts, and so is its fixed reason", () => {
+  const long = "z".repeat(300 * 1024);
+  const claude = talk("claude-code");
+  claude.feed({ type: "result", permission_denials: [{ tool_name: long, tool_use_id: "u" }] });
+  assert.deepEqual(claude.facts.refusals, [{ tool: "z".repeat(TOOL_NAME_MAX), reason: `${"z".repeat(TOOL_NAME_MAX)} was refused.` }]);
+  const codex = codexThrough("t-1");
+  codex.feed({ jsonrpc: "2.0", method: "item/completed", params: { item: { type: long, status: "declined" } } });
+  assert.deepEqual(codex.facts.refusals, [{ tool: "z".repeat(TOOL_NAME_MAX), reason: `Codex declined: ${"z".repeat(TOOL_NAME_MAX)}` }]);
+});
+
+test("a Codex run keeps only its most recent completions before the turn/start answer, with cut error text", () => {
+  const early = codexThrough("t-1");
+  early.feed({ jsonrpc: "2.0", method: "turn/completed", params: { turn: { id: "turn-1", status: "failed", error: { message: "x".repeat(2000) } } } });
+  for (let index = 0; index < KEPT_EARLY_COMPLETIONS - 1; index += 1) early.feed({ jsonrpc: "2.0", method: "turn/completed", params: { turn: { id: `other-${index}`, status: "completed" } } });
+  early.feed(answer(3, { turn: { id: "turn-1" } }));
+  assert.equal(early.state.closed, 1, "the run's own completion is still among the kept ones");
+  assert.equal(early.facts.hostError, "x".repeat(500));
+  const late = codexThrough("t-1");
+  late.feed({ jsonrpc: "2.0", method: "turn/completed", params: { turn: { id: "turn-1", status: "completed" } } });
+  for (let index = 0; index < KEPT_EARLY_COMPLETIONS; index += 1) late.feed({ jsonrpc: "2.0", method: "turn/completed", params: { turn: { id: `other-${index}`, status: "completed" } } });
+  late.feed(answer(3, { turn: { id: "turn-1" } }));
+  assert.equal(late.state.closed, 0, "a completion pushed out by newer ones is no longer held");
+  late.feed({ jsonrpc: "2.0", method: "turn/completed", params: { turn: { id: "turn-1", status: "completed" } } });
+  assert.equal(late.state.closed, 1);
+});
+
+test("a Claude Code run past its tracked background tasks only counts further starts, and closes its input once all of them ended", () => {
+  const { state, feed } = talk("claude-code");
+  const result = { type: "result", is_error: false, permission_denials: [] };
+  for (let index = 0; index < TRACKED_TASKS + 2; index += 1) feed({ type: "system", subtype: "task_started", task_id: `task-${index}` });
+  feed({ type: "system", subtype: "task_started", task_id: "task-0" });
+  for (let index = 0; index < TRACKED_TASKS + 1; index += 1) feed({ type: "system", subtype: "task_notification", task_id: `task-${index}` });
+  feed(result);
+  assert.equal(state.closed, 0, "one started task has not ended");
+  feed({ type: "system", subtype: "task_notification", task_id: `task-${TRACKED_TASKS + 1}` }, result);
+  assert.equal(state.closed, 1);
 });
