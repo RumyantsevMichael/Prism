@@ -37,7 +37,8 @@ test("clause 49: an artifact written to the store after the move is checked, and
   await storeWrite(call, "docs/requirements/billing/invoices.md", BROKEN, { scope: "component", component: "billing" });
   const web = await otherCheckout(context, place);
   await storeWrite(web.call, "docs/requirements/shared.md", REQUIREMENT, { scope: "workspace" });
-  await storeWrite(web.call, "docs/requirements/web-only.md", REQUIREMENT);
+  // A new file with no folder below the kind folder is created in the workspace unless a scope is named, so web names its own.
+  await storeWrite(web.call, "docs/requirements/web-only.md", REQUIREMENT, { scope: "repository" });
   const value = await checked(call, { type: "requirements" });
   assert.deepEqual(value.artifacts.map(keyOf), [
     ["requirements", "docs/requirements/billing/invoices.md", "api/billing"],
@@ -52,6 +53,8 @@ test("clause 49: an artifact written to the store after the move is checked, and
 
 test("clause 50: a given path that two scopes hold is refused as ambiguous until its scope is named, and a scope that holds no file there is missing", async (context) => {
   const { place, call } = await storeProject(context);
+  // api's first tool call moves its files into scope api before the workspace holds the same paths, which would keep them in the checkout.
+  await storeRead(call, PATHS.glossary);
   const web = await otherCheckout(context, place);
   await storeWrite(web.call, PATHS.glossary, GLOSSARY.replace("Terms used across the payments client.", "Terms used across the workspace."), { scope: "workspace" });
   const ambiguous = await call("check_artifacts", { paths: [PATHS.glossary] });
@@ -88,6 +91,8 @@ test("clause 52: a glossary source counts by its recorded status, not by its Sta
 
 test("clauses 53, 54: each glossary a checkout sees is checked on its own, and its sources resolve in its own scope first and never in a scope it does not see", async (context) => {
   const { place, call } = await storeProject(context);
+  // api's first tool call moves its files into scope api before the workspace holds the same paths, which would keep them in the checkout.
+  await storeRead(call, PATHS.glossary);
   const web = await otherCheckout(context, place);
   // The workspace holds a Draft copy of the requirement that api's own copy holds Approved, and a workspace glossary cites it.
   await storeWrite(web.call, PATHS.requirements, draft, { scope: "workspace" });
