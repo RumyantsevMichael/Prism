@@ -105,7 +105,7 @@ async function readTarget(projectRoot, parsed, indexer, state = undefined, env =
     if (!view) throw unknownTarget(parsed.reference);
     const status = await launchRunStatus({ id: parsed.launch, env });
     const resumeReason = status === "running" ? "The session is running." : await resumeRefusal({ id: parsed.launch, env });
-    // A shipped initiative's state is history, so its launched sessions' actions are unavailable as every other action on it.
+    // A shipped initiative's state is history, so its sessions cannot resume; they stay stoppable, since orchestrate ships while its host runs.
     const shipped = await shippedDecision(projectRoot, view.initiative).catch(() => null);
     return { ...parsed, view, initiative: view.initiative, running: status === "running", resumeReason, shipped };
   }
@@ -326,11 +326,15 @@ const LAUNCH_STOP = {
   label: "Stop",
   effect: "Interrupts the host's turn as the host's own Stop button does, and ends the host process if it still runs after the grace period.",
   target: (context) => context.reference,
+  // The shipped state never decides a stop.
+  ownsShipped: true,
   unavailable: (context) => (context.running ? null : "The session is not running."),
   after: () => null,
-  async launch({ context, env }) {
+  async launch({ projectRoot, context, env }) {
     const launch = await stopLaunch({ id: context.launch, env });
-    return { launch, after: "stopped", initiative: context.initiative, started: null };
+    // After the initiative shipped, its state is history: the stop request in the launch folder is the stop's only record.
+    const shipped = await shippedDecision(projectRoot, context.initiative).catch(() => null);
+    return { launch, after: "stopped", initiative: context.initiative, started: null, record: !shipped };
   }
 };
 
@@ -341,7 +345,11 @@ const LAUNCH_RESUME = {
   label: "Resume",
   effect: "Starts the host session again headless; you confirm it outside the browser unless you confirmed in the last 30 minutes.",
   target: (context) => context.reference,
-  unavailable: (context) => context.resumeReason,
+  ownsShipped: true,
+  unavailable: (context) => {
+    if (context.running) return "The session is running.";
+    return context.shipped ? shippedActionReason(context.shipped) : context.resumeReason;
+  },
   after: () => null,
   async launch({ context, env }) {
     await confirmLaunch({ initiative: context.view.initiative, host: context.view.host, checkout: context.view.checkout, env });
@@ -357,7 +365,7 @@ const ACTIONS = [...SETTING_ACTIONS, ...LAUNCH_ACTIONS, GATE_ANSWER, INDEX_REBUI
 export const actionEffect = (id) => ACTIONS.find((definition) => definition.id === id)?.effect ?? null;
 
 function view(definition, context) {
-  const reason = context.shipped ? shippedActionReason(context.shipped) : definition.unavailable(context);
+  const reason = context.shipped && !definition.ownsShipped ? shippedActionReason(context.shipped) : definition.unavailable(context);
   return {
     id: definition.id,
     label: definition.label,
@@ -559,6 +567,7 @@ async function applyLaunchAction({ projectRoot, definition, context, request, en
     throw launchRefusal(error);
   }
   const entry = await entryOf({ ...checked, after: outcome.after }, context);
+  if (outcome.record === false) return { applied: entry, actions: (await listActions({ projectRoot, target, indexer, env })).actions, launch: outcome.launch };
   try {
     await recordPersonAction({ projectRoot, initiative: outcome.initiative, prepare: async () => ({ entry }) });
   } catch (error) {
