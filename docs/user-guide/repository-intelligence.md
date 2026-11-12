@@ -138,7 +138,8 @@ Each index, or each component's index, also keeps a private mirror of the files 
 A rebuild copies into the mirror only the files that changed since the previous build, removes the files that no longer exist, and its `snapshot-copy` phase counts only the copied files.
 The code structure is then updated for the changed and removed files only, and the units and fragments of the other files are reused, so a rebuild after a small edit parses and fragments only what changed.
 A rebuild returns the same index that a build from scratch of the same files returns.
-When the mirror or the kept structure cannot be trusted, for example after it was edited, removed, or written by another version, the next build copies and parses every file again.
+When the mirror or the kept structure cannot be trusted, for example after it was removed or written by another version, the next build copies and parses every file again.
+When a file in the mirror was edited, the build that reads it fails once with `stale_snapshot` and empties the mirror, and the build after it copies and parses every file again.
 The mirror takes about as much disk space as the indexed source, and the kept structure takes less than the index, because it holds no embeddings.
 
 #### Answer from structure while embeddings fill
