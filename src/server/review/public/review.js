@@ -2331,7 +2331,7 @@ async function showArtifact(path) {
     ${documentCard}`;
   // A store artifact shows its review view above its content, and its comment form keeps an unsent comment across the page's live updates.
   // More comments lists further comments in place, so the page takes what the card now lists as what it shows and redraws only when that changes.
-  mountArtifactReview(artifact, data, { actionApi, state, readPage, onListed: (listed) => { if (listed.path === selectedPath) lastSnapshot = JSON.stringify(listed); } });
+  mountArtifactReview(memory.stage, data, { actionApi, state, readPage, onListed: (listed) => { if (listed.path === selectedPath) lastSnapshot = JSON.stringify(listed); } });
   pageBar.setActions(structured ? modeButtons(state, path) : []);
   if (structured) {
     const container = document.createElement("div");
