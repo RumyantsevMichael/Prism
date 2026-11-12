@@ -17,7 +17,7 @@ export const UNAVAILABLE = Object.freeze({
 // A failure keeps Git's exit code, which is a number only when Git ran to its end, and its message, so a command that was killed or overflowed reads as Git not running.
 function git(root, args) {
   return new Promise((resolve) => {
-    execFile("git", ["-c", "core.quotePath=false", ...args], { cwd: root, env: { ...process.env, LC_ALL: "C", LANGUAGE: "C", GIT_OPTIONAL_LOCKS: "0" }, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_BUFFER, encoding: "utf8" }, (error, stdout, stderr) => {
+    execFile("git", ["-c", "core.quotePath=false", ...args], { cwd: root, env: { ...process.env, LC_ALL: "C", LANGUAGE: "C", GIT_OPTIONAL_LOCKS: "0" }, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_BUFFER, encoding: "utf8", windowsHide: true }, (error, stdout, stderr) => {
       resolve(error ? { ok: false, code: error.killed || typeof error.code !== "number" ? null : error.code, stderr: String(stderr ?? ""), stdout: "" } : { ok: true, stdout });
     });
   });
