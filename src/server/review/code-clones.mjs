@@ -266,11 +266,12 @@ export async function createCodeClones({ directory }) {
 
     /**
      * A file read from the clone at a branch or a commit that a branch holds: { repository, branch, commit, path, blob, bytes, content }, fetching its contents only now;
-     * null for no clone, an unknown branch or commit, a path the commit does not hold as a file, a secret, a binary file, or a file over 512 KiB.
+     * { repository, branch, commit, path, blob, withheld } with withheld binary or too_large for a file it holds but does not show,
+     * and null for no clone, an unknown branch or commit, a path the commit does not hold as a file, or a secret.
      */
     async file(workspace, repository, { branch = null, commit = null, path: file }) {
       const base = await cloneOf(workspace, repository);
-      if (!base || typeof file !== "string" || codeFolder(file) === null || codeFolder(file) === "" || secretPath(file) || binaryPath(file)) return null;
+      if (!base || typeof file !== "string" || codeFolder(file) === null || codeFolder(file) === "" || secretPath(file)) return null;
       const branches = await branchesOf(base);
       let at = null;
       if (branch !== null) at = branches.find((item) => item.name === branch)?.commit ?? null;
@@ -282,9 +283,16 @@ export async function createCodeClones({ directory }) {
       if (at === null) return null;
       const blob = await blobAt(base, at, codeFolder(file));
       if (!blob) return null;
+      // A binary or large file is held but not shown, which the answer says apart from a file the commit does not hold.
+      const held = { repository, branch: branch ?? null, commit: at, path: codeFolder(file), blob };
+      if (binaryPath(file)) return { ...held, withheld: "binary" };
+      const size = await git(base, ["cat-file", "-s", blob]);
+      if (!size.ok) return null;
+      if (Number(size.text) > SOURCE_SIZE_LIMIT) return { ...held, withheld: "too_large" };
       const bytes = await blobBytes(base, blob);
-      if (bytes === null || bytes.includes(0)) return null;
-      return { repository, branch: branch ?? null, commit: at, path: codeFolder(file), blob, bytes: bytes.length, content: bytes.toString("utf8") };
+      if (bytes === null) return null;
+      if (bytes.includes(0)) return { ...held, withheld: "binary" };
+      return { ...held, bytes: bytes.length, content: bytes.toString("utf8") };
     },
 
     /** A file read from the clone at the remote's default branch, as file reads one, or null where file answers null. */

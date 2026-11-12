@@ -5,8 +5,10 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { launch, settle, skip } from "./fixtures/kit-browser.mjs";
 import { alias, bareRemote, exists, git, isolateGit, networkStore, place, sha16, startApp, storeCheckout, workspaceId } from "./fixtures/workspace-view.mjs";
 
+// A file the clone holds but does not show, binary or over 512 KiB, answers 404 saying why, and the page says it is not shown rather than gone.
 // Code clones fetch a remote that the store's registration names, in the background, so they never prompt for a password,
 // and a workspace that leaves the list takes its code content with it.
 const environment = await isolateGit();
@@ -125,4 +127,47 @@ test("removing an added workspace turns its code content off and deletes its clo
   assert.equal(await exists(clone), false);
   const saved = JSON.parse(await readFile(path.join(where.app, "code-content.json"), "utf8"));
   assert.deepEqual(saved.repositories.filter((entry) => entry.workspace === id), []);
+});
+
+async function codeOn(context, files) {
+  const where = await place(context);
+  const store = await networkStore(where);
+  alias("https://github.com/acme/api.git", await bareRemote(where.parent, "api-code.git", { files }));
+  await storeCheckout(context, where, "api", store.url);
+  const prism = await startApp(context, where);
+  await prism.grant();
+  assert.equal((await prism.post("/api/workspaces", { url: store.url })).status, 200);
+  const id = workspaceId(store.identity);
+  assert.equal((await prism.put(`/w/${id}/api/code/api`, { enabled: true })).json.code.state, "on");
+  return { prism, id };
+}
+
+const SHOWN = { "src/total.js": "export const total = 1;\n", "assets/logo.bin": "PNG\u0000\u0001", "assets/logo.png": "PNG", "assets/big.txt": "x".repeat(600 * 1024) };
+
+test("a code file the clone holds but does not show answers 404 with the reason it is not shown", async (context) => {
+  const { prism, id } = await codeOn(context, SHOWN);
+  const open = (file) => prism.get(`/w/${id}/api/artifact?ref=${encodeURIComponent(`code:api:${file}`)}`);
+  for (const [file, reason] of [["assets/logo.bin", "binary"], ["assets/logo.png", "binary"], ["assets/big.txt", "too_large"]]) {
+    const answer = await open(file);
+    assert.equal(answer.status, 404, file);
+    assert.equal(answer.json.code, "file_not_shown", file);
+    assert.equal(answer.json.reason, reason, file);
+    const read = await prism.get(`/w/${id}/api/code/file?repository=api&branch=main&path=${encodeURIComponent(file)}`);
+    assert.deepEqual([read.status, read.json.code, read.json.reason], [404, "file_not_shown", reason], file);
+  }
+  const gone = await open("none.js");
+  assert.equal(gone.status, 404);
+  assert.notEqual(gone.json?.code, "file_not_shown");
+});
+
+test("the page says a binary code file is not shown, not that it was moved or deleted", { skip }, async (context) => {
+  const { prism, id } = await codeOn(context, SHOWN);
+  const browser = await launch(context);
+  const page = await (await browser.newContext()).newPage();
+  await page.goto(`${prism.viewer}/w/${id}/review?artifact=${encodeURIComponent("code:api:assets/logo.bin")}`);
+  await settle(page);
+  const text = await page.locator("body").innerText();
+  assert.match(text, /This file is not shown/);
+  assert.match(text, /binary file/);
+  assert.doesNotMatch(text, /moved or deleted/);
 });

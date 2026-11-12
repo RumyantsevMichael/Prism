@@ -869,11 +869,21 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     }
     // A path that no registered checkout lists is read from the repository's code clone at the remote's default branch, with the clone's own checks.
     const cloned = workspace?.code && (await storeRepositories()).includes(code.repository) ? await workspace.code.defaultFile(code.repository, code.path) : null;
+    if (cloned?.withheld) {
+      sendJson(response, 404, withheldAnswer(cloned));
+      return;
+    }
     if (cloned) {
       send(response, 200, JSON.stringify({ ref, ...cloned }), "application/json; charset=utf-8");
       return;
     }
     send(response, 404, "No registered checkout of that repository and no code clone of it on this machine holds the file for review.");
+  }
+
+  // A code file that a clone holds but does not show answers 404 with why, so the page says the file is not shown rather than gone.
+  function withheldAnswer(read) {
+    const why = read.withheld === "binary" ? "it is a binary file" : "it is over 512 KiB";
+    return { code: "file_not_shown", reason: read.withheld, message: `${read.path} is not available here because ${why}, which the review app does not show.` };
   }
 
   // The code routes of a workspace's page, which read the code clones Prism keeps and never answer a URL of a Git host.
@@ -895,7 +905,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       else sendJson(response, 200, { repository, folder, entries });
     } else if (route === "/api/code/file") {
       const read = await workspace.code.file(repository, { branch: url.searchParams.get("branch"), commit: url.searchParams.get("commit"), path: url.searchParams.get("path") });
-      if (read) sendJson(response, 200, read);
+      if (read?.withheld) sendJson(response, 404, withheldAnswer(read));
+      else if (read) sendJson(response, 200, read);
       else sendJson(response, 404, { code: "file_unavailable", message: "The clone holds no such file to show: the branch or commit is unknown, the path is no file there, or the file is a secret, binary, or over 512 KiB." });
     } else {
       const components = await workspace.code.components(repository);

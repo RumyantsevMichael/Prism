@@ -58,7 +58,7 @@ async function showFile(target, repository, entry, query) {
   for (const branches of versions.values()) {
     let read = null;
     try { read = await readJson(query("file", { branch: branches[0], path: entry.path })); }
-    catch { /* A secret, binary, or large file is not shown. */ }
+    catch { /* A binary or large file is not shown. */ }
     const body = read
       ? `<section class="document-sheet source-sheet" data-code-subject><ol class="source-lines">${highlightLines(read.content.replace(/\r\n/g, "\n").replace(/\n$/, ""), languageOf(entry.path)).map((line) => `<li><code>${line || " "}</code></li>`).join("")}</ol></section>`
       : emptyState("Not shown", "The review app shows no secret, binary file, or file over 512 KiB.");

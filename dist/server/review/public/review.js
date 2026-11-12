@@ -1477,6 +1477,27 @@ function showMissing(path) {
   setBusy(false);
 }
 
+// A file that exists but is not shown, such as a binary file or one over 512 KiB, keeps its tab and says why.
+function showNotShown(path, message) {
+  if (path !== selectedPath) return;
+  if (lastSnapshot !== `not-shown:${path}`) {
+    lastSnapshot = `not-shown:${path}`;
+    renderedPath = null;
+    pageBar.setActions([]);
+    const state = document.createElement("prism-empty-state");
+    state.setAttribute("heading", "This file is not shown");
+    state.dataset.notShown = "";
+    const where = document.createElement("p");
+    where.dataset.codeSubject = "";
+    where.textContent = path;
+    const detail = document.createElement("p");
+    detail.textContent = message;
+    state.append(where, detail);
+    artifact.replaceChildren(state);
+  }
+  setBusy(false);
+}
+
 function updateMissingTabs(reported) {
   missingTabs = nextMissingTabs(missingTabs, reported).next;
 }
@@ -1570,7 +1591,10 @@ async function showArtifact(path) {
   }
   const response = await fetch(`./api/artifact?${artifactQuery(path)}`, { cache: "no-store" });
   if (response.status === 404) {
-    showMissing(path);
+    // A code file that is held but not shown, such as a binary or large file, says so rather than that it was moved or deleted.
+    const refused = isCodeRef(path) ? await response.json().catch(() => null) : null;
+    if (refused?.code === "file_not_shown") showNotShown(path, refused.message);
+    else showMissing(path);
     return;
   }
   if (!response.ok) {

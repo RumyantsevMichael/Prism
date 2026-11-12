@@ -313,7 +313,7 @@ A link whose path falls outside every artifact folder names a code file of the a
 It opens that file from a checkout of the repository on this machine that offers it for review, in a tab named `code:<repository>:<path>`.
 A file that no registered checkout offers opens from the repository's code clone, while its code content is on, at the remote's default branch, the branch that the remote's `HEAD` named at the clone's last fetch; the tab shows that branch's label, and a checkout that offers the file always wins over the clone.
 A link to a secret by its file name, such as `.env` or a private key, never opens from the clone.
-A binary file or a file over 512 KiB still shows as a link, and opening it says the file is not available.
+A binary file or a file over 512 KiB still shows as a link, and opening it says that the file is not shown because it is binary or over 512 KiB, rather than that it was moved or deleted.
 When no checkout of that repository is registered on this machine and its code clone does not hold the file, the link keeps its text and shows **not available on this machine** beside it, and the page's heading counts such links apart.
 A link that names no artifact and no file keeps its text and shows **link not found** beside it, and the page's heading counts such links.
 An image, a link inside a fenced code block of backticks or tildes, and a link inside inline code are not links.
