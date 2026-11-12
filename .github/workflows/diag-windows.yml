@@ -1,0 +1,55 @@
+name: Diagnose Windows browser failures
+
+on:
+  pull_request:
+
+jobs:
+  diag:
+    name: diag (${{ matrix.load }}, ${{ matrix.round }})
+    strategy:
+      fail-fast: false
+      matrix:
+        load: [layout, shard1]
+        round: [1, 2, 3]
+    runs-on: windows-2025
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install -g playwright@1.63.0 && npx playwright install chromium
+      - run: |
+          npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
+          npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
+      - name: Dynamic ports and TCP settings
+        shell: pwsh
+        run: |
+          netsh int ipv4 show dynamicport tcp
+          Get-NetTCPSetting | Format-Table SettingName, DynamicPortRangeStartPort, DynamicPortRangeNumberOfPorts, AutoTuningLevelLocal
+          Get-CimInstance Win32_ComputerSystem | Format-List NumberOfLogicalProcessors, TotalPhysicalMemory
+      - name: Run the load while sampling sockets
+        env:
+          PRISM_REQUIRE_BROWSER: "1"
+        run: |
+          stop="$RUNNER_TEMP/stop"; samples="$RUNNER_TEMP/samples.txt"
+          pwsh -NoProfile -File diag/sample-sockets.ps1 -Out "$samples" -Stop "$stop" &
+          set +e
+          if [ "${{ matrix.load }}" = layout ]; then
+            for i in 1 2 3; do
+              node scripts/review-demo/layout-check.mjs --viewports phone,laptop --themes light,dark --part 1/2 > "$RUNNER_TEMP/l$i-1.txt" 2>&1 &
+              node scripts/review-demo/layout-check.mjs --viewports phone,laptop --themes light,dark --part 2/2 > "$RUNNER_TEMP/l$i-2.txt" 2>&1
+              wait %2 2>/dev/null; wait
+              echo "round $i: $(date +%T)"; grep -h "ERR_\|problem" "$RUNNER_TEMP"/l$i-*.txt | sort | uniq -c | head -20
+            done
+          else
+            node scripts/test-shard.mjs --shard 1/4 -- --test-timeout=1200000 --test-concurrency=2 > "$RUNNER_TEMP/shard.txt" 2>&1
+            echo "shard exit $?"; grep -n "^not ok\|ERR_NO_BUFFER\|ERR_CONNECTION" "$RUNNER_TEMP/shard.txt" | head -40
+          fi
+          touch "$stop"; sleep 3
+          echo "== error times"; grep -ho "ERR_NO_BUFFER_SPACE" "$RUNNER_TEMP"/*.txt | wc -l
+          echo "== samples (max total)"; sort -t= -k2 -n -r <(sed 's/.*total=\([0-9]*\).*/\1 &/' "$samples") | head -5
+          echo "== all samples"; cat "$samples"
