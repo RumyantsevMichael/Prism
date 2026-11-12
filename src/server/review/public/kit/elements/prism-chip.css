@@ -73,6 +73,7 @@
 }
 
 .text {
+  flex: 0 1000 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -87,7 +88,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* The secondary text shortens inside its part, so a long one ends in an ellipsis within the chip rather than running past it. */
+/* The label shortens first, so short secondary text such as a count stays whole; only once the label has no room left does the secondary text shorten inside its part, ending in an ellipsis within the chip rather than running past it. */
 .meta:not([hidden]) {
   display: inline-flex;
 }

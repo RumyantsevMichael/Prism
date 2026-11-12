@@ -250,6 +250,20 @@ test("clauses 31, 32: chips are static text, links, or buttons, and badges are s
   assert.deepEqual(roles.filter((role) => ["button", "link", "checkbox", "option", "tab", "menuitem"].includes(role)), [], "a badge carries no control role");
 });
 
+test("clause 31: a chip too narrow for its label shortens the label first and keeps short secondary text whole", { skip }, async (context) => {
+  const { page } = await catalog(context);
+  await mount(page, `<prism-chip id="narrow" interactive>${UNBROKEN}<span slot="meta">30</span></prism-chip>`, { width: "120px" });
+  const sizes = await page.evaluate(() => {
+    const chip = document.querySelector("#narrow");
+    const meta = chip.querySelector("[slot=meta]");
+    const text = chip.shadowRoot.querySelector(".text");
+    return { chip: chip.getBoundingClientRect().width, meta: meta.getBoundingClientRect().width, metaWhole: meta.scrollWidth, text: text.getBoundingClientRect().width, textWhole: text.scrollWidth };
+  });
+  assert.ok(sizes.chip <= 120.5, `the chip stays inside its container: ${JSON.stringify(sizes)}`);
+  assert.ok(sizes.text < sizes.textWhole, "the label shortens");
+  assert.ok(sizes.meta >= sizes.metaWhole, "the count is shown whole");
+});
+
 test("clauses 33, 34: tabs are a named tablist with one selected tab, move focus with arrow keys, and select with Enter", { skip }, async (context) => {
   const { page } = await catalog(context);
   await mount(page, `<prism-button id="before">Before</prism-button><prism-tabs id="tabs" label="Slice"><prism-tab value="a" selected>Design</prism-tab><prism-tab value="b">Diagram</prism-tab><prism-tab value="c">Files</prism-tab></prism-tabs><prism-button id="after">After</prism-button>`);
