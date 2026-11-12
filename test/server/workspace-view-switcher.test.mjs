@@ -80,7 +80,7 @@ test("clause 8: a workspace's page and API answer under its id, and an unknown i
   const id = workspaceId(store.identity);
   const page = await prism.get(`/w/${id}/`);
   assert.equal(page.status, 200);
-  assert.match(page.body, /id="nav-places"/);
+  assert.match(page.body, /<prism-rail id="rail" label="Places"/);
   const index = await prism.get(`/w/${id}/api/index`);
   assert.equal(index.status, 200, index.body);
   assert.equal(index.json.workspace.id, id);
@@ -105,7 +105,7 @@ test("clause 10: the app's root opens the workspace used most recently, or the a
   const empty = await startApp(context, where);
   const page = await empty.get("/");
   assert.equal(page.status, 200);
-  assert.match(page.body, /id="nav-places"/);
+  assert.match(page.body, /<prism-rail id="rail" label="Places"/);
   const root = await plainProject(where, "notes");
   await empty.register(root);
   const redirected = await empty.get("/");
@@ -148,7 +148,7 @@ test("clause 61: the workspace page keeps the places navigation and the kit guar
   const { store, prism } = await threeCheckouts(context);
   const page = await prism.get(`/w/${workspaceId(store.identity)}/`);
   assert.equal(page.status, 200);
-  assert.match(page.body, /<prism-tree id="nav-places"/);
+  assert.match(page.body, /<prism-rail id="rail" label="Places"/);
   const guard = await new Promise((resolve) => execFile(process.execPath, [path.join(REPOSITORY, "scripts", "review-kit", "kit-guard.mjs")], { cwd: REPOSITORY }, (error, stdout) => resolve({ code: error?.code ?? 0, stdout })));
   assert.equal(guard.code, 0, guard.stdout);
   assert.equal(guard.stdout.trim(), "");
