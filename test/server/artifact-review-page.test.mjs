@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { browserRequest, checkout, git, isolateGit, ok, requirementFile, reviewBrowser, server, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
+import { browserRequest, checkout, closeServers, git, isolateGit, ok, requirementFile, reviewBrowser, server, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 import { launch, settle, skip as noBrowser } from "./fixtures/kit-browser.mjs";
 import { defer } from "./fixtures/teardown.mjs";
 
@@ -14,10 +14,17 @@ test.after(() => rm(environment, { recursive: true, force: true }));
 const FILE = "docs/requirements/billing.md";
 
 // The workspace removes its folder in the first after hook that it adds, while an open page still polls the review app in that folder,
-// which Windows refuses with EBUSY, so the teardown stack is added first: it closes the page's browser, then the review app, and only then the folder goes.
+// which Windows refuses with EBUSY, so the teardown stack is added first: it closes the page's browser, then the review app, then the servers,
+// and removes the folder retrying, since a Git process that the review app started can still be working in the checkout for a moment after it closed.
 async function project(context) {
-  defer(context, () => {});
+  let parent = null;
+  defer(context, async () => {
+    await closeServers();
+    (await import("../../dist/server/workflow/record-store-sync.mjs")).cancelRecordSyncs();
+    if (parent) await rm(parent, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  });
   const place = await workspace(context);
+  parent = place.parent;
   const api = await checkout(place, "api");
   git(api, "config", "user.name", "Ada Reviewer");
   const prism = await server(context, place, api);
