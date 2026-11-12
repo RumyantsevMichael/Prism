@@ -503,10 +503,11 @@ export class NativeSemanticRuntime implements ComponentRuntime {
       // A job's new status is set only once its progress record is final, so a caller that sees the job end never finds its record still being written.
       try {
         // A stalled or paused build ends at once, without waiting for its stopped request to end.
-        job.prepared = await Promise.race([this.build(source, snapshot, location, job, attempt), stalled, paused]);
+        // The complete index is set together with the ready status, so a call that its published structure answers meanwhile still reads that structure.
+        const prepared = await Promise.race([this.build(source, snapshot, location, job, attempt), stalled, paused]);
         if (job.freshness !== undefined) await writeFreshness(location.directory, job.snapshot, job.freshness);
         await started; await recorder.succeed();
-        job.status = "ready";
+        job.prepared = prepared; job.status = "ready";
       } catch (error) {
         // A paused run records no failure and leaves the job waiting in the queue, unless a newer read replaced the job meanwhile.
         if (job.pausedAttempt === attempt) {
