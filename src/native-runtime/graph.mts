@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 import { CODE_EXTENSIONS } from "./units.mjs";
 import { installFileBoundary } from "./fs-boundary.mjs";
 import type { SourceUnit, Diagnostic, Progress, Relationship, SourceFile, UnresolvedReference, FileReference } from "../server/repository-intelligence/repository-unit-types.mjs";
@@ -73,6 +74,109 @@ export async function extractGraph(mirror: string, files: Pick<SourceFile, "file
   return result as Graph;
 }
 
+// A sync re-reads only the files it is given, and a file whose own content did not change can still resolve differently when a file it reaches changes:
+// it imports a module by a path that now exists, or through a re-exporting file that now points elsewhere.
+// So every unchanged code file that may resolve through a changed or removed one is synced with it, and is marked changed in the kept graph,
+// because the graph skips a file whose recorded hash still matches. A file may resolve through another when, in the graph, it links to that
+// file's units or to the units that file imports, when it holds an import the graph could not resolve by a name that a path alias or a workspace
+// package of the snapshot declares, since such a name need not name the file it leads to, or when its text names as a module (by its stem, or the
+// folder of an index or package file) that file or, transitively, a file so found that may re-export what it imports.
+// The links are read again from the synced graph, since a changed file can import units it did not import before, until no file is added.
+// When the synced files would exceed half the code files and 32, or the graph cannot be read, the graph is built in full, which `undefined` asks for.
+// The cost is a sync of the files that reach a change: in a graph of 400 files, an edit that two files reach syncs three, and one that forty reach syncs 41.
+const MODULE_FILES = new Set(["index", "__init__", "mod", "lib", "main", "package-info"]);
+function moduleNames(file: string) {
+  const parsed = path.posix.parse(file);
+  const names = [parsed.name];
+  // Go imports a package by its folder.
+  if ((MODULE_FILES.has(parsed.name) || parsed.ext === ".go") && parsed.dir) names.push(path.posix.basename(parsed.dir));
+  return names;
+}
+// The import names that the snapshot's path aliases (`compilerOptions.paths` of a `tsconfig` or `jsconfig` file) and workspace packages (the `name` of a
+// `package.json`) declare, as prefixes, or undefined when one of those files cannot be read, so that any unresolved import may lead to any file.
+function declaredImportNames(files: Pick<SourceFile, "file" | "content">[]): string[] | undefined {
+  const names: string[] = [];
+  for (const file of files) {
+    const base = path.posix.basename(file.file);
+    const config = /^(ts|js)config.*\.json$/i.test(base), manifest = base === "package.json";
+    if (!config && !manifest) continue;
+    const errors: ParseError[] = [];
+    const value = parseJsonc(file.content, errors, { allowTrailingComma: true });
+    if (errors.length || !value || typeof value !== "object") return undefined;
+    if (manifest && typeof value.name === "string" && value.name) names.push(value.name);
+    const aliases = config ? value.compilerOptions?.paths : undefined;
+    if (aliases && typeof aliases === "object") for (const key of Object.keys(aliases)) names.push(key.replace(/\*.*$/, ""));
+  }
+  return names;
+}
+const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// Whether a file may re-export what it imports, so that a file importing it resolves through the files it imports; on doubt it may.
+const JS = /\.(m|c)?(j|t)sx?$/i;
+function passesOn(file: string, content: string) {
+  const extension = path.extname(file).toLowerCase();
+  if (JS.test(file)) return /\bexport\s*(\*|\{|type\s*\{)/.test(content) || /\bexport\s+default\s+[A-Za-z_$][\w$.]*\s*;?\s*$/m.test(content)
+    || /\b(module\.)?exports\b/.test(content) && /\brequire\s*\(/.test(content);
+  if (extension === ".rs") return /\bpub\s*(\([^)]*\)\s*)?use\b/.test(content);
+  return !KNOWN_ROOTED.has(extension);
+}
+// Languages that resolve a reference by its full name or its package rather than through the file that imports it; a Python module or a C header
+// passes on what it imports, and so does a language not named here.
+const KNOWN_ROOTED = new Set([".java", ".kt", ".kts", ".scala", ".cs", ".go", ".c", ".cc", ".cpp", ".cxx", ".swift"]);
+const isCode = (file: string) => CODE_EXTENSIONS.has(path.extname(file).toLowerCase());
+// The files to sync with `paths` that `synced` does not hold yet, marked changed in the graph; the first round, without `synced`, also reads the text and
+// the unresolved imports.
+function dependents(mirror: string, files: Pick<SourceFile, "file" | "content">[], paths: string[], synced?: Set<string>): string[] | undefined {
+  const codeFiles = files.filter(file => isCode(file.file));
+  const changed = paths.filter(isCode);
+  if (!changed.length) return [];
+  let connection: DatabaseConnection | undefined;
+  try {
+    connection = sdk!.DatabaseConnection.open(sdk!.getDatabasePath(mirror));
+    const db = connection.getDb();
+    const tracked = new Set((db.prepare("SELECT path FROM files").all() as { path: string }[]).map(row => row.path));
+    const found = new Set<string>();
+    const marks = changed.map(() => "?").join(",");
+    // Files linking to the units of a changed or removed file, or to the units that file imports, which a re-exporting file passes on.
+    const linked = db.prepare(`SELECT DISTINCT s.file_path AS file FROM edges e JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target
+      WHERE t.file_path IN (${marks}) OR e.target IN (SELECT e2.target FROM edges e2 JOIN nodes s2 ON s2.id = e2.source WHERE s2.file_path IN (${marks}) AND e2.kind = 'imports')`)
+      .all(...changed, ...changed) as { file: string }[];
+    for (const row of linked) found.add(row.file);
+    if (!synced) {
+      const declared = declaredImportNames(files);
+      if (!declared || declared.length) {
+        const failed = db.prepare(`SELECT DISTINCT COALESCE(NULLIF(r.file_path, ''), n.file_path) AS file, r.reference_name AS name FROM unresolved_refs r
+          LEFT JOIN nodes n ON n.id = r.from_node_id WHERE r.reference_kind = 'imports'`).all() as { file: string | null; name: string }[];
+        for (const row of failed) if (row.file && (!declared || declared.some(prefix => row.name === prefix || row.name.startsWith(prefix.endsWith("/") ? prefix : `${prefix}/`)))) found.add(row.file);
+      }
+      const content = new Map(codeFiles.map(file => [file.file, file.content]));
+      const reached = new Set(changed);
+      // A found file passes its importers on only when it may re-export what it imports.
+      const onward = () => [...found].filter(file => !reached.has(file) && passesOn(file, content.get(file) ?? ""));
+      let names = [...changed, ...onward()].flatMap(moduleNames);
+      while (names.length) {
+        for (const file of found) reached.add(file);
+        const pattern = new RegExp(`(?<![\\w$-])(?:${[...new Set(names)].map(escape).join("|")})(?![\\w$-])`);
+        for (const file of codeFiles) if (!reached.has(file.file) && pattern.test(file.content)) found.add(file.file);
+        names = onward().flatMap(moduleNames);
+      }
+    }
+    const present = new Set(codeFiles.map(file => file.file));
+    const before = synced ?? new Set(paths);
+    const added = [...found].filter(file => present.has(file) && !before.has(file));
+    if (before.size + added.length > Math.max(32, codeFiles.length / 2)) return undefined;
+    const stale = db.prepare("UPDATE files SET content_hash = '', size = -1 WHERE path = ?");
+    for (const file of added) if (tracked.has(file)) stale.run(file);
+    return added.sort();
+  } catch { return undefined; }
+  finally { try { connection?.close(); } catch { /* The sync that follows opens the graph again and reports a database it cannot use. */ } }
+}
+
+// Whether the graph's detected frameworks run a pass over several files at once, or undefined when the graph does not show them.
+function crossFilePass(graph: CodeGraph): boolean | undefined {
+  const frameworks = (graph as unknown as { resolver?: { frameworks?: unknown } }).resolver?.frameworks;
+  return Array.isArray(frameworks) ? frameworks.some(framework => typeof framework?.postExtract === "function") : undefined;
+}
+
 // One graph build: `paths` syncs those paths of the kept graph, and otherwise every file is indexed into a new graph.
 // `clean` is true when nothing went wrong that an incremental build could report differently from a full one, which is when the kept graph may serve the next build.
 async function extractOnce(mirror: string, files: Pick<SourceFile, "file" | "content" | "hash">[], runtimeDirectory: string, progress: (value: Progress) => void, paths?: string[]) {
@@ -87,8 +191,24 @@ async function extractOnce(mirror: string, files: Pick<SourceFile, "file" | "con
   try {
     const onProgress = (value: { phase: string; current: number; total: number }) => progress({ phase: `graph:${value.phase}`, current: value.current, total: value.total });
     if (paths) {
+      const incomplete = () => ({ nodes, edges, references, unresolvedByFile, diagnostics, files: [] as string[], parsedFiles: [] as string[], frameworks, clean: false });
+      let added = dependents(mirror, files, paths);
+      if (!added) return incomplete();
+      const synced = new Set([...paths, ...added]);
       graph = await sdk!.CodeGraph.open(mirror, { sync: false });
-      if (paths.length) await graph.sync({ paths, onProgress });
+      // A framework pass that rewrites units from what several files hold together (NestJS route prefixes from module wiring) does not undo
+      // what it wrote for files a sync leaves alone, so a graph that runs one, or whose passes cannot be read, is built in full.
+      if (crossFilePass(graph) !== false) return incomplete();
+      let next = [...synced].sort();
+      while (next.length) {
+        await graph.sync({ paths: next, onProgress });
+        await graph.close(); graph = null;
+        added = dependents(mirror, files, paths, synced);
+        if (!added) return incomplete();
+        for (const file of added) synced.add(file);
+        next = added;
+        graph = await sdk!.CodeGraph.open(mirror, { sync: false });
+      }
     } else {
       graph = await sdk!.CodeGraph.init(mirror, { index: false });
       const result = await graph.indexAll({ onProgress });

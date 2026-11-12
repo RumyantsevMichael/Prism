@@ -16,6 +16,7 @@ const SOURCES = {
   "src/timeout.ts": "import { wait } from './wait';\nexport function timeoutAfter(ms: number) {\n  return wait(ms);\n}\n",
   "src/old.ts": "export function oldHelper() {\n  return 1;\n}\n",
   "src/user.ts": "import { oldHelper } from './old';\nexport function useOld() {\n  return oldHelper();\n}\n",
+  "src/solo.ts": "export function standalone() {\n  return 0;\n}\n",
   "docs/guide.md": "# Guide\n\nRetry the request after a [timeout](notes.md).\n",
   "docs/notes.md": "# Notes\n\nA timeout waits.\n"
 };
@@ -64,10 +65,10 @@ test("an incremental build after adding, changing, and removing files returns th
   await place(fresh, sources);
   const full = await structure(args(fresh, sources), () => {}, counter().tools);
   assert.deepEqual(comparable(incremental), comparable(full));
-  // Only the changed files were counted again, and the graph never indexed every file.
+  // Only the changed files were counted again, and the graph synced the changed files and those that link to them, never the unrelated one.
   assert.deepEqual(counted.sort(), changedFiles.map((file) => CHANGED[file]).sort());
   const parsed = phases.filter((value) => value.phase === "graph:parsing").map((value) => value.total);
-  assert.ok(parsed.length && Math.max(...parsed) <= 3, `the graph parsed ${JSON.stringify(parsed)} of 5 code files`);
+  assert.ok(parsed.length && Math.max(...parsed) <= 5, `the graph parsed ${JSON.stringify(parsed)} of 6 code files`);
   // A reference into the added file now resolves, and nothing still names the removed one.
   assert.ok(incremental.edges.some((edge) => incremental.units.find((unit) => unit.id === edge.target)?.name === "helperLater"));
   assert.ok(!incremental.units.some((unit) => unit.file === "src/old.ts"));

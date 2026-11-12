@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { parse as parseJsonc } from "jsonc-parser";
 import { CODE_EXTENSIONS } from "./units.mjs";
 import { installFileBoundary } from "./fs-boundary.mjs";
 const boundary = installFileBoundary();
@@ -56,6 +57,90 @@ async function extractGraph(mirror, files, runtimeDirectory, progress = () => {
   const { clean: _clean, frameworks: _frameworks, ...result } = graph;
   return result;
 }
+const MODULE_FILES = /* @__PURE__ */ new Set(["index", "__init__", "mod", "lib", "main", "package-info"]);
+function moduleNames(file) {
+  const parsed = path.posix.parse(file);
+  const names = [parsed.name];
+  if ((MODULE_FILES.has(parsed.name) || parsed.ext === ".go") && parsed.dir) names.push(path.posix.basename(parsed.dir));
+  return names;
+}
+function declaredImportNames(files) {
+  const names = [];
+  for (const file of files) {
+    const base = path.posix.basename(file.file);
+    const config = /^(ts|js)config.*\.json$/i.test(base), manifest = base === "package.json";
+    if (!config && !manifest) continue;
+    const errors = [];
+    const value = parseJsonc(file.content, errors, { allowTrailingComma: true });
+    if (errors.length || !value || typeof value !== "object") return void 0;
+    if (manifest && typeof value.name === "string" && value.name) names.push(value.name);
+    const aliases = config ? value.compilerOptions?.paths : void 0;
+    if (aliases && typeof aliases === "object") for (const key of Object.keys(aliases)) names.push(key.replace(/\*.*$/, ""));
+  }
+  return names;
+}
+const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const JS = /\.(m|c)?(j|t)sx?$/i;
+function passesOn(file, content) {
+  const extension = path.extname(file).toLowerCase();
+  if (JS.test(file)) return /\bexport\s*(\*|\{|type\s*\{)/.test(content) || /\bexport\s+default\s+[A-Za-z_$][\w$.]*\s*;?\s*$/m.test(content) || /\b(module\.)?exports\b/.test(content) && /\brequire\s*\(/.test(content);
+  if (extension === ".rs") return /\bpub\s*(\([^)]*\)\s*)?use\b/.test(content);
+  return !KNOWN_ROOTED.has(extension);
+}
+const KNOWN_ROOTED = /* @__PURE__ */ new Set([".java", ".kt", ".kts", ".scala", ".cs", ".go", ".c", ".cc", ".cpp", ".cxx", ".swift"]);
+const isCode = (file) => CODE_EXTENSIONS.has(path.extname(file).toLowerCase());
+function dependents(mirror, files, paths, synced) {
+  const codeFiles = files.filter((file) => isCode(file.file));
+  const changed = paths.filter(isCode);
+  if (!changed.length) return [];
+  let connection;
+  try {
+    connection = sdk.DatabaseConnection.open(sdk.getDatabasePath(mirror));
+    const db = connection.getDb();
+    const tracked = new Set(db.prepare("SELECT path FROM files").all().map((row) => row.path));
+    const found = /* @__PURE__ */ new Set();
+    const marks = changed.map(() => "?").join(",");
+    const linked = db.prepare(`SELECT DISTINCT s.file_path AS file FROM edges e JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target
+      WHERE t.file_path IN (${marks}) OR e.target IN (SELECT e2.target FROM edges e2 JOIN nodes s2 ON s2.id = e2.source WHERE s2.file_path IN (${marks}) AND e2.kind = 'imports')`).all(...changed, ...changed);
+    for (const row of linked) found.add(row.file);
+    if (!synced) {
+      const declared = declaredImportNames(files);
+      if (!declared || declared.length) {
+        const failed = db.prepare(`SELECT DISTINCT COALESCE(NULLIF(r.file_path, ''), n.file_path) AS file, r.reference_name AS name FROM unresolved_refs r
+          LEFT JOIN nodes n ON n.id = r.from_node_id WHERE r.reference_kind = 'imports'`).all();
+        for (const row of failed) if (row.file && (!declared || declared.some((prefix) => row.name === prefix || row.name.startsWith(prefix.endsWith("/") ? prefix : `${prefix}/`)))) found.add(row.file);
+      }
+      const content = new Map(codeFiles.map((file) => [file.file, file.content]));
+      const reached = new Set(changed);
+      const onward = () => [...found].filter((file) => !reached.has(file) && passesOn(file, content.get(file) ?? ""));
+      let names = [...changed, ...onward()].flatMap(moduleNames);
+      while (names.length) {
+        for (const file of found) reached.add(file);
+        const pattern = new RegExp(`(?<![\\w$-])(?:${[...new Set(names)].map(escape).join("|")})(?![\\w$-])`);
+        for (const file of codeFiles) if (!reached.has(file.file) && pattern.test(file.content)) found.add(file.file);
+        names = onward().flatMap(moduleNames);
+      }
+    }
+    const present = new Set(codeFiles.map((file) => file.file));
+    const before = synced ?? new Set(paths);
+    const added = [...found].filter((file) => present.has(file) && !before.has(file));
+    if (before.size + added.length > Math.max(32, codeFiles.length / 2)) return void 0;
+    const stale = db.prepare("UPDATE files SET content_hash = '', size = -1 WHERE path = ?");
+    for (const file of added) if (tracked.has(file)) stale.run(file);
+    return added.sort();
+  } catch {
+    return void 0;
+  } finally {
+    try {
+      connection?.close();
+    } catch {
+    }
+  }
+}
+function crossFilePass(graph) {
+  const frameworks = graph.resolver?.frameworks;
+  return Array.isArray(frameworks) ? frameworks.some((framework) => typeof framework?.postExtract === "function") : void 0;
+}
 async function extractOnce(mirror, files, runtimeDirectory, progress, paths) {
   const codeFiles = files.filter((file) => CODE_EXTENSIONS.has(path.extname(file.file).toLowerCase()));
   if (!codeFiles.length) return { nodes: [], edges: [], references: [], unresolvedByFile: {}, diagnostics: [], files: [], parsedFiles: [], frameworks: [], clean: false };
@@ -67,8 +152,23 @@ async function extractOnce(mirror, files, runtimeDirectory, progress, paths) {
   try {
     const onProgress = (value) => progress({ phase: `graph:${value.phase}`, current: value.current, total: value.total });
     if (paths) {
+      const incomplete = () => ({ nodes, edges, references, unresolvedByFile, diagnostics, files: [], parsedFiles: [], frameworks, clean: false });
+      let added = dependents(mirror, files, paths);
+      if (!added) return incomplete();
+      const synced = /* @__PURE__ */ new Set([...paths, ...added]);
       graph = await sdk.CodeGraph.open(mirror, { sync: false });
-      if (paths.length) await graph.sync({ paths, onProgress });
+      if (crossFilePass(graph) !== false) return incomplete();
+      let next = [...synced].sort();
+      while (next.length) {
+        await graph.sync({ paths: next, onProgress });
+        await graph.close();
+        graph = null;
+        added = dependents(mirror, files, paths, synced);
+        if (!added) return incomplete();
+        for (const file of added) synced.add(file);
+        next = added;
+        graph = await sdk.CodeGraph.open(mirror, { sync: false });
+      }
     } else {
       graph = await sdk.CodeGraph.init(mirror, { index: false });
       const result = await graph.indexAll({ onProgress });
