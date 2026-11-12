@@ -240,8 +240,9 @@ const claudeErrorText = (event) => (text(event.result) || (Array.isArray(event.e
 // A slice of a long string can keep the whole string alive, so kept host text is copied into a string of its own; the UTF-16
 // round trip keeps every code unit, a lone surrogate at the cut included.
 const detached = (text) => Buffer.from(text, "utf16le").toString("utf16le");
-// Host ids are kept by a fixed-size digest, so a long id costs no more than a short one.
-const digestKey = (id) => createHash("sha256").update(id).digest("base64");
+// Host ids are kept by a fixed-size digest of every UTF-16 code unit, so a long id costs no more than a short one and ids that
+// differ only in a lone surrogate stay apart.
+const digestKey = (id) => createHash("sha256").update(Buffer.from(id, "utf16le")).digest("base64");
 
 /**
  * One run's conversation with its host over the host's standard input and output.

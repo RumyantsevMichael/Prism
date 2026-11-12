@@ -222,26 +222,49 @@ test("kept refusal text and host ids keep no more memory than their cut length",
   const module = new URL("../../dist/server/session/launch-hosts.mjs", import.meta.url).href;
   const script = `
     const { hostConversation } = await import(${JSON.stringify(module)});
-    const measure = () => { globalThis.gc(); const m = process.memoryUsage(); return m.heapUsed + m.external; };
+    const measure = async () => {
+      for (let round = 0; round < 4; round += 1) { globalThis.gc(); await new Promise((resolve) => setImmediate(resolve)); }
+      const m = process.memoryUsage();
+      return m.heapUsed + m.external;
+    };
     const big = "r".repeat(1000 * 1000);
     const line = (message) => Buffer.from(JSON.stringify(message) + String.fromCharCode(10));
     const results = hostConversation("claude-code", { initiative: "x", checkout: "/tmp", hostSessionId: ${JSON.stringify(UUID)}, send() {}, closeInput() {} });
     const ids = hostConversation("claude-code", { initiative: "x", checkout: "/tmp", hostSessionId: ${JSON.stringify(UUID)}, send() {}, closeInput() {} });
     const codex = hostConversation("codex", { initiative: "x", checkout: "/tmp", send() {}, closeInput() {} });
     const grown = [];
-    let before = measure();
+    let before = await measure();
     for (let index = 0; index < 40; index += 1) results.push(line({ type: "user", message: { content: [{ type: "tool_result", is_error: true, tool_use_id: "u" + index, content: index + big }] } }));
-    grown.push(measure() - before);
-    before = measure();
+    grown.push((await measure()) - before);
+    before = await measure();
     for (let index = 0; index < 40; index += 1) ids.push(line({ type: "user", message: { content: [{ type: "tool_result", is_error: true, tool_use_id: index + big, content: "no" }] } }));
-    grown.push(measure() - before);
-    before = measure();
+    grown.push((await measure()) - before);
+    before = await measure();
     const half = big.slice(0, 400 * 1000);
     for (let index = 0; index < 8; index += 1) codex.push(line({ jsonrpc: "2.0", method: "turn/completed", params: { turn: { id: index + half, status: "failed", error: { message: index + half } } } }));
     codex.push(line({ jsonrpc: "2.0", method: "turn/completed", params: { turn: { id: "small", status: "completed" } } }));
-    grown.push(measure() - before);
+    grown.push((await measure()) - before);
     process.stdout.write(JSON.stringify(grown));
   `;
   const grown = JSON.parse(execFileSync(process.execPath, ["--expose-gc", "--input-type=module", "-e", script], { encoding: "utf8" }));
-  for (const bytes of grown) assert.ok(bytes < 7 * 1024 * 1024, `a conversation retained ${Math.round(bytes / 1048576)} MiB of host text`);
+  for (const bytes of grown) assert.ok(bytes < 3 * 1024 * 1024, `a conversation retained ${Math.round(bytes / 1048576)} MiB of host text`);
+});
+
+// Host ids that differ only in a lone surrogate are different ids, for refusal reasons and for early Codex completions alike.
+test("host ids that differ only in a lone surrogate stay apart", () => {
+  const line = (message) => Buffer.from(`${JSON.stringify(message)}\n`);
+  const claude = hostConversation("claude-code", { initiative: "x", checkout: "/tmp", send() {}, closeInput() {} });
+  claude.push(line({ type: "user", message: { content: [{ type: "tool_result", is_error: true, tool_use_id: "toolu_\ud800", content: "reason of the other call" }] } }));
+  claude.push(line({ type: "result", permission_denials: [{ tool_name: "Bash", tool_use_id: "toolu_\ud801" }] }));
+  assert.equal(claude.facts.refusals[0].reason, "Bash was refused.");
+
+  let closed = 0;
+  const codex = hostConversation("codex", { initiative: "x", checkout: "/tmp", send() {}, closeInput() { closed += 1; } });
+  codex.start();
+  codex.push(line({ jsonrpc: "2.0", id: 1, result: {} }));
+  codex.push(line({ jsonrpc: "2.0", id: 2, result: { thread: { id: "th" } } }));
+  codex.push(line({ jsonrpc: "2.0", method: "turn/completed", params: { turn: { id: "turn\ud800", status: "failed", error: { message: "other" } } } }));
+  codex.push(line({ jsonrpc: "2.0", id: 3, result: { turn: { id: "turn\ud801" } } }));
+  assert.equal(closed, 0);
+  assert.equal(codex.facts.hostError, null);
 });
