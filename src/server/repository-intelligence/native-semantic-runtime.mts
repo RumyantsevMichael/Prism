@@ -705,6 +705,8 @@ export class NativeSemanticRuntime implements ComponentRuntime {
           .catch(async error => {
             // A mirror file that no longer matches its manifest is never trusted again, so the next build copies everything.
             if (error.code === "stale_snapshot") await forgetMirror(directory).catch(() => {});
+            // A build that fails after it published structure keeps that structure stored, so the failure is reported only once its pointers are written, under the lock.
+            await structureSaved;
             throw error;
           });
         indexed();
