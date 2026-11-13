@@ -74,8 +74,9 @@ test("with store sync on, the moved files and their ledger reach the remote in o
   assert.ok(commit.some((file) => file.startsWith("artifact-status/repositories/api/requirements/billing.md/")), "its status record is in the same commit");
 });
 
-// A move makes a fixed number of file-system calls for each file it takes, which Windows answers several times slower, while a move that listed the store again for each file would take minutes there.
-const MOVE_BOUND = process.platform === "win32" ? 90000 : 30000;
+// A move makes a fixed number of file-system calls for each file it takes, while a move that listed the store again for each file would take minutes on Windows.
+// The move takes about 5 s on an idle machine, but a busy Linux runner once took 35 s, so one bound serves every platform.
+const MOVE_BOUND = 90000;
 
 test("one write that the store refuses keeps only its file, and the rest of a long move goes on without listing the store again for each file", async (context) => {
   const place = await workspace(context);
