@@ -1252,6 +1252,17 @@ a.inspect-tile:focus-visible {
   min-width: 0;
 }
 
+/* Each verified file names its path, which wraps when long, and then its state. */
+.slice-verified-files {
+  min-width: 0;
+}
+
+.slice-file-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* The claim strip runs the page's full width; a covering scope's note follows it. */
 .slice-claim-strip > .claim-held {
   display: flex;

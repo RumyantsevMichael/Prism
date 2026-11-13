@@ -143,7 +143,8 @@ test("clause 2: no update creates a component folder whose name is a Windows dev
   assert.equal(await exists(path.join(held, "b.md")), false);
 });
 
-test("clauses 5 and 10: a checkout lists the workspace's artifacts and its own repository's, sorted and labeled, without other repositories' ones", async (context) => {
+// Agents now read every scope of the store, other repositories' ones included, as the workspace view's artifact index lists them.
+test("clauses 5 and 10: a checkout lists the workspace's artifacts and every repository's, sorted and labeled", async (context) => {
   const place = await workspace(context);
   const api = await checkout(place, "api", { components: ["- billing: packages/billing"] });
   const web = await checkout(place, "web");
@@ -160,7 +161,8 @@ test("clauses 5 and 10: a checkout lists the workspace's artifacts and its own r
     ["docs/plans/reports/slice.md", "workspace"],
     ["docs/requirements/api.md", "api"],
     ["docs/requirements/billing.md", "api/billing"],
-    ["docs/requirements/shared.md", "workspace"]
+    ["docs/requirements/shared.md", "workspace"],
+    ["docs/requirements/web.md", "web"]
   ]);
   const shared = listed.artifacts.find((entry) => entry.path === "docs/requirements/shared.md");
   assert.equal(shared.kind, "requirements");
@@ -170,8 +172,8 @@ test("clauses 5 and 10: a checkout lists the workspace's artifacts and its own r
   assert.equal(listed.truncated ?? false, false);
 
   const folder = ok(await webServer.call("get_artifact", { path: "docs/requirements" }));
-  assert.deepEqual(folder.artifacts.map((entry) => [entry.path, entry.scope.label]), [["docs/requirements/shared.md", "workspace"], ["docs/requirements/web.md", "web"]]);
-  refused(await webServer.call("get_artifact", { path: "docs/requirements/api.md" }), "artifact_not_found");
+  assert.deepEqual(folder.artifacts.map((entry) => [entry.path, entry.scope.label]), [["docs/requirements/api.md", "api"], ["docs/requirements/billing.md", "api/billing"], ["docs/requirements/shared.md", "workspace"], ["docs/requirements/web.md", "web"]]);
+  assert.equal(ok(await webServer.call("get_artifact", { path: "docs/requirements/api.md" })).scope.label, "api", "another repository's artifact is read, not changed");
 });
 
 test("clause 6: a path that two seen scopes hold needs a scope, which picks one", async (context) => {

@@ -115,10 +115,11 @@ test("Attention lists the newest applied actions across initiatives and the chec
   assert.ok(attention.recentChanges.length <= 20);
 });
 
-// The shared app's project base, the prefix of one checkout's routes.
-const projectBase = (url) => /^(.*\/p\/[0-9a-f]{16})/.exec(new URL(url).href)[1];
+// The shared app's workspace base, the prefix of one workspace's routes, or of one checkout's routes in a link from before workspaces.
+const projectBase = (url) => /^(.*\/[pw]\/[0-9a-f]{16})/.exec(new URL(url).href)[1];
 
-test("an applied action reaches the tabs of every checkout of the workspace, and an index rebuild only its own checkout's", async (context) => {
+// Every checkout of a workspace opens the workspace's one page, so every tab of the workspace receives each applied action.
+test("an applied action reaches the tabs of every checkout of the workspace", async (context) => {
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-controls-workspace-")));
   const directory = path.join(parent, "app");
   context.after(async () => {
@@ -140,12 +141,9 @@ test("an applied action reaches the tabs of every checkout of the workspace, and
   const headers = await writeHeaders(billingBase, opened.at(-1));
   const second = await startStandaloneReview({ projectRoot: portal, env, openBrowser });
   const portalBase = projectBase(second.url);
-  assert.notEqual(portalBase, billingBase);
-  const portalTargets = (await get(portalBase, "api/actions/targets?kind=index")).json.targets;
-  assert.deepEqual(portalTargets, ["index:portal/portal"], "a checkout's page lists only its own index");
-  assert.equal((await listing(portalBase, "index:billing/billing")).status, 404, "another checkout's index is not a target of this page");
-  assert.equal((await listing(portalBase, target)).status, 200, "every checkout of the workspace lists the shared initiative's actions");
-  const onPortal = events(context, `${portalBase}/api/events`, "action", 1);
+  assert.equal(portalBase, billingBase, "both checkouts of the workspace open its one page");
+  assert.equal((await listing(portalBase, target)).status, 200, "the workspace's page lists the shared initiative's actions");
+  const onPortal = events(context, `${portalBase}/api/events`, "action", 2);
   const onBilling = events(context, `${billingBase}/api/events`, "action", 2);
   await new Promise((resolve) => setTimeout(resolve, 200));
   const rebuild = actionOf(await listing(billingBase, "index:billing/billing", headers), "index.rebuild");
@@ -156,10 +154,11 @@ test("an applied action reaches the tabs of every checkout of the workspace, and
   assert.equal(applied.status, 200, applied.text);
   assert.equal(applied.json.applied.by.checkout.startsWith("billing/main on "), true, "the author's checkout is the one whose page applied it");
   const [portalEvents, billingEvents] = await Promise.all([onPortal, onBilling]);
-  assert.deepEqual(portalEvents, [{ ...applied.json.applied, initiative: INITIATIVE }], "the other checkout's tab receives the shared change but not the index rebuild");
+  assert.deepEqual(portalEvents[1], { ...applied.json.applied, initiative: INITIATIVE }, "another tab of the workspace receives the shared change");
+  assert.deepEqual(portalEvents.map((event) => event.action), ["index.rebuild", "initiative.continuation"]);
   assert.deepEqual(billingEvents.map((event) => event.action), ["index.rebuild", "initiative.continuation"]);
   const attention = (await get(portalBase, "api/entity?ref=attention")).json.data;
-  assert.deepEqual(attention.recentChanges.map((entry) => entry.action), ["initiative.continuation"], "Attention of the other checkout shows the shared history and only its own index history");
+  assert.ok(attention.recentChanges.some((entry) => entry.action === "initiative.continuation"), "Attention of the workspace shows the shared history");
 });
 
 test("the page loads the generic action view", async (context) => {

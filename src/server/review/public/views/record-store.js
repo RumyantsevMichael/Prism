@@ -30,9 +30,20 @@ export function storeItem(store) {
   return { label: `${noun} ${store.label}`, short: `Shared store ${name}`, title, tone: "muted" };
 }
 
-/** The store's sync state, as the status bar names it, or null when nothing syncs: { label, tone, problem }. */
-export function syncItem(store, status, now = Date.now()) {
+/**
+ * The store's sync state, as the status bar names it, or null when nothing syncs: { label, tone, problem, message }.
+ * workspace is the open workspace's own fetch state, when the app keeps its store in sync: an unreachable store names when it last synced, and a problem of the last record sync wins over a fetch that went through.
+ */
+export function syncItem(store, status, now = Date.now(), workspace = null) {
   if (!store || store.kind === "project" || store.unavailable) return null;
+  if (workspace?.state === "unreachable") {
+    const when = workspace.lastSyncedAt ? relativeTime(workspace.lastSyncedAt, now) : "";
+    return { label: `Store unreachable · ${when ? `last synced ${when}` : "never synced"}`, tone: "danger", problem: true, message: workspace.message };
+  }
+  if (workspace && !Object.hasOwn(PROBLEMS, status?.state)) {
+    if (workspace.state === "syncing" && !workspace.lastSyncedAt) return { label: "Syncing…", tone: "muted", problem: false };
+    if (workspace.lastSyncedAt) return { label: `Synced ${relativeTime(workspace.lastSyncedAt, now)}`, tone: "ok", problem: false };
+  }
   if (!store.sync) return { label: "Sync off", tone: "muted", problem: false };
   if (!status) return { label: "Not synced yet", tone: "muted", problem: false };
   const when = relativeTime(status.at, now);
@@ -40,13 +51,15 @@ export function syncItem(store, status, now = Date.now()) {
   return { label: `${STATES[status.state] ?? status.state}${when ? `${problem ? " · " : " "}${when}` : ""}`, tone: problem ? (status.state === "conflicts" ? "warn" : "danger") : "ok", problem };
 }
 
-function storeFacts(store, status) {
+function storeFacts(store, status, workspace = null) {
   const where = store.kind === "project" ? `In this checkout, <code>${escapeHtml(store.label)}</code>` : `${store.kind === "remote" ? "Remote store" : "Store folder"} <code>${escapeHtml(store.label)}</code>`;
   return keyValues([
     ["Records", where],
     ["Folder", store.location && store.kind !== "project" ? `<code>${escapeHtml(store.location)}</code>` : null],
     ["Sync", store.kind === "project" ? null : store.sync ? "on" : "off"],
     ["Last sync", status ? `${escapeHtml(STATES[status.state] ?? status.state)} · ${escapeHtml(relativeTime(status.at))} <span class="muted">(${escapeHtml(formatTime(status.at))})</span>` : null],
+    ["Last fetched", workspace ? workspace.lastSyncedAt ? `${escapeHtml(relativeTime(workspace.lastSyncedAt))} <span class="muted">(${escapeHtml(formatTime(workspace.lastSyncedAt))})</span>` : "Not yet" : null],
+    ["Next fetch", workspace?.nextFetchAt ? escapeHtml(formatTime(workspace.nextFetchAt)) : null],
     ["Ahead", status?.ahead ? plural(status.ahead, "local commit") : null],
     ["Behind", status?.behind ? plural(status.behind, "upstream commit") : null]
   ]);
@@ -78,35 +91,38 @@ function unsavedHtml(status, describe) {
 export function createRecordStoreStatus({ storeButton, storeLabel, syncPart, syncLabel, dialog, fetchJson, openRecord, hasArtifact, describe = (path) => ({ label: path, kind: "Record" }) }) {
   let store = null;
   let status = null;
+  let workspace = null;
   // The dialog keeps its own header and Close button, so the details render into one holder in its body.
   const content = document.createElement("div");
   content.className = "store-details";
   dialog.append(content);
 
-  function update(nextStore, nextStatus) {
+  function update(nextStore, nextStatus, nextWorkspace = null) {
     store = nextStore ?? null;
     status = nextStatus ?? null;
+    workspace = nextWorkspace ?? null;
     const where = storeItem(store);
     storeButton.hidden = !where;
     if (!where) return;
-    const sync = syncItem(store, status);
+    const sync = syncItem(store, status, Date.now(), workspace);
     storeLabel.textContent = where.short;
     syncPart.hidden = !sync;
     if (sync) syncLabel.textContent = sync.label;
     storeButton.dataset.tone = sync?.tone ?? where.tone;
-    const tip = [where.title, sync ? [sync.label, status?.message].filter(Boolean).join(": ") : "", sync?.problem ? "Click for details" : ""];
+    const tip = [where.title, sync ? [sync.label, sync.message ?? status?.message].filter(Boolean).join(": ") : "", sync?.problem ? "Click for details" : ""];
     storeButton.setAttribute("tip", tip.filter(Boolean).join("\n"));
   }
 
   async function open() {
     if (!store) return;
-    const problem = syncItem(store, status)?.problem;
+    const sync = syncItem(store, status, Date.now(), workspace);
+    const problem = sync?.problem;
     content.innerHTML = `<div class="store-details-body">
         ${store.unavailable ? `<p class="store-message is-danger">${escapeHtml(store.unavailable)}</p>` : ""}
         ${store.awaitingMove?.message ? `<p class="store-message is-warn">${escapeHtml(store.awaitingMove.message)}</p>` : ""}
         ${store.keptInCheckout?.message ? `<p class="store-message" data-kept-in-checkout>${escapeHtml(store.keptInCheckout.message)}</p>` : ""}
-        ${problem && status.message ? `<p class="store-message ${status.state === "conflicts" ? "is-warn" : "is-danger"}">${escapeHtml(status.message)}</p>` : ""}
-        ${storeFacts(store, status)}
+        ${sync?.message ? `<p class="store-message is-danger" data-unreachable>${escapeHtml(sync.message)}</p>` : problem && status?.message ? `<p class="store-message ${status.state === "conflicts" ? "is-warn" : "is-danger"}">${escapeHtml(status.message)}</p>` : ""}
+        ${storeFacts(store, status, workspace)}
         ${store.kind === "project" ? "" : `<section class="store-conflicts"><h3>Saved conflicts</h3>
           <p class="muted">When two checkouts change the same record, the sync keeps the upstream version and saves the local one. Compare them to redo a lost change through an agent.</p>
           ${unsavedHtml(status, describe)}<div data-conflicts><p class="muted">Loading…</p></div></section>`}

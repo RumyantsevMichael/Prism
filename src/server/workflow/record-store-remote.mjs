@@ -3,10 +3,10 @@ import { cp, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promise
 import path from "node:path";
 import { withArtifactLock, withFileLock } from "./artifact-store.mjs";
 import { gitTransportPath } from "./git-local-repository.mjs";
-import { describeOversizedEntry, describeUnsafeEntry, unsafeEntryFix, gitTimeoutMs, gitTooOld, gitUrlText, helperForRepository, localRemoteRepository, markManagedStore, oversizedStoreEntry, runGit, unsafeStoreEntry, writeCommitFiles } from "./record-store-sync.mjs";
-import { legacyStoresDirectory, managedStoreId, managedStoresDirectory, normalizeRemote, remoteLabel, withoutCredentials } from "./remote-url.mjs";
+import { describeOversizedEntry, describeUnsafeEntry, unsafeEntryFix, gitTimeoutMs, gitTooOld, gitUrlText, helperForRepository, localRemoteRepository, markManagedStore, moveUnderSyncLock, oversizedStoreEntry, runGit, unsafeStoreEntry, writeCommitFiles } from "./record-store-sync.mjs";
+import { legacyStoreId, legacyStoresDirectory, managedStoreId, managedStoresDirectory, remoteLabel, storeIdentity, withoutCredentials } from "./remote-url.mjs";
 
-// A record store named by its remote lives in a clone Prism keeps in its application folder, one per remote, shared by every checkout and host that names it.
+// A record store named by its remote lives in a clone Prism keeps in its application folder, one per store identity, shared by every checkout and host that names any spelling of that identity.
 // Prism creates that clone because no checkout owns it, and never changes, replaces, or deletes a folder it finds there.
 const clones = new Map();
 // The review app serves projects of sessions whose hosts keep their data in different folders, so each project uses the folder its sessions report.
@@ -26,18 +26,25 @@ export function managedStoresOf(projectRoot) {
 const exists = (target) => lstat(target).then(() => true, (error) => { if (error.code === "ENOENT") return false; throw error; });
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return error.code !== "ESRCH"; } };
 
-// A folder already at the clone path is used only when it is the top of a Git checkout whose origin is the configured remote.
-async function adopt(target, configured, unavailable) {
+// Whether a clone's origin names the store of this identity, in any spelling.
+async function originIs(base, identity) {
+  const origin = await runGit(base, ["config", "--local", "--get", "remote.origin.url"]);
+  return origin.ok && await storeIdentity(origin.text, { root: base }) === identity;
+}
+
+// A folder already at the clone path is used only when it is the top of a Git checkout whose origin has the configured store's identity.
+// A folder there that is no such clone refuses with the code clone_folder_taken, and advice says what the person can do about it.
+async function adopt(target, configured, unavailable, advice = "move it away, or name its remote under Workspace.") {
   if (!(await exists(target))) return null;
   const label = remoteLabel(configured) ?? "the configured remote";
-  const refuse = (reason) => unavailable(`Its clone at ${target} ${reason} Prism never changes or deletes that folder; move it away, or name its remote under Workspace.`);
+  const refuse = (reason) => unavailable(`Its clone at ${target} ${reason} Prism never changes or deletes that folder; ${advice}`, "clone_folder_taken");
   let base;
   try { base = await realpath(target); } catch { throw refuse("cannot be resolved."); }
   const top = await runGit(base, ["rev-parse", "--show-toplevel"]);
   if (top.missing) throw unavailable("Git is not available, so the remote store cannot be used.");
   if (!top.ok || await realpath(top.text).catch(() => null) !== base) throw refuse("is not a Git clone.");
   const origin = await runGit(base, ["config", "--local", "--get", "remote.origin.url"]);
-  if (!origin.ok || normalizeRemote(origin.text) !== normalizeRemote(configured)) throw refuse(`has ${origin.ok ? `the origin ${remoteLabel(origin.text) ?? "of another remote"}` : "no origin"}, not ${label}.`);
+  if (!origin.ok || await storeIdentity(origin.text, { root: base }) !== await storeIdentity(configured)) throw refuse(`has ${origin.ok ? `the origin ${remoteLabel(origin.text) ?? "of another remote"}` : "no origin"}, not ${label}.`);
   return base;
 }
 
@@ -50,21 +57,59 @@ async function sweepAbandoned(directory, id) {
   }
 }
 
-// Prism 0.16 kept clones under each host's plugin data directory; the first access here moves that clone, so commits it has not pushed yet stay.
-// A copy replaces the move when the two folders sit on different file systems, and a folder there with another origin stays where it is.
-async function moveLegacyClone(directory, id, target, configured) {
-  const legacy = legacyStoresDirectory();
-  if (!legacy || path.resolve(legacy) === path.resolve(directory)) return;
-  const source = path.join(legacy, id);
-  if (!(await exists(source))) return;
-  const origin = await runGit(source, ["config", "--local", "--get", "remote.origin.url"]);
-  if (!origin.ok || normalizeRemote(origin.text) !== normalizeRemote(configured)) return;
+// Move a clone that an earlier Prism made at source to target, so its unpushed commits stay.
+// Only the top of a Git clone whose origin has the configured store's identity moves, and a folder already at the new path leaves the old one untouched.
+// The move holds the old folder's sync lock, so no sync there loses its folder midway, and when that lock is held or the move fails the access refuses and makes no clone,
+// so the old folder keeps its commits and a later access moves it.
+async function moveEarlierClone(source, target, configured, unavailable, move) {
+  const identity = await storeIdentity(configured);
+  const qualifies = async () => {
+    if (!(await exists(source)) || await exists(target)) return false;
+    let base;
+    try { base = await realpath(source); } catch { return false; }
+    const top = await runGit(base, ["rev-parse", "--show-toplevel"]);
+    if (!top.ok || await realpath(top.text).catch(() => null) !== base) return false;
+    return originIs(base, identity);
+  };
+  if (!(await qualifies())) return;
+  const kept = `Its clone from an earlier Prism version at ${source} keeps its files and commits`;
   try {
-    await rename(source, target);
+    await moveUnderSyncLock(source, target, qualifies, move);
   } catch (error) {
-    if (error.code !== "EXDEV") return;
-    await cp(source, target, { recursive: true, verbatimSymlinks: true, errorOnExist: true }).catch(() => rm(target, { recursive: true, force: true }));
+    if (error.code === "lock_timeout") throw unavailable(`${kept}, and a sync of that clone is still running; try again when it finishes.`);
+    throw unavailable(`${kept}, and Prism could not move it to ${target}${error.code ? ` (${error.code})` : ""}; close any program that uses that folder and try again.`);
   }
+}
+
+// Prism 0.20 named a clone after its configured spelling; the first access with no clone at the identity's folder renames that folder.
+async function renameSpellingClone(directory, target, configured, unavailable, renameFolder) {
+  const old = legacyStoreId(configured);
+  if (!old) return;
+  const source = path.join(directory, old);
+  if (source === target) return;
+  await moveEarlierClone(source, target, configured, unavailable, renameFolder);
+}
+
+// Prism 0.16 kept clones under each host's plugin data directory, named as 0.20 named them; the first access here moves that clone the same way.
+// A copy replaces the move when the two folders sit on different file systems, and a copy that fails leaves nothing at the new path.
+async function moveLegacyClone(directory, target, configured, unavailable, renameFolder) {
+  const legacy = legacyStoresDirectory();
+  const old = legacyStoreId(configured);
+  if (!legacy || !old || path.resolve(legacy) === path.resolve(directory)) return;
+  const move = async (source, destination) => {
+    try {
+      await renameFolder(source, destination);
+    } catch (error) {
+      if (error.code !== "EXDEV") throw error;
+      try {
+        await cp(source, destination, { recursive: true, verbatimSymlinks: true, errorOnExist: true });
+      } catch (copyError) {
+        await rm(destination, { recursive: true, force: true });
+        throw copyError;
+      }
+    }
+  };
+  await moveEarlierClone(path.join(legacy, old), target, configured, unavailable, move);
 }
 
 // The origin URL that git clone records for a remote: a local path made absolute from the folder the clone ran in, as clone's absolute_pathdup does, or the URL as it is.
@@ -78,16 +123,19 @@ async function clonedUrl(directory, configured) {
 }
 
 // One process at a time clones a remote, into a temporary sibling that is renamed into place, so the clone path never holds a partial clone.
-async function cloneOnce(directory, id, target, configured, unavailable) {
-  const found = await adopt(target, configured, unavailable);
+// unavailable(reason, code) builds each refusal, code clone_folder_taken, clone_failed, or store_empty where the reason is one of those.
+// With refuseEmpty, a remote that holds no commit refuses and leaves no folder; report.cloned says whether this call made the clone.
+async function cloneOnce(directory, id, target, configured, unavailable, renameFolder, { refuseEmpty = false, report = {}, advice } = {}) {
+  const found = await adopt(target, configured, unavailable, advice);
   if (found) return found;
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const lockError = () => unavailable("Another process is still cloning it; try again when that clone finishes.");
   return withArtifactLock(target, () => withFileLock(target, async () => {
-    const again = await adopt(target, configured, unavailable);
+    const again = await adopt(target, configured, unavailable, advice);
     if (again) return again;
-    await moveLegacyClone(directory, id, target, configured);
-    const moved = await adopt(target, configured, unavailable);
+    await renameSpellingClone(directory, target, configured, unavailable, renameFolder);
+    await moveLegacyClone(directory, target, configured, unavailable, renameFolder);
+    const moved = await adopt(target, configured, unavailable, advice);
     if (moved) return moved;
     await sweepAbandoned(directory, id);
     const temporary = path.join(directory, `.${id}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
@@ -109,12 +157,13 @@ async function cloneOnce(directory, id, target, configured, unavailable) {
       const source = local ? ["--no-local", "--", local.path] : ["--", configured];
       const cloned = await runGit(directory, ["-c", "transfer.fsckObjects=true", "clone", "--quiet", "--no-checkout", "--origin", "origin", "--config", "core.longpaths=true", "--config", "core.symlinks=false", ...helper, ...source, temporary]);
       if (cloned.missing) throw unavailable("Git is not available, so the remote store cannot be cloned.");
-      if (!cloned.ok) throw unavailable(`Git could not clone it: ${withoutCredentials(cloned.stderr) || `git clone exited with code ${cloned.code}.`}`);
+      if (!cloned.ok) throw unavailable(`Git could not clone it: ${withoutCredentials(cloned.stderr) || `git clone exited with code ${cloned.code}.`}`, "clone_failed");
       if (local?.path) {
         const recorded = await runGit(temporary, ["config", "remote.origin.url", await clonedUrl(directory, configured)]);
         if (!recorded.ok) throw unavailable(`Git could not record its remote: ${recorded.stderr}`);
       }
       const head = await runGit(temporary, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+      if (!head.ok && refuseEmpty) throw unavailable("Its repository holds no commit yet.", "store_empty");
       if (head.ok) {
         const unsafe = await unsafeStoreEntry(temporary, head.text);
         if (unsafe) throw unavailable(`Its branch holds ${describeUnsafeEntry(unsafe)}, so it was not cloned. ${unsafeEntryFix(unsafe)}`);
@@ -123,6 +172,7 @@ async function cloneOnce(directory, id, target, configured, unavailable) {
         await writeCommitFiles(temporary, head.text).catch((error) => { throw unavailable(`Git could not write its files: ${withoutCredentials(error.message)}`); });
       }
       await rename(temporary, target);
+      report.cloned = true;
     } finally {
       await rm(temporary, { recursive: true, force: true });
     }
@@ -133,12 +183,13 @@ async function cloneOnce(directory, id, target, configured, unavailable) {
 /**
  * The folder of a remote store's managed clone, cloned on first use and reused by every later access in this process.
  * makeUnavailable(message, remote) builds the store_unavailable error, so every refusal names the remote without its user information.
+ * renameFolder moves a clone that an earlier Prism made, and tests pass one that fails.
  */
-export async function managedRecordStore(projectRoot, configured, makeUnavailable) {
+export async function managedRecordStore(projectRoot, configured, makeUnavailable, { renameFolder = rename } = {}) {
   const label = remoteLabel(configured);
   const unavailable = (reason) => makeUnavailable(`The record store ${label ? `${label} ` : ""}named under Workspace in .prism/workflow.md is a Git remote. ${reason}`, label);
   const directory = managedStoresOf(projectRoot);
-  const id = managedStoreId(configured);
+  const id = await managedStoreId(configured);
   if (!id) throw unavailable("It is not a usable remote address.");
   // A Git older than the store sync needs would fail some of the clone's or a sync's commands midway, so the store is refused before either runs.
   const tooOld = await gitTooOld();
@@ -148,7 +199,7 @@ export async function managedRecordStore(projectRoot, configured, makeUnavailabl
   // A clone that disappeared since it was cached is looked for again, so the access reports what is there now.
   if (cached && (!cached.done || await exists(target))) return cached.pending;
   const entry = { done: false };
-  entry.pending = cloneOnce(directory, id, target, configured, unavailable).then((base) => {
+  entry.pending = cloneOnce(directory, id, target, configured, unavailable, renameFolder).then((base) => {
     entry.done = true;
     markManagedStore(base);
     return base;
@@ -159,4 +210,25 @@ export async function managedRecordStore(projectRoot, configured, makeUnavailabl
   });
   clones.set(target, entry);
   return entry.pending;
+}
+
+
+/**
+ * The managed clone of the network store that url names, for a workspace that a person adds without a checkout: { base, cloned },
+ * cloned false when a clone of that store identity already sat in its folder and was used as it is.
+ * The clone runs with the machine's Git configuration and credential helpers and never asks on a terminal, and a failed or refused clone leaves no folder.
+ * Each refusal is an error with code clone_failed, clone_folder_taken, or store_empty and a message without credentials; refuseEmpty refuses a remote with no commit.
+ */
+export async function cloneAddedStore(url, { directory = managedStoresDirectory(), refuseEmpty = true, renameFolder = rename } = {}) {
+  const label = remoteLabel(url) ?? "the store";
+  const unavailable = (reason, code = "clone_failed") => Object.assign(new Error(withoutCredentials(`Prism could not add ${label}. ${reason}`)), { code });
+  const id = await managedStoreId(url);
+  if (!id) throw unavailable("It is not a usable remote address.");
+  const tooOld = await gitTooOld();
+  if (tooOld) throw unavailable(tooOld);
+  const target = path.join(directory, id);
+  const report = { cloned: false };
+  const base = await cloneOnce(directory, id, target, url, unavailable, renameFolder, { refuseEmpty, report, advice: "move it away, then add the store again." });
+  markManagedStore(base);
+  return { base, cloned: report.cloned };
 }

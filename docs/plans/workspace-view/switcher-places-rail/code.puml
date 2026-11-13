@@ -1,0 +1,11 @@
+@startuml
+title switcher-places-rail: units and dependencies
+component "workspace-view-switcher.test.mjs\nclauses 8, 10, 61" as switcher
+component "workspace-view-switcher-rail.test.mjs\nfix acceptance tests" as rail
+component "review.html\nprism-rail id=rail label=Places" as page
+component "review-app-server.mjs\n/w/<w>/ and / pages" as app
+switcher ..> app
+rail ..> app
+rail ..> switcher
+app ..> page
+@enduml

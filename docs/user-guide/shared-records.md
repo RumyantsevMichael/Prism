@@ -81,12 +81,21 @@ Frozen tests of accepted designs stay in the checkout.
 
 3. Commit the configuration, so every checkout of the project names the same store and the same repository.
 
-`Store` names a remote when it is a URL with the scheme `https`, `http`, `ssh`, `git`, or `file`, or the scp form `user@host:path`.
-On the first record access that finds no clone of it, Prism clones the remote into its application folder, under `stores/<id>`, where `<id>` is derived from the remote.
+`Store` names a remote when it is a URL with the scheme `https`, `http`, `ssh`, `git`, or `file`, or the scp form `[user@]host:path`.
+A value in Git's `<transport>::<address>` form, such as `ext::sh`, would start a Git remote helper, so Prism takes it for a folder path rather than a remote and never clones it.
+On the first record access that finds no clone of it, Prism clones the remote into its application folder, under `stores/<id>`, where `<id>` is derived from the store's identity.
+An `https://`, `ssh://`, or scp-form remote's identity is its host in lowercase and its path, with a URL's percent-encoding decoded, without a trailing `.git` or `/`, with no scheme, user, or port, so `https://github.com/you/prism-store.git`, `ssh://git@GitHub.com:22/you/prism-store`, and `git@github.com:you/prism-store.git` all name one store.
+An unencrypted `http://` or `git://` URL keeps its scheme in its identity, so `http://github.com/you/prism-store` and `git://github.com/you/prism-store` each have a clone of their own, apart from the clone of the encrypted spellings, and a plaintext spelling never fetches into or pushes from the encrypted spellings' clone.
+A `file://` URL or a folder path has the identity of the folder's real path.
 The application folder is `~/Library/Application Support/Prism` on macOS, `%LOCALAPPDATA%\Prism` on Windows, and `$XDG_STATE_HOME/prism` or `~/.local/state/prism` elsewhere, and `PRISM_REVIEW_APP_DIR` overrides it.
 The access waits for the clone, and every later access on the machine uses it.
-Every checkout, worktree, and host on the machine whose configuration names the same remote shares that one clone, even when they spell it differently, such as with or without a trailing `.git` or `/`, so Claude Code and Codex read and write the same clone.
-A clone that Prism 0.16 made under a host's plugin data directory moves to the application folder on the first record access, with any commit it has not pushed yet.
+Every checkout, worktree, and host on the machine whose configuration names a spelling of the same store identity shares that one clone, so Claude Code and Codex read and write the same clone.
+Prism 0.20 and earlier named the clone after the spelling instead, so an HTTPS and an SSH spelling of one store had a clone each.
+On the first record access, a clone that Prism 0.20 named for the configured spelling moves to its new folder with any commit it has not pushed yet, when its origin names the same store and no clone is at the new folder yet.
+A clone already at the new folder is used as before, and the old folder stays untouched, so move any unpushed commit from it yourself before you delete it.
+While a sync of the old clone is running, or when the move fails, for example because another program has a file open in that folder, the access is refused with `store_unavailable` naming the old folder, Prism makes no new clone, and the next access tries the move again.
+A clone that Prism 0.16 made under a host's plugin data directory moves to the application folder on the first record access in the same way, and is copied instead when the two folders sit on different file systems.
+When that move or copy fails, or a sync of the old clone is running, the access is refused with `store_unavailable` naming the old folder, Prism makes no new clone, the old clone keeps its files and commits, and the next access tries again.
 Store sync is on by default for a remote store, so Prism keeps the clone in step with the remote without you running Git in it:
 
 - A few seconds after a record write, Prism commits the change, merges the remote's branch, and pushes.
@@ -388,6 +397,14 @@ A sync saves the local versions that lost under `.prism-sync/saving/` before it 
 The next sync on that machine moves the versions of the files the stopped sync replaced to `.prism-sync/conflicts/` and drops the others, which the merge saves again when it runs, even when such a file changed in between, so each lost version is saved once.
 Each saved version stays pending in `.prism-sync/notices/` until a tool result has named it, so a sync that stops after it saved a version and before its status was written still has the version named by the next server's tool result.
 Only a result that the server writes to its host counts, so any call that the host cancels before its result is written, such as a `wait_for_user_gate` or a slow `update_coordination_state` you stop with Esc, gets no response and leaves the version pending for the next result, and so does a call that the session's end aborts.
+
+## Read every scope
+
+An agent lists and reads the artifacts of every scope the store holds through `get_artifact`: the workspace, each repository, and each repository's components.
+Each listing entry carries the artifact's `location` in the store, its `scope`, and its `path` in the agent's checkout, which is null when that checkout configures no folder for its kind, and `location` also reads such an artifact.
+`label`, a scope label as listings report it, such as `web` or `api/billing`, reads one scope's file at a path that several scopes hold; a read of such a path without it is refused with `artifact_ambiguous`, which lists the holding scopes, and an unknown label is refused with `scope_unknown`.
+An agent changes only its own checkout's scopes, the workspace, its repository, and its components.
+A change to a file that only another repository's scopes hold is refused with `scope_not_writable`, which names the scope, so make that change from a checkout of that repository.
 
 ## When two people change the same artifact
 

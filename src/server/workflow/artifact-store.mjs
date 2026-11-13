@@ -92,7 +92,8 @@ async function acquireFileLock(artifactPath, makeError, options) {
 
 export async function withFileLock(artifactPath, action, makeError = defaultError, options = {}) {
   const lock = await acquireFileLock(artifactPath, makeError, options);
-  const heartbeat = options.renew ? setInterval(async () => {
+  // A lock never keeps its file open, and a lock whose action moves the folder that holds it is never renewed there, since the folder moves away from the lock's path.
+  const heartbeat = options.renew && !options.closeHandle ? setInterval(async () => {
     const owner = await readFile(lock.lockPath, "utf8").then(parseStoreJson).catch(() => null);
     const now = new Date();
     if (owner?.token === lock.token) await utimes(lock.lockPath, now, now).catch(() => {});

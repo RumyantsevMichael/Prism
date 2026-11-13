@@ -146,6 +146,7 @@ const SPECIMENS = {
     tones: TONES.map((tone) => `<prism-chip tone="${tone}">${tone}</prism-chip>`).join(""),
     link: `<prism-chip href="#entry-prism-chip" tone="accent">Kit controls</prism-chip>`,
     interactive: `<prism-chip interactive>Filter by status</prism-chip>`,
+    pressed: `<prism-chip interactive pressed="true">api<span slot="meta">3</span></prism-chip><prism-chip interactive pressed="false">web<span slot="meta">1</span></prism-chip>`,
     meta: `<prism-chip tone="danger">Open findings<span slot="meta">3</span></prism-chip><prism-chip>Change map<span slot="meta">12 planned</span></prism-chip>`,
     "long-text": `<prism-chip tone="warning">${LONG}</prism-chip>`,
     "unbroken-name": `<prism-chip>${UNBROKEN}</prism-chip>`

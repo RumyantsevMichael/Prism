@@ -3,30 +3,32 @@
 // Filters above the results narrow them to one kind; above 720px a preview of the current result sits beside them, and a footer names the keys and the count.
 import { claimElement } from "./claim-index.js";
 
-const KIND_ORDER = ["action", "place", "slice", "initiative", "requirement", "decision", "record", "term", "file"];
+const KIND_ORDER = ["action", "place", "slice", "initiative", "requirement", "decision", "record", "term", "file", "code"];
 // Requirements, decisions, and Prism's other records read as documents, so they share one group.
 const GROUP_OF = { requirement: "document", decision: "document", record: "document" };
-const GROUPS = { action: "Settings on this page", place: "Places", initiative: "Initiatives", slice: "Slices", document: "Documents", term: "Glossary terms", file: "Files", text: "Text matches" };
-const GROUP_ORDER = ["action", "place", "slice", "initiative", "document", "term", "text", "file"];
-const KINDS = { action: "Setting", place: "Place", initiative: "Initiative", slice: "Slice", requirement: "Requirement", decision: "Decision", term: "Term", file: "File" };
-// Each filter keeps the kinds it names; All keeps every result, and Text keeps the matches in documents only.
+const GROUPS = { action: "Settings on this page", place: "Places", initiative: "Initiatives", slice: "Slices", document: "Documents", term: "Glossary terms", file: "Files", text: "Text matches", code: "Code in indexed components" };
+const GROUP_ORDER = ["action", "place", "slice", "initiative", "document", "term", "text", "code", "file"];
+// Why a workspace's search left a component out, as the left-out list names it.
+const LEFT_OUT = { no_checkout: "no checkout here", no_index: "no ready index", search_failed: "search failed" };
+const KINDS = { action: "Setting", place: "Place", initiative: "Initiative", slice: "Slice", requirement: "Requirement", decision: "Decision", term: "Term", file: "File", code: "Code" };
+// Each filter keeps the kinds it names; All keeps every result, and Text keeps the matches in documents and indexed code only.
 const SCOPES = [
   { value: "all", label: "All", kinds: null },
   { value: "slices", label: "Slices", kinds: ["slice"] },
   { value: "initiatives", label: "Initiatives", kinds: ["initiative"] },
   { value: "documents", label: "Documents", kinds: ["requirement", "decision", "record", "term"] },
   { value: "files", label: "Files", kinds: ["file"] },
-  { value: "text", label: "Text", kinds: ["text"] }
+  { value: "text", label: "Text", kinds: ["text", "code"] }
 ];
-const PLACE_ICONS = { attention: "bell", roadmap: "roadmap", requirements: "list", decisions: "scale", glossary: "book", launches: "agent" };
-const KIND_ICONS = { action: "filter", initiative: "roadmap", slice: "layers", requirement: "list", decision: "scale", term: "book", record: "document", file: "code", text: "document" };
+const PLACE_ICONS = { attention: "bell", roadmap: "roadmap", requirements: "list", decisions: "scale", glossary: "book", launches: "agent", code: "code" };
+const KIND_ICONS = { action: "filter", initiative: "roadmap", slice: "layers", requirement: "list", decision: "scale", term: "book", record: "document", file: "code", text: "document", code: "code" };
 const RESULT_LIMIT = 40;
 const TEXT_SEARCH_DELAY_MS = 200;
 const TEXT_SEARCH_MINIMUM = 3;
 
 function rank(entry, query, tokens) {
   const label = entry.label.toLowerCase();
-  const haystack = `${label} ${String(entry.detail ?? "").toLowerCase()} ${String(entry.kindLabel ?? "").toLowerCase()} ${entry.ref.toLowerCase()}`;
+  const haystack = `${label} ${String(entry.detail ?? "").toLowerCase()} ${String(entry.kindLabel ?? "").toLowerCase()} ${String(entry.scope ?? "").toLowerCase()} ${entry.ref.toLowerCase()}`;
   if (!tokens.every((token) => haystack.includes(token))) return null;
   const position = label.startsWith(query) ? 0 : label.includes(query) ? 1 : 2;
   return [KIND_ORDER.indexOf(entry.kind), position, label.length];
@@ -92,6 +94,8 @@ const words = (text) => String(text ?? "").replace(/-/g, " ");
 function detailOf(entry) {
   // A text match names its document's kind and line; its owner stays in the preview, so the row's name never repeats another result's title.
   if (entry.kind === "text") return [entry.kindLabel, entry.line ? `Line ${entry.line}` : ""].filter(Boolean).join(" · ");
+  // A code match names its line; its component shows as the row's scope chip, and its excerpt stays in the preview as it is.
+  if (entry.kind === "code") return entry.line ? `Line ${entry.line}` : "";
   if (entry.kind === "requirement" || entry.kind === "decision") return [kindOf(entry), entry.detail].filter(Boolean).join(" · ");
   // A slice's or an initiative's record shows its owner to the eye, and the row's name leaves it to the preview, so it never repeats the owner's title.
   if (entry.kind === "record") return "";
@@ -108,6 +112,8 @@ export function createPalette({ dialog, field, results, preview, scopes = null, 
   let matches = [];
   let total = 0;
   let textMatches = [];
+  let codeMatches = [];
+  let leftOut = [];
   let textState = "idle";
   let searchTimer = 0;
   let searchRequest = 0;
@@ -146,23 +152,29 @@ export function createPalette({ dialog, field, results, preview, scopes = null, 
     total = found.length;
     matches = found.slice(0, RESULT_LIMIT);
     textMatches = [];
+    codeMatches = [];
+    leftOut = [];
     clearTimeout(searchTimer);
     const current = ++searchRequest;
     textState = search && kept("text") && text.length >= TEXT_SEARCH_MINIMUM ? "searching" : "idle";
     if (textState === "searching") {
       searchTimer = setTimeout(async () => {
-        let found = [];
+        let answer = [];
         try {
-          found = await search(query());
+          answer = await search(query());
         } catch {
-          found = [];
+          answer = [];
         }
         if (current !== searchRequest) return;
+        // A workspace's search answers { results, code, leftOut }: code matches of the indexed components and the components it left out, beside the documents.
+        const found = Array.isArray(answer) ? answer : answer.results ?? [];
+        codeMatches = Array.isArray(answer) ? [] : (answer.code ?? []).map((match) => ({ ref: match.ref, kind: "code", label: match.file, code: true, detail: String(match.excerpt ?? "").split(/\r?\n/).find((line) => line.trim())?.trim() ?? "", line: match.range?.startLine ?? null, find: null, scope: match.component }));
+        leftOut = Array.isArray(answer) ? [] : answer.leftOut ?? [];
         textMatches = found.flatMap((result) => result.matches.slice(0, 1).map((match) => {
           const named = describe(result.path);
           // As in the Documents group, a record that belongs to a slice or initiative reads as its kind, and the preview names its owner.
           const owned = !named.code && named.owner && named.label !== named.kind;
-          return { ref: result.path, kind: "text", label: match.text, kindLabel: named.kind, code: Boolean(named.code), detail: match.text, line: match.line, find: query(), preview: { kind: named.kind, title: owned ? named.owner : named.label } };
+          return { ref: result.path, kind: "text", label: match.text, kindLabel: named.kind, code: Boolean(named.code), detail: match.text, line: match.line, find: query(), scope: result.scope ?? null, preview: { kind: named.kind, title: owned ? named.owner : named.label } };
         }));
         textState = "done";
         render({ keep: true });
@@ -171,7 +183,7 @@ export function createPalette({ dialog, field, results, preview, scopes = null, 
     render({ keep: false });
   }
 
-  const all = () => [...matches, ...textMatches];
+  const all = () => [...matches, ...textMatches, ...codeMatches];
 
   function option(entry, index) {
     const code = entry.kind === "file" || entry.code;
@@ -206,6 +218,12 @@ export function createPalette({ dialog, field, results, preview, scopes = null, 
     const meta = node("span", "palette-meta");
     meta.slot = "meta";
     if (claim) meta.append(claimElement(claim, "avatar"));
+    // A store artifact's row names its scope, so artifacts of one name in several scopes read apart in the list itself.
+    if (entry.scope) {
+      const scope = node("prism-chip", "", entry.scope);
+      scope.dataset.scopeLabel = "";
+      meta.append(scope, " ");
+    }
     meta.append(node("span", "palette-kind", entry.kind === "text" ? "Text" : kindOf(entry)));
     item.append(meta);
     return item;
@@ -221,10 +239,27 @@ export function createPalette({ dialog, field, results, preview, scopes = null, 
     return holder;
   }
 
+  // The components a workspace's search left out, each a chip that names it and why, so a missing code match reads as not searched rather than absent.
+  function leftOutGroup() {
+    const holder = node("div", "palette-group");
+    holder.dataset.leftOut = "";
+    const chips = node("div", "palette-left-out");
+    for (const item of leftOut) {
+      const chip = node("prism-chip", "", item.component);
+      chip.dataset.leftOutComponent = item.component;
+      chip.dataset.codeSubject = "";
+      chip.append(node("span", "", LEFT_OUT[item.reason] ?? item.reason));
+      chip.lastChild.slot = "meta";
+      chips.append(chip);
+    }
+    holder.append(node("div", "palette-group-label", "Left out of this search"), chips);
+    return holder;
+  }
+
   function render({ keep }) {
     const active = keep ? results.active?.getAttribute("value") ?? null : null;
     const list = all();
-    const key = JSON.stringify([scope.value, list.map((entry) => [entry.ref, entry.kind, entry.label, entry.line ?? null]), textState]);
+    const key = JSON.stringify([scope.value, list.map((entry) => [entry.ref, entry.kind, entry.label, entry.line ?? null]), leftOut, textState]);
     if (key === rendered) return;
     rendered = key;
     const groups = [];
@@ -240,13 +275,14 @@ export function createPalette({ dialog, field, results, preview, scopes = null, 
       if (items.length) groups.push(group(name, items.map(({ entry, index }) => option(entry, index))));
     }
     if (textState === "done" && !list.length) groups.push(node("p", "palette-status", "No text matches."));
+    if (textState === "done" && leftOut.length) groups.push(leftOutGroup());
     if (!list.length && textState !== "searching" && textState !== "done") groups.push(node("p", "palette-status", "Nothing matches."));
     if (total > matches.length) groups.push(node("p", "palette-status", `${total - matches.length} more ${total - matches.length === 1 ? "result" : "results"}; type more to narrow them`));
     results.replaceChildren(...groups);
     results.activate(active);
     if (count) {
       const shown = list.length;
-      const known = total + textMatches.length;
+      const known = total + textMatches.length + codeMatches.length;
       count.textContent = shown === known ? `${shown} ${shown === 1 ? "result" : "results"}` : `${shown} of ${known}`;
     }
     showPreview();
@@ -276,7 +312,7 @@ export function createPalette({ dialog, field, results, preview, scopes = null, 
     if (code) title.dataset.codeSubject = "";
     const parts = [node("p", "palette-preview-kind", entry.preview?.kind ?? kindOf(entry)), title];
     if (entry.detail && entry.detail !== entry.preview?.title) {
-      const detail = node("p", "palette-preview-detail", entry.kind === "text" ? `Line ${entry.line}: ${entry.detail}` : words(entry.detail));
+      const detail = node("p", "palette-preview-detail", entry.kind === "text" || entry.kind === "code" ? entry.line ? `Line ${entry.line}: ${entry.detail}` : entry.detail : words(entry.detail));
       // A file's path, and a line of a document's text, are quoted as they are.
       if (code || entry.kind === "text") detail.dataset.codeSubject = "";
       parts.push(detail);

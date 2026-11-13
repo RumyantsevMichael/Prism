@@ -4,7 +4,7 @@ import { closeEvidence, openEvidence } from "./views/evidence.js";
 import { ENTITY_LABELS, entityLabel, KNOWLEDGE_PAGES, parseEntityRef, recordKind, recordLabel, renderEntity } from "./views/entities.js";
 import { createPalette } from "./views/palette.js";
 import { highlight, highlightLines, languageOf } from "./views/highlight.js";
-import { anchorTarget, decorateDocuments, HEADING_PREFIX, LINE_RANGE, markCurrentSection, renderText, revealInDocument } from "./views/markdown.js";
+import { anchorTarget, decorateDocuments, HEADING_PREFIX, LINE_RANGE, linkTargets, markCurrentSection, renderText, revealInDocument } from "./views/markdown.js";
 import { createLinkPreview } from "./views/preview.js";
 import { createSidePanel } from "./views/side-panel.js";
 import { createIndexingStatus } from "./views/indexing.js";
@@ -20,6 +20,7 @@ import { DENSITIES, onPreferencesChange, preference, preferencesReady, savePrefe
 import { shownActionEntries } from "./views/actions.js";
 import { artifactReviewHtml, focusAfterMore, mountArtifactReview, readListedComments } from "./views/artifact-review.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
+import { createWorkspaceForms } from "./views/workspace-forms.js";
 import { currentPhase } from "./views/slice.js";
 import { messageHtml, shortDate } from "./views/util.js";
 import { LANES, laneHeading, ROADMAP_VIEWS } from "./views/roadmap.js";
@@ -78,6 +79,58 @@ let sessionConnected = false;
 // The origin's shared event stream, which one tab holds for every tab of the review app.
 let relay = null;
 let saveQueue = Promise.resolve();
+// A workspace's page names each store artifact by its store location, store:<location>, in its tabs, links, and URLs, never by a checkout's path:
+// a checkout path that a record view or an older link names opens as the store artifact it names.
+const STORE_REF = "store:";
+const isStoreRef = (path) => typeof path === "string" && path.startsWith(STORE_REF);
+let pathRefs = new Map();
+const localTab = (tab) => typeof tab === "string" ? pathRefs.get(tab) ?? tab : tab;
+const localTabs = (tabs) => Array.isArray(tabs) ? [...new Set(tabs.map(localTab))] : tabs;
+// Every scope of the workspace's store that holds an artifact, each store artifact's scope label by ref, and the index's notes about the store.
+let storeScopes = [];
+let refScopes = new Map();
+let storeNotes = [];
+let storeSignature = "";
+let codeRepositories = [];
+
+function useStoreRefs(data) {
+  pathRefs = new Map(Object.entries(data.storeRefs ?? {}));
+  storeScopes = Array.isArray(data.scopes) ? data.scopes : [];
+  refScopes = new Map(Object.entries(data.artifactScopes ?? {}).filter(([ref]) => isStoreRef(ref)));
+  storeNotes = Array.isArray(data.notes) ? data.notes : [];
+  // A workspace's code repositories, which the Library's Code page lists while there is one.
+  codeRepositories = Array.isArray(data.repositories) ? data.repositories.map((repository) => repository.name) : [];
+  storeSignature = JSON.stringify([storeScopes, storeNotes, [...refScopes.keys()].join("\n"), codeRepositories]);
+}
+
+// The scope filter narrows the store's artifacts to the chosen scope labels, or shows every scope while null, and the page keeps it in its URL's scopes parameter.
+function readScopeFilter() {
+  const labels = (new URLSearchParams(location.search).get("scopes") ?? "").split(",").map((label) => label.trim()).filter(Boolean);
+  return labels.length ? new Set(labels) : null;
+}
+let scopeFilter = readScopeFilter();
+const scopeShown = (label) => !scopeFilter || scopeFilter.has(label);
+
+function withScopeFilter(url) {
+  if (scopeFilter) url.searchParams.set("scopes", [...scopeFilter].join(","));
+  else url.searchParams.delete("scopes");
+  return url;
+}
+
+function setScopeFilter(labels) {
+  scopeFilter = labels && labels.size ? labels : null;
+  const url = withScopeFilter(new URL(location.href));
+  history.replaceState(history.state, "", `${url.pathname}${url.search}`);
+  renderNavigation();
+}
+
+// A session snapshot with every store artifact named as the page opens it.
+function localSession(snapshot) {
+  const named = { ...snapshot };
+  for (const key of ["openTabs", "agentTabs", "missingTabs"]) if (Object.hasOwn(snapshot, key)) named[key] = localTabs(snapshot[key]);
+  for (const key of ["activeTab", "previewTab"]) if (Object.hasOwn(snapshot, key)) named[key] = localTab(snapshot[key]);
+  return named;
+}
 let lastSnapshot = "";
 // The path whose view the workspace shows, and each visited page's scroll position, so a refresh or a return keeps the reader's place.
 let renderedPath = null;
@@ -141,6 +194,105 @@ function welcome() {
   writeArtifact("");
   artifact.replaceChildren(empty);
   setBusy(false);
+}
+
+// A button of an empty state that runs one action.
+function emptyStateButton(text, onClick, variant = "primary") {
+  const button = document.createElement("prism-button");
+  button.setAttribute("variant", variant);
+  button.textContent = text;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+// The app's root without a workspace: the page offers to add one from its store address, and opens the first workspace as soon as the app lists one.
+function showNoWorkspace() {
+  renderedPath = null;
+  project.textContent = "No workspace";
+  document.title = "Prism review";
+  projectButton.removeAttribute("disabled");
+  watchWorkspaceMenu();
+  void refreshProjects();
+  const empty = document.createElement("prism-empty-state");
+  empty.className = "welcome";
+  empty.setAttribute("heading", "No workspace yet");
+  const actions = element("div", "welcome-actions");
+  actions.append(emptyStateButton("Add a workspace", () => workspaceForms().openAdd()));
+  empty.append(
+    element("p", "", "A workspace is one record store with every checkout and repository that shares it, or a project that keeps its records itself."),
+    element("p", "", "Add one from its store's address, or start a Prism session in one of its projects; it opens here as soon as it is added."),
+    actions
+  );
+  writeArtifact("");
+  artifact.replaceChildren(empty);
+  setBusy(false);
+  const check = async () => {
+    const listed = await fetch(`${appRoot}api/workspaces`, { cache: "no-store" }).then((response) => response.ok ? response.json() : null, () => null);
+    if (listed?.workspaces?.length) location.reload();
+    else setTimeout(check, 5000);
+  };
+  setTimeout(check, 5000);
+}
+
+// An added workspace that no registered checkout serves: its page names it and says where its records open, and offers to remove it.
+// The forms that add and remove the app's workspaces, made once the page first needs them.
+let forms = null;
+function workspaceForms() {
+  forms ??= createWorkspaceForms({
+    appRoot,
+    writeHeaders,
+    canWrite: () => Boolean(writeSession()),
+    confirm: confirmAction,
+    toast: (message, options) => showToast(message, options),
+    open: (url, notice) => openWithNotice(url, notice)
+  });
+  return forms;
+}
+
+// A notice that a page leaves for the page it opens, such as what a removal did with a store's clone, which the next page of this tab shows once.
+const NOTICE_KEY = "prism-review-notice";
+function openWithNotice(url, notice) {
+  try { sessionStorage.setItem(NOTICE_KEY, JSON.stringify(notice)); } catch { /* The next page then shows no notice. */ }
+  if (new URL(url, location.href).href === location.href) location.reload();
+  else location.href = url;
+}
+
+function showLeftNotice() {
+  let notice = null;
+  try {
+    notice = JSON.parse(sessionStorage.getItem(NOTICE_KEY) ?? "null");
+    sessionStorage.removeItem(NOTICE_KEY);
+  } catch { /* A notice that cannot be read is dropped. */ }
+  if (typeof notice?.message === "string" && notice.message) showToast(notice.message, { tone: notice.tone });
+}
+
+// The listing entry of the open workspace, from the switcher's latest listing.
+let listedWorkspaces = [];
+const currentEntry = () => listedWorkspaces.find((entry) => entry.id === thisWorkspace?.id) ?? null;
+
+// Removing the open workspace reloads it while a checkout keeps it listed, and otherwise opens the app's root.
+async function removeCurrentWorkspace() {
+  const entry = currentEntry();
+  if (!entry?.added) return;
+  const removed = await workspaceForms().remove(entry);
+  if (!removed) return;
+  const listed = await fetch(`${appRoot}api/workspaces`, { cache: "no-store" }).then((response) => response.ok ? response.json() : null, () => null);
+  const notice = { message: removed.message, tone: removed.clone === "kept" ? "warning" : "success" };
+  openWithNotice(listed?.workspaces?.some((item) => item.id === entry.id) ? location.href : appRoot, notice);
+}
+
+// The workspace menu opens the chosen workspace's page, or runs its Add and Remove items.
+let watchingWorkspaceMenu = false;
+function watchWorkspaceMenu() {
+  if (watchingWorkspaceMenu) return;
+  watchingWorkspaceMenu = true;
+  projectButton.addEventListener("click", () => void (projectPoller ? projectPoller.now() : refreshProjects()));
+  projectMenu.addEventListener("prism-select", (event) => {
+    const url = event.detail?.value;
+    if (url === "workspace:add") workspaceForms().openAdd();
+    else if (url === "workspace:remove") void removeCurrentWorkspace();
+    else if (url && url !== location.href) location.href = url;
+  });
 }
 
 // The pages this browser tab visited sit in the browser's own history, each entry numbered, so Back and Forward know whether there is a page to go to.
@@ -311,7 +463,7 @@ async function takeWriteGrant() {
 }
 
 function updateLocation(path, push = false) {
-  const url = new URL(location.href);
+  const url = withScopeFilter(new URL(location.href));
   if (path) {
     url.searchParams.set("artifact", path);
   } else {
@@ -507,7 +659,8 @@ function toggleGroup(name, collapsed) {
 
 // Opening a page shows it in a tab and pushes it onto the browser history, so Back, Forward, and the browser's own buttons move through the same pages.
 // An ordinary open replaces the preview tab; `keep` opens a kept tab instead, or keeps the preview, and a new tab goes right after the selected one.
-function openRef(path, { keep = false, fromHistory = false, keepDrawer = false } = {}) {
+function openRef(given, { keep = false, fromHistory = false, keepDrawer = false } = {}) {
+  const path = localTab(given);
   if (!path || !requireApp()) {
     return;
   }
@@ -595,7 +748,8 @@ function closeTabs(paths) {
 // while a window keeps its own page when another window picks a tab, so a window's history holds only the pages it showed.
 let lastActive = null;
 
-function synchronizeSession(snapshot) {
+function synchronizeSession(given) {
+  const snapshot = localSession(given);
   if (pendingSaves > 0) {
     if (!waitingSnapshot || newerSnapshot(snapshot, waitingSnapshot)) waitingSnapshot = snapshot;
     return;
@@ -683,79 +837,79 @@ function element(tag, className, text) {
   return node;
 }
 
-// Checkouts that resolve their records to one store share them, across repositories too; a checkout with records of its own is its own project.
-// A remote store that cannot be cloned right now still groups by its address, so an outage does not scatter its workspace.
-function sharedStore(entry) {
-  const store = entry.store;
-  if (!store || store.kind === "project") return null;
-  if (store.location) return `store:${store.location}`;
-  return store.kind === "remote" && store.label ? `remote:${store.label}` : null;
-}
-
-// A workspace takes the name kept in its store when one is set.
-// Otherwise it is named after its store: a folder store by its folder, because each checkout may spell the configured path differently,
-// and a remote store by its repository, so the name reads as a name rather than an address.
-function storeName(store) {
-  if (store.workspaceName) return store.workspaceName;
-  if (store.kind === "folder" && store.location) return folderName(store.location);
-  if (store.kind === "remote" && store.label) return store.label.replace(/[\\/]+$/, "").split(/[\\/:]/).filter(Boolean).pop()?.replace(/\.git$/i, "") || store.label;
-  return store.label ?? "records";
-}
-
-// Only a store that other checkouts can share makes a workspace; a checkout's own records do not.
-function workspaceOf(store) {
-  return store && store.kind !== "project" ? storeName(store) : null;
-}
-
-function storeKey(entry) {
-  return sharedStore(entry) ?? `project:${entry.id}`;
-}
-
 // Entries keep one order, by name, so a sync that changes recency or liveness never moves an entry under the pointer.
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
-function compareMembers(left, right) {
-  const key = ({ entry, identity }) => [identity.repository ?? "", workspaceName(identity) ?? folderName(entry.projectRoot), entry.projectRoot];
-  const a = key(left);
-  const b = key(right);
-  for (let index = 0; index < a.length; index += 1) {
-    const order = collator.compare(a[index], b[index]) || (a[index] < b[index] ? -1 : a[index] > b[index] ? 1 : 0);
-    if (order) return order;
-  }
-  return 0;
-}
+// The review app's root, where the workspace list lives; a workspace's page sits below it at w/<id>/.
+const appRoot = location.pathname.replace(/\/w\/[0-9a-f]{16}(?:\/.*)?$/, "/").replace(/[^/]*$/, "");
 
-// One project of the menu: its checkout, marked when it is the open one, with its open gates and whether an agent uses it, and its folder as the tip.
-function projectItem({ entry, identity }, current, { gates: showGates = true, repository = false, value = entry.url } = {}) {
-  const item = document.createElement("prism-menu-item");
-  item.setAttribute("type", "radio");
-  item.setAttribute("value", value);
-  item.toggleAttribute("checked", entry.id === current);
-  item.setAttribute("tip", projectTitle(identity, entry.projectRoot));
-  const checkout = workspaceName(identity) ?? folderName(entry.projectRoot);
-  // A workspace can hold several repositories, so its items name the repository as well as the checkout.
-  item.append(repository && identity.repository ? `${identity.repository} / ${checkout}` : checkout);
+const countText = (count, one, many) => `${count} ${count === 1 ? one : many}`;
+
+// The states an entry shows at its end: whether an agent uses it, and its open gates, or that its records cannot be read.
+function stateHint(entry, { gates = true } = {}) {
   const states = [];
   if (entry.live) states.push("in use");
   // Only a running or failed build is marked, because the status bar covers the open project's other states.
   if (entry.indexing === "preparing") states.push("indexing");
   if (entry.indexing === "failed") states.push("index failed");
-  if (showGates && entry.gates === null) states.push("unreadable");
-  else if (showGates && entry.gates) states.push(`${entry.gates} ${entry.gates === 1 ? "gate" : "gates"}`);
-  if (states.length) {
-    const hint = element("span", "project-states", states.join(" · "));
-    hint.slot = "hint";
-    item.append(hint);
-  }
-  // The folder shows under the checkout's name, as two checkouts of one repository differ by their folders.
-  const folder = element("span", "project-folder", entry.projectRoot);
-  folder.slot = "detail";
-  item.append(folder);
+  // An added workspace without a checkout here reads no records yet, which its page says, so it is not marked unreadable.
+  if (gates && entry.gates === null && entry.checkouts?.length !== 0) states.push("unreadable");
+  else if (gates && entry.gates) states.push(countText(entry.gates, "gate", "gates"));
+  if (!states.length) return null;
+  const hint = element("span", "project-states", states.join(" · "));
+  hint.slot = "hint";
+  return hint;
+}
+
+// One checkout of a session server's menu: its checkout, marked as the open one, with its folder as the tip.
+function projectItem({ entry, identity }, current) {
+  const item = document.createElement("prism-menu-item");
+  item.setAttribute("type", "radio");
+  item.setAttribute("value", entry.url);
+  item.toggleAttribute("checked", entry.id === current);
+  item.setAttribute("tip", projectTitle(identity, entry.projectRoot));
+  item.append(workspaceName(identity) ?? folderName(entry.projectRoot));
   return item;
 }
 
-// A session server has no list of projects, so its menu holds the one project it serves.
+// A workspace's repositories and how many of its checkouts this machine has, as information under its name; only the workspace itself is a place to open.
+function workspaceDetail(entry) {
+  const repositories = entry.repositories.map((repository) => repository.name);
+  const held = repositories.length ? repositories.join(", ") : entry.kind === "project" ? "Records kept in the project" : "No repository yet";
+  return `${held} · ${countText(entry.checkouts.length, "checkout", "checkouts")}`;
+}
+
+function workspaceTip(entry) {
+  const lines = [entry.name, ...(entry.store ? [`Store: ${entry.store.label}`] : [])];
+  for (const repository of entry.repositories) lines.push(`${repository.name}: ${repository.checkouts.length ? repository.checkouts.join(", ") : "no checkout on this machine"}`);
+  const named = new Set(entry.repositories.flatMap((repository) => repository.checkouts));
+  for (const checkout of entry.checkouts) if (!named.has(checkout)) lines.push(checkout);
+  return lines.join("\n");
+}
+
+// A menu item's second line, held in its detail slot.
+function detailLine(text) {
+  const line = element("span", "project-folder", text);
+  line.slot = "detail";
+  return line;
+}
+
+function workspaceItem(entry, current) {
+  const item = document.createElement("prism-menu-item");
+  item.setAttribute("type", "radio");
+  item.setAttribute("value", entry.url);
+  item.toggleAttribute("checked", entry.id === current);
+  item.setAttribute("tip", workspaceTip(entry));
+  item.append(entry.name);
+  const hint = stateHint(entry);
+  if (hint) item.append(hint);
+  item.append(detailLine(workspaceDetail(entry)));
+  return item;
+}
+
+// A session server has no list of workspaces, so its menu holds the one project it serves.
 let thisProject = null;
+let thisWorkspace = null;
 
 function showOneProject() {
   if (!thisProject || projectListing === "one") return;
@@ -763,18 +917,19 @@ function showOneProject() {
   const member = { entry: { id: "this", url: location.href, projectRoot: thisProject.projectRoot }, identity: workspaceIdentity(thisProject) };
   const group = document.createElement("prism-menu-group");
   group.setAttribute("label", member.identity.repository ?? folderName(thisProject.projectRoot));
-  group.append(projectItem(member, "this", { gates: false }));
+  group.append(projectItem(member, "this"));
   projectMenu.replaceChildren(group);
   projectButton.removeAttribute("disabled");
 }
 
-// The review app lists its projects; a session server has no list, so its page stops asking.
+// The review app lists its workspaces: each one store with its repositories and this machine's checkouts as information, or a project without a store;
+// a session server has no list, so its page stops asking.
 let projectPoller = null;
 
 async function refreshProjects() {
   let listing;
   try {
-    const response = await appFetch("./api/projects", { cache: "no-store", deadlineMs: POLL_DEADLINE_MS });
+    const response = await appFetch(`${appRoot}api/workspaces`, { cache: "no-store", deadlineMs: POLL_DEADLINE_MS });
     if (response.status === 404) projectPoller?.stop();
     if (!response.ok) {
       showOneProject();
@@ -785,81 +940,69 @@ async function refreshProjects() {
     return;
   }
   projectButton.removeAttribute("disabled");
-  // Checkouts that share a record store share their gates, so each store counts once.
-  const current = listing.projects.find((entry) => entry.id === listing.current);
-  const counted = new Set([current ? storeKey(current) : null]);
-  let waiting = 0;
-  for (const entry of listing.projects) {
-    if (counted.has(storeKey(entry))) continue;
-    counted.add(storeKey(entry));
-    waiting += entry.gates ?? 0;
-  }
+  const current = thisWorkspace?.id ?? null;
+  const waiting = listing.workspaces.reduce((sum, entry) => sum + (entry.id === current ? 0 : entry.gates ?? 0), 0);
   projectGates.hidden = waiting === 0;
   projectGates.textContent = String(waiting);
-  projectGates.setAttribute("tip", `${waiting} open ${waiting === 1 ? "gate" : "gates"} in other projects`);
-  // An unchanged list is left alone, and the server lists projects by recency, so the comparison ignores order and a sync that only reorders them leaves the menu alone.
-  const text = JSON.stringify({ ...listing, projects: [...listing.projects].sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)) });
+  projectGates.setAttribute("tip", `${waiting} open ${waiting === 1 ? "gate" : "gates"} in other workspaces`);
+  const entries = [...listing.workspaces].sort((left, right) => collator.compare(left.name, right.name) || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
+  // An unchanged list is left alone, so a sync that only reorders the workspaces by recency leaves the menu as it is.
+  const text = JSON.stringify(entries);
   if (text === projectListing) return;
   projectListing = text;
-  if (current) setProjectLabel(workspaceIdentity(current), current.projectRoot, current.store);
-  // Checkouts that share one record store form one workspace, whichever repositories they belong to: its records and gates show once, and each checkout stays reachable for its code.
-  // Every other checkout is listed under its repository, even a repository with one checkout.
-  // Workspaces come first, then repositories, each in name order.
-  const workspaces = new Map();
-  const repositories = new Map();
-  for (const entry of listing.projects) {
-    const member = { entry, identity: workspaceIdentity(entry) };
-    const shared = sharedStore(entry);
-    const groups = shared ? workspaces : repositories;
-    const key = shared ?? member.identity.repository ?? folderName(entry.projectRoot);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(member);
-  }
-  const groups = [];
-  const workspaceList = [...workspaces.values()].map((members) => members.sort(compareMembers));
-  workspaceList.sort((left, right) => collator.compare(storeName(left[0].entry.store), storeName(right[0].entry.store)) || compareMembers(left[0], right[0]));
-  for (const members of workspaceList) {
-    const shared = members[0].entry;
-    const gates = Math.max(...members.map(({ entry }) => entry.gates ?? 0));
-    const group = document.createElement("prism-menu-group");
-    group.setAttribute("label", `Workspace ${storeName(shared.store)}${gates ? ` · ${gates} ${gates === 1 ? "gate" : "gates"}` : ""}`);
-    // Choosing the workspace opens its records through the checkout already open, else one an agent is using, else the one used last.
-    // Every checkout of a workspace shows the same records, so only code views, such as source files and the index, differ between them.
-    const opened = members.find(({ entry }) => entry.id === listing.current) ?? members.find(({ entry }) => entry.live) ?? listing.projects.map((entry) => members.find((member) => member.entry === entry)).find(Boolean);
-    const through = [opened.identity.repository, workspaceName(opened.identity) ?? folderName(opened.entry.projectRoot)].filter(Boolean).join(" / ");
-    const repositoryCount = new Set(members.map(({ identity }) => identity.repository)).size;
-    const head = document.createElement("prism-menu-item");
-    head.setAttribute("value", opened.entry.url);
-    head.setAttribute("tip", `Workspace ${storeName(shared.store)}: ${members.length} ${members.length === 1 ? "checkout" : "checkouts"}${repositoryCount > 1 ? ` of ${repositoryCount} repositories` : ""} keep their records in ${shared.store.location ?? shared.store.label}, so their roadmap, initiatives, and gates are the same. Opens through ${through}.`);
-    head.append(`Workspace ${storeName(shared.store)}`);
-    const via = element("span", "project-folder", `Opens through ${through}`);
-    via.slot = "detail";
-    head.append(via);
-    group.append(head, ...members.map((member) => projectItem(member, listing.current, { gates: false, repository: true })));
-    groups.push(group);
-  }
-  for (const [repository, members] of [...repositories].sort(([left], [right]) => collator.compare(left, right))) {
-    const group = document.createElement("prism-menu-group");
-    group.setAttribute("label", repository);
-    group.append(...members.sort(compareMembers).map((member) => projectItem(member, listing.current)));
-    groups.push(group);
-  }
+  listedWorkspaces = entries;
+  const group = document.createElement("prism-menu-group");
+  group.setAttribute("label", "Workspaces");
+  if (entries.length) group.append(...entries.map((entry) => workspaceItem(entry, current)));
+  else group.append(noWorkspaceItem());
   // A list that changes while the menu is open keeps the menu's scroll position and its place under the button.
   const scrolled = projectMenu.scrollTop;
-  projectMenu.replaceChildren(...groups);
+  projectMenu.replaceChildren(group, manageGroup(entries.find((entry) => entry.id === current) ?? null));
   if (projectMenu.isOpen) {
     projectMenu.place();
     projectMenu.scrollTop = scrolled;
   }
 }
 
-function setProjectLabel(identity, projectRoot, store = null) {
-  const workspace = workspaceOf(store);
+// Adding a workspace is offered on every page of the app, and removing one on the page of a workspace that a person added.
+function manageGroup(entry) {
+  const group = document.createElement("prism-menu-group");
+  group.setAttribute("label", "Manage");
+  const add = document.createElement("prism-menu-item");
+  add.setAttribute("value", "workspace:add");
+  add.append("Add workspace…", detailLine("Clone a store from its address"));
+  group.append(add);
+  if (entry?.added) {
+    const remove = document.createElement("prism-menu-item");
+    remove.setAttribute("value", "workspace:remove");
+    remove.append(`Remove ${entry.name}…`, detailLine(entry.checkouts.length ? "Its checkouts keep it listed" : "Deletes its clone when nothing here uses it"));
+    group.append(remove);
+  }
+  return group;
+}
+
+function noWorkspaceItem() {
+  const item = document.createElement("prism-menu-item");
+  item.setAttribute("disabled", "");
+  item.append("No workspace yet", detailLine("Add one from its store address, or start a Prism session in a project"));
+  return item;
+}
+
+// A checkout of a workspace leads with the workspace's name, because the records it shows belong to the whole workspace.
+function setProjectLabel(identity, projectRoot, workspace = null) {
   project.replaceChildren(projectLabel(identity, workspace));
   projectTile.setAttribute("name", workspace ?? identity.repository ?? folderName(projectRoot));
   projectButton.setAttribute("tip", [workspace ? `Workspace: ${workspace}` : "", projectTitle(identity, projectRoot)].filter(Boolean).join("\n"));
   signals.project = [workspace, [identity.repository ?? folderName(projectRoot), workspaceName(identity)].filter(Boolean).join("/")].filter(Boolean).join(" · ");
   document.title = signalTitle(baseTitle(), signals.count ?? 0);
+}
+
+// A session server names no workspace, so a checkout whose records live in a store takes the store's name, the workspace name it keeps or the store's last segment.
+function storeWorkspaceName(store) {
+  if (!store || store.kind === "project") return null;
+  if (store.workspaceName) return store.workspaceName;
+  const place = store.kind === "folder" ? store.location : store.label;
+  return String(place ?? "").replace(/[\\/]+$/, "").split(/[\\/:]/).filter(Boolean).pop()?.replace(/\.git$/i, "") || store.label || null;
 }
 
 const baseTitle = () => signals.project ? `${signals.project} · Prism` : "Prism review";
@@ -975,9 +1118,14 @@ function escapeHtml(value) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
-function markdownOptions(basePath) {
-  return { basePath, isKnown: (path) => availableArtifacts.has(path) };
+// A store artifact's read carries its links resolved against its store location, which the page renders in place of resolving them itself.
+function markdownOptions(basePath, links = null) {
+  return { basePath, isKnown: (path) => availableArtifacts.has(path), links: linkTargets(links) };
 }
+
+// The read of a page's file: a store artifact, or a code file a store artifact links to, code:<repository>:<path>, by its ref, and any other file by its path.
+const isCodeRef = (path) => typeof path === "string" && /^code:[^:/]+:./.test(path);
+const artifactQuery = (path) => isStoreRef(path) || isCodeRef(path) ? `ref=${encodeURIComponent(path)}` : `path=${encodeURIComponent(path)}`;
 
 // A short outage shows the retrying banner; one that outlasts the grace period shows the stopped banner, and any answer clears both.
 function reportRefresh(ok) {
@@ -1455,6 +1603,71 @@ function workInitiativeItem(item, nodes, scope, query) {
   return treeItem(ref, item.title, { selected: selectedPath === ref, expanded, start: [kitElement("prism-state", { state, label: stateWord })], end, children, tip });
 }
 
+// The store tree lists every scope's artifacts together, each scope with its label and count, behind the scope filter; a scope lists its first artifacts and the palette finds the rest.
+const SCOPE_ITEM = "store-scope:";
+const SCOPE_ARTIFACTS_SHOWN = 50;
+
+// A store artifact's location below its scope's folder, such as requirements/billing.md, as the store tree names it.
+function belowScope(ref) {
+  const names = ref.slice(STORE_REF.length).split("/");
+  const at = names[0] === "repositories" && names.length > 2 ? names[2] === "components" && names.length > 4 ? 4 : 2 : 0;
+  return names.slice(at).join("/");
+}
+
+function scopeFilterChips() {
+  const holder = element("div", "nav-scope-filter");
+  holder.dataset.scopeFilter = "";
+  holder.setAttribute("role", "group");
+  holder.setAttribute("aria-label", "Scope filter");
+  for (const scope of storeScopes) {
+    const chip = element("prism-chip", "", scope.label);
+    chip.setAttribute("interactive", "");
+    chip.setAttribute("pressed", String(Boolean(scopeFilter?.has(scope.label))));
+    chip.setAttribute("tip", scopeFilter?.has(scope.label) ? `Stop narrowing to ${scope.label}` : `Show only ${scope.label} and the other chosen scopes`);
+    chip.append(Object.assign(element("span", "", String(scope.artifacts)), { slot: "meta" }));
+    chip.addEventListener("click", () => {
+      const next = new Set(scopeFilter ?? []);
+      if (next.has(scope.label)) next.delete(scope.label);
+      else next.add(scope.label);
+      setScopeFilter(next);
+    });
+    holder.append(chip);
+  }
+  if (scopeFilter) {
+    const all = element("prism-chip", "", "All scopes");
+    all.setAttribute("interactive", "");
+    all.addEventListener("click", () => setScopeFilter(null));
+    holder.append(all);
+  }
+  return holder;
+}
+
+function storeNavigation() {
+  if (!storeScopes.length && !storeNotes.length) return [];
+  const parts = [section("Store", refScopes.size)];
+  for (const note of storeNotes) parts.push(element("p", "nav-note", note.message ?? String(note)));
+  if (!storeScopes.length) return parts;
+  parts.push(scopeFilterChips());
+  const byScope = new Map(storeScopes.map((scope) => [scope.label, []]));
+  for (const [ref, label] of refScopes) byScope.get(label)?.push(ref);
+  let cut = false;
+  const items = storeScopes.filter((scope) => scopeShown(scope.label)).map((scope) => {
+    const refs = byScope.get(scope.label) ?? [];
+    const value = `${SCOPE_ITEM}${scope.label}`;
+    const holdsCurrent = refs.includes(selectedPath);
+    const shown = refs.slice(0, SCOPE_ARTIFACTS_SHOWN);
+    if (holdsCurrent && !shown.includes(selectedPath)) shown.push(selectedPath);
+    if (shown.length < refs.length) cut = true;
+    const count = element("span", "nav-count", String(scope.artifacts));
+    const children = shown.map((ref) => treeItem(ref, belowScope(ref), { selected: selectedPath === ref }));
+    return treeItem(value, scope.label, { expanded: treeToggles.get(value) ?? holdsCurrent, end: [count], children });
+  });
+  if (items.length) parts.push(tree("Store artifacts by scope", items));
+  else parts.push(element("p", "nav-note", "No scope matches the filter."));
+  if (cut) parts.push(element("p", "nav-note", `A scope lists its first ${SCOPE_ARTIFACTS_SHOWN} artifacts here; press Ctrl K to find any other.`));
+  return parts;
+}
+
 // The current place: the one the person chose last in this browser, or the one a `place=` address names, and Attention when none was stored.
 const PLACE_KEY = "prism.review.place";
 
@@ -1486,7 +1699,9 @@ let pendingLane = null;
 }
 
 const addressedPlace = new URLSearchParams(location.search).get("place");
-let currentPlace = placeNamed(addressedPlace) ? addressedPlace : readStoredPlace() ?? DEFAULT_PLACE;
+// An address that names a store artifact or a code file and no place opens Knowledge, whose sidebar holds the store's scopes and the scope filter.
+const addressedRecord = /^(store|code):/.test(new URLSearchParams(location.search).get("artifact") ?? "");
+let currentPlace = placeNamed(addressedPlace) ? addressedPlace : addressedRecord ? "knowledge" : readStoredPlace() ?? DEFAULT_PLACE;
 if (placeNamed(addressedPlace)) storePlace(addressedPlace);
 
 // The page names no place until it knows the current one, and names it at once, before the workspace loads, so a person whose place is History never sees Attention first.
@@ -1810,8 +2025,10 @@ function knowledgeNavigation() {
       row("requirements", ENTITY_LABELS.requirements, "list", count(library.requirements)),
       row("decisions", ENTITY_LABELS.decisions, "scale", count(library.decisions)),
       row("glossary", "Glossary", "book", glossary.exists ? count(library.terms) : [element("span", "nav-state", "missing")]),
-      row("knowledge:diagrams", "Diagrams", "diagram", count(library.diagrams))
-    ])
+      row("knowledge:diagrams", "Diagrams", "diagram", count(library.diagrams)),
+      ...(codeRepositories.length ? [row("code", ENTITY_LABELS.code, "code", [])] : [])
+    ]),
+    ...storeNavigation()
   ];
 }
 
@@ -1849,7 +2066,7 @@ function renderNavigation() {
   for (const rail of [shellRail, drawerRail]) renderRail(rail, attention.gates ?? 0);
   const entity = Boolean(parseEntityRef(selectedPath ?? ""));
   const claims = claimIndex ? [...claimIndex.live(), ...claimIndex.expired()].map((claim) => [claim.ref, claim.expiresAt, claim.label]) : [];
-  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", knowledgeQuery(), knowledgeResults, attentionMoreOpen, roadmapView(), currentPlace === "knowledge" ? [lastSlice, touchedCount] : null]);
+  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", knowledgeQuery(), knowledgeResults, attentionMoreOpen, roadmapView(), currentPlace === "knowledge" ? [lastSlice, touchedCount] : null, storeSignature, scopeFilter && [...scopeFilter]]);
   if (key === navigationKey) return;
   navigationKey = key;
   const focused = document.activeElement?.closest?.("prism-tree-item");
@@ -2142,6 +2359,28 @@ function showMissing(path) {
   setBusy(false);
 }
 
+// A file that exists but is not shown, such as a binary file or one over 512 KiB, keeps its tab and says why.
+function showNotShown(path, message) {
+  if (path !== selectedPath) return;
+  if (lastSnapshot !== `not-shown:${path}`) {
+    lastSnapshot = `not-shown:${path}`;
+    renderedPath = null;
+    pageBar.setActions([]);
+    const state = document.createElement("prism-empty-state");
+    state.setAttribute("heading", "This file is not shown");
+    state.dataset.notShown = "";
+    const where = document.createElement("p");
+    where.dataset.codeSubject = "";
+    where.textContent = path;
+    const detail = document.createElement("p");
+    detail.textContent = message;
+    state.append(where, detail);
+    writeArtifact("");
+    artifact.replaceChildren(state);
+  }
+  setBusy(false);
+}
+
 function updateMissingTabs(reported) {
   const { next, changed } = nextMissingTabs(missingTabs, reported);
   missingTabs = next;
@@ -2218,7 +2457,14 @@ async function showEntity(path) {
   const container = document.createElement("div");
   container.className = "structured-view";
   memory.stage.appendChild(container);
-  await renderEntity(container, entity, { ...viewContext(path, state), renderMarkdown: (source, basePath = null) => renderText("document.md", source, markdownOptions(basePath)) });
+  await renderEntity(container, entity, { ...viewContext(path, state), renderMarkdown: (source, basePath = null) => renderText("document.md", source, markdownOptions(basePath)),
+    // The Code page turns a repository's code content on or off with the tab's write session, and then reads the page again.
+    canWrite: () => Boolean(writeSession()),
+    setCode: (repository, enabled) => setCodeContent(repository, enabled),
+    refresh: () => {
+      lastSnapshot = "";
+      if (path === selectedPath) void showArtifact(path);
+    } });
   endRebuild(memory);
 }
 
@@ -2282,19 +2528,22 @@ async function showArtifact(path) {
     await showEntity(path);
     return;
   }
-  const response = await appFetch(`./api/artifact?path=${encodeURIComponent(path)}`, { cache: "no-store" });
+  const response = await appFetch(`./api/artifact?${artifactQuery(path)}`, { cache: "no-store" });
   if (response.status === 404) {
-    showMissing(path);
+    // A code file that is held but not shown, such as a binary or large file, says so rather than that it was moved or deleted.
+    const refused = isCodeRef(path) ? await response.json().catch(() => null) : null;
+    if (refused?.code === "file_not_shown") showNotShown(path, refused.message);
+    else showMissing(path);
     return;
   }
   if (!response.ok) {
     await showError(response);
     return;
   }
-  const data = await response.json();
+  const data = codeCloneRead(await response.json());
   const state = viewState(data.path);
   // A Review card that lists further comment reads reads them all again with the first, so its list stays the file's first comments as they now are.
-  const readPage = (commentOffset) => fetchJson(`./api/artifact?path=${encodeURIComponent(data.path)}&commentOffset=${commentOffset}`);
+  const readPage = (commentOffset) => fetchJson(`./api/artifact?${artifactQuery(data.path)}&commentOffset=${commentOffset}`);
   if (data.artifact && (state.commentReads ?? 1) > 1) {
     const listed = await readListedComments(data.artifact, state, readPage).catch(() => null);
     if (path !== selectedPath) return;
@@ -2316,7 +2565,7 @@ async function showArtifact(path) {
     ? `<section class="document-sheet source-sheet" data-code-subject><ol class="source-lines">${highlightLines(data.content.replace(/\r\n/g, "\n").replace(/\n$/, ""), languageOf(data.path)).map((line, index) => `<li id="${HEADING_PREFIX}L${index + 1}"><code>${line || " "}</code></li>`).join("")}</ol></section>`
     : structured || data.path.toLowerCase().endsWith(".puml")
       ? ""
-      : `<section class="document-sheet"><prism-doc class="document-content">${renderText(data.path, data.content, markdownOptions(data.path))}</prism-doc></section>`;
+      : `<section class="document-sheet"><prism-doc class="document-content">${renderText(data.path, data.content, markdownOptions(data.path, data.links))}</prism-doc></section>`;
   const memory = beginRebuild(path);
   // A repository file is named by its path; a record of Prism's by its title and kind, never its file name.
   const named = describe(data.path);
@@ -2328,8 +2577,13 @@ async function showArtifact(path) {
         ${named.code ? "" : `<p class="eyebrow">${escapeHtml(named.kind)}</p>`}
         <h1${named.code ? " data-code-subject" : ""}>${escapeHtml(heading)}</h1>
         ${named.code ? `<p class="artifact-path" data-code-subject>${escapeHtml(data.path)}</p>` : ""}
+        ${data.location ? `<p class="artifact-path" data-code-subject>${escapeHtml(data.location)}</p>` : ""}
       </div>
       <div class="artifact-meta">
+        ${data.scope ? `<prism-chip tone="accent" data-scope-label tip="The scope that holds this artifact in the record store">${escapeHtml(data.scope.label)}</prism-chip>` : ""}
+        ${data.unresolvedLinks ? `<prism-chip tone="warning" tip="Links in this file that name no artifact in the record store and no file">${escapeHtml(countText(data.unresolvedLinks, "link not found", "links not found"))}</prism-chip>` : ""}
+        ${unavailableLinks(data) ? `<prism-chip tip="Links to code files that no checkout of their repository on this machine holds">${escapeHtml(countText(unavailableLinks(data), "code link not available on this machine", "code links not available on this machine"))}</prism-chip>` : ""}
+        ${data.branch ? `<prism-chip data-branch-label tip="The branch of the repository's code clone that this file is read from">${escapeHtml(data.branch)}</prism-chip>` : ""}
         ${named.code || structured ? `<prism-chip>${escapeHtml(kind)}</prism-chip>` : ""}
         ${source ? "<prism-chip>Read-only</prism-chip>" : structured ? "" : `<prism-chip>${diagramLabel}</prism-chip>`}
       </div>
@@ -2355,6 +2609,21 @@ async function showArtifact(path) {
     await renderDiagram(diagram.source, section.querySelector(".diagram-output"), section);
   }
   endRebuild(memory);
+}
+
+// Turn a repository's code content on or off, answering { message } when the app refused it.
+async function setCodeContent(repository, enabled) {
+  if (!requireApp()) return null;
+  const response = await fetch(`./api/code/${encodeURIComponent(repository)}`, { method: "PUT", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ enabled }) });
+  const answer = await response.json().catch(() => ({ message: "The review app returned an unreadable answer." }));
+  if (!response.ok) return { message: answer.message ?? "The review app could not change the code content." };
+  return answer.code?.state === "unreachable" ? { message: answer.code.message } : null;
+}
+
+// A code file read from a repository's code clone names its path below the repository and its branch, so the page shows it as a read-only source file by its ref.
+function codeCloneRead(data) {
+  if (!isCodeRef(data?.ref) || data.kind !== undefined || typeof data.content !== "string") return data;
+  return { ...data, path: data.ref, file: data.path, kind: "source", diagrams: [] };
 }
 
 const KIND_LABELS = {
@@ -2395,10 +2664,13 @@ function viewContext(path, state) {
     onTouched: (slice, answer) => noteTouched(slice, answer),
     escapeHtml,
     showToast,
-    fetchArtifact: (artifactPath) => fetchJson(`./api/artifact?path=${encodeURIComponent(artifactPath)}`),
+    fetchArtifact: (artifactPath) => fetchJson(`./api/artifact?${artifactQuery(localTab(artifactPath))}`),
     fetchEvidence: (id) => fetchJson(`./api/evidence?id=${encodeURIComponent(id)}`),
-    hasArtifact: (artifactPath) => availableArtifacts.has(artifactPath) || Boolean(parseEntityRef(artifactPath)),
-    openArtifact(artifactPath, options = {}) {
+    hasArtifact: (artifactPath) => availableArtifacts.has(localTab(artifactPath)) || Boolean(parseEntityRef(artifactPath)),
+    // A store artifact's scope label, which the record views show beside it, or null for any other file.
+    scopeLabel: (artifactPath) => refScopes.get(localTab(artifactPath)) ?? null,
+    openArtifact(given, options = {}) {
+      const artifactPath = localTab(given);
       if (!availableArtifacts.has(artifactPath) && !parseEntityRef(artifactPath)) {
         showToast(`Not a reviewable artifact: ${artifactPath}`);
         return;
@@ -2423,7 +2695,7 @@ function viewContext(path, state) {
     },
     // A view embeds a PlantUML file as the same diagram card that opening the file shows.
     async mountDiagram(target, diagramPath) {
-      const data = await fetchJson(`./api/artifact?path=${encodeURIComponent(diagramPath)}`);
+      const data = await fetchJson(`./api/artifact?${artifactQuery(localTab(diagramPath))}`);
       for (const diagram of data.diagrams ?? []) {
         const section = diagramCard(diagram);
         target.appendChild(section);
@@ -2464,6 +2736,9 @@ function viewContext(path, state) {
   };
 }
 
+// The links of a store artifact's read to code files that no checkout on this machine holds.
+const unavailableLinks = (data) => Array.isArray(data.links) ? data.links.filter((item) => item.resolved === null).length : 0;
+
 function paletteEntries() {
   const places = [
     { ref: "attention", label: "Attention", kind: "place", detail: "What needs you" },
@@ -2474,12 +2749,23 @@ function paletteEntries() {
     { ref: "knowledge:diagrams", label: "Diagrams", kind: "place", detail: "Library" },
     { ref: "launches", label: "Launched sessions", kind: "place", detail: "Headless sessions on this computer" }
   ];
-  const indexed = navigation.index ?? [];
+  // A library entry that names a store artifact by the reading checkout's path is that store artifact: it opens by its ref, follows the scope filter, and names its scope,
+  // so the Records group below never lists it a second time.
+  const indexed = (navigation.index ?? []).flatMap((entry) => {
+    const ref = localTab(entry.ref);
+    if (!isStoreRef(ref)) return [entry];
+    return scopeShown(refScopes.get(ref)) ? [{ ...entry, ref, scope: refScopes.get(ref) ?? "workspace" }] : [];
+  });
   const known = new Set(indexed.map((entry) => entry.ref));
   const titles = titleIndex();
   // Prism's own records are named by title and kind; repository files keep their paths, since code is their subject.
-  const files = [...availableArtifacts].filter((file) => !known.has(file)).map((file) => {
+  const files = [...availableArtifacts].filter((file) => !known.has(file) && (!isStoreRef(file) || scopeShown(refScopes.get(file)))).map((file) => {
     if (describe(file).code) return { ref: file, label: fileName(file), kind: "file", detail: file };
+    // A store artifact names its scope and its place in it, so files of one name in several scopes read apart.
+    if (isStoreRef(file)) {
+      const named = recordLabel(file, titles);
+      return { ref: file, label: named.owner ? named.kind : named.label, kind: "record", kindLabel: named.kind, scope: refScopes.get(file) ?? "workspace", detail: `${refScopes.get(file) ?? "workspace"} · ${belowScope(file)}` };
+    }
     // A record that belongs to a slice or initiative reads as its kind, so its owner's title stays the owner's own result; the preview names the owner.
     const named = recordLabel(file, titles);
     if (named.owner) return { ref: file, label: named.kind, kind: "record", kindLabel: "Record", detail: named.owner, preview: { kind: named.kind, title: named.owner } };
@@ -2492,7 +2778,7 @@ let recordStoreStatus = null;
 
 // The record store and its sync live in the status bar: where records live, and the sync state, which opens details with every saved conflict.
 function renderStoreSync(data) {
-  recordStoreStatus?.update(data.recordStore, data.storeSync);
+  recordStoreStatus?.update(data.recordStore, data.storeSync, data.sync);
 }
 
 startAppearanceMenu();
@@ -2606,8 +2892,15 @@ function watchDrawerWidth() {
 
 async function initialize() {
   await takeWriteGrant();
+  showLeftNotice();
   // The views start from the person's stored preferences, such as the roadmap's view, so they wait for them alongside the index.
-  const [data] = await Promise.all([fetchJson("./api/index"), preferencesReady()]);
+  const [index] = await Promise.all([fetchJson("./api/index"), preferencesReady()]);
+  if (index.workspace === null && !index.projectRoot) {
+    showNoWorkspace();
+    return;
+  }
+  useStoreRefs(index);
+  const data = localSession(index);
   startHistory();
   watchHistoryLeave();
   pageBar = createPageBar({
@@ -2626,7 +2919,7 @@ async function initialize() {
     dialog: document.getElementById("store-dialog"),
     fetchJson,
     openRecord: (path) => openRef(path),
-    hasArtifact: (path) => availableArtifacts.has(path),
+    hasArtifact: (path) => availableArtifacts.has(localTab(path)),
     describe
   });
   renderStoreSync(data);
@@ -2637,9 +2930,13 @@ async function initialize() {
   sessionRevision = Number.isInteger(data.revision) ? data.revision : 0;
   sessionInstance = typeof data.instance === "string" ? data.instance : null;
   appVersion = typeof data.appVersion === "string" ? data.appVersion : null;
-  const requestedPath = selectedPath;
+  const requestedPath = localTab(selectedPath);
   selectedPath = Object.hasOwn(data, "activeTab") ? data.activeTab : null;
-  setProjectLabel(workspaceIdentity(data), data.projectRoot, data.recordStore);
+  // A workspace that the app reads through its store's clone alone names no checkout, so the label shows the workspace alone.
+  const storeOnly = data.checkout === null && Boolean(data.workspace?.id);
+  thisWorkspace = data.checkout || storeOnly ? data.workspace : null;
+  if (storeOnly) setProjectLabel({ repository: data.workspace.name, worktree: null, branch: null, detached: false }, data.recordStore?.label ? `Store: ${data.recordStore.label}` : "", null);
+  else setProjectLabel(data.checkout ?? workspaceIdentity(data), data.projectRoot, thisWorkspace ? thisWorkspace.kind === "store" ? thisWorkspace.name : null : storeWorkspaceName(data.recordStore));
   thisProject = data;
   showPrivateServer(data.privateServer);
   let sectionFrame = 0;
@@ -2658,11 +2955,7 @@ async function initialize() {
   window.addEventListener("resize", followSections, { passive: true });
   // Choosing another project opens its review page; opening the menu refreshes the list first.
   projectPoller = createPoller({ run: refreshProjects, interval: 5000 });
-  projectButton.addEventListener("click", () => void projectPoller.now());
-  projectMenu.addEventListener("prism-select", (event) => {
-    const url = event.detail?.value;
-    if (url && url !== location.href) location.href = url;
-  });
+  watchWorkspaceMenu();
   void projectPoller.start();
   createIndexingStatus({
     root: document.getElementById("indexing"),
@@ -2704,7 +2997,21 @@ async function initialize() {
     entries: paletteEntries,
     describe,
     claimFor: (ref) => claimIndex.claimFor(ref),
-    search: async (query) => (await fetchJson(`./api/search?q=${encodeURIComponent(query)}`)).results,
+    // A checkout's text match in a store artifact found by its path opens the store artifact, follows the scope filter, and names its scope.
+    // A workspace's search names each store artifact by its ref and scope, and adds the code matches of its indexed components, each opened from its repository,
+    // and the components it left out.
+    search: async (query) => {
+      const answer = await fetchJson(`./api/search?q=${encodeURIComponent(query)}`);
+      const results = answer.results.flatMap((result) => {
+        const ref = result.ref ?? localTab(result.path);
+        if (!isStoreRef(ref)) return [result];
+        const scope = result.scope?.label ?? refScopes.get(ref) ?? "workspace";
+        return scopeShown(scope) ? [{ ...result, path: ref, scope }] : [];
+      });
+      if (!Array.isArray(answer.code)) return results;
+      const code = answer.code.map((match) => ({ ...match, ref: `code:${match.component.split("/")[0]}:${match.file}` }));
+      return { results, code, leftOut: answer.leftOut ?? [] };
+    },
     onOpen: (ref, { find, ...options }) => {
       pendingFind = find ? { path: ref, text: find } : null;
       openRef(ref, options);
@@ -2717,7 +3024,7 @@ async function initialize() {
     // A page's Side panel button follows the panel, however it opens or closes.
     onChange: (open) => document.dispatchEvent(new CustomEvent("prism:side-panel", { detail: { open } })),
     fetchJson,
-    renderMarkdown: (path, content) => renderText(path, content, markdownOptions(path)),
+    renderMarkdown: (path, content, links) => renderText(path, content, markdownOptions(path, links)),
     // The panel draws a diagram as the same card its page shows, without the name its header already gives, and fitted to the panel's width.
     mountDiagram: async (target, diagram) => {
       const section = diagramCard(diagram, { compact: true });
@@ -2736,7 +3043,7 @@ async function initialize() {
   linkPreview = createLinkPreview({
     root: workspace,
     fetchJson,
-    renderMarkdown: (path, content) => renderText(path, content, markdownOptions(path)),
+    renderMarkdown: (path, content, links) => renderText(path, content, markdownOptions(path, links)),
     kindLabel: (kind) => KIND_LABELS[kind] ?? "Structured record",
     drawDiagram: drawPlantUml,
     describe,
@@ -2747,7 +3054,7 @@ async function initialize() {
   panelPreview = createLinkPreview({
     root: sidePanel.body,
     fetchJson,
-    renderMarkdown: (path, content) => renderText(path, content, markdownOptions(path)),
+    renderMarkdown: (path, content, links) => renderText(path, content, markdownOptions(path, links)),
     kindLabel: (kind) => KIND_LABELS[kind] ?? "Structured record",
     drawDiagram: drawPlantUml,
     describe,
@@ -2775,6 +3082,14 @@ async function initialize() {
   }, { capture: true });
   navRoot.addEventListener("prism-select", (event) => {
     const ref = event.detail?.value;
+    // A scope of the store tree opens and closes its list of artifacts rather than opening a page.
+    if (ref?.startsWith(SCOPE_ITEM)) {
+      const item = [...navRoot.querySelectorAll("prism-tree-item")].find((node) => node.getAttribute("value") === ref);
+      treeToggles.set(ref, !(item?.hasAttribute("expanded") ?? false));
+      renderNavigation();
+      navKeep = false;
+      return;
+    }
     if (ref && Object.hasOwn(NAVIGATION_ACTIONS, ref)) NAVIGATION_ACTIONS[ref]();
     else if (ref?.startsWith(LANE_VALUE)) showLane(ref.slice(LANE_VALUE.length), { keep: navKeep });
     else if (ref) openRef(ref, { keep: navKeep });
@@ -2883,7 +3198,7 @@ async function initialize() {
   window.addEventListener("popstate", (event) => {
     const from = pages.index;
     if (Number.isInteger(event.state?.index)) pages.index = event.state.index;
-    const ref = event.state?.ref ?? new URLSearchParams(location.search).get("artifact");
+    const ref = localTab(event.state?.ref ?? new URLSearchParams(location.search).get("artifact"));
     if (ref) pages.refs[pages.index] = ref;
     // The browser's own buttons can land on an entry that shows the open page; the move goes on to the next entry in the same direction.
     if (ref === selectedPath && pages.index !== from) {
@@ -2921,8 +3236,11 @@ async function initialize() {
     if (++polls % 3 === 0 && connection !== "stopped") document.dispatchEvent(new CustomEvent("prism:poll"));
     try {
       const refreshed = await appFetch("./api/index", { cache: "no-store", deadlineMs: POLL_DEADLINE_MS }).catch(() => null);
-      const snapshot = refreshed?.ok ? await refreshed.json().catch(() => null) : null;
-      reportRefresh(Boolean(snapshot));
+      const answered = refreshed?.ok ? await refreshed.json().catch(() => null) : null;
+      reportRefresh(Boolean(answered));
+      const storeBefore = storeSignature;
+      if (answered) useStoreRefs(answered);
+      const snapshot = answered && localSession(answered);
       if (snapshot) {
         renderStoreSync(snapshot);
         prismRecords = new Set(snapshot.artifacts);
@@ -2936,7 +3254,7 @@ async function initialize() {
           renderNavigation();
           renderTabs();
           if (added) void claimIndex.refresh().catch(() => {});
-        }
+        } else if (storeSignature !== storeBefore) renderNavigation();
         if (!sessionConnected) {
           synchronizeSession(snapshot);
         }

@@ -5,7 +5,7 @@
       "a required field follows the field it depends on, and the hint names the first empty one": 9,
       "every connected tab of the project receives an applied action as it happens": 2,
       "Attention lists the newest applied actions across initiatives and the checkout's index, with their authors": 6,
-      "an applied action reaches the tabs of every checkout of the workspace, and an index rebuild only its own checkout's": 10,
+      "an applied action reaches the tabs of every checkout of the workspace": 9,
       "the page loads the generic action view": 1
     },
     "test/server/review-action-equal-models.test.mjs": {

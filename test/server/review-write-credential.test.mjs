@@ -110,7 +110,7 @@ test("a presentation opens a writable tab while every connected tab is read-only
 });
 
 // The shared app's project base, the prefix of one project's routes.
-const projectBase = (url) => /^(.*\/p\/[0-9a-f]{16})/.exec(new URL(url).href)[1];
+const projectBase = (url) => /^(.*\/[pw]\/[0-9a-f]{16})/.exec(new URL(url).href)[1];
 
 async function appDirectory(context) {
   const parent = await mkdtemp(path.join(os.tmpdir(), "prism-write-app-"));

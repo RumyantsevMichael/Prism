@@ -1,0 +1,40 @@
+@startuml
+title Show a whole workspace in the review app: slices and shared interfaces
+
+package "store-identity" as identity
+package "workspace-switcher" as switcher
+package "workspace-add" as add
+package "workspace-sync" as sync
+package "artifact-index" as index
+package "combined-artifacts" as combined
+package "code-clones" as code
+package "verified-files" as verified
+package "slice-files" as files
+package "workspace-search" as search
+
+interface "store identity and clone folder" as storeId
+interface "/w/<w>/ workspace routes" as routes
+interface "workspace fetch timer" as timer
+interface "artifact index by location" as artifactIndex
+interface "code clone per remote" as clone
+interface "run files and ship commit" as runFiles
+
+identity -- storeId
+switcher -- routes
+sync -- timer
+index -- artifactIndex
+code -- clone
+verified -- runFiles
+
+switcher ..> storeId
+add ..> routes
+sync ..> add
+combined ..> routes
+combined ..> artifactIndex
+combined ..> add
+code ..> timer
+files ..> clone
+files ..> runFiles
+search ..> combined
+index ..> storeId
+@enduml

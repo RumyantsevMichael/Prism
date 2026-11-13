@@ -35,7 +35,7 @@ A choice applies at once, and System follows the operating system again.
 **Component catalog** opens the review app's component catalog in a new tab, which shows every control of the interface with its options, states, and keys.
 The catalog's own toolbar changes its theme, density, and width for that tab only, and stores nothing.
 
-The top bar holds the Prism mark, the project switcher, the search button that opens the Jump palette, and **Who's working**.
+The top bar holds the Prism mark, the workspace switcher, the search button that opens the Jump palette, and **Who's working**.
 The status bar at the bottom shows where the project's records live, naming a shared store, their sync state, and the repository index.
 The rail at the left edge switches between five places, and the sidebar beside it shows only the current place, under its title and a line that says what it holds.
 **Attention** shows what waits on you, and the rail's Attention button carries the number of recorded questions that wait for an answer.
@@ -63,6 +63,7 @@ Clearing the field or pressing Esc in it brings the groups back.
 It says `Nothing has shipped yet.` while there is none.
 Choosing any other place leaves the open page as it is, and the place stays while you change tabs, follow links, use the palette, or go back.
 The browser remembers the current place, so a reload or a new window shows it again, and an address with `place=work`, or another place's name, chooses that place.
+An address that opens a store artifact or a code file and names no place opens Knowledge, whose sidebar holds the store's scopes and the scope filter.
 The page bar's trail starts with the place of the open page, and choosing that crumb makes the place current without leaving the page.
 An initiative's row shows its state as a round glyph and its shipped leaf slices out of all, such as `0/4`.
 Expanded, it lists at most five of its unfinished slices, each with a triangle in the color of its phase, its holder, and `Blocked` when it is blocked: the slice you have open first, then those in progress or claimed, then blocked ones, then the rest.
@@ -105,7 +106,7 @@ A banner appears when the review server stops responding, and it clears when the
 When the server stays silent for about 15 seconds, the banner says that the review app stopped and the page is no longer live, and actions that need the server say so instead of failing silently.
 A restarted app uses a new link, so ask the agent to open the review browser to get one, or run `./bin/prism review` from a Prism checkout.
 Opening an old link after a restart, or the app's port without a link, shows a page that says the link no longer works; it cannot list your projects, because the link is what keeps other users of the computer from reading them.
-The app's own address opens the project an agent used last, and a link to a project the app no longer lists opens that project too, with a notice to choose another from the project menu.
+The app's own address opens the workspace an agent session used most recently, and a link to a workspace or checkout the app no longer lists opens that workspace too, with a notice to choose another from the workspace switcher; with no workspace yet, it opens the page that offers to add one.
 The page keeps checking and recovers on its own when the same app or its upgraded successor answers.
 A check that gets no answer within 8 seconds counts as no answer, so a server that is too busy to answer shows the banner instead of a page that silently stops changing.
 
@@ -310,7 +311,7 @@ A slice whose design waits for your answer at its design gate shows as in design
 The list shows the slice tree, and the graph orders leaf slices by execution order.
 A slice that records a [component](workflow.md#components) carries a small label with its `<repository>/<component>` identity in the slice tree, on its board card, and on its slice page, and a slice without one, such as a split scope or a slice accepted before components existed, has no label.
 Below them, the page lists the unstarted leaves that can be designed next, leaving out those in design review.
-A slice page shows the slice's diagrams, its design from `slice.md`, the verification run, the review ledger, and every file in the slice folder.
+A slice page shows the slice's diagrams, its design from `slice.md`, the verification run, the review ledger, its [verified files](#a-slices-files-after-verification), and every file in the slice folder.
 It is the page to read at a design gate.
 Under its title a tag names the slice's phase with its gate or status, such as `Design · design gate open`, beside its requirements, and below the lifecycle a strip shows who holds the slice, since when, when the holder last renewed the claim, and the time left, with the exact times on hover or focus.
 The Review ledger tab counts the open findings and the Files tab the slice folder's files.
@@ -374,6 +375,7 @@ Take current intent from Approved requirements, Accepted ADRs, the glossary, and
 Prism stores diagrams as PlantUML `.puml` source files, and the browser renders them without creating image files.
 Markdown links open the linked file or heading in the review.
 A link to a missing file or a target outside the project is marked as missing, and an external link opens in a new browser tab.
+A store artifact's links resolve by its place in the store; see [Every scope in one view](#every-scope-in-one-view).
 A document with three or more headings gets a contents list that marks the current section.
 In a wide window the contents stay beside the text while it scrolls, and a list longer than the window scrolls on its own and keeps the current section in view.
 In a window 1100 pixels wide or narrower the contents sit above the text and fold open from their header.
@@ -411,6 +413,7 @@ The list is closed when the page opens, and it stays open or closed as you left 
 To comment, enter that line number, with or without spaces around it, and your comment of at most 4000 characters, then select Comment.
 A file takes at most 1000 comments: once it holds 1000, Prism refuses a further comment with `comment_limit` and stores nothing, and a file whose comment folder holds more than 1000 files, as a sync from elsewhere could bring, shows no comments at all.
 The comment goes to the record store as a file of its own, so it reaches every checkout that sees the file and every machine that syncs the store, and the file itself does not change.
+On a workspace's page you can comment on the files of every scope, also another repository's, and the comment names its author by the Git name of the store's clone on this machine.
 Agents read the comments with the file through `get_artifact`.
 A file's comments belong to it: when an agent moves the file to another scope its comments move with it, and when an agent removes the file its comments are removed with it, so a new file at the same path starts without them.
 A comment you are still typing stays in the form when the file moves to another scope, and Comment then sends it to the file in its new scope.
@@ -427,6 +430,10 @@ It finds places, initiatives, slices, requirements, decisions, glossary terms, a
 A slice's result shows who holds a claim on it, and beside the results a preview shows the active result.
 A query of three or more characters also searches the text of Prism artifacts, never source files, and every word must occur in a matching file.
 Opening a text match scrolls to and highlights the first occurrence.
+On a workspace's page the text search covers the store artifacts of every scope, each match with its scope label, whichever checkout the page reads through.
+It also searches the code of each component whose index is ready in a checkout on this machine, and lists those matches as **Code in indexed components**, each with its component.
+Under **Left out of this search** it names every other component the workspace knows, with why: `no checkout here` for a repository without a checkout on this machine, `no ready index` for a component whose index is not built, and `search failed` for one whose search failed.
+The components a workspace knows are those of each checkout on this machine, those that each code clone's branches declare, and those that hold a component scope folder in the store, plus each repository's root component.
 When the match is not visible in the rendered view, try the Raw view.
 On an initiative or slice page, the palette also lists the page's settings as entries such as `Push: Off`, and choosing one moves the focus to that setting's control.
 In the palette, the arrow keys move through the results, Enter opens one, and Esc closes the palette.
@@ -437,21 +444,118 @@ The index item at the right of the status bar shows the open project's native in
 Its panel lists each index target of the checkout, the root component first and then each declared component, with its indexing state and a **Rebuild** button that rebuilds only that component's index.
 While a component's index is being built, its row says `An index build is already running.` in place of the button.
 In a repository with components, the item combines every component's index and names the component being built.
+On a workspace's page the panel lists the components of every repository with a checkout on this machine, by repository name, and offers no rebuild for a repository without one, because a rebuild runs in a checkout.
 A long component identity ends in an ellipsis, and its tooltip names it whole.
 See [Watch an index build in the review browser](repository-intelligence.md#watch-an-index-build-in-the-review-browser) for what each state means.
 
-## Several projects
+## Workspaces
 
-All Prism sessions of one user share one review app on one local port, and each project has its own page there.
-The project switcher names the project as `repository/branch`, falls back to the worktree folder without a branch, and shows a detached checkout by its commit.
-A checkout of a workspace shows the workspace's name first, as `workspace · repository/branch`; see [Name the workspace](shared-records.md#name-the-workspace).
-Checkouts whose records live in one shared store form one workspace, with the name kept in its store, or until one is set named after the store's folder or, for a remote store, after its repository, with one count of open questions and each checkout listed under it as `repository / branch`, because their roadmap, initiatives, and questions are the same, whichever repository each checkout belongs to.
-Choose the workspace's name to open its records through the checkout already open, else one an agent session is using, else the one you used last.
-Every checkout of a workspace shows the same roadmap, initiatives, and questions, so choose a checkout only for its own source files and index.
-Every other recent project is listed under its repository, even a repository with one checkout, with its open questions.
+All Prism sessions of one user share one review app on one local port, and the app shows workspaces.
+A workspace is one record store with every checkout and repository on this machine that shares it, and a project that keeps its records itself is a workspace of one.
+Every spelling of one store, such as its HTTPS and SSH URLs, names one workspace.
+Each workspace has its own page at `w/<id>/` below the app's address, whichever checkout opened it.
+The switcher in the top bar lists workspaces only, named by the workspace name kept in the store, else after the store's last path segment, or, for a project without a store, after its folder; see [Name the workspace](shared-records.md#name-the-workspace).
+Under each workspace's name it lists its repositories and how many of their checkouts this machine has, and its tooltip names the store and each checkout's folder, as information rather than places to open.
+Each entry marks a workspace that an agent session is using now and counts its open questions, and the switcher keeps the entries in name order, so they never move while you look.
 The switcher's counts of open questions follow a question that an agent recorded or answered within about 15 seconds, and one answered in the browser within about 5 seconds.
-The switcher marks the projects an agent session is using now, and lists workspaces first and then repositories, each in name order, so entries never move while you look.
+The switcher's button shows the workspace's name first, as `workspace · repository/branch`, naming the checkout whose source files and index the page shows: the checkout that presented a review last.
+An older link to a checkout's page, which has `p/<id>/` in its address, opens the same page of the checkout's workspace, and an artifact it names by the checkout's path opens by its place in the store.
+Open tabs name each store artifact by its place in the store, so a tab opened from one checkout stays the same artifact from every other checkout of the workspace.
+The app's own address opens the workspace an agent session used most recently, else the workspace used most recently.
+With no workspace yet, it shows a page that offers to add one, and opens the first workspace as soon as you add it or a Prism session or `prism review` in a project adds it.
 When an agent presents a review for another project while a tab that can make changes is open, that tab shows a notice with a link instead of a second tab opening.
+
+### Every scope in one view
+
+A workspace's page shows the artifacts of every scope its store holds together: the workspace, each repository, and each repository's components, also the repositories with no checkout on this machine.
+The **Store** section at the foot of the sidebar lists each scope by its label, `workspace`, the repository, or `<repository>/<component>`, with its count of artifacts, and each scope opens to list its artifacts by their place in it, such as `requirements/billing.md`.
+A scope lists its first 50 artifacts there, and the Jump palette finds every other one.
+Each store artifact's page names its scope in a label beside its heading and in its Review card, and shows its place in the store, such as `repositories/api/requirements/billing.md`.
+The page names a store artifact by that place, `store:<location>`, in its tabs, links, and address, never by a checkout's path, so one link opens the same file from every checkout and from a workspace with no checkout.
+A link or tab that still names a checkout's path opens the store artifact at that path.
+
+The scope chips above the list are the scope filter: select one or more scopes to show only their artifacts in the sidebar and the Jump palette, select a chosen chip again to drop it, and select **All scopes** to show every scope again.
+The filter stays in the page's address as `scopes=<label>,<label>`, so it survives a reload and a shared link, and it never changes the workspace the page shows.
+
+A relative Markdown link in a store artifact opens the artifact it names, looked for first beside the artifact's place in the store, and then at the path the link names from the file's checkout path, as a checkout of its repository on this machine configures its folders, or as Prism's default folders do without one, in the file's own scope or else the workspace scope.
+A link whose path falls outside every artifact folder names a code file of the artifact's repository, or, for a workspace artifact, of the checkout the page reads through.
+It opens that file from a checkout of the repository on this machine that offers it for review, in a tab named `code:<repository>:<path>`.
+A file that no registered checkout offers opens from the repository's code clone, while its code content is on, at the remote's default branch, the branch that the remote's `HEAD` named at the clone's last fetch; the tab shows that branch's label, and a checkout that offers the file always wins over the clone.
+A link to a secret by its file name, such as `.env` or a private key, never opens from the clone.
+A binary file or a file over 512 KiB still shows as a link, and opening it says that the file is not shown because it is binary or over 512 KiB, rather than that it was moved or deleted.
+When no checkout of that repository is registered on this machine and its code clone does not hold the file, the link keeps its text and shows **not available on this machine** beside it, and the page's heading counts such links apart.
+A link that names no artifact and no file keeps its text and shows **link not found** beside it, and the page's heading counts such links.
+An image, a link inside a fenced code block of backticks or tildes, and a link inside inline code are not links.
+The Jump palette lists each store artifact once, names its scope in its row, and finds only the artifacts of the scopes the filter shows.
+
+A store that holds no artifacts yet, because no Prism session moved a checkout's files into it, shows a note in the **Store** section that names its repositories and says that each keeps its artifacts in its checkouts until a Prism session there moves them into the store.
+
+### Code content
+
+The **Code** page in the sidebar's **Library** lists each repository of the workspace with its code content state: **Off**, **On**, or **Unreachable**.
+Choose **Turn code content on** for a repository to have Prism keep a clone of its code on this machine, also when this machine has no checkout of it.
+Prism clones the first remote that the store's registration of the repository lists, with the machine's Git configuration and credential helpers and without asking for a password on a terminal, into `code/` of its state directory, one clone per remote.
+The clone is bare and blobless: it holds every branch of the remote with its commits and folders, and it fetches a file's contents only when someone opens the file, so it uses little disk.
+A repository whose registration lists no remote cannot take code content.
+Only a tab that can make changes turns code content on or off; see [Which tabs can make changes](#which-tabs-can-make-changes).
+Which repositories have code content on survives a restart of the app.
+
+While a page of the workspace is open, each fetch of the workspace also fetches every repository with code content on, bringing new branches and dropping branches that left the remote.
+When a repository's remote cannot be reached, the Code page shows it as **Unreachable** with Git's reason, and the clone keeps what it fetched last; when the first clone fails, Prism keeps no folder and tries the clone again at the next fetch.
+For a repository with code content on, the Code page lists the files and folders of every branch, each with the labels of the branches that hold it, and opens a file to show each version of it with the labels of the branches that hold that version, so it never asks you to choose a branch.
+It shows no secret, binary file, or file over 512 KiB, and it never names the Git host's address.
+Choose **Turn code content off** to delete the repository's clone from this machine.
+Removing an added workspace that leaves the switcher also turns code content off for each of its repositories and deletes each clone that no other workspace on this machine still uses.
+Code clones never show a password prompt or a credential dialog, because a teammate can change the remote they fetch from; they sign in only through a credential helper or SSH key that answers without asking.
+
+### A slice's files after verification
+
+The **Files** tab of a slice page lists, under **Verified files**, every file that the slice's latest passing verification run recorded: each file whose content differs from the slice's start content, and its frozen tests.
+Each run records only a fingerprint of each file, its Git blob hash, and never its content.
+While the repository's code content is on, the page reads each file at the verified commit when a branch of the repository holds that commit.
+After a squash merge or force push removes the verified commit, the page reads the files at the commit of the default branch that Prism recorded when the initiative shipped.
+Each file is marked **same as verified** when its content at that commit is the content the run tested, and **changed after verification** when it differs, as for a file the run tested with an uncommitted change.
+When neither commit is in the repository's code clone, or the repository's code content is off or unreachable, each file is **not available** and the card says why; a slice without a passing run has no verified files yet.
+
+Work on a slice that exists only on the machine that holds it, unpushed or uncommitted, shows only as its presence under **Work in progress**, such as `in progress in feature-x on vm, not pushed`, named from the slice's latest verification run and its live claim, and never as its content.
+The review app shows no content of a commit that no branch of a code clone holds.
+
+### Add a workspace from its store
+
+Choose **Add workspace…** in the switcher, or **Add a workspace** on the page without one, and give the store's address: an HTTPS or SSH URL, a `host:path` address such as `git@github.com:acme/store.git`, or the absolute path of a folder.
+Only a tab that can make changes adds or removes a workspace; see [Which tabs can make changes](#which-tabs-can-make-changes).
+Prism clones only the store, into `stores/` of its state directory, with the machine's Git configuration and credential helpers, and never asks for a password on a terminal.
+A store that this machine already keeps, because a checkout here names it, is added without cloning.
+An address that carries credentials is refused before Git runs: a user name, password, or token in an HTTP or HTTPS URL, any user name in a `git://` URL, a password in SSH user information, or a query or fragment, which can carry a token.
+An SSH login name such as the `git` of `git@github.com:acme/store.git` is no credential and is accepted, because SSH signs in with the machine's keys.
+Credentials come from the machine's Git configuration, such as a credential helper or SSH keys.
+When the clone fails, the dialog shows Git's reason without any user name, password, or token, and Prism keeps no folder and no workspace.
+Prism also refuses, and leaves as it is, a folder at the clone's place in `stores/` that is no clone of that store.
+A store with no commit yet is added only after you confirm it with **Add empty store**.
+When the store turns out to be one this machine already keeps under another address, such as an SSH host alias, the address joins that workspace instead, which Prism tells by the store's first commit.
+A plain `http://` or `git://` address always stays a workspace of its own with its own clone: it never joins the workspace of an encrypted address such as HTTPS or SSH, and an encrypted address never joins it.
+An added workspace stays in the switcher across restarts of the app until you remove it.
+Until a checkout of one of its repositories is registered with the app, its page reads the records from the store's clone on this machine, and the switcher's button shows the workspace's name alone.
+An answer, comment, or approval that you give on that page is committed in the store's clone and pushed to the store, as an agent's record write is.
+Those commits carry the clone's Git identity from the machine's Git configuration, or `Prism <prism@localhost>` when Git names none, and each change's history entry names you and this machine's review app.
+
+### Keep a workspace in sync
+
+While a page of a workspace whose store is a Git remote is open, the app fetches the store's upstream when the first page opens and then every 60 seconds, merges it into the store's clone on this machine, and pushes the clone's own record changes.
+When no page of the workspace is open, the app fetches nothing, and reading the page starts no fetch of its own.
+After a fetch fails, the next one waits twice as long as the wait before it, up to 15 minutes, until a fetch succeeds, so a store that cannot be reached costs at most one Git process every 15 minutes.
+A checkout whose `.prism/workflow.md` turns Store sync off is never synced by the app.
+The sync item in the status bar shows when the workspace last synced, such as **Synced 2 min ago**.
+When the store cannot be reached, it shows **Store unreachable** with the time of the last fetch that succeeded, and its tooltip and details name the store and Git's reason, without any user name, password, or token.
+The page keeps showing the copy it last synced meanwhile, and its details list when the next fetch is due.
+
+### Remove a workspace
+
+Choose **Remove** for the open workspace in the switcher.
+Removing never changes the store itself.
+Prism deletes the store's clone on this machine only when no checkout here names the store and the clone holds no commit, changed file, or saved conflict copy that is not pushed; otherwise it keeps the clone and says which checkout names the store or that the clone holds changes that are not pushed.
+A folder store is your own folder, which Prism never deletes.
+A removed workspace that still has registered checkouts stays in the switcher, no longer marked as added.
 
 The app starts with the MCP server of the first Prism session, outlives that session, and exits after 30 minutes with no session and no open viewer.
 A session of a newer Prism release replaces an app of an older release on the same port, and open review pages reload into the new version.
@@ -469,7 +573,8 @@ Each fallback also adds a line with the time, project, and reason to `fallbacks.
 A shared app that is still running but slow to answer, for example on a busy machine, counts as busy rather than gone: a session waits up to 30 seconds more for it and never starts a second app beside it.
 A session that fell back tries the shared app again at most once a minute while the review is in use, and its new review links lead to the shared app once it answers, while tabs already open on the session's own server keep working.
 
-`prism review` opens the project in the shared review app and returns.
+`prism review` opens the project's workspace in the shared review app and returns.
+`prism review --workspaces` opens the app's own address, from any folder, with a tab that can make changes when no such tab is open.
 It opens the system browser only when no review tab that can make changes is open, and such a tab shows the project or a notice with a link to it instead.
 When the shared app cannot start or `PRISM_REVIEW_APP=off` is set, `prism review` serves the review itself until you stop it with `Ctrl-C`.
 

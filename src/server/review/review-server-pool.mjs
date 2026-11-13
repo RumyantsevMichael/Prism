@@ -181,6 +181,19 @@ export function createReviewServerPool({ start = startReviewServer, app } = {}) 
   return { get, close, register, startApp };
 }
 
+/** prism review --workspaces opens the review app's root, its workspace list, with a write grant, from any folder; it needs the shared review app. */
+export async function startWorkspacesReview({ env = process.env, openBrowser: browserOpener = openBrowser, app = {} } = {}) {
+  if (reviewAppDisabled(env)) throw new Error("the workspace list is served by the shared review app, which PRISM_REVIEW_APP turns off here.");
+  const client = createReviewAppClient({ directory: reviewAppDirectory(env), ...app });
+  try {
+    const answer = await client.presentRoot();
+    const opened = answer.open ? Boolean(await browserOpener(withWriteGrant(answer.url, answer.writeGrant))) : false;
+    return { url: answer.url, opened };
+  } finally {
+    await client.close();
+  }
+}
+
 // The prism review command presents through the user's review app and returns; it holds a server only when it serves the review itself.
 export async function startStandaloneReview({ projectRoot = process.cwd(), artifactPath, env = process.env, start = startReviewServer, openBrowser: browserOpener = openBrowser, app = {} } = {}) {
   const root = await realpath(path.resolve(projectRoot));

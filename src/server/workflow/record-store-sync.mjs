@@ -5,6 +5,7 @@ import { copyFile, lstat, mkdir, open, readdir, readFile, rename, rm, rmdir, wri
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, IDENTITY_FILE_MAX, identityContent, identityOf, letterCaseKey, locationIdentity, STATUS_RECORD_NAME, uniqueIdentities, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
+import { markArtifactIndexStale } from "./artifact-index.mjs";
 import { renameWhenFree, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { commitProblem, gitFileName, isLinkMode, LINK_TARGET_BYTES_MAX, linkTargetProblem, TREE_DEPTH_MAX, TREE_DEPTH_TEXT, tooDeepTree, treeEntries, treeProblems } from "./git-objects.mjs";
 import { canonicalJson, hasRecordMerge, nestedDeeperThan, recordMergeFor } from "./record-merge.mjs";
@@ -821,6 +822,26 @@ async function moveBranch(base, commit, previous, message) {
 const RAW_FILES = "raw-files.json";
 const migrated = new Set();
 const syncLockOptions = () => ({ renew: true, abandonWhenUnrenewed: true, staleMs: SETTINGS.gitTimeoutMs * 2 });
+
+/**
+ * Move a clone's folder from source to target while holding the clone's sync lock, so no sync of source, from this or an earlier Prism, runs while it moves.
+ * qualifies() runs under the lock and decides whether the move happens; renameFolder does the move.
+ * It answers whether the folder moved, throws an error with code lock_timeout when a sync holds the lock, and throws the rename's error when the move fails, leaving source as it was.
+ * The lock moves with the folder and is removed at its new place.
+ */
+export async function moveUnderSyncLock(source, target, qualifies, renameFolder = rename) {
+  await mkdir(syncPath(source), { recursive: true });
+  const lock = `${syncPath(source, "sync")}.lock`;
+  return withFileLock(syncPath(source, "sync"), async () => {
+    if (!(await qualifies())) return false;
+    const token = (await readFile(lock, "utf8").then(parseStoreJson).catch(() => null))?.token;
+    await renameFolder(source, target);
+    const moved = path.join(target, path.relative(source, lock));
+    const owner = await readFile(moved, "utf8").then(parseStoreJson).catch(() => null);
+    if (token && owner?.token === token) await rm(moved, { force: true });
+    return true;
+  }, undefined, { ...syncLockOptions(), timeoutMs: 1, closeHandle: true });
+}
 
 /**
  * Prepare a store's files for syncing, once per clone, before any Prism write in this process reaches them: an earlier Prism checked a first clone's files out through Git's line-ending conversion,
@@ -1902,6 +1923,8 @@ async function replaceFiles(base, run, { from, diskTree = from, to, copies, thei
     }
   };
   const applied = await apply(base, from, to, options, progress, held, diskTree);
+  // The files the sync replaced change what the store's artifact listings hold.
+  await markArtifactIndexStale(base);
   if (applied) for (const [file, entry] of copies) if (entry && held.get(file) === entry) { held.delete(file); run.withheld?.delete(file); }
   return { applied, conflicts: stage ? await settleStage(base, stage, applied) : [] };
 }
@@ -3218,4 +3241,21 @@ export async function pruneArtifactFolders(base, target) {
       await rmdir(folder);
     } catch { return; }
   }
+}
+
+/**
+ * What a store clone holds that its upstream lacks: { commits, files, conflicts }, commits whether any branch has a commit that no remote branch holds,
+ * files whether a store file on disk differs from its branch's commit, is missing from it, or is a file the commit lacks, and conflicts whether a saved local copy of a conflict waits.
+ * It reads Git's objects and the files' bytes and changes nothing, so a caller decides from it whether deleting the clone loses work.
+ */
+export async function localStoreChanges(base) {
+  const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  const ahead = await git(base, ["rev-list", "--count", "--branches", "--not", "--remotes"]);
+  const commits = !ahead.ok || Number(ahead.text) > 0 || await unpublished(base);
+  const committed = head.ok ? (await partition(await treeFiles(base, head.text))).shared : new Map();
+  const withheld = new Map();
+  const onDisk = await localFiles(base, committed, withheld);
+  let files = withheld.size > 0 || onDisk.size !== committed.size;
+  for (const [file, entry] of onDisk) if (!files && committed.get(file)?.object !== entry.object) files = true;
+  return { commits, files, conflicts: (await listSavedConflicts(base)).length > 0 };
 }
