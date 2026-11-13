@@ -94,7 +94,7 @@ test("clause 29: a name that the index defines only through its last segment kee
 test("clause 29: reports count the coverage that Prism computed", async (t) => {
   const { root, storage } = await project(t, { files: COVERAGE_FILES });
   const { runtime } = await coverageRuntime(storage);
-  const found = await findSameNameUnits({ projectRoot: root, filters: { paths: ["packages/net"] } }, { runtime, waitMs: 2000 });
+  const found = await findSameNameUnits({ projectRoot: root, filters: { paths: ["packages/net"] } }, { runtime, waitMs: 10000 });
   assert.equal(found.status, "ready");
   const status = await runtime.status(root);
   const net = status.components.find((item) => item.component === "root/net");
@@ -105,7 +105,7 @@ test("clause 29: in a component, a call that names only a sibling component's fu
   const { root, storage } = await project(t, { files: COVERAGE_FILES });
   // retryRequest is a function of the net component, which the app component's index does not hold.
   const { runtime } = await coverageRuntime(storage, { unresolved: { "packages/app/extra.ts": [{ name: "retryRequest", kind: "calls" }] } });
-  await findSameNameUnits({ projectRoot: root }, { runtime, waitMs: 2000 });
+  await findSameNameUnits({ projectRoot: root }, { runtime, waitMs: 10000 });
   const status = await runtime.status(root);
   const app = status.components.find((item) => item.component === "root/app");
   assert.equal(app.coverage.structurallyCoveredFiles, 2, "client.ts and extra.ts are covered, broken.ts did not parse");

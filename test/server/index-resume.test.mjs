@@ -29,8 +29,9 @@ const records = (bytes) => Array.from({ length: Math.floor(bytes.length / RECORD
 
 test("clause 7: a build that keeps making progress runs well past the stall period", async (t) => {
   const { root, storage } = await project(t, { components: null });
-  const { runtime, control } = await stagedRuntime(storage, { stallMs: 150 });
-  control.delayMs = 80;
+  // Each batch arrives well inside the stall period, with room for the snapshot check that a slow machine runs before the first report, and the build lasts longer than that period.
+  const { runtime, control } = await stagedRuntime(storage, { stallMs: 1200 });
+  control.delayMs = 400;
   await prepare(runtime, root);
   const status = await statusIs(runtime, root, "ready");
   assert.equal(status.coverage.newEmbeddings, ORDER.length);
@@ -84,7 +85,7 @@ test("clauses 2, 3, and 11: each embedded batch is saved as it arrives, and no s
   await control.reached("packages/net/retry.ts");
   const store = await storeOf(runtime, root);
   const saved = await until(async () => { const bytes = await readFile(store).catch(() => null); return bytes?.length === 3 * RECORD && bytes; }, "The three embedded fragments were not saved.");
-  assert.equal((await stat(store)).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal((await stat(store)).mode & 0o777, 0o600);
   const expected = await keysOf(root, ORDER.slice(0, 3));
   assert.deepEqual(records(saved).map((record) => record.key), expected);
   assert.deepEqual(records(saved)[0].vector, fakeVector(expected[0]));
