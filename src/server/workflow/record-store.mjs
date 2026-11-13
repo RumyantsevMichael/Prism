@@ -310,7 +310,9 @@ async function resolveStore(projectRootPath) {
 async function checkedRepository(store) {
   const key = `${store.root}\0${store.base}`;
   const cached = nameChecks.get(key);
-  let pending = cached && Date.now() - cached.at < MIGRATION_TTL_MS ? cached.pending : null;
+  // A check still running is never checked again beside itself: its confirming sync can wait for the store's sync lock longer than the trust lasts,
+  // and a second check would take its own pending registration for another's and refuse, so the trust lasts from when the check settled.
+  let pending = cached && (cached.at === null || Date.now() - cached.at < MIGRATION_TTL_MS) ? cached.pending : null;
   if (!pending) {
     pending = (async () => {
       const name = (await readWorkflowConfig(store.root)).workspace?.repository ?? null;
@@ -318,7 +320,9 @@ async function checkedRepository(store) {
     })();
     // A refusal is trusted as long as an acceptance, so a refused checkout does not ask Git again on every operation; any other failure, and a refusal because a registration is still pending, is checked again at once.
     pending.catch((error) => { if ((!REPOSITORY_REFUSALS.includes(error?.code) || error?.pending === true) && nameChecks.get(key)?.pending === pending) nameChecks.delete(key); });
-    nameChecks.set(key, { at: Date.now(), pending });
+    const entry = { at: null, pending };
+    nameChecks.set(key, entry);
+    pending.then(() => { entry.at = Date.now(); }, () => { entry.at = Date.now(); });
   }
   return (await pending).repository;
 }
