@@ -149,9 +149,13 @@ export async function networkStore(where, name = "store", options = {}) {
 }
 
 /** A checkout of a new repository that names store as its record store with sync on, registered in the store by one record read. */
+// The server that made the read stops before the checkout is returned: Windows refuses to remove a folder that a running process works in,
+// so a test that removes the checkout, as one whose checkout leaves the machine does, would otherwise fail with EBUSY.
 export async function storeCheckout(context, where, name, store, options = {}) {
   const root = await checkout(where, name, { store, sync: "on", ...options });
-  ok(await (await server(context, where, root)).call("get_roadmap", {}));
+  const reader = await server(context, where, root);
+  ok(await reader.call("get_roadmap", {}));
+  await reader.close();
   return root;
 }
 

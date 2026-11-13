@@ -24,7 +24,9 @@ async function repository(context) {
   git(top, "commit", "-q", "-m", "one");
   const before = git(top, "rev-parse", "HEAD^{tree}");
   await writeFile(path.join(project, "src", "kept.js"), "changed\n");
-  await writeFile(path.join(project, "src", "a*b.js"), "pattern\n");
+  // a[b].js is a pathspec pattern that Windows allows in a file name, and ab.js the path that the pattern would match.
+  await writeFile(path.join(project, "src", "a[b].js"), "pattern\n");
+  await writeFile(path.join(project, "src", "ab.js"), "matched\n");
   await rm(path.join(project, "src", "gone.js"));
   await writeFile(path.join(top, "outside.txt"), "two\n");
   git(top, "add", "-A");
@@ -35,7 +37,8 @@ async function repository(context) {
 test("changedBlobs lists a project's changed paths relative to it, with null for a removed path", async (context) => {
   const { project, before, after, blob } = await repository(context);
   assert.deepEqual(await changedBlobs(project, before, after), [
-    { path: "src/a*b.js", blob: blob("src/a*b.js") },
+    { path: "src/a[b].js", blob: blob("src/a[b].js") },
+    { path: "src/ab.js", blob: blob("src/ab.js") },
     { path: "src/gone.js", blob: null },
     { path: "src/kept.js", blob: blob("src/kept.js") }
   ]);
@@ -45,7 +48,7 @@ test("changedBlobs lists a project's changed paths relative to it, with null for
 
 test("objectsAt reads project-relative paths literally, with null for a path the tree does not hold", async (context) => {
   const { project, after, blob } = await repository(context);
-  const found = await objectsAt(project, after, ["src/a*b.js", "src/gone.js", "src/kept.js"]);
-  assert.deepEqual([...found], [["src/a*b.js", blob("src/a*b.js")], ["src/gone.js", null], ["src/kept.js", blob("src/kept.js")]]);
+  const found = await objectsAt(project, after, ["src/a[b].js", "src/gone.js", "src/kept.js"]);
+  assert.deepEqual([...found], [["src/a[b].js", blob("src/a[b].js")], ["src/gone.js", null], ["src/kept.js", blob("src/kept.js")]]);
   assert.equal(await objectsAt(project, "0".repeat(40), ["src/kept.js"]), null);
 });
