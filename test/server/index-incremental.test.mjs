@@ -21,6 +21,10 @@ const build = async (runtime, root, count, control) => {
 };
 const hashes = async (root, files) => Object.fromEntries(await Promise.all(files.map(async (file) => [file, sha256(await readFile(path.join(root, file), "utf8"))])));
 
+// A build that stalls on purpose is stopped after this period, which must outlast a slow runner's start before the build's first report,
+// since a Windows runner took more than 250 ms there and the build then stalled while starting rather than in the phase a test holds.
+const STALL_MS = 3000;
+
 test("clauses 22 and 23: a first build copies every file into the kept mirror and passes no change lists", async (t) => {
   const { root, storage } = await project(t, { components: null });
   const { runtime, control } = await stagedRuntime(storage);
@@ -60,7 +64,7 @@ test("clauses 6 and 23: a rebuild copies only changed files, removes deleted one
 
 test("clause 23: a change that a stopped build copied but never indexed is still named to the next build", async (t) => {
   const { root, storage, write } = await project(t, { components: null });
-  const first = await stagedRuntime(storage, { stallMs: 250 });
+  const first = await stagedRuntime(storage, { stallMs: STALL_MS });
   await build(first.runtime, root, 1, first.control);
   await write("README.md", `${FILES["README.md"]}Changed.\n`);
   first.control.hold("README.md", "structure");

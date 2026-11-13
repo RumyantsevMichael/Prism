@@ -14,6 +14,9 @@ const { openNativeRepositoryIntelligence } = await import("../../dist/server/rep
 const { searchRepositoryConcepts } = await import("../../dist/server/repository-intelligence/semantic-native-provider.mjs");
 const { readProgressRecords } = await import("../../dist/server/repository-intelligence/index-progress.mjs");
 
+// A build that stalls on purpose is stopped after this period, which must outlast a slow runner's start before the build's first report,
+// since a Windows runner took more than 250 ms there and the build then stalled while starting rather than in the phase a test holds.
+const STALL_MS = 3000;
 const RECORD = 32 + 384 * 4;
 // The files of the fixture project in path order, which is the order in which the staged runtime embeds them.
 const ORDER = [".prism/workflow.md", "README.md", "packages/app/client.ts", "packages/net/retry.ts", "packages/net/timeout.ts"];
@@ -40,7 +43,7 @@ test("clause 7: a build that keeps making progress runs well past the stall peri
 
 test("clauses 4, 8, and 10: a build that only repeats its progress is stopped as stalled in its phase", async (t) => {
   const { root, storage } = await project(t, { components: null });
-  const { runtime, control } = await stagedRuntime(storage, { stallMs: 250 });
+  const { runtime, control } = await stagedRuntime(storage, { stallMs: STALL_MS });
   control.heartbeat = true;
   control.hold("packages/net/retry.ts");
   await prepare(runtime, root);
@@ -59,7 +62,7 @@ test("clauses 4, 8, and 10: a build that only repeats its progress is stopped as
 
 test("clause 10: a stalled component names its phase, and the next call prepares it again", async (t) => {
   const { root, storage } = await project(t);
-  const { runtime, control } = await stagedRuntime(storage, { stallMs: 250 });
+  const { runtime, control } = await stagedRuntime(storage, { stallMs: STALL_MS });
   control.hold("packages/net/retry.ts", "structure");
   const search = () => searchRepositoryConcepts({ projectRoot: root, query: "retry the request", filters: { paths: ["packages/net"] } }, { runtime, waitMs: 0 });
   await search();
@@ -102,7 +105,7 @@ test("clauses 2, 3, and 11: each embedded batch is saved as it arrives, and no s
 
 test("clauses 12 and 14: a later session reuses every embedding that a stalled build saved", async (t) => {
   const { root, storage } = await project(t, { components: null });
-  const first = await stagedRuntime(storage, { stallMs: 250 });
+  const first = await stagedRuntime(storage, { stallMs: STALL_MS });
   first.control.hold("packages/net/timeout.ts");
   await prepare(first.runtime, root);
   await statusIs(first.runtime, root, "degraded");
@@ -167,7 +170,7 @@ test("clause 13: a complete index leaves one saved record per distinct embedding
 
 test("clause 14: a component's later build reuses what its stalled build saved, in its own store", async (t) => {
   const { root, storage } = await project(t);
-  const first = await stagedRuntime(storage, { stallMs: 250 });
+  const first = await stagedRuntime(storage, { stallMs: STALL_MS });
   first.control.hold("packages/net/timeout.ts");
   await searchRepositoryConcepts({ projectRoot: root, query: "retry", filters: { paths: ["packages/net"] } }, { runtime: first.runtime, waitMs: 0 });
   await until(async () => (await first.runtime.status(root)).components?.find((item) => item.component === "root/net")?.status === "degraded", "The net component did not stall.");
