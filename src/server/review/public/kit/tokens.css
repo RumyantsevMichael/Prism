@@ -82,6 +82,7 @@
   --prism-icon-size-sm: 14px;
   --prism-icon-size-xs: 12px;
   --prism-mark-size: 20px;
+  --prism-mark-size-lg: 40px;
   --prism-glyph-size: 10px;
   --prism-dot-size: 7px;
   /* A canvas's dotted grid: the spacing at 100% zoom and the radius of each dot. */
@@ -381,6 +382,7 @@
   --prism-icon-size-sm: 16px;
   --prism-icon-size-xs: 13px;
   --prism-mark-size: 22px;
+  --prism-mark-size-lg: 44px;
   --prism-avatar-size: 24px;
   --prism-avatar-size-sm: 18px;
   --prism-avatar-size-lg: 36px;

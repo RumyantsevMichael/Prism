@@ -1,4 +1,5 @@
 import { relativeTime } from "./indexing.js";
+import { everyMinute } from "../kit/claim-time.js";
 import { diffHtml } from "./line-diff.js";
 import { escapeHtml, formatTime, keyValues, plural } from "./util.js";
 
@@ -57,8 +58,8 @@ function storeFacts(store, status, workspace = null) {
     ["Records", where],
     ["Folder", store.location && store.kind !== "project" ? `<code>${escapeHtml(store.location)}</code>` : null],
     ["Sync", store.kind === "project" ? null : store.sync ? "on" : "off"],
-    ["Last sync", status ? `${escapeHtml(STATES[status.state] ?? status.state)} · ${escapeHtml(relativeTime(status.at))} <span class="muted">(${escapeHtml(formatTime(status.at))})</span>` : null],
-    ["Last fetched", workspace ? workspace.lastSyncedAt ? `${escapeHtml(relativeTime(workspace.lastSyncedAt))} <span class="muted">(${escapeHtml(formatTime(workspace.lastSyncedAt))})</span>` : "Not yet" : null],
+    ["Last sync", status ? `${escapeHtml(STATES[status.state] ?? status.state)} · <prism-time datetime="${escapeHtml(status.at)}"></prism-time> <span class="muted">(${escapeHtml(formatTime(status.at))})</span>` : null],
+    ["Last fetched", workspace ? workspace.lastSyncedAt ? `<prism-time datetime="${escapeHtml(workspace.lastSyncedAt)}"></prism-time> <span class="muted">(${escapeHtml(formatTime(workspace.lastSyncedAt))})</span>` : "Not yet" : null],
     ["Next fetch", workspace?.nextFetchAt ? escapeHtml(formatTime(workspace.nextFetchAt)) : null],
     ["Ahead", status?.ahead ? plural(status.ahead, "local commit") : null],
     ["Behind", status?.behind ? plural(status.behind, "upstream commit") : null]
@@ -96,6 +97,9 @@ export function createRecordStoreStatus({ storeButton, storeLabel, syncPart, syn
   const content = document.createElement("div");
   content.className = "store-details";
   dialog.append(content);
+
+  // The status bar's "Synced 5 min ago" counts on with the clock, also between syncs.
+  everyMinute(() => update(store, status, workspace));
 
   function update(nextStore, nextStatus, nextWorkspace = null) {
     store = nextStore ?? null;

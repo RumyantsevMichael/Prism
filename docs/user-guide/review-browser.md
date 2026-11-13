@@ -34,9 +34,11 @@ Its menu offers the themes System, Light, and Dark, the densities Compact and Co
 A choice applies at once, and System follows the operating system again.
 **Component catalog** opens the review app's component catalog in a new tab, which shows every control of the interface with its options, states, and keys.
 The catalog's own toolbar changes its theme, density, and width for that tab only, and stores nothing.
+The small **About Prism** button just before **Appearance** names the version of Prism that runs the review app and also opens the component catalog.
 
 The top bar holds the Prism mark, the workspace switcher, the search button that opens the Jump palette, and **Who's working**.
 The status bar at the bottom shows where the project's records live, naming a shared store, their sync state, and the repository index.
+Times in words, such as when a question was asked, how long ago the records synced, or how long a claim has left, count on while the page is open, and hovering one shows the exact date and time.
 The rail at the left edge switches between five places, and the sidebar beside it shows only the current place, under its title and a line that says what it holds.
 **Attention** shows what waits on you, and the rail's Attention button carries the number of recorded questions that wait for an answer.
 Its sidebar lists **Everything**, then under **By kind** **Questions**, **Review findings**, **Failed verifications**, **Blocked work**, **Ready to ship**, and **Problems**, each with its count, also at 0, then under **By work** the three initiatives with the most items and a row such as `2 more` that shows the rest below it, and under **Answered** **Answered in the last 7 days**.
@@ -127,6 +129,7 @@ Approving the correctness review of a finished initiative lets the agent ship it
 The approval of a requirement or ADR takes the same answers, and its card names the file, its scope, its recorded status, and the whole status that approving records, wrapped onto further lines when it is long.
 Approving writes that status into the file's `Status:` line, and for `Approved` the day you answer into its `Approved:` line, as [Statuses change only at gates](shared-records.md#statuses-change-only-at-gates) describes.
 A decision takes one of its options, a note in your own words, or both.
+To answer in your own words after choosing an option, choose that option again, or press **Clear choice** beside **Your answer**.
 An action request needs only Mark as done, with an optional note.
 The button that sends your answer stays disabled until the answer is complete, and the text beside it says what is missing.
 While a question waits, the tab title starts with the number of waiting questions and the tab icon shows a dot, so a background tab shows it too.
