@@ -118,8 +118,11 @@ async function shutdownApp(directory) {
   }
 }
 
+// The shared app starts within 5 s on a person's machine, and a session that waits longer serves the project itself, but a busy Windows runner can take longer to start it,
+// so a test that starts the real app waits 30 s for it unless it names its own wait or launches a stand-in.
 function pool(context, options) {
-  const value = createReviewServerPool(options);
+  const real = options?.app && options.app.startTimeoutMs === undefined && options.app.launch === undefined;
+  const value = createReviewServerPool(real ? { ...options, app: { ...options.app, startTimeoutMs: 30000 } } : options);
   defer(context, () => value.close());
   return value;
 }

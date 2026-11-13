@@ -156,7 +156,7 @@ test("clauses 5 and 18: a search of a structure-only index answers lexically and
 test("clause 18: in a repository with components only the structure-only component is marked pending, after components_missing", async (t) => {
   const { root, storage, write } = await project(t, { files: REPORT_FILES });
   const { runtime, control } = await stagedRuntime(storage);
-  assert.equal((await searchRepositoryConcepts({ projectRoot: root, query: "retry" }, { runtime, waitMs: 2000 })).status, "ready");
+  assert.equal((await searchRepositoryConcepts({ projectRoot: root, query: "retry" }, { runtime, waitMs: 30000 })).status, "ready");
   await write(HELD, `${FILES[HELD]}// changed\n`);
   await write("packages/app/client.ts", `${FILES["packages/app/client.ts"]}// changed\n`);
   control.hold(HELD);

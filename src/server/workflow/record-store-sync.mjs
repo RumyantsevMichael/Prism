@@ -2627,6 +2627,43 @@ async function readBlobs(base, wanted) {
 }
 const readBlob = async (base, file, entry, max) => (await readBlobs(base, [{ file, entry, max }]))[0];
 
+/**
+ * A reader of the bounded blobs that a run of files takes, in the files' order: entriesOf(file) names the entries the run reads for a file.
+ * It reads the blobs of the next files together, in batches of bounded size, so a sync that replaces many files takes a few Git processes rather than two for each file,
+ * which on Windows, where a process starts slowly, decided how long a sync of a thousand comments took.
+ * A blob it did not read in a batch, as one above its kind's bound or one of no listed file, is read by boundedBlob, which refuses one above the bound by name.
+ */
+async function boundedBlobReader(base, files, entriesOf, batchBytes = 32 * 1024 * 1024) {
+  const { blobMax } = await storeLayout();
+  const wanted = files.map((file) => entriesOf(file).filter((entry) => entry && FILE_MODES.has(entry.mode)));
+  const info = await objectInfo(base, [...new Set(wanted.flat().map((entry) => entry.object))]);
+  const indexOf = new Map(files.map((file, index) => [file, index]));
+  const cache = new Map();
+  let next = 0;
+  return async (file, entry) => {
+    const index = indexOf.get(file);
+    if (entry && FILE_MODES.has(entry.mode) && !cache.has(entry.object) && index !== undefined && index >= next) {
+      cache.clear();
+      const batch = [];
+      let total = 0;
+      let end = index;
+      // A batch takes whole files while their blobs fit in batchBytes, and always its first file, so a file is never split across two batches.
+      while (end < files.length) {
+        const readable = wanted[end].filter((item) => { const found = info.get(item.object); return found?.type === "blob" && found.size <= blobMax(files[end]); });
+        const bytes = readable.reduce((sum, item) => sum + info.get(item.object).size + 128, 0);
+        if (end > index && total + bytes > batchBytes) break;
+        for (const item of readable) batch.push({ file: files[end], entry: item });
+        total += bytes;
+        end += 1;
+      }
+      next = end;
+      const contents = await readBlobs(base, batch);
+      batch.forEach((item, at) => { if (Buffer.isBuffer(contents[at])) cache.set(item.entry.object, contents[at]); });
+    }
+    return entry && cache.has(entry.object) ? cache.get(entry.object) : boundedBlob(base, file, entry);
+  };
+}
+
 // The bytes of a blob that the sync writes to disk, which a store holds within its bound wherever the sync writes from: a blob above it is refused by name rather than read.
 async function boundedBlob(base, file, entry) {
   const bytes = await readBlob(base, file, entry);
@@ -3095,18 +3132,19 @@ async function apply(base, from, to, options, progress = {}, held = new Map(), d
           const listings = new Map();
           // A file is read only up to its kind's bound, so one above it is never read and holds no commit's bytes.
           const ownBytes = async (index, cache) => (await storedInSpelling(base, files[index], cache)) ? boundedBytes(targets[index], bound(files[index])) : null;
+          const blobOf = await boundedBlobReader(base, files, (file) => held.get(file)?.disk ? [after.get(file)] : [before.get(file), after.get(file), held.get(file)]);
           for (const [index, file] of files.entries()) {
             // A file withheld because it is above its kind's bound is never read: it must still be the file the sync held back, which the caller moves aside before replacing it.
             if (held.get(file)?.disk) {
               if (!(await sameDiskFile(targets[index], held.get(file).disk))) return false;
-              next.push(await boundedBlob(base, file, after.get(file)));
+              next.push(await blobOf(file, after.get(file)));
               continue;
             }
             // The branch's version is read only within its bound, as every blob the sync reads is, and one above it, which only a commit made by hand puts on the branch, is refused by name.
-            const [bytes, expected] = await Promise.all([ownBytes(index, listings), boundedBlob(base, file, before.get(file))]);
+            const [bytes, expected] = await Promise.all([ownBytes(index, listings), blobOf(file, before.get(file))]);
             // A file whose local version the sync withheld still holds that version, which the caller saved.
-            if (!sameBytes(bytes, expected) && !(held.has(file) && sameBytes(bytes, await boundedBlob(base, file, held.get(file))))) return false;
-            next.push(await boundedBlob(base, file, after.get(file)));
+            if (!sameBytes(bytes, expected) && !(held.has(file) && sameBytes(bytes, await blobOf(file, held.get(file))))) return false;
+            next.push(await blobOf(file, after.get(file)));
           }
           // A comment that this machine wrote after the sync read its comment folders, as while the sync fetched or while an update held the artifact lock, is in neither commit,
           // so the merge did not count it; where the target's comments leave it no room in its folder, it is saved, named as a comment that the folder's bound left out, and leaves the disk,

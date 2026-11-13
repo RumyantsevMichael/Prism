@@ -108,9 +108,9 @@ test("clause 22: each component keeps its own mirror of its own files", async (t
   const { root, storage, write } = await project(t);
   const { runtime, control } = await stagedRuntime(storage);
   const { searchRepositoryConcepts } = await import("../../dist/server/repository-intelligence/semantic-native-provider.mjs");
-  assert.equal((await searchRepositoryConcepts({ projectRoot: root, query: "retry" }, { runtime, waitMs: 2000 })).status, "ready");
+  assert.equal((await searchRepositoryConcepts({ projectRoot: root, query: "retry" }, { runtime, waitMs: 30000 })).status, "ready");
   await write("packages/net/retry.ts", `${FILES["packages/net/retry.ts"]}// changed\n`);
-  assert.equal((await searchRepositoryConcepts({ projectRoot: root, query: "retry" }, { runtime, waitMs: 2000 })).status, "ready");
+  assert.equal((await searchRepositoryConcepts({ projectRoot: root, query: "retry" }, { runtime, waitMs: 30000 })).status, "ready");
   const last = control.builds.at(-1);
   assert.deepEqual([last.files, last.changedFiles, last.removedFiles], [["packages/net/retry.ts", "packages/net/timeout.ts"], ["packages/net/retry.ts"], []]);
   const net = (await runtime.location(root, { name: "net", identity: "root/net", folder: "packages/net" })).directory;

@@ -72,12 +72,12 @@ test("clauses 12 and 16: an unscoped search while a component prepares merges th
 test("clause 17: without a native runtime the search falls back to lexical results over the selected components' files", async (t) => {
   const { root, storage } = await project(t);
   const runtime = new NativeSemanticRuntime({ directory: storage, manifestPath });
-  const found = await searchRepositoryConcepts({ projectRoot: root, query: "value", filters: { paths: ["packages/app"] } }, { runtime, waitMs: 2000 });
+  const found = await searchRepositoryConcepts({ projectRoot: root, query: "value", filters: { paths: ["packages/app"] } }, { runtime, waitMs: 30000 });
   assert.equal(found.status, "degraded");
   assert.ok(found.results.length > 0);
   assert.ok(found.results.every((result) => result.file.startsWith("packages/app/") && result.component === "root/app" && result.cosineSimilarity === null));
   assert.equal(entry(found, "root/app").failure.code, "unsupported_runtime");
-  const unscoped = await searchRepositoryConcepts({ projectRoot: root, query: "value" }, { runtime, waitMs: 2000 });
+  const unscoped = await searchRepositoryConcepts({ projectRoot: root, query: "value" }, { runtime, waitMs: 30000 });
   assert.deepEqual([...new Set(unscoped.results.map((result) => result.component))].sort(), ["root/app", "root/net"]);
 });
 

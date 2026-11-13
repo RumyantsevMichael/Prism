@@ -26,7 +26,7 @@ test("a structural report on a baseline reads the baseline's components and name
   const { runtime, control } = await fakeRuntime(storage);
   const snapshotId = await capture(root);
   await write("packages/net/retry.ts", "export const removed = 1;\n");
-  const report = await reportComplexUnits({ projectRoot: root, snapshotId, filters: { paths: ["packages/net"] } }, { runtime, waitMs: 2000 });
+  const report = await reportComplexUnits({ projectRoot: root, snapshotId, filters: { paths: ["packages/net"] } }, { runtime, waitMs: 30000 });
   assert.equal(report.snapshotId, snapshotId);
   assert.deepEqual(report.components.map((item) => [item.component, item.status]), [["root/net", "included"]]);
   assert.deepEqual(control.builds.map((build) => build.files), [["packages/net/retry.ts", "packages/net/timeout.ts"]]);

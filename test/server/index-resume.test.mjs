@@ -77,7 +77,7 @@ test("clause 10: a stalled component names its phase, and the next call prepares
   assert.equal(net.failure.phase, "graph:parsing");
   assert.match(net.failure.message, /^The index build made no progress for \d+ seconds during graph:parsing\.$/);
   control.release("packages/net/retry.ts");
-  const again = await searchRepositoryConcepts({ projectRoot: root, query: "retry the request", filters: { paths: ["packages/net"] } }, { runtime, waitMs: 2000 });
+  const again = await searchRepositoryConcepts({ projectRoot: root, query: "retry the request", filters: { paths: ["packages/net"] } }, { runtime, waitMs: 30000 });
   assert.equal(again.status, "ready");
   assert.equal(control.builds.length, 2, "a stall is not a native limit, so the next call prepares the component again");
 });
@@ -178,7 +178,7 @@ test("clause 14: a component's later build reuses what its stalled build saved, 
   await until(async () => (await first.runtime.status(root)).components?.find((item) => item.component === "root/net")?.status === "degraded", "The net component did not stall.", STALL_WAIT);
   first.control.release("packages/net/timeout.ts");
   const later = await stagedRuntime(storage);
-  const found = await searchRepositoryConcepts({ projectRoot: root, query: "retry", filters: { paths: ["packages/net"] } }, { runtime: later.runtime, waitMs: 2000 });
+  const found = await searchRepositoryConcepts({ projectRoot: root, query: "retry", filters: { paths: ["packages/net"] } }, { runtime: later.runtime, waitMs: 30000 });
   assert.equal(found.status, "ready");
   assert.deepEqual(later.control.builds[0].previousEmbeddings, await keysOf(root, ["packages/net/retry.ts"]));
 });

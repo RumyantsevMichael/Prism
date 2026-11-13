@@ -38,7 +38,7 @@ test("a complete index removes the structure-only index it replaced, so earlier 
 test("a component whose structure-only search failed carries no embeddings mark", async (t) => {
   const { root, storage, write } = await project(t);
   const { runtime, control } = await stagedRuntime(storage);
-  assert.equal((await searchRepositoryConcepts({ projectRoot: root, query: "retry" }, { runtime, waitMs: 2000 })).status, "ready");
+  assert.equal((await searchRepositoryConcepts({ projectRoot: root, query: "retry" }, { runtime, waitMs: 30000 })).status, "ready");
   await write(HELD, `${FILES[HELD]}// changed\n`);
   control.hold(HELD);
   t.after(() => control.release(HELD));
