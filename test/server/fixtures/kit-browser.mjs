@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { CHROMIUM_OPTIONS } from "../../../scripts/review-demo/layout-audit.mjs";
 import { defer } from "./teardown.mjs";
 
 export const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
@@ -81,7 +82,7 @@ export async function serveProject(context, projectRoot) {
 }
 
 export async function launch(context) {
-  const browser = await playwright.chromium.launch();
+  const browser = await playwright.chromium.launch(CHROMIUM_OPTIONS);
   defer(context, () => browser.close());
   return browser;
 }
@@ -336,7 +337,11 @@ export function escapes(page, selector = "body") {
           if (!parent || parent === document.body || getComputedStyle(parent).overflowX !== "visible") continue;
           const box = node.getBoundingClientRect();
           const limit = parent.getBoundingClientRect();
-          if (box.width && box.right > limit.right + 2 && box.left < limit.right) out.push(describe(node) + " overflows " + describe(parent));
+          if (!box.width || box.right <= limit.right + 2 || box.left >= limit.right) continue;
+          // A failure names the text, both right edges, and the custom element around it, so a failure seen only in CI can be read from its log.
+          let host = node;
+          while (host.parentElement && !host.localName.includes("-")) host = host.parentElement;
+          out.push(describe(node) + " overflows " + describe(parent) + " (" + JSON.stringify(node.textContent.trim().slice(0, 60)) + " ends at " + Math.round(box.right) + " past " + Math.round(limit.right) + ", displays " + style.display + " in " + getComputedStyle(parent).display + ", in " + host.outerHTML.slice(0, 900) + ")");
         }
       }
       return [...new Set(out)];

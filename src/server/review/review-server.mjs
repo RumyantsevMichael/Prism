@@ -11,7 +11,7 @@ import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { listComponents } from "../workflow/components.mjs";
 import { artifactKinds, parseWorkflowConfig, readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { RECORD_DIRECTORY, artifactPathTest, artifactsInCheckout, describeRecordStore, inArtifactStore, isStoreWithoutCheckout, outsideToolCall, keyOfPath, recordStoreOf, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
+import { RECORD_DIRECTORY, artifactPathTest, artifactsInCheckout, describeRecordStore, inArtifactStore, isStoreWithoutCheckout, outsideToolCall, keyOfPath, recordStoreOf, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile, withRecordReads } from "../workflow/record-store.mjs";
 import { artifactStoreLocation, readStoreArtifact, readStoreArtifactAt, reviewStoreArtifact, reviewStoreArtifactAt, storeArtifactLocation, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
 import { codeRefOf, parseCodeRef, resolveLinks } from "./artifact-links.mjs";
 import { checkoutsOnMachine, knownComponents, registeredRepositories } from "./workspaces.mjs";
@@ -1423,7 +1423,13 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     }
   }
 
-  async function handle(request, response, route, url) {
+  // A page's reads resolve the record store and its folders once per request; the event streams stay open for the page's life, so they read afresh.
+  function handle(request, response, route, url) {
+    if (request.method !== "GET" || route.startsWith("/api/events")) return serve(request, response, route, url);
+    return withRecordReads(() => serve(request, response, route, url));
+  }
+
+  async function serve(request, response, route, url) {
     if (await servePageRoute(request, response, route)) {
       // The page, its assets, and the preferences are the same for every page.
     } else if (route === "/api/events" && request.method === "GET") {

@@ -11,7 +11,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { ROOT } from "./project.mjs";
-import { auditPage as audit, checkCatalog, checkNames, loadPlaywright as installedPlaywright, VIEWPORTS } from "./layout-audit.mjs";
+import { auditPage as audit, checkCatalog, checkNames, CHROMIUM_OPTIONS, loadPlaywright as installedPlaywright, VIEWPORTS } from "./layout-audit.mjs";
 
 const PLACES = ["attention", "roadmap", "requirements", "decisions", "glossary"];
 
@@ -39,7 +39,7 @@ const catalogLine = ({ entry, problem, viewport, width, theme }) => `catalog ${e
 // With --catalog, only that catalog is checked.
 if (values.catalog) {
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch();
+  const browser = await chromium.launch(CHROMIUM_OPTIONS);
   let problems;
   try {
     problems = await checkCatalog({ url: values.catalog, viewports, themes, browser });
@@ -56,7 +56,7 @@ const appDirectory = path.join(parent, "app");
 await mkdir(appDirectory, { mode: 0o700 });
 const held = [];
 const { chromium } = loadPlaywright();
-const browser = await chromium.launch();
+const browser = await chromium.launch(CHROMIUM_OPTIONS);
 const findings = new Map();
 let pages = 0;
 let catalogProblems = [];

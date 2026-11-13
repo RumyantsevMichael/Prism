@@ -467,11 +467,14 @@ prism-field {
   text-overflow: ellipsis;
 }
 
+/* A text area grows with its text from three lines up to a limit, then scrolls; a browser without field-sizing gets the same from the element's script. */
 textarea.prism-field-control {
   min-height: calc(3 * var(--prism-control-height));
+  max-height: calc(14 * var(--prism-control-height));
   padding: var(--prism-space-3) var(--prism-space-4);
   line-height: var(--prism-line-height);
   resize: vertical;
+  field-sizing: content;
 }
 
 select.prism-field-control {
@@ -3219,4 +3222,27 @@ prism-inbox-item[unread] > .prism-inbox-end::before {
   height: var(--prism-space-3);
   border-radius: var(--prism-radius-round);
   background: var(--prism-color-accent);
+}
+
+/* ---------- prism-canvas: a drawing on a dotted grid that scales with its zoom and scrolls with it ---------- */
+
+prism-canvas {
+  --prism-canvas-step: 1;
+  --prism-canvas-x: 0px;
+  --prism-canvas-y: 0px;
+  --prism-canvas-tile: calc(var(--prism-canvas-grid) * var(--prism-canvas-step));
+  display: block;
+  min-width: 0;
+  overflow: auto;
+  background-image: radial-gradient(circle at center, var(--prism-color-canvas-dot) var(--prism-canvas-dot), transparent calc(var(--prism-canvas-dot) + var(--prism-stroke)));
+  background-position: calc(var(--prism-canvas-x) - var(--prism-canvas-tile) / 2) calc(var(--prism-canvas-y) - var(--prism-canvas-tile) / 2);
+  background-size: var(--prism-canvas-tile) var(--prism-canvas-tile);
+  /* The grid belongs to the drawing, so it moves with the scrolled content rather than staying under the frame. */
+  background-attachment: local;
+}
+
+/* A canvas the page pans by dragging takes the pointer as a canvas does: a grab cursor, and no text selection. */
+prism-canvas[pannable] {
+  cursor: grab;
+  user-select: none;
 }

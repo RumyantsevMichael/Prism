@@ -614,7 +614,11 @@ async function computeAttention(projectRoot) {
     // The Watch group lists every live and expired claim, read-only, beside the agent-side signals.
     const claimed = await claimedSlices(projectRoot, id);
     for (const claim of sliceClaims(claimed)) claims.push({ ...claim, initiative });
-    if (state?.valid) for (const entry of state.state?.history ?? []) changes.push({ ...entry, initiative: id });
+    if (state?.valid) {
+      // An answer in Recent changes names the question it answered, so the list can be reviewed on its own.
+      const questions = new Map([...(state.state?.pending ?? []), ...(state.state?.closed ?? [])].filter((gate) => gate && typeof gate === "object" && typeof gate.question === "string").map((gate) => [`gate:${id}/${gate.id}`, gate.question]));
+      for (const entry of state.state?.history ?? []) changes.push({ ...entry, initiative: id, ...(entry.action === "gate.answer" && questions.has(entry.target) ? { question: questions.get(entry.target) } : {}) });
+    }
     if (state?.exists && !state.valid) {
       watch.push({ type: "record-problem", initiative, path: await recordFile(projectRoot, { kind: "state", initiative: id }), message: state.errors.join(" ") });
     }

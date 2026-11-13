@@ -1,0 +1,30 @@
+name: Report main failures
+
+# A failed Validate run on main adds a comment to the open ci-main-failure issue, so the failure is recorded where people and agents look, not only in the Actions tab.
+on:
+  workflow_run:
+    workflows: [Validate plugin]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+jobs:
+  report:
+    if: ${{ github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Comment on the ci-main-failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/report-ci-failure.mjs ${{ github.event.workflow_run.id }}

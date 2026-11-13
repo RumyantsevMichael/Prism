@@ -21,7 +21,8 @@ const REPORT_FILES = {
   "packages/app/is.ts": IS_OBJECT,
   "packages/app/client.ts": `import { retryRequest } from "../net/retry";\n${FILES["packages/app/client.ts"]}`
 };
-const options = (runtime, waitMs = 2000) => ({ runtime, waitMs });
+// A report answers as soon as every component is ready, so the default bound only tells a slow runner from a build that never finishes.
+const options = (runtime, waitMs = 30000) => ({ runtime, waitMs });
 const groupFiles = (found) => found.groups.map((group) => group.variants.flatMap((variant) => variant.members.map((member) => member.file)).sort());
 
 test("clauses 10 and 18: an unscoped structural report reads every component as one union", async (t) => {

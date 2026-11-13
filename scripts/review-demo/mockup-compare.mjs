@@ -10,7 +10,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { ROOT } from "./project.mjs";
-import { loadPlaywright, THEMES } from "./layout-audit.mjs";
+import { CHROMIUM_OPTIONS, loadPlaywright, THEMES } from "./layout-audit.mjs";
 
 const HEIGHT = 900;
 const SLICE = "slice:retry-hardening/timeout-retries";
@@ -200,7 +200,7 @@ async function main() {
   const parent = await mkdtemp(path.join(os.tmpdir(), "prism-mockup-compare-"));
   const appDirectory = path.join(parent, "app");
   await mkdir(appDirectory, { mode: 0o700 });
-  const browser = await playwright.chromium.launch();
+  const browser = await playwright.chromium.launch(CHROMIUM_OPTIONS);
   let held = null;
   const entries = [];
   try {

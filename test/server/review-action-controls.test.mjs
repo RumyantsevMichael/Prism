@@ -110,7 +110,7 @@ test("Attention lists the newest applied actions across initiatives and the chec
   const attention = (await get(base, "api/entity?ref=attention")).json.data;
   assert.ok(Array.isArray(attention.recentChanges));
   assert.deepEqual(attention.recentChanges.map((entry) => [entry.action, entry.initiative]), [["index.rebuild", null], ["gate.answer", INITIATIVE], ["initiative.continuation", INITIATIVE]]);
-  assert.deepEqual(attention.recentChanges[1], { ...entries.find((entry) => entry.action === "gate.answer"), initiative: INITIATIVE });
+  assert.deepEqual(attention.recentChanges[1], { ...entries.find((entry) => entry.action === "gate.answer"), initiative: INITIATIVE, question: "Install the signing key." }, "an answer names the question it answered");
   for (const entry of attention.recentChanges) assert.deepEqual(entry.by, authorOf(root), "each change names who made it and from which checkout");
   assert.ok(attention.recentChanges.length <= 20);
 });

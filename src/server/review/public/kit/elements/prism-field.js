@@ -3,13 +3,16 @@ import { Base, setAttribute, uniqueId } from "./base.js";
 
 const TYPES = ["text", "search", "textarea", "select"];
 
+// Whether the browser sizes a text area to its content from the stylesheet's field-sizing, so the element's script need not.
+const sizesToContent = () => globalThis.CSS?.supports?.("field-sizing", "content") ?? false;
+
 export class PrismField extends Base {
   static tag = "prism-field";
   static observedAttributes = ["label", "hint", "name", "value", "placeholder", "required", "disabled", "invalid", "error", "type"];
   static catalog = {
     purpose: "A labelled text, search, textarea, or select control: one native control in the light DOM, so it belongs to its form and reports input and change.",
     options: [
-      { name: "type", values: TYPES, default: "text", description: "The kind of native control the field creates." },
+      { name: "type", values: TYPES, default: "text", description: "The kind of native control the field creates; a textarea grows with its text from three lines up to a limit, then scrolls." },
       { name: "label", values: ["text"], default: "", description: "The visible label, associated with the control." },
       { name: "hint", values: ["text"], default: "", description: "Help text below the control, linked as its description." },
       { name: "name", values: ["text"], default: "", description: "The control's name in its form." },
@@ -51,8 +54,19 @@ export class PrismField extends Base {
   }
 
   set value(value) {
-    if (this.control) this.control.value = value ?? "";
-    else this.setAttribute("value", value ?? "");
+    if (this.control) {
+      this.control.value = value ?? "";
+      this.fit();
+    } else this.setAttribute("value", value ?? "");
+  }
+
+  /** Grows a text area to its text where the browser cannot size it from its content; the stylesheet's minimum and maximum heights still apply. */
+  fit() {
+    const control = this.control;
+    if (control?.tagName !== "TEXTAREA" || sizesToContent() || !control.isConnected) return;
+    control.style.removeProperty("height");
+    const border = control.offsetHeight - control.clientHeight;
+    control.style.setProperty("height", `${control.scrollHeight + border}px`);
   }
 
   build(value = this.getAttribute("value")) {
@@ -92,6 +106,10 @@ export class PrismField extends Base {
     } else {
       this.options?.disconnect();
       if (value !== null && value !== undefined) control.value = value;
+      if (type === "textarea") {
+        control.addEventListener("input", () => this.fit());
+        requestAnimationFrame(() => this.fit());
+      }
     }
   }
 

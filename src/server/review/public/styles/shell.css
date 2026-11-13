@@ -421,6 +421,16 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* A view being built lies over the page at the page's width, out of sight and out of the scrolling range, until it replaces the page whole. */
+.artifact-stage {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 100%;
+  overflow: clip;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* A record that is gone names where it was and what to do next. */
 .missing-path {
   margin: 0 auto var(--prism-space-5);
