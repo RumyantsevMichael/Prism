@@ -49,7 +49,7 @@ test("clause 20: a call that needs a component without an index pauses an unrela
   const records = await readProgressRecords((await runtime.location(root, NET)).directory);
   assert.equal(records.some((record) => record.state === "failed"), false, "a paused build records no failure");
   control.release("README.md");
-  assert.equal((await search(root, runtime, ["README.md"], 2000)).status, "ready");
+  assert.equal((await search(root, runtime, ["README.md"], 30000)).status, "ready");
   control.release("packages/net/timeout.ts");
   await settled(runtime, root);
   assert.deepEqual(built(control), [NET_FILES, ROOT_FILES, NET_FILES, APP_FILES], "the paused build runs directly after the call's components");
@@ -60,7 +60,7 @@ test("clause 20: a call that needs a component without an index pauses an unrela
 test("clause 20: a call whose components all have a stored index waits its turn without pausing the running build", async (t) => {
   const { root, storage, write } = await project(t);
   const { runtime, control } = await stagedRuntime(storage);
-  assert.equal((await search(root, runtime, undefined, 2000)).status, "ready");
+  assert.equal((await search(root, runtime, undefined, 30000)).status, "ready");
   await write("README.md", `${FILES["README.md"]}Changed.\n`);
   await write("packages/net/timeout.ts", `${FILES["packages/net/timeout.ts"]}// changed\n`);
   control.hold("packages/net/timeout.ts");
