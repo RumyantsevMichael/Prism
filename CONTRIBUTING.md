@@ -28,6 +28,7 @@ src/                 # editable server, native helper, and hook sources
   hooks/             # session hook entry points
 dist/                # generated runtime and browser assets, same layout as src/; built, not committed
 test/                # server and native helper tests
+docs/                # user guide, feature files, and the Skill Definition Markdown standard
 vendor/plantuml/     # pinned MIT PlantUML browser runtime
 bin/                 # MCP and standalone review launchers
 .claude-mcp.json     # Claude MCP server definition
@@ -41,6 +42,15 @@ Putting a shared component inside either manifest directory breaks one or both p
 Do not name the Claude MCP definition `.mcp.json`.
 Claude Code also reads a root `.mcp.json` as project config when a session runs in this repository.
 That project server has no `${CLAUDE_PLUGIN_ROOT}` value, so it fails to start.
+
+### Requirements, ADRs, and plans
+
+Prism's own requirements, ADRs, plans, and roadmap view live in the record store that `.prism/workflow.md` names, not in this repository.
+Agents read and change them with the `get_artifact` and `update_artifact` tools, by their path in the project such as `docs/ADRs/orchestration/components.md`, and the review browser shows them.
+Do not add files under `docs/requirements/`, `docs/ADRs/`, or `docs/plans/` by hand: the next Prism tool call moves them into the store.
+Two kinds of files stay in the repository because tests read them:
+- `docs/plans/review-app-places/kept-tests.json` is a frozen test of an accepted design, and frozen tests stay in the checkout.
+- The approved UI mockups that the comparison scripts and their tests read live in `scripts/review-demo/mockups/`, and the store keeps the copy each design gate approved.
 
 ## Local development
 
@@ -213,7 +223,7 @@ It puts the demo app into the state of each mockup scene (Attention with a gate 
 Read every pair: the layout check finds broken layouts, but only this comparison shows a screen that works and still looks nothing like the design.
 Differences that come from the demo's data, or from mockup content that is deliberately out of scope, are expected; name them in the pull request.
 
-The places mockup in `docs/plans/review-app-places/mockup/mockup.html` has its own comparison, which measures each scene instead of only picturing it:
+The places mockup in `scripts/review-demo/mockups/review-app-places/mockup.html` has its own comparison, which measures each scene instead of only picturing it:
 
 ```bash
 node scripts/review-demo/places-compare.mjs --out /tmp/places-compare
