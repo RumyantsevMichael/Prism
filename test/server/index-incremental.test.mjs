@@ -16,10 +16,14 @@ const { openNativeRepositoryIntelligence } = await import("../../dist/server/rep
 const ALL = [".prism/workflow.md", "README.md", "packages/app/client.ts", "packages/net/retry.ts", "packages/net/timeout.ts"];
 const build = async (runtime, root, count, control) => {
   await runtime.prepare(await openNativeRepositoryIntelligence(root), undefined, 0);
-  await until(async () => control.builds.length >= count && ["ready", "degraded"].includes((await runtime.status(root)).status), `Build ${count} did not end.`);
+  await until(async () => control.builds.length >= count && ["ready", "degraded"].includes((await runtime.status(root)).status), `Build ${count} did not end.`, { timeoutMs: STALL_MS + 10000 });
   return runtime.status(root);
 };
 const hashes = async (root, files) => Object.fromEntries(await Promise.all(files.map(async (file) => [file, sha256(await readFile(path.join(root, file), "utf8"))])));
+
+// A build that stalls on purpose is stopped after this period, which must outlast a slow runner's start before the build's first report,
+// since a Windows runner took more than 250 ms there and the build then stalled while starting rather than in the phase a test holds.
+const STALL_MS = 3000;
 
 test("clauses 22 and 23: a first build copies every file into the kept mirror and passes no change lists", async (t) => {
   const { root, storage } = await project(t, { components: null });
@@ -60,7 +64,7 @@ test("clauses 6 and 23: a rebuild copies only changed files, removes deleted one
 
 test("clause 23: a change that a stopped build copied but never indexed is still named to the next build", async (t) => {
   const { root, storage, write } = await project(t, { components: null });
-  const first = await stagedRuntime(storage, { stallMs: 250 });
+  const first = await stagedRuntime(storage, { stallMs: STALL_MS });
   await build(first.runtime, root, 1, first.control);
   await write("README.md", `${FILES["README.md"]}Changed.\n`);
   first.control.hold("README.md", "structure");
