@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import { copyFile, lstat, mkdir, open, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, IDENTITY_FILE_MAX, identityContent, identityOf, letterCaseKey, locationIdentity, STATUS_RECORD_NAME, uniqueIdentities, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
 import { renameWhenFree, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { commitProblem, gitFileName, isLinkMode, LINK_TARGET_BYTES_MAX, linkTargetProblem, TREE_DEPTH_MAX, TREE_DEPTH_TEXT, tooDeepTree, treeEntries, treeProblems } from "./git-objects.mjs";
@@ -36,10 +37,11 @@ const managed = new Set();
 // which the parent process may hold, as when a Git hook starts the server, so no store command inherits them.
 const INHERITED_OUT = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|QUARANTINE_PATH|REPLACE_REF_BASE|GRAFT_FILE|SHALLOW_FILE|LITERAL_PATHSPECS|GLOB_PATHSPECS|NOGLOB_PATHSPECS|ICASE_PATHSPECS|ATTR_SOURCE|REDIRECT_STDIN|REDIRECT_STDOUT|REDIRECT_STDERR)$/;
 
-/** Change the debounce, pull interval, or torn-read wait, or the bound on a store tree's files, which tests shorten, or turn off the pull that a record read starts. */
+/** Change the debounce, pull interval, or torn-read wait, or the bound on a store tree's files, which tests shorten, turn off the pull that a record read starts, or turn on the watcher that syncs what is pending when the process ends. */
 export function configureRecordSync(settings = {}) {
   for (const key of Object.keys(SETTINGS)) if (Number.isFinite(settings[key])) SETTINGS[key] = settings[key];
   if (typeof settings.pullOnRead === "boolean") pullOnRead = settings.pullOnRead;
+  if (typeof settings.watchPending === "boolean") watchPending = settings.watchPending;
 }
 
 /** Cancel every debounced sync and forget fetch times, so a process or a test can finish. */
@@ -48,6 +50,68 @@ export function cancelRecordSyncs() {
   scheduled.clear();
   lastFetch.clear();
   rerun.clear();
+  written.clear();
+}
+
+// The script that finishes the syncs a process hands off when it ends.
+const HANDOFF_SCRIPT = new URL("./record-store-handoff.mjs", import.meta.url);
+// A long-lived process, such as the MCP server, turns on a watcher process while it has syncs pending, since a host may end it in a way that runs none of its code.
+let watchPending = false;
+let watcher = null;
+let watcherList = "";
+// Stores with a record write that no sync has started on, and stores whose running sync started on one; a sync that only pulls is not pending.
+const written = new Set();
+const writing = new Set();
+
+const handOffOff = () => process.env.PRISM_STORE_HANDOFF === "off";
+const pendingStores = () => [...new Set([...written, ...writing, ...rerun])].map((base) => ({ base, managed: managed.has(base) }));
+
+function startWatcher() {
+  try {
+    const child = spawn(process.execPath, [fileURLToPath(HANDOFF_SCRIPT)], { detached: true, stdio: ["pipe", "ignore", "ignore"], windowsHide: true });
+    child.on("error", () => {});
+    child.stdin.on("error", () => {});
+    child.once("exit", () => { if (watcher === child) { watcher = null; watcherList = ""; } });
+    child.unref();
+    child.stdin.unref?.();
+    return child;
+  } catch {
+    // The next Prism process to sync the store pushes what this one wrote.
+    return null;
+  }
+}
+
+// Tell the watcher which stores have a sync pending, starting it on the first one and ending it once none is left.
+// It syncs the last list it was told when its input closes, which happens however this process ends: a signal, Windows' forced end, or SIGKILL.
+function updateWatcher() {
+  if (!watchPending || handOffOff()) return;
+  const stores = pendingStores();
+  if (!stores.length && !watcher) return;
+  const list = JSON.stringify(stores);
+  if (list === watcherList) return;
+  watcher ??= startWatcher();
+  if (!watcher) return;
+  watcherList = list;
+  if (stores.length) { watcher.stdin.write(`${list}\n`); return; }
+  watcher.stdin.end(`${list}\n`);
+  watcher = null;
+  watcherList = "";
+}
+
+/**
+ * Hand every store whose debounced sync has not run, or whose sync is running or due again, to the detached watcher process, which syncs it and exits, then cancel this process's syncs.
+ * A host can end a session within a fraction of a second, before the debounce comes due, so a process that ends calls this to push the records it wrote; it returns the stores handed off.
+ */
+export function handOffRecordSyncs() {
+  const stores = pendingStores();
+  cancelRecordSyncs();
+  // A test suite turns the hand-off off, so no detached process writes a folder that a test removes.
+  if (handOffOff()) return [];
+  const child = watcher ?? (stores.length ? startWatcher() : null);
+  watcher = null;
+  watcherList = "";
+  child?.stdin.end(`${JSON.stringify(stores)}\n`);
+  return stores.map((store) => store.base);
 }
 
 // The notice every view that Prism generates from a record carries, as generatedNotice in projection.mjs writes it.
@@ -293,17 +357,20 @@ export async function waitForStableStore(base) {
   while (Date.now() < deadline && await holderAlive(marker)) await new Promise((resolve) => setTimeout(resolve, 25));
 }
 
-/** Debounce a sync after a record write; a sync problem never reaches the write. */
-export function scheduleRecordSync(base) {
+/** Debounce a sync after a record write, or after a sync that must run again, which carries a write only when the one it repeats did; a sync problem never reaches the write. */
+export function scheduleRecordSync(base, carriesWrite = true) {
   watched.add(base);
+  if (carriesWrite) written.add(base);
   clearTimeout(scheduled.get(base));
   const timer = setTimeout(() => {
     scheduled.delete(base);
-    if (running.has(base)) { rerun.add(base); return; }
-    syncRecordStore(base).catch(() => {});
+    if (running.has(base)) rerun.add(base);
+    else syncRecordStore(base).catch(() => {});
+    updateWatcher();
   }, SETTINGS.debounceMs);
   timer.unref();
   scheduled.set(base, timer);
+  updateWatcher();
 }
 
 /** Start a background sync after a record read when the last fetch is older than the pull interval; the read never waits for it. */
@@ -530,7 +597,7 @@ export function syncRecordStore(base, options = {}) {
       }, undefined, { ...syncLockOptions(), timeoutMs: 1 });
     } catch (error) {
       // The holder may have committed before this process wrote, so a later sync picks the change up.
-      if (error.code === "lock_timeout") { scheduleRecordSync(base); return { state: "skipped" }; }
+      if (error.code === "lock_timeout") { scheduleRecordSync(base, writing.has(base)); return { state: "skipped" }; }
       // An upstream entry that no store may hold, or a path that leads outside the store, stops the merge before any file changes, so the branch stays and every sync reports it until the upstream drops it.
       if (error.unsafePath) return writeStatus(base, { state: "merge_failed", message: error.message, ...await counts(base).catch(() => ({})) }).catch(() => ({ state: "merge_failed", message: withoutCredentials(error.message) }));
       // A Git error outside fetch, merge, and push, such as a leftover index lock, is reported as it is and never repaired here.
@@ -538,9 +605,13 @@ export function syncRecordStore(base, options = {}) {
     }
   })().finally(() => {
     running.delete(base);
+    writing.delete(base);
     if (rerun.delete(base)) scheduleRecordSync(base);
+    updateWatcher();
   });
   running.set(base, pending);
+  if (written.delete(base)) writing.add(base);
+  updateWatcher();
   return pending;
 }
 
