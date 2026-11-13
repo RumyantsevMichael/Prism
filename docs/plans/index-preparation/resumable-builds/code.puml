@@ -1,0 +1,23 @@
+@startuml
+title resumable-builds - units
+package "repository-intelligence" {
+  component "native-semantic-runtime.mts" as Runtime
+  component "index-store.mts" as Store
+  component "index-store-thread.mts" as Thread
+  component "embedding-store.mts" as Embeddings
+  component "native-helper.mts" as Helper
+  component "semantic-native-provider.mts" as Provider
+}
+package "native-runtime" {
+  component "worker.mts" as Worker
+  component "embeddings.mts" as Embed
+}
+Provider --> Runtime : prepare, status
+Runtime --> Store : build, save, stop
+Runtime --> Runtime : stall watchdog in report
+Thread --> Store : runs in its thread
+Store --> Embeddings : append, read, replace
+Store --> Helper : build request, stop
+Helper --> Worker : build over stdio
+Worker --> Embed : vectors per batch
+@enduml
