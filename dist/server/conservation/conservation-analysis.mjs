@@ -3,7 +3,7 @@ import path from "node:path";
 import { readChangeMapDocument } from "./change-map.mjs";
 import { conservationStore, conservationError, digest, canonical, withinScope } from "./conservation-store.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { baselineIndex, componentDiagnostics, componentResult, componentStates, indexComponents, prepareComponents, selectedComponents } from "../repository-intelligence/component-indexes.mjs";
+import { answeringPreparation, baselineIndex, componentDiagnostics, componentResult, componentStates, indexComponents, prepareComponents, selectedComponents } from "../repository-intelligence/component-indexes.mjs";
 import { CODE_EXTENSIONS } from "../../native-runtime/domains.mjs";
 import { CHUNKER_VERSION } from "../../native-runtime/versions.mjs";
 import { sameNameGroups } from "../repository-intelligence/same-name-units.mjs";
@@ -45,14 +45,14 @@ async function prepareAnalysis(projectRoot, snapshotId, options = {}) {
   const declaration = await indexComponents(projectRoot);
   if (declaration) return prepareComponentAnalysis(projectRoot, snapshotId, declaration, runtime, store);
   const source = await store.source(projectRoot, snapshotId);
-  const prepared = await runtime.prepare(source);
+  const prepared = answeringPreparation(await runtime.prepare(source, void 0, void 0, { structure: true, structureSuffices: true }));
   if (prepared.status === "preparing") return { status: "preparing", preparationId: prepared.preparationId };
   if (!prepared.prepared) return { status: "degraded", diagnostics: prepared.diagnostics, analysis: null };
   return { status: "ready", analysis: await retainAnalysis(projectRoot, snapshotId, prepared.prepared, store), missing: NONE };
 }
 async function prepareComponentAnalysis(projectRoot, snapshotId, declaration, runtime, store) {
   const { selected, snapshot } = await selectedComponents(projectRoot, declaration, void 0, void 0, (filter) => store.source(projectRoot, snapshotId, filter));
-  const preparations = await prepareComponents(runtime, selected);
+  const preparations = await prepareComponents(runtime, selected, void 0, { structure: true, structureSuffices: true });
   const result = componentResult(componentStates(selected, preparations), snapshot);
   if (result.components.some((state) => state.status === "waiting" || state.status === "preparing")) return { status: "preparing", preparationId: null, components: result.components };
   if (!result.components.some((state) => state.status === "included")) return { status: "degraded", diagnostics: componentDiagnostics(result, preparations), components: result.components, analysis: null };

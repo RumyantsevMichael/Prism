@@ -2,9 +2,10 @@
 import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { componentOf, listsComponents, readComponents } from "../workflow/components.mjs";
+import { componentOf, listComponents, listsComponents, readComponents } from "../workflow/components.mjs";
 import { NativeRepositoryIntelligence, RepositoryScan } from "./native-repository-intelligence.mjs";
 import { semanticError } from "./native-semantic-runtime.mjs";
+import { FUSION_OFFSET, fusionWeights } from "../../native-runtime/fusion.mjs";
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const inside = (file, folder) => file === folder || file.startsWith(`${folder}/`);
 async function indexComponents(projectRoot) {
@@ -16,6 +17,15 @@ async function indexComponents(projectRoot) {
   }
   if (!listsComponents(config)) return null;
   return readComponents(config);
+}
+async function rootIdentity(projectRoot) {
+  let repository = null;
+  try {
+    repository = listComponents(await readWorkflowConfig(projectRoot)).repository;
+  } catch {
+  }
+  repository ??= "root";
+  return `${repository}/${repository}`;
 }
 function componentSources(root, declaration, options = {}) {
   const scan = new RepositoryScan();
@@ -56,16 +66,35 @@ async function selectionSnapshot(selected) {
 `);
   return sha(lines.join(""));
 }
-function prepareComponents(runtime, selected, waitMs) {
-  if (!selected.length) return Promise.resolve([]);
-  return runtime.prepareComponents(selected.map((entry) => ({ source: entry.source, component: { name: entry.name, identity: entry.component, folder: entry.folder } })), waitMs);
+async function prepareComponents(runtime, selected, waitMs, { siblings = [], ...options } = {}) {
+  if (!selected.length) return [];
+  const ordered = [...selected.filter((entry) => !siblings.includes(entry)), ...selected.filter((entry) => siblings.includes(entry))];
+  const prepared = await runtime.prepareComponents(ordered.map((entry) => ({
+    source: entry.source,
+    component: { name: entry.name, identity: entry.component, folder: entry.folder },
+    ...siblings.includes(entry) ? { structureOnly: true } : {}
+  })), waitMs, options);
+  const preparations = selected.map((entry) => prepared[ordered.indexOf(entry)]);
+  return options.structure ? preparations.map(answeringPreparation) : preparations;
+}
+function answeringPreparation(preparation) {
+  if (preparation.prepared || !preparation.structure || preparation.status === "ready") return preparation;
+  return { ...preparation, status: "ready", prepared: preparation.structure };
 }
 function componentStates(selected, preparations) {
   return selected.map((entry, index) => {
     const preparation = preparations[index];
     const status = preparation.status === "ready" && preparation.prepared ? "included" : preparation.status === "degraded" ? "failed" : preparation.status === "waiting" ? "waiting" : "preparing";
     const failure = status !== "failed" ? null : preparation.failure ?? { code: preparation.diagnostics[0]?.code ?? "preparation_failed", message: preparation.diagnostics[0]?.message ?? "The component's preparation failed." };
-    return { component: entry.component, folder: entry.folder, status, indexRevision: status === "included" ? preparation.prepared.revision : null, failure };
+    return {
+      component: entry.component,
+      folder: entry.folder,
+      status,
+      indexRevision: status === "included" ? preparation.prepared.revision : null,
+      failure,
+      ...status === "included" && preparation.prepared.stage === "structure" ? { embeddings: "pending" } : {},
+      ...(status === "waiting" || status === "preparing") && preparation.waitingFor ? { waitingFor: preparation.waitingFor } : {}
+    };
   });
 }
 function componentResult(components, snapshot) {
@@ -119,25 +148,54 @@ async function unionSnapshot(sources, snapshot) {
     complete: snapshots.every((item) => item.complete)
   };
 }
-async function searchComponents(included, limit) {
+async function searchComponents(included, limit, query = "") {
   const answers = [];
   for (const entry of included) answers.push(await entry.search());
   const lists = included.flatMap((entry, index) => answers[index] ? [answers[index].map((result) => ({ ...result, component: entry.component }))] : []);
   if (lists.length === 1) return { answers, results: lists[0].slice(0, limit) };
-  const keyed = lists.flatMap((list) => {
-    let previous = -Infinity;
-    return list.map((result) => ({ result, key: previous = result.cosineSimilarity ?? previous }));
+  const scored = (result) => result.cosineSimilarity != null || result.lexicalScore != null;
+  const entries = [];
+  const orphans = [];
+  for (const list of lists) {
+    let last;
+    for (const result of list) {
+      if (scored(result)) entries.push(last = { result, order: entries.length, followers: [], fused: 0 });
+      else if (last) last.followers.push(result);
+      else orphans.push(result);
+    }
+  }
+  const byScore = (score) => (left, right) => score(right.result) - score(left.result);
+  for (const list of lists) {
+    const own = entries.filter((entry) => list.includes(entry.result) && entry.result.lexicalScore != null).sort(byScore((result) => result.lexicalScore));
+    const top = own.length ? own[0].result.lexicalScore : 0;
+    own.forEach((entry, place) => {
+      entry.lexical = [place, top > 0 ? entry.result.lexicalScore / top : 0];
+    });
+  }
+  const weights = fusionWeights(query);
+  const vector = entries.filter((entry) => entry.result.cosineSimilarity != null).sort(byScore((result) => result.cosineSimilarity));
+  vector.forEach((entry, rank) => {
+    entry.fused += weights.cosineSimilarity / (FUSION_OFFSET + rank + 1);
   });
-  const merged = keyed.sort((left, right) => left.key === right.key ? 0 : right.key > left.key ? 1 : -1);
-  return { answers, results: merged.slice(0, limit).map(({ result }, index) => ({ ...result, fusedRank: index + 1 })) };
+  const lexical = entries.filter((entry) => entry.lexical).sort((left, right) => left.lexical[0] - right.lexical[0] || right.lexical[1] - left.lexical[1]);
+  lexical.forEach((entry, rank) => {
+    entry.fused += weights.lexicalScore / (FUSION_OFFSET + rank + 1);
+  });
+  const term = query.trim();
+  const exact = (result) => [result.file, result.name, result.qualifiedName, result.selector].includes(term) ? 1 : 0;
+  const ranked = entries.sort((left, right) => exact(right.result) - exact(left.result) || right.fused - left.fused || left.order - right.order);
+  const merged = [...ranked.flatMap((entry) => [entry.result, ...entry.followers]), ...orphans];
+  return { answers, results: merged.slice(0, limit).map((result, index) => ({ ...result, fusedRank: index + 1 })) };
 }
-async function selectedComponents(projectRoot, declaration, paths, expectedSnapshot, baseline) {
+async function selectedComponents(projectRoot, declaration, paths, expectedSnapshot, baseline, { siblings: withSiblings = false } = {}) {
   const root = await realpath(projectRoot);
   const sources = baseline ? await baselineSources(declaration, baseline) : componentSources(root, declaration);
   const selected = await selectComponents(declaration, sources, paths);
-  const snapshot = await selectionSnapshot(selected);
+  const siblings = withSiblings && paths?.length ? (await selectComponents(declaration, sources)).filter((entry) => !selected.includes(entry)) : [];
+  const read = siblings.length ? sources.filter((entry) => selected.includes(entry) || siblings.includes(entry)) : selected;
+  const snapshot = await selectionSnapshot(read);
   if (expectedSnapshot && expectedSnapshot !== snapshot) throw semanticError("stale_snapshot", "The expected repository snapshot has changed. Repeat the reuse search.");
-  return { root, sources, selected, snapshot };
+  return { root, sources, selected, siblings, read, snapshot };
 }
 async function baselineIndex(selected, preparations, result) {
   const included = result.components.flatMap((state, index2) => state.status === "included" ? [{ component: state.component, prepared: preparations[index2].prepared }] : []);
@@ -153,6 +211,7 @@ async function baselineIndex(selected, preparations, result) {
   } };
 }
 export {
+  answeringPreparation,
   baselineIndex,
   baselineSources,
   componentDiagnostics,
@@ -161,6 +220,7 @@ export {
   componentStates,
   indexComponents,
   prepareComponents,
+  rootIdentity,
   searchComponents,
   selectComponents,
   selectedComponents,

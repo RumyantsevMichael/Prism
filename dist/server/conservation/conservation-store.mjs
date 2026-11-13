@@ -10,6 +10,7 @@ import { privateDirectory, regularBytes, semanticError } from "../repository-int
 import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { CHANGE_MAP_FILES, resolveArtifactPath } from "./change-map.mjs";
 import { isManagedRecordFile, keyOfPath, recordPath, sliceDocumentFolder } from "../workflow/record-store.mjs";
+import { parseStoreJson } from "../workflow/store-json.mjs";
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 async function trackedIgnored(root) {
   try {
@@ -66,7 +67,7 @@ class ConservationStore {
   async outputs(projectRoot) {
     const { directory } = await this.location(projectRoot);
     try {
-      const record = JSON.parse((await regularBytes(path.join(directory, "outputs.json"), 1024 * 1024)).toString());
+      const record = parseStoreJson((await regularBytes(path.join(directory, "outputs.json"), 1024 * 1024)).toString());
       if (record.schemaVersion !== 1 || !Array.isArray(record.outputs) || record.outputs.some((file) => typeof file !== "string")) throw new Error();
       return withRenamedChangeMaps(record.outputs);
     } catch (error) {
@@ -152,7 +153,7 @@ class ConservationStore {
   async analysis(projectRoot, snapshotId) {
     const { directory } = await this.location(projectRoot);
     try {
-      const pointer = JSON.parse((await regularBytes(path.join(directory, "analyses", `${validId(snapshotId)}.json`), 4096)).toString());
+      const pointer = parseStoreJson((await regularBytes(path.join(directory, "analyses", `${validId(snapshotId)}.json`), 4096)).toString());
       const record = await this.get(projectRoot, pointer.evidenceId, "analysis");
       if (record.snapshotId !== snapshotId) throw conservationError("evidence_missing", "The retained analysis belongs to another snapshot.");
       return record;
@@ -166,7 +167,7 @@ class ConservationStore {
     try {
       const bytes = await regularBytes(path.join(directory, "records", `${validId(id)}.json`), 64 * 1024 * 1024);
       if (digest(bytes) !== id) throw new Error();
-      const record = JSON.parse(bytes.toString());
+      const record = parseStoreJson(bytes.toString());
       if (record.schemaVersion !== 1 || record.project !== root || kind && record.kind !== kind) throw new Error();
       return record;
     } catch (error) {

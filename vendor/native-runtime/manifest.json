@@ -1,36 +1,36 @@
 {
   "schemaVersion": 1,
-  "assetVersion": "v0.23.0",
+  "assetVersion": "v0.24.0",
   "bundles": {
     "darwin-arm64": {
-      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/v0.23.0/prism-native-darwin-arm64.tar.gz",
-      "bytes": 106952323,
-      "sha256": "7361cf513d5be8d62d1bbc20f3a4eeb1f2e29949a3fdb19b757c5ce4901a2963",
-      "unpackedBytes": 493801716
+      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/v0.24.0/prism-native-darwin-arm64.tar.gz",
+      "bytes": 106961670,
+      "sha256": "4f7b9ef1f3c178fa0f3dc9df5e724e08ffdfd9baee202c093677f04a47623f85",
+      "unpackedBytes": 493816920
     },
     "darwin-x64": {
-      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/v0.23.0/prism-native-darwin-x64.tar.gz",
-      "bytes": 108901671,
-      "sha256": "ba5715441b4231ae26bea39541292f3d98ede55963224ba8eaf130c9c66b51ce",
-      "unpackedBytes": 500029918
+      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/v0.24.0/prism-native-darwin-x64.tar.gz",
+      "bytes": 108911669,
+      "sha256": "f9c5ca6958561f078c1bd952a56aa77dd75ac44a79ef32e08f53215cfe823087",
+      "unpackedBytes": 500045122
     },
     "linux-x64": {
-      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/v0.23.0/prism-native-linux-x64.tar.gz",
-      "bytes": 113984229,
-      "sha256": "90b906c690d6fda14d3200951948e529b7934af763dd94e1bbb923b6c12baed5",
-      "unpackedBytes": 494015265
+      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/v0.24.0/prism-native-linux-x64.tar.gz",
+      "bytes": 113995871,
+      "sha256": "fb5e1a539a9e5e21b5663392bf307ed2b9fee6ce5af1f39e6455b3c174a738d8",
+      "unpackedBytes": 494030469
     },
     "linux-arm64": {
-      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/v0.23.0/prism-native-linux-arm64.tar.gz",
-      "bytes": 109153557,
-      "sha256": "4bbf72e877f06ceb75579a27418e0fc0fdbdf855f08f5bb2952699d5eab59c09",
-      "unpackedBytes": 478317555
+      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/v0.24.0/prism-native-linux-arm64.tar.gz",
+      "bytes": 109151196,
+      "sha256": "40b73a3675e5278d5ef85b9ad41f16de5bd5ab84bbde49fd2addb138a4fcd84e",
+      "unpackedBytes": 478332759
     },
     "win32-x64": {
-      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/v0.23.0/prism-native-win32-x64.tar.gz",
-      "bytes": 118865146,
-      "sha256": "33113e554a4fed2626c7dfcb76315d08be4adaf6b462f3bfeb038e627b45ff1b",
-      "unpackedBytes": 491029254
+      "url": "https://github.com/RumyantsevMichael/Prism/releases/download/v0.24.0/prism-native-win32-x64.tar.gz",
+      "bytes": 118868679,
+      "sha256": "ea71131629f167ed90013b833e33d8db5af064586cd74478c7826558ad8e0d5a",
+      "unpackedBytes": 491044458
     }
   },
   "model": {
@@ -74,5 +74,5 @@
     ],
     "license": "MIT"
   },
-  "modelMirror": "https://github.com/RumyantsevMichael/Prism/releases/download/v0.23.0"
+  "modelMirror": "https://github.com/RumyantsevMichael/Prism/releases/download/v0.24.0"
 }

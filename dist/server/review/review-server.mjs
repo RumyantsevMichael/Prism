@@ -10,7 +10,9 @@ import { PLUGIN_ROOT } from "../plugin-root.mjs";
 import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { RECORD_DIRECTORY, describeRecordStore, keyOfPath, listRecordStoreConflicts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
+import { RECORD_DIRECTORY, artifactPathTest, artifactsInCheckout, describeRecordStore, inArtifactStore, outsideToolCall, keyOfPath, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile, withRecordReads } from "../workflow/record-store.mjs";
+import { readStoreArtifact, reviewStoreArtifact } from "../workflow/store-artifacts.mjs";
+import { withoutCredentials } from "../workflow/remote-url.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
 import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
@@ -19,9 +21,11 @@ import { nativeSemanticRuntime } from "../repository-intelligence/native-semanti
 import { entityContext, entityExists, forgetWorkspace, loadClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords } from "./workspace-model.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
+import { listLaunches } from "../session/launched-sessions.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 import { readStoredPreferences, writePreferences } from "./review-preferences.mjs";
 import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
+import { parseStoreJson } from "../workflow/store-json.mjs";
 import { createViewerHub, openEventStream, writeEvent } from "./viewer-hub.mjs";
 import { createCachedValue } from "./cached-value.mjs";
 
@@ -155,7 +159,7 @@ function reviewListing(projectRoot) {
   let listing = listings.get(projectRoot);
   if (!listing) {
     listing = createCachedValue(async () => {
-      const [artifacts, sources] = await Promise.all([listArtifacts(projectRoot), listSourceFiles(projectRoot)]);
+      const [artifacts, sources] = await Promise.all([listCheckoutArtifacts(projectRoot), listReviewSources(projectRoot)]);
       return { artifacts, sources };
     }, { ttlMs: (ms) => Math.max(LISTING_MIN_MS, LISTING_FACTOR * ms) });
     listings.set(projectRoot, listing);
@@ -165,29 +169,81 @@ function reviewListing(projectRoot) {
 
 // A wanted file whose presence on disk disagrees with the kept listing, such as one an agent has just written, moved, or deleted, lists the project again,
 // so a few checked files keep the listing honest without listing the whole project on every request.
+// The listing keeps only what the checkout holds; a store's artifacts, which another process's tool call can change at any time, are listed on every request.
 async function listedFiles(projectRoot, wanted = []) {
   const listing = reviewListing(projectRoot);
   let value = await listing.get();
-  const files = wanted.filter((file) => typeof file === "string" && file !== "attention" && !parseEntityRef(file));
+  const isArtifact = await artifactPathTest(projectRoot);
+  const files = wanted.filter((file) => typeof file === "string" && file !== "attention" && !parseEntityRef(file) && !isArtifact(file));
   const listed = (file) => value.artifacts.includes(file) || value.sources.includes(file);
   const present = await Promise.all(files.map((file) => stat(path.join(projectRoot, file)).then((info) => info.isFile(), () => false)));
   if (files.some((file, index) => listed(file) !== present[index])) {
     listing.invalidate();
     value = await listing.get();
   }
-  return value;
+  return { artifacts: await withStoreArtifacts(projectRoot, value.artifacts), sources: value.sources };
+}
+
+// With a record store, the descriptive artifacts the checkout sees come from the store, by path, while the checkout's own files under those paths are not artifacts.
+// An unavailable store or a refused repository name lists no artifact, and never the checkout's files in their place; null means the project names no store.
+async function storeArtifactEntries(projectRoot) {
+  return listStoreArtifacts(projectRoot).catch((error) => {
+    if (recordsUnavailable(error) || error?.name === "ArtifactError") return [];
+    throw error;
+  });
+}
+
+/** Why the record store cannot serve the checkout's artifacts, as describeRecordStore reports it with the store named as configured, or null when it can or the project names no store. */
+async function artifactStoreRefusal(projectRoot) {
+  return (await describeRecordStore(projectRoot).catch(() => null))?.unavailable ?? null;
+}
+
+// The checkout's tracked files under its artifact paths that an available store does not hold, which the browser shows beside the store's status; the browser itself never moves them:
+// awaitingMove counts those that an agent's tool call still moves or reports, and keptInCheckout those that a move kept for a person to settle.
+async function checkoutArtifactsOf(projectRoot, store) {
+  if (store.kind === "project" || store.unavailable) return {};
+  return artifactsInCheckout(projectRoot);
+}
+
+/** The source files the review shows, without a checkout file at an artifact path of a project with a store, which is never the artifact. */
+async function listReviewSources(projectRoot) {
+  const isArtifact = await artifactPathTest(projectRoot);
+  return (await listSourceFiles(projectRoot)).filter((file) => !isArtifact(file));
+}
+
+/** The scope label of each store artifact the checkout sees, by path, or an empty object without a store; a path that several scopes hold names the first by label. */
+export async function listArtifactScopes(projectRoot) {
+  const scopes = {};
+  for (const entry of await storeArtifactEntries(projectRoot) ?? []) scopes[entry.path] ??= entry.scope.label;
+  return scopes;
 }
 
 export async function listArtifacts(projectRoot) {
+  return withStoreArtifacts(projectRoot, await listCheckoutArtifacts(projectRoot));
+}
+
+// The artifacts the checkout itself holds, without a checkout file at an artifact path of a project with a store, which is never the artifact.
+async function listCheckoutArtifacts(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   const results = new Set();
   for (const root of configuredRoots(config)) {
     await walkArtifacts(projectRoot, root, results);
   }
+  const isArtifact = await artifactPathTest(projectRoot);
+  for (const file of [...results]) if (isArtifact(file)) results.delete(file);
   // Machine records live under .prism, which the walk above skips as a hidden folder.
   await walkArtifacts(projectRoot, `${RECORD_DIRECTORY}/initiatives`, results);
   const roadmap = recordPath({ kind: "roadmap" });
   if (await resolveRecordFile(projectRoot, roadmap).then(({ target }) => stat(target)).then((info) => info.isFile(), () => false)) results.add(roadmap);
+  return [...results].sort();
+}
+
+// The checkout's artifacts with the text artifacts that the store's scopes hold, as the store lists them now.
+async function withStoreArtifacts(projectRoot, local) {
+  const stored = await storeArtifactEntries(projectRoot);
+  if (stored === null) return local;
+  const results = new Set(local);
+  for (const entry of stored) if (TEXT_EXTENSIONS.has(path.posix.extname(entry.path).toLowerCase())) results.add(entry.path);
   return [...results].sort();
 }
 
@@ -212,9 +268,13 @@ export async function searchArtifacts(projectRoot, query) {
   for (const artifactPath of await listArtifacts(projectRoot)) {
     let content;
     try {
-      const absolutePath = await resolveProjectFile(projectRoot, artifactPath);
-      if ((await stat(absolutePath)).size > SEARCH_SIZE_LIMIT) continue;
-      content = await readFile(absolutePath, "utf8");
+      if (await inArtifactStore(projectRoot, artifactPath)) ({ content } = await readReviewed(projectRoot, artifactPath));
+      else {
+        const absolutePath = await resolveProjectFile(projectRoot, artifactPath);
+        if ((await stat(absolutePath)).size > SEARCH_SIZE_LIMIT) continue;
+        content = await readFile(absolutePath, "utf8");
+      }
+      if (Buffer.byteLength(content) > SEARCH_SIZE_LIMIT) continue;
     } catch {
       continue;
     }
@@ -277,7 +337,7 @@ export function artifactKind(artifactPath, data) {
 async function loadJsonArtifact(projectRoot, artifactPath, content) {
   let data;
   try {
-    data = JSON.parse(content);
+    data = parseStoreJson(content);
   } catch (error) {
     return { kind: "json", parseError: error.message };
   }
@@ -322,7 +382,33 @@ export async function loadEvidence(projectRoot, evidenceId, store = conservation
   return { id: evidenceId, kind: record.kind, record, truncated, arrayLimit: EVIDENCE_ARRAY_LIMIT };
 }
 
-export async function loadArtifact(projectRoot, artifactPath) {
+// A store artifact is read from the store, and every other file from the project or the record store as its path decides.
+// An unavailable store or a refused repository name throws its refusal rather than read the checkout's file.
+async function readReviewed(projectRoot, file) {
+  if (await inArtifactStore(projectRoot, file)) {
+    const stored = await readStoreArtifact(projectRoot, file);
+    if (stored === null) throw Object.assign(new Error(`${file} is not in the record store.`), { code: "ENOENT" });
+    return { content: stored.bytes.toString("utf8"), modifiedAt: stored.modifiedAt, scope: stored.scope };
+  }
+  const absolutePath = await resolveProjectFile(projectRoot, file);
+  return { content: await readFile(absolutePath, "utf8"), modifiedAt: (await stat(absolutePath)).mtimeMs, absolutePath };
+}
+
+// What the review view shows of a store artifact beside its content: its scope, version, the version a person last accepted with its text, whether it changed since, and its comments.
+// The comments come one page at a time, from the 1-based commentOffset, with their total and the offset of the next page.
+async function reviewedStoreArtifact(projectRoot, file, options) {
+  const stored = await reviewStoreArtifact(projectRoot, file, options);
+  if (stored === null) throw Object.assign(new Error(`${file} is not in the record store.`), { code: "ENOENT" });
+  const { scope, version, accepted, changed, comments, totalComments, nextCommentOffset } = stored;
+  return { content: stored.bytes.toString("utf8"), modifiedAt: stored.modifiedAt, artifact: { scope, version, accepted, changed, comments, totalComments, nextCommentOffset } };
+}
+
+export async function loadArtifact(projectRoot, artifactPath, { commentOffset = 1 } = {}) {
+  if (await inArtifactStore(projectRoot, artifactPath)) {
+    const { content, modifiedAt, artifact } = await reviewedStoreArtifact(projectRoot, artifactPath, { commentOffset });
+    if (path.extname(artifactPath).toLowerCase() === ".json") return { path: artifactPath, content, diagrams: [], modifiedAt, artifact, ...(await loadJsonArtifact(projectRoot, artifactPath, content)) };
+    return { path: artifactPath, content, diagrams: await linkedDiagrams(projectRoot, artifactPath, content), modifiedAt, artifact };
+  }
   const absolutePath = await resolveProjectFile(projectRoot, artifactPath);
   if (!TEXT_EXTENSIONS.has(path.extname(artifactPath).toLowerCase())) {
     const bytes = await readFile(absolutePath);
@@ -335,19 +421,23 @@ export async function loadArtifact(projectRoot, artifactPath) {
     const metadata = await stat(absolutePath);
     return { path: artifactPath, content, diagrams: [], modifiedAt: metadata.mtimeMs, ...(await loadJsonArtifact(projectRoot, artifactPath, content)) };
   }
+  const metadata = await stat(absolutePath);
+  return { path: artifactPath, content, diagrams: await linkedDiagrams(projectRoot, artifactPath, content), modifiedAt: metadata.mtimeMs };
+}
+
+async function linkedDiagrams(projectRoot, artifactPath, content) {
   const diagrams = [];
   for (const diagramPath of linkedDiagramPaths(artifactPath, content)) {
     try {
-      const diagramFile = await resolveProjectFile(projectRoot, diagramPath);
-      diagrams.push({ path: diagramPath, source: await readFile(diagramFile, "utf8") });
+      diagrams.push({ path: diagramPath, source: (await readReviewed(projectRoot, diagramPath)).content });
     } catch (error) {
-      if (error.code !== "ENOENT") {
+      // A missing diagram, or a store diagram the checkout cannot read or reach, is left out.
+      if (error.code !== "ENOENT" && error.name !== "ArtifactError" && !recordsUnavailable(error)) {
         throw error;
       }
     }
   }
-  const metadata = await stat(absolutePath);
-  return { path: artifactPath, content, diagrams, modifiedAt: metadata.mtimeMs };
+  return diagrams;
 }
 
 export function isTrustedHost(host) {
@@ -527,7 +617,37 @@ export async function readBody(request) {
 }
 
 // A refusal of the action registry answers with its status and a JSON body of its code, message, and the fields that refusal carries.
-const ACTION_STATUS = { unknown_target: 404, unknown_action: 404, stale_revision: 409, action_unavailable: 409, confirmation_required: 409, invalid_input: 400 };
+// An approval of an artifact that changed since it was asked, of an id that more than one pending gate holds, an approval or comment by a checkout whose Git names no user,
+// or a comment on a file that already holds the comments a file may hold, conflicts with the store as it is,
+// and a store that cannot be used answers an approval or comment target with its own refusal as unavailable, as an artifact read does.
+const ACTION_STATUS = {
+  unknown_target: 404,
+  unknown_action: 404,
+  stale_revision: 409,
+  action_unavailable: 409,
+  confirmation_required: 409,
+  artifact_changed: 409,
+  approval_ambiguous: 409,
+  author_unknown: 409,
+  comment_limit: 409,
+  invalid_input: 400,
+  // The refusals of a launch, a stop, and a resume, and of the confirmation outside the page that comes before a start.
+  confirmation_pending: 409,
+  confirmation_cooldown: 409,
+  confirmation_unavailable: 409,
+  confirmation_declined: 409,
+  confirmation_timeout: 409,
+  unknown_host: 409,
+  unknown_initiative: 409,
+  unknown_launch: 409,
+  host_unavailable: 409,
+  launch_running: 409,
+  launch_not_running: 409,
+  no_host_session: 409,
+  supervision_lost: 409,
+  stop_timeout: 409,
+  launch_failed: 500
+};
 const ACTION_FIELDS = ["current", "reason", "field", "accepted"];
 export const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
 
@@ -536,6 +656,10 @@ function sendJson(response, statusCode, body) {
 }
 
 function sendActionError(response, error) {
+  if (error?.name === "ActionError" && error.unavailable === true) {
+    sendJson(response, 503, { code: error.code, message: withoutCredentials(error.message) });
+    return;
+  }
   const status = ACTION_STATUS[error.code];
   if (!status) throw error;
   sendJson(response, status, { code: error.code, message: error.message, ...Object.fromEntries(ACTION_FIELDS.filter((key) => error[key] !== undefined).map((key) => [key, error[key]])) });
@@ -556,7 +680,7 @@ function fromPage(request) {
 async function readJson(request) {
   const text = await readBody(request);
   try {
-    return JSON.parse(text);
+    return parseStoreJson(text);
   } catch {
     throw new Error("The request body must be JSON.");
   }
@@ -565,8 +689,9 @@ async function readJson(request) {
 // One project's review context: its tab session, viewer streams, and routes, shared by the session server and the review app.
 // onViewer(send) runs when a viewer stream opens, after its first session event, and send writes a named event to that viewer only.
 // writeSessions is the write session store of the server or app that serves this page; without one, no request can write.
-// onAction(event, { shared }) receives each applied action's event, the history entry with its initiative, instead of this page's viewer streams;
-// shared is false for an index target, whose history belongs to this checkout alone. Without it, the event reaches this page's viewer streams.
+// onAction(event, { shared, comment }) receives each applied action's event, the history entry with its initiative, instead of this page's viewer streams;
+// shared is false for an index target, whose history belongs to this checkout alone, and comment is the id of a stored comment, which names its file, or null.
+// Without it, the event reaches this page's viewer streams.
 // hub holds the shared viewer streams of the origin that serves this page; the review app passes one hub to every project, and a session server keeps its own.
 export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, onAction = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null, writeSessions = null, hub = createViewerHub(),
   rebuildIndex = (root, component, options = {}) => backgroundPreparation().then((module) => module.startIndexRebuild(root, { ...(component ? { component: { identity: component.identity, folder: component.folder } } : {}), ...options })), autoRebuild = (root) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }) {
@@ -821,7 +946,13 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     }
   }
 
-  async function handle(request, response, route, url) {
+  // A page's reads resolve the record store and its folders once per request; the event streams stay open for the page's life, so they read afresh.
+  function handle(request, response, route, url) {
+    if (request.method !== "GET" || route.startsWith("/api/events")) return serve(request, response, route, url);
+    return withRecordReads(() => serve(request, response, route, url));
+  }
+
+  async function serve(request, response, route, url) {
     if (route === "/" || route === "/review") {
       await serveFile(response, path.join(PUBLIC_DIR, "review.html"), "text/html; charset=utf-8");
     } else if (route === "/review.js") {
@@ -850,7 +981,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       try {
         let change;
         try {
-          change = JSON.parse(await readBody(request));
+          change = parseStoreJson(await readBody(request));
         } catch {
           throw Object.assign(new Error("The preferences must be a JSON object that gives one or more preferences."), { code: "invalid_preference" });
         }
@@ -884,7 +1015,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const available = new Set([...artifacts, ...sources]);
       const snapshot = await followMovedRecords(available);
       const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref) => entityExists(projectRoot, ref));
-      send(response, 200, JSON.stringify({ projectRoot, workspace: await readWorkspaceIdentity(projectRoot), artifacts, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
+      send(response, 200, JSON.stringify({ projectRoot, workspace: await readWorkspaceIdentity(projectRoot), artifacts, artifactScopes: await listArtifactScopes(projectRoot), sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
     } else if (route === "/api/store/conflicts" && request.method === "GET") {
       // Saved local record versions are read-only here; a person redoes a lost change through an agent.
       send(response, 200, JSON.stringify({ conflicts: await listRecordStoreConflicts(projectRoot).catch(() => []) }), "application/json; charset=utf-8");
@@ -904,6 +1035,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       } catch (error) {
         sendActionError(response, error);
       }
+    } else if (route === "/api/launches" && request.method === "GET") {
+      // Every launched session of this machine that shares this checkout's record store; reading needs no write session.
+      sendJson(response, 200, await listLaunches({ projectRoot, env: process.env }));
     } else if (route === "/api/actions/targets" && request.method === "GET") {
       try {
         sendJson(response, 200, await listActionTargets({ projectRoot, kind: url.searchParams.get("kind") }));
@@ -927,11 +1061,13 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       try {
         const result = await applyAction({ projectRoot, target: body.target, action: body.action, input: body.input, revision: body.revision, confirmed: body.confirmed, via: "review-app", indexer });
         if (result.applied) forgetWorkspace();
-        sendJson(response, 200, result);
+        // A launch, stop, or resume also answers with the launched session it changed; an approval's or comment's artifact stays in the event alone.
+        sendJson(response, 200, { applied: result.applied, actions: result.actions, ...(result.launch !== undefined ? { launch: result.launch } : {}) });
         if (result.applied) {
           const target = parseTarget(result.applied.target);
-          const event = { ...result.applied, initiative: target?.initiative ?? null };
-          if (onAction) await Promise.resolve(onAction(event, { shared: target?.kind !== "index" })).catch(() => {});
+          // An approval or a comment belongs to no initiative, so its event names its artifact, as Attention's recent changes list it.
+          const event = { ...result.applied, initiative: target?.initiative ?? (target?.kind === "launch" ? result.launch?.initiative ?? null : null), ...(result.artifact ? { artifact: result.artifact } : {}) };
+          if (onAction) await Promise.resolve(onAction(event, { shared: target?.kind !== "index", comment: result.comment ?? null })).catch(() => {});
           else notify("action", event);
         }
       } catch (error) {
@@ -983,11 +1119,23 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       send(response, 200, JSON.stringify(await searchArtifacts(projectRoot, url.searchParams.get("q"))), "application/json; charset=utf-8");
     } else if (route === "/api/artifact") {
       const artifactPath = url.searchParams.get("path");
+      // A store artifact's comments come one page at a time from commentOffset, which names a whole number of at least 1 in ASCII digits.
+      const commentOffset = url.searchParams.has("commentOffset") ? url.searchParams.get("commentOffset") : "1";
+      if (!/^[0-9]+$/.test(commentOffset) || Number(commentOffset) < 1) {
+        send(response, 400, "commentOffset names the 1-based position of the first comment to read, a whole number of at least 1 in ASCII digits.");
+        return;
+      }
       // Only listed documents and filtered source files are served, never an arbitrary project path such as .env.
       // A path that leaves the project still fails here, while a moved or deleted file answers 404 below.
       await resolveProjectFile(projectRoot, artifactPath).catch((error) => {
         if (error.code !== "ENOENT") throw error;
       });
+      // An artifact path whose store cannot be reached is refused with the store's reason, never answered with the checkout's bytes.
+      const refusal = await inArtifactStore(projectRoot, artifactPath) ? await artifactStoreRefusal(projectRoot) : null;
+      if (refusal !== null) {
+        send(response, 503, refusal);
+        return;
+      }
       const { artifacts, sources } = await listedFiles(projectRoot, [artifactPath]);
       if (!artifacts.includes(artifactPath) && !sources.includes(artifactPath)) {
         send(response, 404, "The file is not available for review.");
@@ -995,8 +1143,12 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       }
       let loaded;
       try {
-        loaded = await loadArtifact(projectRoot, artifactPath);
+        loaded = await loadArtifact(projectRoot, artifactPath, { commentOffset: Number(commentOffset) });
       } catch (error) {
+        if (recordsUnavailable(error)) {
+          send(response, 503, await artifactStoreRefusal(projectRoot) ?? withoutCredentials(error.message));
+          return;
+        }
         // A file deleted after the listing above answers the same as an unlisted one.
         if (error.code !== "ENOENT") throw error;
         send(response, 404, "The file is not available for review.");
@@ -1055,7 +1207,8 @@ export async function startReviewServer(options = {}) {
   const token = randomBytes(24).toString("base64url");
   const prefix = `/session/${token}`;
   let review;
-  const server = createServer(async (request, response) => {
+  // A request answers a browser, never a tool call, so no store access in it moves a checkout's artifacts, even on a server that a tool call started.
+  const server = createServer((request, response) => outsideToolCall(async () => {
     try {
       if (!isTrustedHost(request.headers.host)) {
         send(response, 403, "Unknown host");
@@ -1074,7 +1227,7 @@ export async function startReviewServer(options = {}) {
         send(response, 400, error.message);
       }
     }
-  });
+  }));
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(options.port ?? 0, "127.0.0.1", resolve);

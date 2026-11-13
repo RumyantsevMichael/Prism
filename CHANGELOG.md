@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.24.0](https://github.com/RumyantsevMichael/Prism/compare/v0.23.0...v0.24.0) (2026-11-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* With a store, `ship` without an approved correctness gate is refused with `ship_unconfirmed`. The orchestrate skill asks for the gate and passes it as `afterGate`.
+
+### Added
+
+* **index-preparation:** build native indexes that finish, resume and rebuild incrementally ([#264](https://github.com/RumyantsevMichael/Prism/issues/264)) ([0ca0b6d](https://github.com/RumyantsevMichael/Prism/commit/0ca0b6d4fd2f6b6717664d2a71b6e27934d3ed05)), closes [#119](https://github.com/RumyantsevMichael/Prism/issues/119) [#120](https://github.com/RumyantsevMichael/Prism/issues/120) [#14](https://github.com/RumyantsevMichael/Prism/issues/14)
+* keep requirements, ADRs and plans in the shared record store ([#201](https://github.com/RumyantsevMichael/Prism/issues/201)) ([b708594](https://github.com/RumyantsevMichael/Prism/commit/b708594eadb89731807e2a1658a3727233e7176b)), closes [#48](https://github.com/RumyantsevMichael/Prism/issues/48)
+* **review:** launch, stop and resume headless sessions from the review app ([#212](https://github.com/RumyantsevMichael/Prism/issues/212)) ([903936f](https://github.com/RumyantsevMichael/Prism/commit/903936f92646833159bdef4a72509ee72a6c18fd))
+
+
+### Fixed
+
+* **ci:** report main failures from colored logs and steady component index tests ([#257](https://github.com/RumyantsevMichael/Prism/issues/257)) ([ccaabc4](https://github.com/RumyantsevMichael/Prism/commit/ccaabc4a552b88e654065041f8f6ac276b134cf5)), closes [#210](https://github.com/RumyantsevMichael/Prism/issues/210) [#237](https://github.com/RumyantsevMichael/Prism/issues/237) [#262](https://github.com/RumyantsevMichael/Prism/issues/262)
+* deliver gate answers only to the session that asked ([#215](https://github.com/RumyantsevMichael/Prism/issues/215)) ([6b8df86](https://github.com/RumyantsevMichael/Prism/commit/6b8df86ae09fbf31a34776521ce7a7d2b184175b)), closes [#213](https://github.com/RumyantsevMichael/Prism/issues/213)
+* name the record store in record tool results ([#267](https://github.com/RumyantsevMichael/Prism/issues/267)) ([27e1bea](https://github.com/RumyantsevMichael/Prism/commit/27e1bea8420b23258cb018c6c8074f5a37e8f98e)), closes [#261](https://github.com/RumyantsevMichael/Prism/issues/261)
+* push store writes when a session ends and show notes to Claude Code ([#263](https://github.com/RumyantsevMichael/Prism/issues/263)) ([2f956a1](https://github.com/RumyantsevMichael/Prism/commit/2f956a19168aedbb0ac7c13aeb3e81992ff756f2)), closes [#48](https://github.com/RumyantsevMichael/Prism/issues/48)
+* **review:** fix ten small review app and hook defects ([#239](https://github.com/RumyantsevMichael/Prism/issues/239)) ([1089fee](https://github.com/RumyantsevMichael/Prism/commit/1089fee54068e42db9a3190e479f82efbcadd0ae)), closes [#225](https://github.com/RumyantsevMichael/Prism/issues/225) [#226](https://github.com/RumyantsevMichael/Prism/issues/226) [#227](https://github.com/RumyantsevMichael/Prism/issues/227) [#228](https://github.com/RumyantsevMichael/Prism/issues/228) [#229](https://github.com/RumyantsevMichael/Prism/issues/229) [#230](https://github.com/RumyantsevMichael/Prism/issues/230) [#231](https://github.com/RumyantsevMichael/Prism/issues/231) [#232](https://github.com/RumyantsevMichael/Prism/issues/232) [#233](https://github.com/RumyantsevMichael/Prism/issues/233) [#234](https://github.com/RumyantsevMichael/Prism/issues/234)
+* **review:** hide the git windows of the Changed this week count on Windows ([#214](https://github.com/RumyantsevMichael/Prism/issues/214)) ([50776f2](https://github.com/RumyantsevMichael/Prism/commit/50776f2c3c6c0d5bf1d175a535b0209b264d2a55)), closes [#85](https://github.com/RumyantsevMichael/Prism/issues/85)
+* **review:** resolve the record store once per page request ([#238](https://github.com/RumyantsevMichael/Prism/issues/238)) ([94b0473](https://github.com/RumyantsevMichael/Prism/commit/94b04731dab2670e7758e765a26548fa03bbd48d)), closes [#85](https://github.com/RumyantsevMichael/Prism/issues/85)
+* **review:** stop advertising a design-audit mode to Codex ([#235](https://github.com/RumyantsevMichael/Prism/issues/235)) ([57ebd9b](https://github.com/RumyantsevMichael/Prism/commit/57ebd9b635a1105493238667f83d455ea0a478b4)), closes [#224](https://github.com/RumyantsevMichael/Prism/issues/224)
+* stop four recurring CI failures (busy folder, move bound, ellipsis, comment focus) ([#266](https://github.com/RumyantsevMichael/Prism/issues/266)) ([ace9430](https://github.com/RumyantsevMichael/Prism/commit/ace94304aa4afcb753aa73991d93783aff04271a)), closes [#237](https://github.com/RumyantsevMichael/Prism/issues/237) [#210](https://github.com/RumyantsevMichael/Prism/issues/210) [#262](https://github.com/RumyantsevMichael/Prism/issues/262)
+* stop Windows CI's two recurring failures and report main failures ([#236](https://github.com/RumyantsevMichael/Prism/issues/236)) ([8b0f364](https://github.com/RumyantsevMichael/Prism/commit/8b0f3645a4094569d71738d692dc34f59007ae10)), closes [#210](https://github.com/RumyantsevMichael/Prism/issues/210) [#85](https://github.com/RumyantsevMichael/Prism/issues/85)
+
+
+### Documentation
+
+* add requirements for reference repositories and work item pins ([#187](https://github.com/RumyantsevMichael/Prism/issues/187)) ([cf3cfd6](https://github.com/RumyantsevMichael/Prism/commit/cf3cfd63a3ad341269d6a7a5adeddb4541a36fa5))
+
 ## [0.23.0](https://github.com/RumyantsevMichael/Prism/compare/v0.22.1...v0.23.0) (2026-11-12)
 
 

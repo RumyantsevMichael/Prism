@@ -4,7 +4,7 @@ import { mkdir, readFile, realpath } from "node:fs/promises";
 import { withArtifactLock, withFileLock } from "../workflow/artifact-store.mjs";
 import { assertInput, describeErrors } from "../workflow/artifact-schema.mjs";
 import { resolveArtifactPath, readChangeMapDocument } from "../conservation/change-map.mjs";
-import { locateRecord, moveLegacyRecords, sameRecord, sliceDocumentFolder, writeRecord } from "../workflow/record-store.mjs";
+import { inArtifactStore, locateRecord, moveLegacyRecords, readArtifactText, sameRecord, sliceDocumentFolder, writeArtifactText, writeRecord } from "../workflow/record-store.mjs";
 import { regularBytes } from "../repository-intelligence/native-semantic-runtime.mjs";
 import { acceptedDesign, latestVerification } from "../workflow/slice-design.mjs";
 import { readCoordinationState, updateCoordinationState } from "../workflow/state.mjs";
@@ -12,6 +12,7 @@ import { refuseShipped } from "../workflow/shipped-history.mjs";
 import { conservationStore, canonical, digest, conservationError, withinScope } from "../conservation/conservation-store.mjs";
 import { assessDeltaReadiness, resolveReference, COMPARISON_VERSION } from "../conservation/conservation-analysis.mjs";
 import { objectSchema as obj, arraySchema as arr, textField as str, hashField, referenceSchema, justificationSchema } from "../conservation/conservation-schema.mjs";
+import { parseStoreJson } from "../workflow/store-json.mjs";
 const verifiedTreeWave = (wave) => Boolean(wave.tree) && !wave.comparisonId;
 const revisionField = { oneOf: [hashField, { type: "null" }] };
 const sliceIdentity = { projectRoot: str, initiative: str, slice: str };
@@ -140,7 +141,7 @@ async function refuseAtLoopLimit(input, limit) {
 async function sliceStatus(input) {
   const located = await locateRecord(input.projectRoot, { kind: "initiative", initiative: input.initiative });
   try {
-    return JSON.parse(await readFile(located.target, "utf8")).slices?.[input.slice]?.status;
+    return parseStoreJson(await readFile(located.target, "utf8")).slices?.[input.slice]?.status;
   } catch {
     return void 0;
   }
@@ -313,7 +314,7 @@ function assertDeferrals(review) {
 async function loadReview(projectRoot, initiative, slice) {
   const resolved = await locateRecord(projectRoot, { kind: "review", initiative, slice });
   try {
-    const bytes = await regularBytes(resolved.target, 4 * 1024 * 1024), document = JSON.parse(bytes.toString());
+    const bytes = await regularBytes(resolved.target, 4 * 1024 * 1024), document = parseStoreJson(bytes.toString());
     assertInput(recordSchema, document);
     assertDeferrals(document);
     return { resolved, exists: true, revision: digest(bytes), document };
@@ -624,7 +625,19 @@ function markdown(review) {
 async function reviewProjection(input) {
   const folder = await sliceDocumentFolder(input.projectRoot, input.initiative, input.slice);
   if (folder === null) throw conservationError("invalid_path", "The workflow config disables the plans path.");
-  return resolveArtifactPath(input.projectRoot, `${folder}/review.md`, false, "review.md");
+  const file = `${folder}/review.md`;
+  if (await inArtifactStore(input.projectRoot, file)) return { root: input.projectRoot, deltaPath: file, target: null, inStore: true };
+  return { ...await resolveArtifactPath(input.projectRoot, file, false, "review.md"), inStore: false };
+}
+async function readReviewProjection(input) {
+  const projection = await reviewProjection(input);
+  if (projection.inStore) return readArtifactText(input.projectRoot, projection.deltaPath);
+  return (await regularBytes(projection.target, 4 * 1024 * 1024)).toString();
+}
+async function writeReviewProjection(input, root, contents) {
+  const projection = await reviewProjection(input);
+  if (!projection.inStore) await mkdir(path.dirname(projection.target), { recursive: true });
+  await writeArtifactText(input.projectRoot, projection.deltaPath, contents, { write: (target, text) => conservationStore.writeManaged(root, target, text), follow: true });
 }
 function compactHistory(finding) {
   let previous = finding.evidence;
@@ -654,8 +667,7 @@ async function getReview(input) {
   const list = input.wave === void 0 ? loaded.document[section] : section === "findings" ? loaded.document.findings.filter((item) => raisedIn(item) === input.wave) : section === "waves" ? loaded.document.waves.filter((item) => item.id === input.wave) : loaded.document[section].filter((item) => item.wave === input.wave);
   let projectionStale = true;
   try {
-    const projection = await reviewProjection(input);
-    projectionStale = (await regularBytes(projection.target, 4 * 1024 * 1024)).toString() !== markdown(loaded.document);
+    projectionStale = await readReviewProjection(input) !== markdown(loaded.document);
   } catch {
   }
   const entries = list.slice(offset, offset + limit), current = lastWave(loaded.document);
@@ -901,9 +913,7 @@ async function updateReview(input) {
       if (changed) await writeRecord(input.projectRoot, { kind: "review", initiative: input.initiative, slice: input.slice }, contents);
       let projectionStale = false;
       try {
-        const projection = await reviewProjection(input);
-        await mkdir(path.dirname(projection.target), { recursive: true });
-        await conservationStore.writeManaged(resolved.root, projection.target, markdown(review));
+        await writeReviewProjection(input, resolved.root, markdown(review));
       } catch {
         projectionStale = true;
       }

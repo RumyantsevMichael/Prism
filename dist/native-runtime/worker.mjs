@@ -2,7 +2,7 @@
 import readline from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { create, insertMultiple, search } from "@orama/orama";
 import { AutoTokenizer, AutoModel, env } from "@huggingface/transformers";
@@ -11,10 +11,9 @@ import { CHUNKER_VERSION, CODE_EXTENSIONS, extractTextUnits, resolveTextLinks, b
 import { assignContainers, planFragments } from "./fragments.mjs";
 import { searchExclusion } from "./domains.mjs";
 import { extractGraph } from "./graph.mjs";
-import { embedFragments } from "./embeddings.mjs";
+import { embedFragments, embeddingKey } from "./embeddings.mjs";
+import { FUSION_OFFSET, fusionWeights } from "./fusion.mjs";
 const runtimeDirectory = path.dirname(fileURLToPath(import.meta.url));
-const IDENTIFIER = /[A-Za-z\d][_-][A-Za-z\d]|[a-z\d][A-Z]|\b[A-Z\d]{3,}\b|["'`]/;
-const fusionWeights = (query2) => ({ lexicalScore: IDENTIFIER.test(query2) ? 0.5 : 0.25, cosineSimilarity: 1 });
 const CONTEXT_BOOST = 0.5;
 const STOP_WORDS = /* @__PURE__ */ new Set(["a", "an", "and", "are", "as", "at", "be", "by", "can", "do", "does", "for", "from", "how", "in", "into", "is", "it", "its", "of", "on", "or", "that", "the", "their", "this", "to", "what", "when", "where", "which", "while", "who", "why", "with"]);
 const sha = (value) => createHash("sha256").update(value).digest("hex");
@@ -29,9 +28,9 @@ let model;
 let modelIdentity;
 const LOADED_BYTES = 1.5 * 1024 * 1024 * 1024;
 const loaded = /* @__PURE__ */ new Map();
-const loadedKey = (snapshot, identity) => `${snapshot}\0${identity}`;
-function keep(value) {
-  const key = loadedKey(value.index.snapshot, value.index.modelIdentity);
+const loadedKey = (snapshot, identity, indexPath) => `${snapshot}\0${identity}\0${indexPath}`;
+function keep(value, indexPath) {
+  const key = loadedKey(value.index.snapshot, value.index.modelIdentity, indexPath);
   loaded.delete(key);
   loaded.set(key, value);
   for (const chunk of value.index.chunks) delete chunk.embedding;
@@ -75,9 +74,11 @@ async function embed(texts) {
   for (const value of Object.values(inputs)) value.dispose?.();
   return vectors;
 }
+const hasEmbeddings = (index) => index.chunks.length > 0 && index.chunks.every((chunk) => Array.isArray(chunk.embedding));
 async function database(index) {
+  const vectors = hasEmbeddings(index);
   const db = create({
-    schema: { text: "string", context: "string", domain: "enum", kind: "enum", embedding: "vector[384]" },
+    schema: { text: "string", context: "string", domain: "enum", kind: "enum", ...vectors ? { embedding: "vector[384]" } : {} },
     components: { tokenizer: { stemming: false } }
   });
   const split = (value) => value.replace(/([a-z])([A-Z])/g, "$1 $2");
@@ -87,20 +88,59 @@ async function database(index) {
     context: split(chunk.context || ""),
     domain: chunk.domain,
     kind: chunk.kind,
-    embedding: chunk.embedding
+    ...vectors ? { embedding: chunk.embedding } : {}
   })));
   return db;
 }
 async function build(args, progress) {
   await loadModel(args.modelDirectory, args.modelIdentity);
+  const index = await structure(args, progress, { countTokens, fileTokens: (text) => tokenizer.encode(text, { add_special_tokens: false }).length, boundaries });
+  progress({ phase: "structure", index });
+  if (args.fragmentsOnly) return index;
+  const embeddingCounts = await embedFragments(index.chunks, modelIdentity, args.previousEmbeddings || {}, embed, progress);
+  index.counts = { ...index.counts, ...embeddingCounts };
+  index.resources = { rssBytes: process.memoryUsage().rss, peakRssBytes: process.resourceUsage().maxRSS * 1024 };
+  return index;
+}
+const DERIVED_STATE = "derived.json";
+const stateDirectory = (mirror) => path.basename(mirror) === "mirror" ? path.join(path.dirname(mirror), "runtime-state") : void 0;
+async function readDerived(directory, modelIdentity2) {
+  try {
+    const derived = JSON.parse(await readFile(path.join(directory, DERIVED_STATE), "utf8"));
+    return derived?.schemaVersion === 1 && derived.chunkerVersion === CHUNKER_VERSION && derived.modelIdentity === modelIdentity2 && derived.files && typeof derived.files === "object" ? derived.files : {};
+  } catch {
+    return {};
+  }
+}
+async function writeDerived(directory, modelIdentity2, files) {
+  try {
+    await mkdir(directory, { recursive: true, mode: 448 });
+    const temporary = path.join(directory, `${DERIVED_STATE}.${process.pid}.tmp`);
+    await writeFile(temporary, JSON.stringify({ schemaVersion: 1, chunkerVersion: CHUNKER_VERSION, modelIdentity: modelIdentity2, files }), { mode: 384 });
+    await rename(temporary, path.join(directory, DERIVED_STATE));
+  } catch {
+  }
+}
+const fragmentKey = (hash, structured, units) => sha(JSON.stringify([hash, structured, units]));
+async function structure(args, progress, tools) {
   const files = [];
   for (const meta of args.files) {
     const text = await readFile(path.join(args.mirror, meta.file), "utf8");
     if (sha(text) !== meta.hash) throw Object.assign(new Error("The snapshot mirror changed."), { code: "stale_snapshot" });
     files.push({ ...meta, content: text });
   }
-  const graph = await extractGraph(args.mirror, files, runtimeDirectory, progress);
-  const groups = files.map(extractTextUnits);
+  const state = stateDirectory(args.mirror);
+  const changes = args.changedFiles && args.removedFiles ? { changedFiles: args.changedFiles, removedFiles: args.removedFiles } : void 0;
+  const previous = state && changes ? await readDerived(state, args.modelIdentity) : {};
+  const derived = {};
+  const reusable = (file) => previous[file.file]?.hash === file.hash ? previous[file.file] : void 0;
+  const graph = await extractGraph(args.mirror, files, runtimeDirectory, progress, state ? { directory: state, ...changes ? { changes } : {} } : void 0);
+  const groups = files.map((file) => {
+    const kept = reusable(file)?.group;
+    const group = kept ? structuredClone(kept) : extractTextUnits(file);
+    derived[file.file] = { hash: file.hash, group: kept ?? structuredClone(group) };
+    return group;
+  });
   resolveTextLinks(groups);
   const units = [...graph.nodes];
   const edges = [...graph.edges];
@@ -125,46 +165,61 @@ async function build(args, progress) {
   const byFile = new Map(files.map((file) => [file.file, file]));
   const excluded = new Set(files.filter((file) => searchExclusion(file.file, file.content)).map((file) => file.file));
   assignContainers(units, edges, byFile);
+  const cache = {
+    get(file, list) {
+      const kept = reusable(byFile.get(file))?.fragments;
+      if (!kept || kept.key !== fragmentKey(byFile.get(file).hash, Boolean(syntaxCoverage[file]), list)) return void 0;
+      derived[file].fragments = kept;
+      return new Map(structuredClone(kept.planned));
+    },
+    set(file, list, planned) {
+      derived[file].fragments = { key: fragmentKey(byFile.get(file).hash, Boolean(syntaxCoverage[file]), list), planned: structuredClone([...planned]) };
+    }
+  };
   const chunks = planFragments(units, byFile, {
-    countTokens,
-    boundaries,
+    countTokens: tools.countTokens,
+    boundaries: tools.boundaries,
     limit: 512,
     isCandidate: (unit) => !excluded.has(unit.file) && unit.kind !== "import",
-    isStructured: (file) => Boolean(syntaxCoverage[file])
+    isStructured: (file) => Boolean(syntaxCoverage[file]),
+    ...state ? { cache } : {}
   });
   if (chunks.length > 1e5) throw Object.assign(new Error("The semantic index exceeds 100,000 fragments."), { code: "resource_limit" });
-  const embeddingCounts = args.fragmentsOnly ? { reusedEmbeddings: 0, newEmbeddings: 0 } : await embedFragments(chunks, modelIdentity, args.previousEmbeddings || {}, embed, progress);
+  for (const chunk of chunks) chunk.embeddingKey = embeddingKey(args.modelIdentity, chunk.embeddingText);
   const index = {
     schemaVersion: 1,
     chunkerVersion: CHUNKER_VERSION,
-    modelIdentity,
+    modelIdentity: args.modelIdentity,
     snapshot: args.snapshot,
     units,
     edges,
     unresolvedReferences: graph.references,
+    unresolvedByFile: graph.unresolvedByFile,
     chunks,
     fileCoverage,
     diagnostics,
     syntaxCoverage,
     structureCounts: Object.fromEntries(groups.map((group) => [group.units[0].file, group.counts])),
-    tokenCounts: Object.fromEntries(files.map((file) => [file.file, tokenizer.encode(file.content, { add_special_tokens: false }).length])),
-    counts: { files: files.length, units: units.length, fragments: chunks.length, searchExcludedFiles: excluded.size, ...embeddingCounts },
+    tokenCounts: Object.fromEntries(files.map((file) => [file.file, derived[file.file].tokens = reusable(file)?.tokens ?? tools.fileTokens(file.content)])),
+    counts: { files: files.length, units: units.length, fragments: chunks.length, searchExcludedFiles: excluded.size, reusedEmbeddings: 0, newEmbeddings: 0 },
     structureComplete: !diagnostics.some((item) => !item.file),
     resources: { rssBytes: process.memoryUsage().rss, peakRssBytes: process.resourceUsage().maxRSS * 1024 }
   };
+  if (state) await writeDerived(state, args.modelIdentity, derived);
   return index;
 }
 async function query(args) {
-  await loadModel(args.modelDirectory, args.modelIdentity);
-  let current = loaded.get(loadedKey(args.snapshot, args.modelIdentity));
+  let current = loaded.get(loadedKey(args.snapshot, args.modelIdentity, args.indexPath));
   if (!current) {
     const index = JSON.parse(await readFile(args.indexPath, "utf8"));
     if (index.snapshot !== args.snapshot || index.modelIdentity !== args.modelIdentity) throw Object.assign(new Error("The semantic index is stale."), { code: "stale_snapshot" });
-    current = { index, db: await database(index) };
+    current = { index, db: await database(index), vectors: hasEmbeddings(index) };
   }
-  keep(current);
+  keep(current, args.indexPath);
+  const lexicalOnly = args.mode === "lexical" || !current.vectors;
+  if (!lexicalOnly) await loadModel(args.modelDirectory, args.modelIdentity);
   const prefix = "Represent this sentence for searching relevant passages: ";
-  if (countTokens(prefix + args.query) > 512) throw Object.assign(new Error("The search query exceeds the model token limit."), { code: "validation_failed" });
+  if (!lexicalOnly && countTokens(prefix + args.query) > 512) throw Object.assign(new Error("The search query exceeds the model token limit."), { code: "validation_failed" });
   const where = {};
   if (args.filters?.domains?.length) where.domain = { in: args.filters.domains };
   if (args.filters?.kinds?.length) where.kind = { in: args.filters.kinds };
@@ -173,9 +228,9 @@ async function query(args) {
   const words = args.query.replace(/([a-z])([A-Z])/g, "$1 $2").split(/\s+/);
   const term = words.filter((word) => !STOP_WORDS.has(word.toLowerCase())).join(" ") || words.join(" ");
   const lexical = await search(current.db, { term, properties: ["text", "context"], boost: { context: CONTEXT_BOOST }, limit: candidateLimit, where });
-  if (args.mode !== "lexical" && (lastQuery?.text !== args.query || lastQuery.identity !== args.modelIdentity))
+  if (!lexicalOnly && (lastQuery?.text !== args.query || lastQuery.identity !== args.modelIdentity))
     lastQuery = { text: args.query, identity: args.modelIdentity, vector: (await embed([prefix + args.query]))[0] };
-  const dense = args.mode === "lexical" ? { hits: [] } : await search(current.db, { mode: "vector", vector: { property: "embedding", value: lastQuery.vector }, similarity: -1, limit: candidateLimit, where });
+  const dense = lexicalOnly ? { hits: [] } : await search(current.db, { mode: "vector", vector: { property: "embedding", value: lastQuery.vector }, similarity: -1, limit: candidateLimit, where });
   const chunks = new Map(current.index.chunks.map((chunk) => [chunk.id, chunk]));
   const allowed = (id) => !args.filters?.paths?.length || args.filters.paths.some((prefix2) => chunks.get(id).file === prefix2 || chunks.get(id).file.startsWith(`${prefix2}/`));
   const fused = /* @__PURE__ */ new Map();
@@ -184,7 +239,7 @@ async function query(args) {
     for (const [rank, hit] of hits.filter((hit2) => allowed(hit2.id)).entries()) {
       const item = fused.get(hit.id) || { id: hit.id, fusedScore: 0, lexicalScore: null, cosineSimilarity: null };
       item[mode] = hit.score;
-      item.fusedScore += weights[mode] / (60 + rank + 1);
+      item.fusedScore += weights[mode] / (FUSION_OFFSET + rank + 1);
       fused.set(hit.id, item);
     }
   }
@@ -230,25 +285,34 @@ async function query(args) {
     return names;
   };
   return selected.map((score, index) => {
-    const { text, embeddingText, embedding, embeddingKey, prefixLength, context, excerpt, ...unit } = chunks.get(score.id);
+    const { text, embeddingText, embedding, embeddingKey: embeddingKey2, prefixLength, context, excerpt, ...unit } = chunks.get(score.id);
     return { ...unit, ...score, ancestry: ancestry(unit.parentId), fusedRank: index + 1, excerpt: excerpt ?? text.slice(prefixLength, prefixLength + 600) };
   });
 }
-const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
-let pending = Promise.resolve();
-input.on("line", (line) => {
-  pending = pending.then(async () => {
-    let request;
-    try {
-      request = JSON.parse(line);
-      const progress = (value) => send({ id: request.id, progress: value });
-      if (!request) throw new Error("The worker request is missing.");
-      const result = request.method === "build" ? await build(request.args, progress) : request.method === "search" ? await query(request.args) : (() => {
-        throw new Error("Unknown native worker method.");
-      })();
-      send({ id: request.id, result });
-    } catch (error) {
-      send({ id: request?.id, error: { code: error.code || "preparation_failed", message: error.message } });
-    }
+if (!process.env.PRISM_WORKER_LIBRARY) serve();
+function serve() {
+  const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+  let pending = Promise.resolve();
+  input.on("line", (line) => {
+    pending = pending.then(async () => {
+      let request;
+      try {
+        request = JSON.parse(line);
+        const progress = (value) => send({ id: request.id, progress: value });
+        if (!request) throw new Error("The worker request is missing.");
+        const result = request.method === "build" ? await build(request.args, progress) : request.method === "search" ? await query(request.args) : (() => {
+          throw new Error("Unknown native worker method.");
+        })();
+        send({ id: request.id, result });
+      } catch (error) {
+        send({ id: request?.id, error: { code: error.code || "preparation_failed", message: error.message } });
+      }
+    });
   });
-});
+}
+export {
+  hasEmbeddings,
+  query,
+  stateDirectory,
+  structure
+};

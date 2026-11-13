@@ -12,7 +12,7 @@ Design authors it for a fitted slice, including when corrections return from imp
 ## 1. Prepare
 
 1. If `.prism/workflow.md` exists, read it first.
-2. Read Approved requirements, governing ADRs, the glossary, and related features.
+2. Read Approved requirements, governing ADRs, the glossary, and related features, through `get_artifact` for [store artifacts](../workflow/SKILL.md#common-terms).
 3. Inspect the selected code and tests for compatibility and acceptance paths.
 4. If intended behavior conflicts with the design or durable sources, stop and report the conflict.
 
@@ -21,7 +21,7 @@ Existing code and tests do not authorize new behavior.
 
 ## 2. Write the feature
 
-1. Create or update `F-<capability>.feature` in the configured feature directory, defaulting to `docs/Features/`.
+1. Create or update `F-<capability>.feature` in the configured feature directory, defaulting to `docs/Features/`, so that a new file name is a [portable name](../workflow/SKILL.md#common-terms).
 2. Use this shape for each invariant:
 
    ```gherkin

@@ -16,6 +16,7 @@ To run a skill in a child, start a fresh child agent whose prompt asks it to use
 - Don't
   - Load or follow `setup`, `design`, `implement`, `review`, `triage`, or `ideate` yourself; only their child agents do.
   - Run git, hash files, or read code while slices run; children commit their own work and Prism checks the frozen tests.
+  - Read a [store artifact](../workflow/SKILL.md#common-terms), such as a requirement, from a checkout file or from git; read it with `get_artifact`, and treat a checkout file that Prism moved into the store as moved, not deleted.
   - Keep a child's transcript; keep its status.
 
 ## 1. Settings
@@ -65,7 +66,7 @@ Repeat for the next leaf that is `not-started`, has an accepted design, and whos
 3. Run `implement` for the slice in one fresh child agent, passing the contract's `slice.md` and the slice folder; it verifies the slice through `verify_slice` itself.
 4. When it returns `DONE`, read the slice with `get_initiative`: when its review mark is `required`, review it through [review](#5-review), then call `update_initiative` with `set_status` `done`; when it is not done otherwise, call `set_status` `done`, which refuses without a fresh passing run.
 5. When the slice was the last leaf of its contract scope that was not done, call `verify_slice` with the scope as `slice` and `dependents` `true` for its dependents' run; call it again after `running`, after `approval_needed` get the user's answer as for an implementer's approval gate below and call it again with `approvalGate` and any `chatApproval`, and report a `failed` or `approval_unclear` scope to the user as blocked, with each `blocked` component.
-6. Accept the slice's Proposed ADRs, and push when push is on.
+6. Push when push is on, and in a project without a store, accept the slice's Proposed ADRs.
 7. When continuation is `stepwise`, pause and report the finished slice.
 
 - When the slice is `blocked` with contract defects, or its dependencies changed:
@@ -87,7 +88,7 @@ On resume, continue an `in-progress` slice with a fresh implementation session b
 
 ## 6. User gates
 
-- Record every question to the user before asking it, through `update_coordination_state` with a `gateOperations` `ask` operation that names the kind, `visual-review` for a design gate, `decision` for a choice, or `assistance` for an action the user must take, and the slice, question, its context, artifacts, and for a decision its options with consequences and the recommended answer, written as a [blocker](../workflow/SKILL.md#common-terms).
+- Record every question to the user before asking it, through `update_coordination_state` with a `gateOperations` `ask` operation that names the kind, `visual-review` for a design gate, `correctness` to confirm a ship, `decision` for a choice, or `assistance` for an action the user must take, and the slice, question, its context, artifacts, and for a decision its options with consequences and the recommended answer, written as a [blocker](../workflow/SKILL.md#common-terms).
 - After asking, call `wait_for_user_gate` once with the ids just recorded, and when it returns without an answer, end the turn.
 - Treat an answer recorded in the review browser as the user's answer, never ask an answered gate again, and `resolve` each gate after acting on it or as soon as it no longer applies, such as when its artifacts are gone, with a reason unless the browser recorded the answer, and for a decision answered in conversation with the chosen option's id as `choice`.
 
@@ -95,8 +96,10 @@ On resume, continue an `in-progress` slice with a fresh implementation session b
 
 - When every leaf is done:
   1. Run the dependents' run of each contract scope that has no `passed` entry in `get_initiative`'s `dependents`.
-  2. Call `update_roadmap` with a `ship` operation for the initiative; when it refuses with `open_work`, act on and `resolve` each listed gate, accept or revise each listed proposal, and end or wait out each listed claim, and when it refuses with `fixes_unfinished`, design and run each listed fix through sections 3 and 4, then call `ship` again.
-  3. When `ship` refuses with `dependents_blocked`, run the dependents' run again of each listed scope whose `reason` is `not_run` or `stale` and call `ship` again, then report each scope whose `reason` is `failed` or whose new run did not pass to the user with its `blocked` components and stop until a later dependents' run passes.
-  4. Move facts that later work needs from the initiative's slice folders into requirements, ADRs, or user documentation.
-  5. Keep the slice folders and the initiative's records, because they are the initiative's history, and when commit is on, commit the slice documents that ship lists under `historyMarks` apart from other changes.
+  2. In a project with a store, ask a [correctness gate](../workflow/SKILL.md#common-terms) once the last verification run passed and the initiative's `slice.md` files and the ADRs they link no longer change, with those files as artifacts, tell the person that only an answer in the review browser confirms a ship, wait for it, and act on a request for changes before asking again, which closes each earlier correctness gate that the person answered.
+  3. Call `update_roadmap` with a `ship` operation for the initiative, with that gate as `afterGate` in a project with a store, which closes that gate when the initiative ships; when it refuses with `open_work`, act on and `resolve` each listed gate, accept or revise each listed proposal, and end or wait out each listed claim, and when it refuses with `fixes_unfinished`, design and run each listed fix through sections 3 and 4, then call `ship` again.
+  4. When `ship` refuses with `dependents_blocked`, run the dependents' run again of each listed scope whose `reason` is `not_run` or `stale` and call `ship` again, then report each scope whose `reason` is `failed` or whose new run did not pass to the user with its `blocked` components and stop until a later dependents' run passes.
+  5. When `ship` refuses with `ship_unconfirmed`, ask a new correctness gate; with `adr_pending`, wait for the approvals it names through `wait_for_user_gate` with `artifact` and ship again; and with `adr_ambiguous` or `artifact_too_large`, ask the person with its message as a [blocker](../workflow/SKILL.md#common-terms).
+  6. Move facts that later work needs from the initiative's slice folders into requirements, ADRs, or user documentation.
+  7. Keep the slice folders and the initiative's records, because they are the initiative's history, and in a project without a store, when commit is on, commit the slice documents that ship lists under `historyMarks` apart from other changes, while in a project with a store they are already shared and need no commit.
 - When work must pause, call `checkpoint_pause` with the initiative, the current revision, the active slice, recovery content that names the next action, and the state changes.

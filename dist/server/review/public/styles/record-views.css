@@ -82,6 +82,132 @@
   max-width: 100%;
 }
 
+/* ---------- The review view of a store artifact, above its content ---------- */
+
+.artifact-review {
+  display: block;
+  margin: 0 0 var(--prism-space-5);
+}
+
+.artifact-review-changes {
+  min-width: 0;
+  margin: var(--prism-space-4) 0;
+}
+
+/* The numbered lines of the current version: each line shows its number before its text, and a long line wraps rather than widening the card. */
+.artifact-review-lines {
+  display: block;
+  min-width: 0;
+  margin: 0 0 var(--prism-space-4);
+}
+
+.artifact-lines-scroll {
+  max-height: calc(var(--prism-control-height) * 16);
+  margin-block-start: var(--prism-space-2);
+  overflow: auto;
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-sm);
+  background: var(--prism-color-sunken);
+}
+
+.artifact-lines {
+  margin: 0;
+  padding: 0;
+  color: var(--prism-color-ink);
+  font-family: var(--prism-font-code);
+  font-size: var(--prism-font-size-code);
+  line-height: var(--prism-line-height-code);
+  list-style: none;
+}
+
+.artifact-line {
+  display: flex;
+  min-width: 0;
+}
+
+.artifact-line-number {
+  flex: 0 0 auto;
+  min-width: calc(var(--prism-control-height) * 1.5);
+  padding-inline: var(--prism-space-3);
+  color: var(--prism-color-ink-muted);
+  text-align: end;
+  user-select: none;
+}
+
+.artifact-line-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-inline-end: var(--prism-space-3);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.artifact-review-comments {
+  display: grid;
+  gap: var(--prism-space-4);
+  min-width: 0;
+}
+
+.artifact-review-subheading {
+  margin: 0;
+  font-size: var(--prism-font-size-md);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+/* The listed comments and the More comments button below them, which reads the next ones. */
+.artifact-comment-list {
+  display: grid;
+  gap: var(--prism-space-4);
+  min-width: 0;
+}
+
+.artifact-comments-more {
+  display: flex;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+.artifact-comments {
+  display: grid;
+  gap: var(--prism-space-4);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.artifact-comment {
+  min-width: 0;
+  padding-block-end: var(--prism-space-4);
+  border-bottom: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.artifact-comment-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2) var(--prism-space-3);
+  min-width: 0;
+  font-size: var(--prism-font-size-sm);
+}
+
+.artifact-comment-author {
+  min-width: 0;
+  font-weight: var(--prism-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.artifact-comment-head .muted {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A comment keeps the line breaks its author typed, and a long unbroken word wraps rather than widening the page. */
+.artifact-comment-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* ---------- Documents and source files ---------- */
 
 .document-sheet {
@@ -241,7 +367,7 @@ mark.find-hit {
   overflow: auto;
   padding: var(--prism-space-6);
   border-radius: var(--prism-radius-md);
-  background: var(--prism-color-diagram-paper);
+  background-color: var(--prism-color-diagram-paper);
   color: var(--prism-color-diagram-ink);
   text-align: center;
 }
@@ -361,8 +487,7 @@ body.has-maximized::after {
   padding: var(--prism-space-4);
   border: var(--prism-stroke) solid var(--prism-color-line);
   border-radius: var(--prism-radius-md);
-  background: var(--prism-color-sunken);
-  cursor: grab;
+  background-color: var(--prism-color-sunken);
 }
 
 .graph-viewport.is-panning {

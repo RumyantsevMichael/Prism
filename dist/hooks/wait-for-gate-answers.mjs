@@ -35,7 +35,9 @@ export async function waitForGateAnswers({ input = process.stdin, directory, pol
   const notices = { session, ...(typeof request.waitId === "string" ? { waitId: request.waitId } : {}), ...(directory ? { directory: path.join(path.dirname(directory), NOTICE_FOLDER) } : {}) };
   let result;
   try {
-    result = await waitForUserGates({ projectRoot: request.projectRoot, initiative: request.initiative, gateIds: request.gateIds, maxWaitMinutes, notices, watchChanges: request.coordinates === true, ...(Array.isArray(request.knownEntries) ? { knownEntries: request.knownEntries } : {}), ...(pollMs ? { pollMs } : {}), ...(settleMs === undefined ? {} : { settleMs }) });
+    // An artifact wait reads the artifact's approval gates and takes no notices, which an initiative records.
+    const source = typeof request.artifact === "string" ? { artifact: request.artifact, scope: request.scope, ...(directory ? { deliveredDirectory: directory } : {}) } : { initiative: request.initiative, notices, watchChanges: request.coordinates === true, ...(Array.isArray(request.knownEntries) ? { knownEntries: request.knownEntries } : {}) };
+    result = await waitForUserGates({ projectRoot: request.projectRoot, ...source, gateIds: request.gateIds, maxWaitMinutes, ...(pollMs ? { pollMs } : {}), ...(settleMs === undefined ? {} : { settleMs }) });
   } catch {
     return null;
   }
@@ -52,7 +54,9 @@ export async function waitForGateAnswers({ input = process.stdin, directory, pol
     "The user answered while Prism's wait_for_user_gate call waited after your turn; this is its result.",
     ...result.answered.map(answerText),
     ...(result.waiting.length ? [`Still waiting on: ${result.waiting.join(", ")}.`] : []),
-    "Act on each answer, then remove each answered gate with an update_coordination_state resolve operation for its id."
+    typeof request.artifact === "string"
+      ? "Act on each answer; an approval gate needs no resolve, since Prism recorded the answer in the artifact's status record."
+      : "Act on each answer, then remove each answered gate with an update_coordination_state resolve operation for its id."
   ];
   return { decision: "block", reason: lines.join("\n") };
 }

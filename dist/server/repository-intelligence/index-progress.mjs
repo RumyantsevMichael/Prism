@@ -20,6 +20,7 @@ function processAlive(pid) {
   }
 }
 const shared = /* @__PURE__ */ new Map();
+const live = /* @__PURE__ */ new Map();
 const sharedFile = (file) => {
   let state = shared.get(file);
   if (!state) shared.set(file, state = { queue: Promise.resolve() });
@@ -41,6 +42,8 @@ class ProgressRecorder {
   heartbeat;
   displaced = false;
   async start() {
+    if (!live.has(this.directory)) live.set(this.directory, /* @__PURE__ */ new Set());
+    live.get(this.directory).add(this);
     const state = sharedFile(this.file);
     if (state.owner && state.owner !== this) {
       state.owner.displaced = true;
@@ -94,6 +97,8 @@ class ProgressRecorder {
   }
   // Gives the file up once this recorder's last operation has run, so the next build of the directory owns it.
   release() {
+    live.get(this.directory)?.delete(this);
+    if (!live.get(this.directory)?.size) live.delete(this.directory);
     const state = shared.get(this.file);
     if (state?.owner === this) state.owner = void 0;
     if (state && !state.owner && state.queue === this.queue) shared.delete(this.file);
@@ -128,6 +133,12 @@ async function readProgressRecords(directory) {
     }
   }
   return records;
+}
+async function lockHolder(directory, self) {
+  const holding = (progress) => progress?.phase !== "waiting";
+  for (const recorder of live.get(directory) ?? []) if (recorder !== self && holding(recorder.record.progress)) return recorder.record.preparationId;
+  for (const record of await readProgressRecords(directory)) if (record.pid !== process.pid && record.state === "preparing" && holding(record.progress) && processAlive(record.pid)) return record.preparationId;
+  return null;
 }
 function git(root, args) {
   return new Promise((resolve) => {
@@ -165,6 +176,7 @@ export {
   componentStorageKey,
   freshnessFile,
   gitFingerprint,
+  lockHolder,
   processAlive,
   progressFile,
   projectStorageKey,

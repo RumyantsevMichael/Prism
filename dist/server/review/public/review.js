@@ -18,6 +18,7 @@ import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createPresence } from "./views/presence.js";
 import { DENSITIES, onPreferencesChange, preference, preferencesReady, savePreferences, setPreference, THEMES } from "./kit/preferences.js";
 import { shownActionEntries } from "./views/actions.js";
+import { artifactReviewHtml, focusAfterMore, mountArtifactReview, readListedComments } from "./views/artifact-review.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
 import { currentPhase } from "./views/slice.js";
 import { messageHtml, shortDate } from "./views/util.js";
@@ -137,6 +138,7 @@ function welcome() {
   empty.className = "welcome";
   empty.setAttribute("heading", "Nothing is open");
   empty.append(element("p", "", "Choose Attention, the roadmap, or a library section, or press Ctrl K to jump."));
+  writeArtifact("");
   artifact.replaceChildren(empty);
   setBusy(false);
 }
@@ -842,7 +844,13 @@ async function refreshProjects() {
     group.append(...members.sort(compareMembers).map((member) => projectItem(member, listing.current)));
     groups.push(group);
   }
+  // A list that changes while the menu is open keeps the menu's scroll position and its place under the button.
+  const scrolled = projectMenu.scrollTop;
   projectMenu.replaceChildren(...groups);
+  if (projectMenu.isOpen) {
+    projectMenu.place();
+    projectMenu.scrollTop = scrolled;
+  }
 }
 
 function setProjectLabel(identity, projectRoot, store = null) {
@@ -932,8 +940,10 @@ function onStreamEvent(name, data) {
     notices.set(data.projectId, data);
     renderNotices();
   } else if (name === "action") {
-    // An applied action of this page or of another checkout's page on the same records: views that show it update without a reload.
+    // An applied action of this page or of another checkout's page on the same records: views that show it update without a reload,
+    // and a comment on the open file shows at once rather than at the next check.
     document.dispatchEvent(new CustomEvent("prism:action", { detail: data }));
+    if (data?.artifact?.path && data.artifact.path === selectedPath) void showArtifact(selectedPath);
   } else if (name === "session") {
     sessionConnected = true;
     try {
@@ -1038,6 +1048,8 @@ function setDiagramScale(section, scale) {
   svg.style.width = `${Number(section.dataset.naturalWidth) * nextScale}px`;
   svg.style.height = `${Number(section.dataset.naturalHeight) * nextScale}px`;
   section.querySelector("[data-scale-label]").textContent = `${Math.round(nextScale * 100)}%`;
+  // The canvas's dotted grid scales with the diagram.
+  section.querySelector(".diagram-output")?.setAttribute("scale", String(nextScale));
 }
 
 function configureDiagram(section, source) {
@@ -1187,7 +1199,7 @@ function diagramCard(diagram, { compact = false } = {}) {
       <prism-button variant="ghost" size="sm" data-action="source" aria-expanded="false">Show source</prism-button>
       <prism-button variant="ghost" size="sm" data-action="copy" tip="Copy PlantUML source">Copy</prism-button>
     </div>
-    <div class="diagram-output"><prism-spinner label="Rendering diagram"></prism-spinner></div>
+    <prism-canvas class="diagram-output"><prism-spinner label="Rendering diagram"></prism-spinner></prism-canvas>
     <div class="diagram-source" hidden><prism-code language="plantuml"><pre><code>${highlight(diagram.source, "plantuml")}</code></pre></prism-code></div>`;
   return section;
 }
@@ -1899,20 +1911,52 @@ function controlsOf(root) {
 // and then the scroll position, open sections, and focus come back; a newly opened path starts where its tab was left, or at the top.
 function beginRebuild(path) {
   const same = renderedPath === path;
-  const memory = { path, top: same ? workspace.scrollTop : scrollPositions.get(path) ?? 0, open: null, focus: -1 };
+  const memory = { path, top: same ? workspace.scrollTop : scrollPositions.get(path) ?? 0, open: null, focus: -1, focusKey: null };
   if (same) {
     memory.open = [...artifact.querySelectorAll("prism-disclosure")].map((disclosure) => [disclosure.getAttribute("summary") ?? "", disclosure.open]);
     memory.focus = artifact.contains(document.activeElement) ? controlsOf(artifact).indexOf(document.activeElement) : -1;
+    // A control whose view names it with data-focus-key, such as a kit button whose own control sits in its shadow, gets its focus back by that name.
+    memory.focusKey = artifact.contains(document.activeElement) ? document.activeElement.closest("[data-focus-key]")?.dataset.focusKey ?? null : null;
+    // A control that the new view takes over whole, such as the comment form with an unsent comment, is focused again as itself,
+    // since moving it to another scope renames its focus key and the controls before it can differ.
+    memory.focused = artifact.contains(document.activeElement) ? document.activeElement : null;
+    memory.selection = memory.focused && "selectionStart" in memory.focused ? [memory.focused.selectionStart, memory.focused.selectionEnd] : null;
     artifact.style.minHeight = `${artifact.offsetHeight}px`;
   } else {
     artifact.style.minHeight = "";
   }
   rebuilding = true;
   linkPreview?.hide();
+  // The new view is built out of sight beside the one showing and replaces it whole once it is drawn, graphs and diagrams included,
+  // so a refresh changes the page without showing it empty or half drawn.
+  dropStages();
+  memory.generation = stageGeneration;
+  memory.stage = element("div", "artifact-view artifact-stage");
+  memory.stage.setAttribute("aria-hidden", "true");
+  memory.stage.inert = true;
+  workspace.append(memory.stage);
   return memory;
 }
 
-function scrollToAnchor(anchor) {
+// Each rebuild, and each page written straight into the artifact area, starts a new generation, so a slower build that an earlier one began is dropped rather than shown over it.
+let stageGeneration = 0;
+
+function dropStages() {
+  stageGeneration += 1;
+  for (const stage of workspace.querySelectorAll(":scope > .artifact-stage")) stage.remove();
+}
+
+// A page written straight into the artifact area, such as an error or a missing page, ends any build in progress.
+function writeArtifact(html) {
+  dropStages();
+  rebuilding = false;
+  artifact.innerHTML = html;
+}
+
+// A reader who asks for less motion gets the jump; everyone else sees the page travel to the section, so they keep track of where they went.
+const reducedMotion = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)");
+
+function scrollToAnchor(anchor, { smooth = false } = {}) {
   const target = anchorTarget(artifact, anchor);
   if (!target) return false;
   revealInDocument(target);
@@ -1922,7 +1966,10 @@ function scrollToAnchor(anchor) {
   if (range?.[2]) {
     for (let line = target; line && Number(line.id.slice(HEADING_PREFIX.length + 1)) <= Number(range[2]); line = line.nextElementSibling) line.classList.add("in-range");
   }
-  workspace.scrollTop += target.getBoundingClientRect().top - workspace.getBoundingClientRect().top - 16;
+  // A maximized document scrolls itself; any other page scrolls the workspace.
+  const scroller = target.closest(".is-maximized") ?? workspace;
+  const top = scroller.scrollTop + target.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 16;
+  scroller.scrollTo({ top, behavior: smooth && !reducedMotion?.matches ? "smooth" : "instant" });
   target.classList.remove("is-target");
   void target.offsetWidth;
   target.classList.add("is-target");
@@ -2009,11 +2056,21 @@ function markClippedChips(root) {
 }
 
 function endRebuild(memory) {
+  // A build that a later one replaced leaves the page to the later one.
+  if (memory.generation !== stageGeneration) {
+    memory.stage.remove();
+    return;
+  }
   rebuilding = false;
   if (memory.path !== selectedPath) {
+    memory.stage.remove();
     artifact.style.minHeight = "";
     return;
   }
+  // The reader may have scrolled the page while the new view was built, so a refresh of the same page keeps where they are now.
+  if (renderedPath === memory.path) memory.top = workspace.scrollTop;
+  artifact.replaceChildren(...memory.stage.childNodes);
+  memory.stage.remove();
   const state = viewState(memory.path);
   state.folds ??= new Map();
   decorateDocuments(artifact, state.folds);
@@ -2025,7 +2082,30 @@ function endRebuild(memory) {
       if (sections[index] && (sections[index].getAttribute("summary") ?? "") === summary) sections[index].open = open;
     });
   }
-  if (memory.focus >= 0 && !artifact.contains(document.activeElement)) controlsOf(artifact)[memory.focus]?.focus({ preventScroll: true });
+  // Focus that a view named with data-focus-key comes back by that name, and a comment, which is no control, takes it without entering the tab order.
+  // A comment is never found again by position, since a list that grew or shrank would move focus to another control: one that is gone hands focus to the More comments button when one is listed.
+  // A More comments button that this redraw no longer lists, as when it lists the last comments that a press of it asked for, hands focus on as that press would:
+  // to the More comments button that follows the added comments, or else to the first comment that the press added, never to a control found by position.
+  const keyed = (key) => [...artifact.querySelectorAll("[data-focus-key]")].find((control) => control.dataset.focusKey === key);
+  const comment = memory.focusKey?.startsWith("comment:") === true;
+  const more = memory.focusKey === "more-comments";
+  if (memory.focused?.isConnected && artifact.contains(memory.focused) && !artifact.contains(document.activeElement)) {
+    memory.focused.focus({ preventScroll: true });
+    if (memory.selection && "setSelectionRange" in memory.focused) try { memory.focused.setSelectionRange(...memory.selection); } catch {}
+  }
+  if (memory.focusKey && !artifact.contains(document.activeElement)) {
+    const found = keyed(memory.focusKey) ?? (comment ? keyed("more-comments") : null);
+    if (found?.dataset.commentId !== undefined) found.tabIndex = -1;
+    if (found) found.focus({ preventScroll: true });
+    else if (more) {
+      const list = artifact.querySelector("[data-comment-list]");
+      const listed = [...(list?.querySelectorAll("[data-comment-id]") ?? [])];
+      // Without a press under way, focus goes to the last listed comment, the place in the list where the button stood.
+      const before = state.moreBefore ?? new Set(listed.slice(0, -1).map((item) => item.dataset.commentId));
+      if (list) focusAfterMore(list, before);
+    }
+  }
+  if (!comment && !more && memory.focus >= 0 && !artifact.contains(document.activeElement)) controlsOf(artifact)[memory.focus]?.focus({ preventScroll: true });
   workspace.scrollTop = memory.top;
   if (pendingAnchor?.path === memory.path) {
     scrollToAnchor(pendingAnchor.anchor);
@@ -2056,6 +2136,7 @@ function showMissing(path) {
     renderedPath = null;
     document.body.classList.remove("has-maximized");
     pageBar.setActions([]);
+    writeArtifact("");
     renderMissing(artifact, path, { entity: Boolean(parseEntityRef(path)), label: pageLabel(path), onClose: () => closeTab(path) });
   }
   setBusy(false);
@@ -2070,7 +2151,8 @@ function updateMissingTabs(reported) {
 // A page that could not load says why in the artifact area, and the area is no longer busy.
 async function showError(response) {
   pageBar.setActions([]);
-  artifact.innerHTML = `<div class="document-sheet"><p class="error">${escapeHtml(await response.text())}</p></div>`;
+  const message = await response.text();
+  writeArtifact(`<div class="document-sheet"><p class="error">${escapeHtml(message)}</p></div>`);
   setBusy(false);
 }
 
@@ -2114,14 +2196,14 @@ async function showEntity(path) {
   const label = entityLabel(entity);
   const state = viewState(path);
   const memory = beginRebuild(path);
-  artifact.innerHTML = `
+  memory.stage.innerHTML = `
     <header class="artifact-header">
       <div>
         <h1>${escapeHtml(label.title)}</h1>
         ${label.lead ? `<div class="artifact-lead${state.leadExpanded ? " is-expanded" : ""}"><p>${escapeHtml(label.lead)}</p><prism-button variant="ghost" size="sm" data-lead-toggle hidden>${state.leadExpanded ? "Less" : "More"}</prism-button></div>` : ""}
       </div>
     </header>`;
-  const lead = artifact.querySelector(".artifact-lead");
+  const lead = memory.stage.querySelector(".artifact-lead");
   if (lead) {
     const text = lead.querySelector("p");
     const toggle = lead.querySelector("[data-lead-toggle]");
@@ -2135,7 +2217,7 @@ async function showEntity(path) {
   pageBar.setActions([]);
   const container = document.createElement("div");
   container.className = "structured-view";
-  artifact.appendChild(container);
+  memory.stage.appendChild(container);
   await renderEntity(container, entity, { ...viewContext(path, state), renderMarkdown: (source, basePath = null) => renderText("document.md", source, markdownOptions(basePath)) });
   endRebuild(memory);
 }
@@ -2210,6 +2292,16 @@ async function showArtifact(path) {
     return;
   }
   const data = await response.json();
+  const state = viewState(data.path);
+  // A Review card that lists further comment reads reads them all again with the first, so its list stays the file's first comments as they now are.
+  const readPage = (commentOffset) => fetchJson(`./api/artifact?path=${encodeURIComponent(data.path)}&commentOffset=${commentOffset}`);
+  if (data.artifact && (state.commentReads ?? 1) > 1) {
+    const listed = await readListedComments(data.artifact, state, readPage).catch(() => null);
+    if (path !== selectedPath) return;
+    // Reads that never agreed, or failed, leave the card as it is until the next redraw; a card not shown yet lists the first read alone.
+    if (listed) data.artifact = listed;
+    else if (renderedPath === path) { setBusy(false); return; }
+  }
   const snapshot = JSON.stringify(data);
   if (path !== selectedPath) return;
   if (snapshot === lastSnapshot) {
@@ -2225,13 +2317,12 @@ async function showArtifact(path) {
     : structured || data.path.toLowerCase().endsWith(".puml")
       ? ""
       : `<section class="document-sheet"><prism-doc class="document-content">${renderText(data.path, data.content, markdownOptions(data.path))}</prism-doc></section>`;
-  const state = viewState(data.path);
   const memory = beginRebuild(path);
   // A repository file is named by its path; a record of Prism's by its title and kind, never its file name.
   const named = describe(data.path);
   const heading = named.code ? fileName(data.path) : named.label === named.kind ? named.kind : named.label;
   const kind = structured ? KIND_LABELS[data.kind] ?? "JSON" : named.code ? fileType(data.path) : named.kind;
-  artifact.innerHTML = `
+  memory.stage.innerHTML = `
     <header class="artifact-header">
       <div>
         ${named.code ? "" : `<p class="eyebrow">${escapeHtml(named.kind)}</p>`}
@@ -2243,20 +2334,24 @@ async function showArtifact(path) {
         ${source ? "<prism-chip>Read-only</prism-chip>" : structured ? "" : `<prism-chip>${diagramLabel}</prism-chip>`}
       </div>
     </header>
+    ${artifactReviewHtml(data, state)}
     <div class="document-history" data-shipped-history>${documentHistoryHtml(path)}</div>
     ${documentCard}`;
+  // A store artifact shows its review view above its content, and its comment form keeps an unsent comment across the page's live updates.
+  // More comments lists further comments in place, so the page takes what the card now lists as what it shows and redraws only when that changes.
+  mountArtifactReview(memory.stage, data, { actionApi, state, readPage, onListed: (listed) => { if (listed.path === selectedPath) lastSnapshot = JSON.stringify(listed); } });
   pageBar.setActions(structured ? modeButtons(state, path) : []);
   if (structured) {
     const container = document.createElement("div");
     container.className = "structured-view";
-    artifact.appendChild(container);
+    memory.stage.appendChild(container);
     await renderView(container, data, viewContext(data.path, state));
     endRebuild(memory);
     return;
   }
   for (const diagram of data.diagrams) {
     const section = diagramCard(diagram);
-    artifact.appendChild(section);
+    memory.stage.appendChild(section);
     await renderDiagram(diagram.source, section.querySelector(".diagram-output"), section);
   }
   endRebuild(memory);
@@ -2338,9 +2433,10 @@ function viewContext(path, state) {
       if (path === selectedPath) decorateMaximize(path);
     },
     // A gate answer is the gate's answer action, applied against the revision its listing shows.
-    async answerGate({ initiative, id, choice, note }) {
+    // An approval gate of a requirement or ADR is the target approval:<id>, since the artifact's status record in the store holds it, and its revision is the artifact's version.
+    async answerGate({ initiative, approval, id, choice, note }) {
       if (connection === "stopped") throw new Error(STOPPED_MESSAGE);
-      const target = `gate:${initiative}/${id}`;
+      const target = approval ? `approval:${id}` : `gate:${initiative}/${id}`;
       const unanswered = () => {
         throw new Error("The review app did not answer, so the answer was not recorded. Try again in a moment.");
       };
@@ -2375,7 +2471,8 @@ function paletteEntries() {
     { ref: "requirements", label: "Requirements", kind: "place", detail: "Library" },
     { ref: "decisions", label: "Decisions", kind: "place", detail: "Library" },
     { ref: "glossary", label: "Glossary", kind: "place", detail: "Library" },
-    { ref: "knowledge:diagrams", label: "Diagrams", kind: "place", detail: "Library" }
+    { ref: "knowledge:diagrams", label: "Diagrams", kind: "place", detail: "Library" },
+    { ref: "launches", label: "Launched sessions", kind: "place", detail: "Headless sessions on this computer" }
   ];
   const indexed = navigation.index ?? [];
   const known = new Set(indexed.map((entry) => entry.ref));
@@ -2724,9 +2821,20 @@ async function initialize() {
     const target = docLink.dataset.docLink;
     const anchor = docLink.dataset.docAnchor;
     if (!target || target === selectedPath) {
-      if (!scrollToAnchor(anchor)) showToast(`No heading #${anchor} in this document.`);
+      if (!scrollToAnchor(anchor, { smooth: true })) showToast(`No heading #${anchor} in this document.`);
       else if (docLink.closest("prism-contents")) {
-        requestAnimationFrame(() => docLink.closest("prism-contents").markCurrent?.(docLink));
+        // The contents follow the scroll on their way to the section, so the chosen link is marked again once the scroll ends,
+        // for a last section too short to reach the top of the page.
+        const contents = docLink.closest("prism-contents");
+        const scroller = docLink.closest(".is-maximized") ?? workspace;
+        const mark = () => contents.markCurrent?.(docLink);
+        requestAnimationFrame(mark);
+        if ("onscrollend" in scroller) {
+          // A scroll that had no distance to go never ends, so the wait gives up rather than mark the link after a later scroll of the reader's.
+          const waiting = new AbortController();
+          scroller.addEventListener("scrollend", () => requestAnimationFrame(mark), { once: true, signal: waiting.signal });
+          setTimeout(() => waiting.abort(), 2000);
+        }
       }
       return;
     }
@@ -2833,10 +2941,11 @@ async function initialize() {
           synchronizeSession(snapshot);
         }
         // A failed probe leaves the open view as it is rather than replacing it with an error.
-        if (sidePanel.isOpen()) void sidePanel.refresh();
+        const panel = sidePanel.isOpen() ? sidePanel.refresh().catch(() => {}) : null;
         if (selectedPath) {
           await showArtifact(selectedPath);
         }
+        await panel;
         // Knowledge's sidebar counts the remembered slice's records, which can change without the navigation changing; the Touched page counts them as it draws.
         if (currentPlace === "knowledge" && lastSlice && selectedPath !== "knowledge:touched") await countTouched(lastSlice);
       }
@@ -2848,6 +2957,6 @@ async function initialize() {
 }
 
 initialize().catch((error) => {
-  artifact.innerHTML = `<div class="document-sheet"><p class="error">${escapeHtml(error.message)}</p></div>`;
+  writeArtifact(`<div class="document-sheet"><p class="error">${escapeHtml(error.message)}</p></div>`);
   setBusy(false);
 });

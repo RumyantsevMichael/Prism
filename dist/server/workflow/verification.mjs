@@ -8,7 +8,7 @@ import { conservationStore } from "../conservation/conservation-store.mjs";
 import { assertInput, describeErrors } from "./artifact-schema.mjs";
 import { withArtifactLock, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { findComponent, readComponents } from "./components.mjs";
-import { appendRecord, listRecordEntries, locateRecord, RECORD_DIRECTORY, recordStoreOf } from "./record-store.mjs";
+import { appendRecord, listRecordEntries, locateRecord, readStoreFileBytes, RECORD_DIRECTORY, recordStoreOf, STORE_FILE_BOUNDS } from "./record-store.mjs";
 import { repositoryId } from "./repository-names.mjs";
 import { changedPaths, contentTree, crossesComponent, setSliceRef, treeId, treeReadable } from "./slice-gate.mjs";
 import { acceptedDesign, checkFrozenTests, designProblems } from "./slice-design.mjs";
@@ -16,6 +16,7 @@ import { readCoordinationState, updateCoordinationState } from "./state.mjs";
 import { refuseShipped } from "./shipped-history.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { publicRemote } from "./remote-url.mjs";
+import { parseStoreJson } from "./store-json.mjs";
 
 export { publicRemote };
 
@@ -83,7 +84,7 @@ export async function configuredTestCommand(projectRoot) {
 // The initiative's slices as its record holds them, or an empty object when it cannot be read.
 async function recordedSlices(root, initiative) {
   const located = await locateRecord(root, { kind: "initiative", initiative });
-  try { return JSON.parse(await readFile(located.target, "utf8"))?.slices ?? {}; }
+  try { return parseStoreJson((await readStoreFileBytes(located.target, STORE_FILE_BOUNDS.initiative))?.toString("utf8") ?? "null")?.slices ?? {}; }
   catch { return {}; }
 }
 
@@ -166,7 +167,7 @@ async function withApprovals(dataDirectory, action) {
   const target = path.join(directory, APPROVALS_FILE);
   return withArtifactLock(target, () => withFileLock(target, async () => {
     let store;
-    try { store = JSON.parse(await readFile(target, "utf8")); }
+    try { store = parseStoreJson(await readFile(target, "utf8")); }
     catch { store = null; }
     if (!store || store.schemaVersion !== 1 || typeof store.approved !== "object" || typeof store.requests !== "object") store = { schemaVersion: 1, approved: {}, requests: {} };
     const before = JSON.stringify(store);

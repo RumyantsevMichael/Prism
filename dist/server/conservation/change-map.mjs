@@ -8,6 +8,7 @@ import { normalizeRepositorySourcePath } from "../repository-intelligence/reposi
 import { withArtifactLock, withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { withinScope } from "./conservation-store.mjs";
 import { isManagedRecordFile, keyOfPath, locateRecord, moveLegacyRecords, writeRecord } from "../workflow/record-store.mjs";
+import { parseStoreJson } from "../workflow/store-json.mjs";
 
 // Slice change maps are change-map.json records under .prism; a concept-delta.json from before the rename moves there under the new name.
 export const CHANGE_MAP_FILE = "change-map.json";
@@ -208,7 +209,7 @@ async function loadDelta(resolved) {
   } finally { await handle.close(); }
   const revision = createHash("sha256").update(contents).digest("hex");
   let raw;
-  try { raw = JSON.parse(contents.toString("utf8")); }
+  try { raw = parseStoreJson(contents.toString("utf8")); }
   catch { return { exists: true, revision, document: null, valid: false, ready: false, errors: ["The change map must contain valid JSON."], diagnostics: [] }; }
   return { exists: true, revision, ...validateDocument(raw) };
 }

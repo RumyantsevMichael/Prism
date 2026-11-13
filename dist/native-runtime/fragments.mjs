@@ -197,9 +197,21 @@ function statementLines(unit, file) {
   return body.filter((line) => indentOf(line) === indent && !closing(line) && /[\p{L}\p{N}]/u.test(line)).map((line) => ({ text: shorten(line) }));
 }
 function planFragments(units, files, options) {
-  const { countTokens, limit = 512, boundaries = wordBoundaries, isCandidate, isStructured } = options;
   const byId = new Map(units.map((unit) => [unit.id, unit]));
-  const candidates = units.filter(isCandidate);
+  const candidates = units.filter(options.isCandidate);
+  const byFile = /* @__PURE__ */ new Map();
+  for (const unit of candidates) byFile.set(unit.file, [...byFile.get(unit.file) || [], unit]);
+  const planned = /* @__PURE__ */ new Map();
+  for (const [file, list] of byFile) {
+    const reused = options.cache?.get(file, list);
+    const result = reused ?? planFile(list, byId, files, options);
+    if (!reused) options.cache?.set(file, list, result);
+    for (const [id, fragments] of result) planned.set(id, fragments);
+  }
+  return candidates.flatMap((unit) => planned.get(unit.id) ?? []);
+}
+function planFile(candidates, byId, files, options) {
+  const { countTokens, limit = 512, boundaries = wordBoundaries, isStructured } = options;
   const children = /* @__PURE__ */ new Map();
   for (const unit of candidates) if (unit.containerId && byId.has(unit.containerId)) children.set(unit.containerId, [...children.get(unit.containerId) || [], unit]);
   const container = (unit) => (children.get(unit.id)?.length || 0) > 0 && (unit.kind !== "file" || isStructured(unit.file));
@@ -215,8 +227,10 @@ function planFragments(units, files, options) {
     outlines.set(unit.id, result.fragment);
     for (const id of result.included) shown.add(id);
   }
-  const fragments = [];
+  const planned = /* @__PURE__ */ new Map();
   for (const unit of candidates) {
+    const fragments = [];
+    planned.set(unit.id, fragments);
     const file = files.get(unit.file), span = spanOf(unit, file);
     const tokens = countTokens(file.content.slice(span.start, span.end)) - countTokens("");
     if (outlines.has(unit.id)) {
@@ -231,7 +245,7 @@ function planFragments(units, files, options) {
     const summary = statements.length >= 2 ? [outline(unit, file, statements, labels, countTokens, limit, `${unit.id}:outline`).fragment] : [];
     for (const piece of [...summary, ...pieces]) fragments.push({ ...piece, tokens, parts: pieces.length });
   }
-  return fragments;
+  return planned;
 }
 export {
   assignContainers,
