@@ -24,7 +24,7 @@ const iso = (time) => time === null ? null : new Date(time).toISOString();
 /**
  * The fetch timer of one workspace: { viewers(count), state(), stop() }.
  * base() answers the folder of the store's managed clone, or null while the workspace has no clone to sync, and label() names the store without credentials in messages.
- * viewers(count) passes the number of the workspace's connected pages; state() answers { state, lastSyncedAt, lastAttemptAt, nextFetchAt, message }.
+ * viewers(count) passes the number of the workspace's connected pages; state() answers { state, lastSyncedAt, lastAttemptAt, nextFetchAt, message }, with state syncing only while a fetch runs before any fetch succeeded.
  * sync(base) runs one record store sync, which commits the app's own record writes, fetches and merges the upstream, and pushes.
  * fetchCode() fetches the code clones of the workspace's repositories whose code content is on, after the store's sync and whatever its outcome, and never changes the store's sync state.
  */
@@ -111,8 +111,9 @@ export function watchWorkspace({ base, label, intervalMs = WORKSPACE_FETCH_MS, m
     async state() {
       await restore();
       return {
-        // A retry during a backoff keeps the store unreachable until a fetch succeeds.
-        state: failure ? "unreachable" : running ? "syncing" : "ok",
+        // A retry during a backoff keeps the store unreachable until a fetch succeeds, and a fetch after one that succeeded keeps it ok,
+        // since a sync that takes longer than the interval starts the next fetch as soon as it ends and would otherwise never show ok.
+        state: failure ? "unreachable" : running && lastSyncedAt === null ? "syncing" : "ok",
         lastSyncedAt: iso(lastSyncedAt),
         lastAttemptAt: iso(lastAttemptAt),
         nextFetchAt: connected > 0 && !stopped ? iso(dueAt ?? now()) : null,

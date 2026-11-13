@@ -60,6 +60,30 @@ test("a watch without a clone to sync fetches nothing, and a skipped sync keeps 
   skipped.stop();
 });
 
+// On a slow machine, such as a Windows runner where every Git process starts slowly, one sync can take longer than the interval, so each fetch starts as the one before ends.
+test("a sync slower than the interval shows syncing only until a fetch succeeds, and ok from then on", async () => {
+  const calls = [];
+  const sync = async () => {
+    calls.push(Date.now());
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    return { state: "ok" };
+  };
+  const watch = watchWorkspace({ base: async () => "/clone", label: () => "store", intervalMs: 20, maxMs: 80, sync });
+  watch.viewers(1);
+  const seen = [];
+  const deadline = Date.now() + 400;
+  while (Date.now() < deadline) {
+    const state = await watch.state();
+    if (calls.length) seen.push([state.state, state.lastSyncedAt !== null]);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  watch.stop();
+  assert.ok(calls.length >= 3, `fetches ran back to back: ${calls.length}`);
+  assert.ok(seen.some(([state]) => state === "syncing"), "the first fetch shows syncing");
+  assert.ok(seen.every(([state, synced]) => state === (synced ? "ok" : "syncing")), `syncing only before the first fetch succeeded: ${JSON.stringify(seen)}`);
+  assert.deepEqual(seen.at(-1), ["ok", true]);
+});
+
 test("the status bar shows when an unreachable workspace last synced, and a record sync problem over a fetch that went through", () => {
   const now = Date.parse("2026-11-03T02:00:00Z");
   const store = { kind: "remote", sync: true };
