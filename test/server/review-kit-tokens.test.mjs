@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const KIT = path.join(ROOT, "src/server/review/public/kit");
-const PROPOSED = path.join(ROOT, "docs/plans/review-app-ui-kit/mockup/tokens.css");
+const PROPOSED = path.join(ROOT, "scripts/review-demo/mockups/review-app-ui-kit/tokens.css");
 
 // Parses top-level rules and rules inside @media into { selector, media, declarations }, and @font-face blocks into faces.
 function parse(text) {

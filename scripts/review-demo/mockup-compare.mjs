@@ -172,7 +172,7 @@ async function main() {
       widths: { type: "string", default: "1440,820,390" },
       themes: { type: "string", default: THEMES.join(",") },
       densities: { type: "string", default: DENSITIES.join(",") },
-      mockup: { type: "string", default: path.join(ROOT, "docs/plans/review-app-ui-kit/mockup/mockup.html") }
+      mockup: { type: "string", default: path.join(ROOT, "scripts/review-demo/mockups/review-app-ui-kit/mockup.html") }
     }
   });
   if (!values.out) {

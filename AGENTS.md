@@ -33,6 +33,12 @@ This applies to subagents as well: if you are dispatched to work on a file here,
 - **A pull request names each issue it fully resolves with `Closes #N` in its description.**
   Use `Refs #N` for a partial fix, and see "Linking issues" in `CONTRIBUTING.md`.
 
+## Requirements, ADRs, and plans
+
+Prism's own requirements, ADRs, plans, and roadmap view live in the record store that `.prism/workflow.md` names, not in this checkout.
+Read and change them with `get_artifact` and `update_artifact` by their path in the project, and never recreate them under `docs/`.
+`docs/plans/review-app-places/kept-tests.json` is a frozen test and stays, and the UI mockups that tests read live in `scripts/review-demo/mockups/`.
+
 ## Editing skills
 
 Before editing a file under `skills/`, read [the Skill Definition Markdown standard](docs/skill-language.md) and [its validation behavior](docs/skill-language-validation.md).

@@ -461,7 +461,7 @@ async function main() {
         widths: { type: "string", default: WIDTHS.join(",") },
         themes: { type: "string", default: THEMES.join(",") },
         parts: { type: "string", default: PARTS.join(",") },
-        mockup: { type: "string", default: path.join(ROOT, "docs/plans/review-app-places/mockup/mockup.html") },
+        mockup: { type: "string", default: path.join(ROOT, "scripts/review-demo/mockups/review-app-places/mockup.html") },
         "app-mockup": { type: "string" }
       }
     }));
