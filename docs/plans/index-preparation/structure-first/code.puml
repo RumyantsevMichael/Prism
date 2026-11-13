@@ -1,0 +1,25 @@
+@startuml
+title structure-first - units
+package "repository-intelligence" {
+  component "native-semantic-runtime.mts" as Runtime
+  component "index-store.mts" as Store
+  component "index-files.mts" as Files
+  component "component-indexes.mts" as Indexes
+  component "semantic-native-provider.mts" as Provider
+  component "index-status.mts" as Status
+}
+package "conservation" {
+  component "conservation-analysis.mts" as Analysis
+}
+package "native-runtime" {
+  component "worker.mts" as Worker
+}
+Store --> Runtime : structure callback
+Store --> Files : saveStructure
+Runtime --> Files : stage pointers
+Provider --> Runtime : structure for reports, lexical search
+Provider --> Indexes : included with embeddings pending
+Analysis --> Runtime : structure for baselines
+Status --> Files : units sidecar of current.json
+Worker --> Store : structure progress, lexical mode
+@enduml

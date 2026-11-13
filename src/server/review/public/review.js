@@ -2134,6 +2134,10 @@ function beginRebuild(path) {
     memory.focus = artifact.contains(document.activeElement) ? controlsOf(artifact).indexOf(document.activeElement) : -1;
     // A control whose view names it with data-focus-key, such as a kit button whose own control sits in its shadow, gets its focus back by that name.
     memory.focusKey = artifact.contains(document.activeElement) ? document.activeElement.closest("[data-focus-key]")?.dataset.focusKey ?? null : null;
+    // A control that the new view takes over whole, such as the comment form with an unsent comment, is focused again as itself,
+    // since moving it to another scope renames its focus key and the controls before it can differ.
+    memory.focused = artifact.contains(document.activeElement) ? document.activeElement : null;
+    memory.selection = memory.focused && "selectionStart" in memory.focused ? [memory.focused.selectionStart, memory.focused.selectionEnd] : null;
     artifact.style.minHeight = `${artifact.offsetHeight}px`;
   } else {
     artifact.style.minHeight = "";
@@ -2302,6 +2306,10 @@ function endRebuild(memory) {
   const keyed = (key) => [...artifact.querySelectorAll("[data-focus-key]")].find((control) => control.dataset.focusKey === key);
   const comment = memory.focusKey?.startsWith("comment:") === true;
   const more = memory.focusKey === "more-comments";
+  if (memory.focused?.isConnected && artifact.contains(memory.focused) && !artifact.contains(document.activeElement)) {
+    memory.focused.focus({ preventScroll: true });
+    if (memory.selection && "setSelectionRange" in memory.focused) try { memory.focused.setSelectionRange(...memory.selection); } catch {}
+  }
   if (memory.focusKey && !artifact.contains(document.activeElement)) {
     const found = keyed(memory.focusKey) ?? (comment ? keyed("more-comments") : null);
     if (found?.dataset.commentId !== undefined) found.tabIndex = -1;

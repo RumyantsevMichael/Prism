@@ -1,0 +1,14 @@
+@startuml
+title scoped-calls-ahead - units
+package "repository-intelligence" {
+  component "native-semantic-runtime.mts" as Runtime
+  component "index-progress.mts" as Progress
+  component "component-indexes.mts" as Indexes
+  component "index-store.mts" as Store
+}
+Indexes --> Runtime : prepareComponents
+Runtime --> Runtime : enqueue pauses the unrelated running job
+Runtime --> Store : stop the paused build
+Runtime --> Progress : lockHolder for waitingFor
+Indexes --> Indexes : waitingFor on waiting entries
+@enduml

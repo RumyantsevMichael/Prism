@@ -325,6 +325,15 @@ export function movingElements(page, selector = "body") {
 export function escapes(page, selector = "body") {
   return page.evaluate(([code, selector]) => {
     const read = new Function("selector", `${code}
+      // Text cut with an ellipsis can end an inline parent's box before the text inside it, which the clipping ancestor hides, so that is no escape.
+      const cutByEllipsis = (node, box) => {
+        if (getComputedStyle(parentOf(node)).display !== "inline") return false;
+        for (let clip = parentOf(node); clip && clip !== document.body; clip = parentOf(clip)) {
+          const style = getComputedStyle(clip);
+          if (style.overflowX !== "visible") return style.textOverflow === "ellipsis" && box.right <= clip.getBoundingClientRect().right + 2;
+        }
+        return false;
+      };
       const out = [];
       const root = document.documentElement;
       if (root.scrollWidth > root.clientWidth + 1) out.push("the window scrolls horizontally");
@@ -337,7 +346,7 @@ export function escapes(page, selector = "body") {
           if (!parent || parent === document.body || getComputedStyle(parent).overflowX !== "visible") continue;
           const box = node.getBoundingClientRect();
           const limit = parent.getBoundingClientRect();
-          if (!box.width || box.right <= limit.right + 2 || box.left >= limit.right) continue;
+          if (!box.width || box.right <= limit.right + 2 || box.left >= limit.right || cutByEllipsis(node, box)) continue;
           // A failure names the text, both right edges, and the custom element around it, so a failure seen only in CI can be read from its log.
           let host = node;
           while (host.parentElement && !host.localName.includes("-")) host = host.parentElement;

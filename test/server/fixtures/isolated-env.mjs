@@ -22,5 +22,6 @@ export function isolatedEnv(overrides = {}) {
   const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => !HOST_ONLY.test(name)));
   if (process.platform !== "win32") environment.PATH = `${browserStubs()}${path.delimiter}${environment.PATH ?? ""}`;
   // It writes no Prism log either, so a test run leaves the user's log as it was; a test of the log sets its own level and folder.
-  return { ...environment, PRISM_REVIEW_BROWSER_ON_START: "off", PRISM_LOG_LEVEL: "off", ...overrides };
+  // An ending server hands no store sync to a detached process, which could still write a test's folder while the test removes it; a test of that hand-off turns it on.
+  return { ...environment, PRISM_REVIEW_BROWSER_ON_START: "off", PRISM_LOG_LEVEL: "off", PRISM_STORE_HANDOFF: "off", ...overrides };
 }

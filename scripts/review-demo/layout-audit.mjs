@@ -57,13 +57,22 @@ export function auditPage() {
   if (root.scrollHeight > root.clientHeight + 1) out.push(`the window scrolls vertically (${root.scrollHeight} > ${root.clientHeight})`);
   const describe = (el) => `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ""}${typeof el.className === "string" && el.className.trim() ? `.${el.className.trim().split(/\s+/).slice(0, 2).join(".")}` : ""}`;
   const shown = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden" && !el.closest("[hidden], svg, .sr-only");
+  // Text cut with an ellipsis can end an inline parent's box before the text inside it, which the clipping ancestor hides, so that is no escape.
+  const cutByEllipsis = (el, box) => {
+    if (getComputedStyle(el.parentElement).display !== "inline") return false;
+    for (let clip = el.parentElement; clip && clip !== document.body; clip = clip.parentElement) {
+      const style = getComputedStyle(clip);
+      if (style.overflowX !== "visible") return style.textOverflow === "ellipsis" && box.right <= clip.getBoundingClientRect().right + 2;
+    }
+    return false;
+  };
   for (const el of document.querySelectorAll("body *")) {
     if (!shown(el) || ["absolute", "fixed"].includes(getComputedStyle(el).position)) continue;
     const parent = el.parentElement;
     if (!parent || parent === document.body || getComputedStyle(parent).overflowX !== "visible") continue;
     const box = el.getBoundingClientRect();
     const limit = parent.getBoundingClientRect();
-    if (box.width && box.right > limit.right + 2 && box.left < limit.right) out.push(`${describe(el)} overflows ${describe(parent)}`);
+    if (box.width && box.right > limit.right + 2 && box.left < limit.right && !cutByEllipsis(el, box)) out.push(`${describe(el)} overflows ${describe(parent)}`);
   }
   for (const el of document.querySelectorAll("button, a[href], input, textarea, select")) {
     if (!shown(el)) continue;
@@ -104,6 +113,15 @@ export function auditCatalog() {
     }
     return false;
   };
+  // Text cut with an ellipsis can end an inline parent's box before the text inside it, which the clipping ancestor hides, so that is no escape.
+  const cutByEllipsis = (el, box) => {
+    if (getComputedStyle(parentOf(el)).display !== "inline") return false;
+    for (let clip = parentOf(el); clip && clip !== document.body; clip = parentOf(clip)) {
+      const style = getComputedStyle(clip);
+      if (style.overflowX !== "visible") return style.textOverflow === "ellipsis" && box.right <= clip.getBoundingClientRect().right + 2;
+    }
+    return false;
+  };
   const CONTROL = "button, a[href], input:not([type=hidden]), textarea, select, [role=button], [role=tab], [role=menuitem], [role=menuitemradio], [role=menuitemcheckbox], [tabindex]";
   function* walk(root) {
     const nodes = [...root.children];
@@ -129,7 +147,7 @@ export function auditCatalog() {
       const parent = parentOf(el);
       if (parent && parent !== document.body && getComputedStyle(parent).overflowX === "visible" && getComputedStyle(parent).display !== "contents") {
         const limit = parent.getBoundingClientRect();
-        if (box.right > limit.right + 2 && box.left < limit.right) add(`${describe(el)} overflows ${describe(parent)}`);
+        if (box.right > limit.right + 2 && box.left < limit.right && !cutByEllipsis(el, box)) add(`${describe(el)} overflows ${describe(parent)}`);
       }
       if (scrolls && box.right > root.clientWidth + 1) add(`${describe(el)} passes the window's right edge (${Math.round(box.right)} > ${root.clientWidth})`);
       if (!el.matches(CONTROL)) continue;

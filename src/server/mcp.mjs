@@ -9,7 +9,7 @@ import { conservationStore } from "./conservation/conservation-store.mjs";
 import { ChangeMapError, GET_CHANGE_MAP_SCHEMA, UPDATE_CHANGE_MAP_SCHEMA, getChangeMap, updateChangeMap } from "./conservation/change-map.mjs";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { COMMENTS_PER_ARTIFACT_MAX, finishUnfinishedMoves, nameToolCallRoot, outsideToolCall, recordStoreOf, restoreMigrationReports, takeMigrationReports, toolCallContext, withToolCall } from "./workflow/record-store.mjs";
+import { COMMENTS_PER_ARTIFACT_MAX, finishUnfinishedMoves, nameToolCallRoot, outsideToolCall, recordStoreOf, recordStoreSummary, restoreMigrationReports, takeMigrationReports, toolCallContext, withToolCall } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
 import { confirmSavedConflicts, releaseSavedConflicts, takeSavedConflicts } from "./workflow/record-store-sync.mjs";
 import { callSessionId, withCallSession } from "./workflow/slice-claims.mjs";
@@ -44,7 +44,7 @@ import { keptExplanation, shownPath } from "./workflow/artifact-migration.mjs";
 import { ARTIFACT_MIGRATIONS, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX } from "./workflow/artifact-paths.mjs";
 import { forgetAskedGates, recordAskedGates } from "./workflow/approval-deliveries.mjs";
 import { VERIFY_SLICE_SCHEMA, cancelVerifications, verificationBrief, verifySlice } from "./workflow/verification.mjs";
-import { cancelRecordSyncs } from "./workflow/record-store-sync.mjs";
+import { configureRecordSync, handOffRecordSyncs } from "./workflow/record-store-sync.mjs";
 import { stopClaimRenewals } from "./workflow/slice-claims.mjs";
 import { managedStoresDirectory } from "./workflow/remote-url.mjs";
 import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
@@ -154,11 +154,21 @@ async function server(argumentsValue, metadata) {
   return reviewServers.get(projectRoot, id);
 }
 
+// Claude Code gives its agent only the structured content of a result that has one, so the text items after the first, which carry notes such as a move report or a saved conflict,
+// also go into the structured content as notes, in their order, after any notes it already holds.
+function withNotesInStructure(value) {
+  const structured = value?.structuredContent;
+  if (!structured || typeof structured !== "object" || Array.isArray(structured) || !Array.isArray(value.content) || value.content.length < 2) return value;
+  const notes = value.content.slice(1).filter((item) => item?.type === "text" && typeof item.text === "string" && item.text).map((item) => item.text);
+  if (!notes.length) return value;
+  return { ...value, structuredContent: { ...structured, notes: [...(Array.isArray(structured.notes) ? structured.notes : []), ...notes] } };
+}
+
 // Write a result to the host: whether the write reached standard output.
 function result(id, value) {
   return new Promise((resolve) => {
     try {
-      process.stdout.write(jsonLine({ jsonrpc: "2.0", id, result: value }), (error) => resolve(!error));
+      process.stdout.write(jsonLine({ jsonrpc: "2.0", id, result: withNotesInStructure(value) }), (error) => resolve(!error));
     } catch {
       resolve(false);
     }
@@ -1001,6 +1011,13 @@ async function callGateWait(argumentsValue, metadata, requestId) {
 }
 const repositoryTools = new Set([...NATIVE_INTELLIGENCE_TOOLS.map(tool => tool.name), "list_repository_intelligence_providers", "plan_repository_context", "resolve_session_capacity", "evaluate_repository_fit", "summarize_session_consumption", "set_workflow_recording", "read_workflow_decisions", "record_workflow_decision"]);
 
+// A record tool's result in a project with a record store names the store, so an agent never takes recordPath for a file in the checkout.
+async function withRecordStore(projectRoot, value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const recordStore = await recordStoreSummary(projectRoot).catch(() => null);
+  return recordStore ? { ...value, recordStore } : value;
+}
+
 async function callStateTool(name, argumentsValue) {
   const projectRoot = await requestedProjectRoot(argumentsValue);
   const input = { ...argumentsValue, projectRoot };
@@ -1028,6 +1045,7 @@ async function callStateTool(name, argumentsValue) {
   } else {
     throw new Error(`Unknown state tool: ${name}`);
   }
+  if (name === "get_coordination_state" || name === "update_coordination_state") resultValue = await withRecordStore(projectRoot, resultValue);
   // Closed gates are history for the review browser; agents never need them.
   if (resultValue?.state?.closed) {
     const { closed, ...state } = resultValue.state;
@@ -1517,6 +1535,7 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
       : name === "get_initiative" ? await getInitiative(input)
       : initiativeAcknowledgement(await updateInitiative(input), input.operations);
     if (name === "get_initiative") value = { ...value, runTotals: await readInitiativeRecordRunTotals(projectRoot, value.initiative, value) };
+    value = await withRecordStore(projectRoot, value);
     const marks = name === "get_initiative" ? await historyMarksContent(projectRoot, value.shippedHistory)
       : name === "get_roadmap" ? await Promise.all((value.markedHistory ?? []).map(async (item) => ({ type: "text", text: await historyMarksText(projectRoot, item.initiative, item.marked) })))
       : [];
@@ -1630,23 +1649,31 @@ input.on("line", async (line) => {
   }
 });
 
-// The host ends the session by closing input, so the server exits once its cleanup ends, or after a short grace period,
+// The host ends the session by closing input or by a signal, so the server exits once its cleanup ends, or after a short grace period,
 // even when index preparation, a store sync, or a child process started meanwhile would keep it alive.
+// Claude Code sends SIGINT and then SIGTERM about a tenth of a second apart, and ends the process soon after, so the stores' pending syncs go to a detached process first.
+// On Windows a signal ends the process without running any of its code, so a detached watcher holds the pending syncs while any are pending and finishes them however the server ends.
+configureRecordSync({ watchPending: true });
 const CLOSE_GRACE_MS = 5000;
 let closing = false;
-input.on("close", async () => {
+async function stop(reason) {
+  if (closing) return;
   closing = true;
-  log.info("process_stopping", { reason: "input closed" });
+  handOffRecordSyncs();
+  log.info("process_stopping", { reason });
   const deadline = setTimeout(() => process.exit(0), CLOSE_GRACE_MS);
   deadline.unref();
   try {
     for (const controller of pendingWaits.values()) controller.abort();
     cancelVerifications();
-    cancelRecordSyncs();
     stopClaimRenewals();
     await Promise.all([nativeSemanticRuntime.close(), reviewServers.close(), Promise.allSettled([...endingWaits])]);
+    // A write that the cleanup finished has its sync handed off too.
+    handOffRecordSyncs();
   } finally {
     await log.flush();
     process.exit(0);
   }
-});
+}
+input.on("close", () => void stop("input closed"));
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => void stop(signal));

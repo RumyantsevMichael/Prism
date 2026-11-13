@@ -2,7 +2,7 @@ import path from "node:path";
 import { readChangeMapDocument } from "./change-map.mjs";
 import { conservationStore, ConservationStore, conservationError, digest, canonical, withinScope } from "./conservation-store.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { baselineIndex, componentDiagnostics, componentResult, componentStates, indexComponents, prepareComponents, selectedComponents } from "../repository-intelligence/component-indexes.mjs";
+import { answeringPreparation, baselineIndex, componentDiagnostics, componentResult, componentStates, indexComponents, prepareComponents, selectedComponents } from "../repository-intelligence/component-indexes.mjs";
 import type { Declaration } from "../repository-intelligence/component-indexes.mjs";
 import { CODE_EXTENSIONS } from "../../native-runtime/domains.mjs";
 import { CHUNKER_VERSION } from "../../native-runtime/versions.mjs";
@@ -47,7 +47,8 @@ export async function prepareAnalysis(projectRoot: string, snapshotId: string, o
   const declaration = await indexComponents(projectRoot);
   if (declaration) return prepareComponentAnalysis(projectRoot, snapshotId, declaration, runtime as ComponentRuntime, store);
   const source = await store.source(projectRoot, snapshotId);
-  const prepared = await runtime.prepare(source);
+  // A baseline's analysis needs its structure only, so a published structure-only index answers it while the build embeds.
+  const prepared = answeringPreparation(await runtime.prepare(source, undefined, undefined, { structure: true, structureSuffices: true }));
   if (prepared.status === "preparing") return { status: "preparing" as const, preparationId: prepared.preparationId };
   if (!prepared.prepared) return { status: "degraded" as const, diagnostics: prepared.diagnostics, analysis: null };
   return { status: "ready" as const, analysis: await retainAnalysis(projectRoot, snapshotId, prepared.prepared, store), missing: NONE };
@@ -58,7 +59,7 @@ export async function prepareAnalysis(projectRoot: string, snapshotId: string, o
 // covered, and named by the components_missing diagnostic. When every component failed, no analysis is retained, as when the one index failed.
 async function prepareComponentAnalysis(projectRoot: string, snapshotId: string, declaration: Declaration, runtime: ComponentRuntime, store: ConservationStore) {
   const { selected, snapshot } = await selectedComponents(projectRoot, declaration, undefined, undefined, filter => store.source(projectRoot, snapshotId, filter));
-  const preparations = await prepareComponents(runtime, selected);
+  const preparations = await prepareComponents(runtime, selected, undefined, { structure: true, structureSuffices: true });
   const result = componentResult(componentStates(selected, preparations), snapshot);
   if (result.components.some(state => state.status === "waiting" || state.status === "preparing")) return { status: "preparing" as const, preparationId: null, components: result.components };
   if (!result.components.some(state => state.status === "included")) return { status: "degraded" as const, diagnostics: componentDiagnostics(result, preparations), components: result.components, analysis: null };
