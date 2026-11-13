@@ -166,7 +166,7 @@ A screen's own rules go in its area stylesheet, read only tokens, and lay out ki
 Each element class also carries a static `tag` and a static `catalog` of its purpose, options, states, and keys.
 The component catalog at `<review URL>/kit/catalog` shows one entry per element from that `catalog`, with a live specimen per state from `SPECIMENS` in `kit/catalog.js`, plus long text and an unbroken name.
 To add an element, add its file, list it in `KIT_ELEMENTS`, and add its specimens to `SPECIMENS`.
-The review page's **Appearance** button, at the end of the status bar, links to the catalog.
+The review page's **Appearance** menu, at the end of the status bar, and the **About Prism** dialog beside it link to the catalog.
 
 The kit guard names each raw design value and each control styled or written around the kit:
 

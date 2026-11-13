@@ -558,6 +558,44 @@ body {
   flex: none;
 }
 
+.statusbar-about {
+  flex: none;
+}
+
+/* About Prism: the mark beside the name and the running version. */
+.about {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-5);
+  min-width: 0;
+}
+
+.about-mark {
+  flex: none;
+  width: var(--prism-mark-size-lg);
+  height: var(--prism-mark-size-lg);
+}
+
+.about-text {
+  display: grid;
+  gap: var(--prism-space-1);
+  min-width: 0;
+}
+
+.about-name {
+  margin: 0;
+  font-size: var(--prism-font-size-lg);
+  font-weight: var(--prism-font-weight-bold);
+  letter-spacing: var(--prism-tracking-heading);
+}
+
+.about-version {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
 .indexing {
   display: inline-flex;
   min-width: 0;

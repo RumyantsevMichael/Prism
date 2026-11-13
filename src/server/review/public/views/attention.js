@@ -23,22 +23,13 @@ const KIND_LOOK = {
   approval: { icon: "gate", tone: "accent", chip: "check-circle" }
 };
 
-function ago(timestamp) {
-  const elapsed = Date.now() - Date.parse(timestamp);
-  if (!Number.isFinite(elapsed)) return "";
-  const minutes = Math.max(0, Math.round(elapsed / 60000));
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return `${hours} h ago`;
-  return `${Math.round(hours / 24)} days ago`;
+// A time in words that keeps itself current: 5 min ago, or for a row's narrow column 5 min or now, or 30 min left.
+function liveTime(time, { format = "ago", className = "", slot = "" } = {}) {
+  if (!time) return "";
+  return `<prism-time${className ? ` class="${className}"` : ""}${slot ? ` slot="${slot}"` : ""}${format === "ago" ? "" : ` format="${format}"`} datetime="${escapeHtml(time)}"></prism-time>`;
 }
 
-// A row's time is short: now, 5 min, 2 h.
-function shortAgo(timestamp) {
-  const text = ago(timestamp);
-  return text === "just now" ? "now" : text.replace(/ ago$/, "");
-}
+const shortTime = (time) => liveTime(time, { format: "short" });
 
 function location(item, ctx) {
   if (item.kind === "approval" && item.artifact) return artifactChip(item.artifact.path, ctx, item.artifact.path.split("/").pop());
@@ -103,8 +94,7 @@ function readyText(item, state) {
 }
 
 function when(time, className = "attention-time") {
-  const exact = Number.isFinite(Date.parse(time)) ? new Date(time).toLocaleString() : "";
-  return `<time class="${className}" datetime="${escapeHtml(time)}"${exact ? ` tip="${escapeHtml(exact)}"` : ""}>${escapeHtml(ago(time))}</time>`;
+  return liveTime(time, { className });
 }
 
 function liveHolder(item) {
@@ -140,9 +130,9 @@ function gateHead(item, ctx, time) {
 function gateHolder(item) {
   const claim = liveHolder(item);
   if (!claim) return "";
-  const left = timeLeft(claim.expiresAt).text;
-  const holds = `It holds the slice for ${claim.activity === "design" ? "design" : "implementation"}${left ? `, ${left}` : ""}.`;
-  return `<p class="gate-holder"><prism-claim variant="avatar"${claimAttributes(claim)}></prism-claim><span><strong>${escapeHtml(claim.label)}</strong> is waiting on your answer. ${escapeHtml(holds)}</span></p>`;
+  const left = timeLeft(claim.expiresAt).text ? `, ${liveTime(claim.expiresAt, { format: "left" })}` : "";
+  const holds = `It holds the slice for ${claim.activity === "design" ? "design" : "implementation"}${left}.`;
+  return `<p class="gate-holder"><prism-claim variant="avatar"${claimAttributes(claim)}></prism-claim><span><strong>${escapeHtml(claim.label)}</strong> is waiting on your answer. ${holds}</span></p>`;
 }
 
 function gateSteps(item) {
@@ -229,7 +219,7 @@ function answerForm(item, draft) {
   if (REVIEW_KINDS.has(item.kind)) for (const [id, text] of Object.entries(REVIEW_OUTCOMES)) consequences.set(id, text);
   const optional = !REVIEW_KINDS.has(item.kind) && options.length > 0;
   const choice = options.length
-    ? `<div class="gate-choices"><p class="label-caps" aria-hidden="true">Your answer</p><prism-choice aria-label="Your answer" data-choice${state.choice ? ` value="${escapeHtml(state.choice)}"` : ""}>${options.map(([id, label]) => `<prism-choice-option value="${escapeHtml(id)}"${id === "request-changes" ? ' tone="danger"' : ""}>${escapeHtml(label)}${id === item.recommended?.option ? ` ${badge("Recommended", "accent")}` : ""}${consequences.get(id) ? `<span slot="detail">${escapeHtml(consequences.get(id))}</span>` : ""}</prism-choice-option>`).join("")}</prism-choice>${optional ? `<prism-button size="sm" variant="ghost" data-clear-choice${state.choice ? "" : " disabled"}>Clear the choice</prism-button>` : ""}</div>`
+    ? `<div class="gate-choices"><div class="gate-choices-head"><p class="label-caps" aria-hidden="true">Your answer</p>${optional ? `<prism-button size="sm" variant="ghost" data-clear-choice tip="Unchoose the option to answer in your own words"${state.choice ? "" : " hidden"}><prism-icon name="close" size="xs"></prism-icon>Clear choice</prism-button>` : ""}</div><prism-choice aria-label="Your answer" data-choice${optional ? " clearable" : ""}${state.choice ? ` value="${escapeHtml(state.choice)}"` : ""}>${options.map(([id, label]) => `<prism-choice-option value="${escapeHtml(id)}"${id === "request-changes" ? ' tone="danger"' : ""}>${escapeHtml(label)}${id === item.recommended?.option ? ` ${badge("Recommended", "accent")}` : ""}${consequences.get(id) ? `<span slot="detail">${escapeHtml(consequences.get(id))}</span>` : ""}</prism-choice-option>`).join("")}</prism-choice></div>`
     : '<p class="label-caps">Your answer</p>';
   const ready = readyText(item, state);
   // An approval gate is the target approval:<id> of the review app's actions, every other gate the target gate:<initiative>/<id>.
@@ -370,7 +360,7 @@ function bindAnswers(container, ctx, gates) {
       submit.textContent = state.submitLabel;
       submit.setAttribute("variant", state.choice === "request-changes" ? "danger" : "primary");
       submit.toggleAttribute("disabled", sending || !state.ready);
-      clear?.toggleAttribute("disabled", !draft.choice);
+      if (clear) clear.hidden = !draft.choice;
       const text = readyText(item, state);
       if (hintText.textContent !== text) hintText.textContent = text;
       hint.classList.toggle("is-ready", ready);
@@ -385,11 +375,9 @@ function bindAnswers(container, ctx, gates) {
       clearFailure();
       refresh();
     });
+    // Clear choice, or choosing the chosen option again, leaves the answer to the note.
     clear?.addEventListener("click", () => {
-      draft.choice = null;
-      choice.value = "";
-      clearFailure();
-      refresh();
+      choice.clear();
       note.focus();
     });
     note.addEventListener("input", () => {
@@ -595,7 +583,7 @@ function claimEntry(claim, ctx) {
   const doing = claim.activity === "design" ? "is designing" : "is implementing";
   const title = expired ? `${escapeHtml(claim.label)}'s claim expired` : `${escapeHtml(claim.label)} ${doing}`;
   return {
-    row: { start: `<prism-claim slot="start" variant="avatar"${claimAttributes(claim)}></prism-claim>`, title, meta: `${escapeHtml(claim.sliceTitle)}${left.text ? ` · ${escapeHtml(left.text)}` : ""}${expired ? " · free to take" : ""}`, end: expired ? escapeHtml(left.text.replace(/^Expired /, "").replace(/ ago$/, "")) : "live" },
+    row: { start: `<prism-claim slot="start" variant="avatar"${claimAttributes(claim)}></prism-claim>`, title, meta: `${escapeHtml(claim.sliceTitle)}${left.text ? ` · ${liveTime(claim.expiresAt, { format: "left" })}` : ""}${expired ? " · free to take" : ""}`, end: expired ? shortTime(claim.expiresAt) : "live" },
     detail: detailSheet({ className: "watch-claim", head: `${badge(expired ? "claim expired" : "working", expired ? "warning" : "info")}<span class="attention-where">${where}</span>`, title, body: `<p class="watch-detail"><prism-claim variant="strip"${claimAttributes(claim)}></prism-claim></p>` })
   };
 }
@@ -647,7 +635,7 @@ function filteredItem({ kind, item }, ctx) {
   const linked = look.ref && ctx.hasArtifact(look.ref);
   const select = look.select ? ` data-attention-select="${escapeHtml(look.select)}"` : "";
   const title = linked ? `<a href="./review?artifact=${encodeURIComponent(look.ref)}" data-artifact="${escapeHtml(look.ref)}"${select}>${look.title}</a>` : look.title;
-  const time = look.at ? `<time slot="time" datetime="${escapeHtml(look.at)}">${escapeHtml(shortAgo(look.at))}</time>` : "";
+  const time = liveTime(look.at, { format: "short", slot: "time" });
   const action = linked ? `<prism-button slot="action" size="sm" data-artifact="${escapeHtml(look.ref)}"${select}>${escapeHtml(look.action ?? "Open")}</prism-button>` : "";
   return `<prism-row icon="${escapeHtml(look.icon)}" tone="${escapeHtml(look.tone)}">${title}${look.sub ? `<span slot="description">${look.sub}</span>` : ""}<prism-chip slot="kind" tone="${escapeHtml(look.chip[1])}">${escapeHtml(look.chip[0])}</prism-chip>${time}${action}</prism-row>`;
 }
@@ -680,7 +668,7 @@ function renderAnswered(container, answered, ctx) {
     const place = [item.initiative ? artifactLink(`initiative:${item.initiative.id}`, ctx, item.initiative.title) : "", item.slice && item.initiative ? artifactLink(`slice:${item.initiative.id}/${item.slice.slug}`, ctx, item.slice.title) : ""].filter(Boolean).join(" · ");
     const outcome = item.answer ? given(item) : `${badge("Closed by the agent")}${item.reason ? ` <span>${escapeHtml(item.reason)}</span>` : ""}`;
     const tone = item.answer ? (item.answer.choice === "request-changes" ? "danger" : "success") : "neutral";
-    return `<prism-row wrap icon="${item.answer ? "check-circle" : "close"}" tone="${tone}">${escapeHtml(item.question)}${place ? `<span slot="description">${place}</span>` : ""}<span slot="detail">${outcome}</span><prism-chip slot="kind" tone="${item.answer ? "success" : "neutral"}">${item.answer ? "Answered" : "Closed"}</prism-chip><time slot="time" datetime="${escapeHtml(item.at ?? "")}">${escapeHtml(shortAgo(item.at))}</time></prism-row>`;
+    return `<prism-row wrap icon="${item.answer ? "check-circle" : "close"}" tone="${tone}">${escapeHtml(item.question)}${place ? `<span slot="description">${place}</span>` : ""}<span slot="detail">${outcome}</span><prism-chip slot="kind" tone="${item.answer ? "success" : "neutral"}">${item.answer ? "Answered" : "Closed"}</prism-chip>${liveTime(item.at, { format: "short", slot: "time" })}</prism-row>`;
   }).join("")}</div>`;
   bindLinks(container, ctx);
 }
@@ -706,7 +694,7 @@ export function render(container, entity, ctx) {
   const needs = [
     ...gates.map((item) => ({
       key: `gate:${item.id}`,
-      row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: KIND_LOOK[item.kind]?.tone ?? "neutral", unread: true, title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, liveHolder(item) ? `${item.claim.label} is waiting on your answer` : item.slice?.title ?? item.initiative?.title ?? item.artifact?.path].filter(Boolean).join(" · ")), end: escapeHtml(shortAgo(item.askedAt)) },
+      row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: KIND_LOOK[item.kind]?.tone ?? "neutral", unread: true, title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, liveHolder(item) ? `${item.claim.label} is waiting on your answer` : item.slice?.title ?? item.initiative?.title ?? item.artifact?.path].filter(Boolean).join(" · ")), end: shortTime(item.askedAt) },
       detail: gateDetail(item, ctx, drafts[item.id] ?? { choice: null, note: "" })
     })),
     ...notes.map((item, index) => ({ key: `note:${index}`, ...noteEntry(item, ctx) }))
@@ -714,12 +702,12 @@ export function render(container, entity, ctx) {
   // A shipped initiative's open questions can no longer be answered, so they list apart from Needs you and raise no count.
   const shippedRows = (data.shippedGates ?? []).map((item) => ({
     key: `shipped:${item.id}`,
-    row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: "neutral", title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, "Cannot be answered", item.slice?.title ?? item.initiative?.title ?? item.artifact?.path].filter(Boolean).join(" · ")), end: escapeHtml(shortAgo(item.askedAt)) },
+    row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: "neutral", title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, "Cannot be answered", item.slice?.title ?? item.initiative?.title ?? item.artifact?.path].filter(Boolean).join(" · ")), end: shortTime(item.askedAt) },
     detail: gateDetail(item, ctx, {})
   }));
   const waiting = answered.map((item) => ({
     key: `answered:${item.id}`,
-    row: { icon: "check", tone: "success", title: escapeHtml(item.question), meta: escapeHtml(`${choiceLabel(item, item.answer.choice)} · waiting for the agent`), end: escapeHtml(shortAgo(item.answer.answeredAt)) },
+    row: { icon: "check", tone: "success", title: escapeHtml(item.question), meta: escapeHtml(`${choiceLabel(item, item.answer.choice)} · waiting for the agent`), end: shortTime(item.answer.answeredAt) },
     detail: answeredDetail(item, ctx)
   }));
   const watch = [
@@ -728,12 +716,12 @@ export function render(container, entity, ctx) {
   ];
   const closed = earlier.map((item) => ({
     key: `closed:${item.id}`,
-    row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: "neutral", title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, item.answer ? choiceLabel(item, item.answer.choice) : "Closed by the agent"].join(" · ")), end: escapeHtml(shortAgo(item.closedAt)) },
+    row: { icon: KIND_LOOK[item.kind]?.icon ?? "question", tone: "neutral", title: escapeHtml(item.question), meta: escapeHtml([GATE_LABELS[item.kind] ?? item.kind, item.answer ? choiceLabel(item, item.answer.choice) : "Closed by the agent"].join(" · ")), end: shortTime(item.closedAt) },
     detail: closedDetail(item, ctx)
   }));
   const history = [{
     key: "recent",
-    row: { icon: "clock", tone: "neutral", title: "Recent changes", meta: escapeHtml(recent.length ? `${plural(recent.length, "change")} from the review app` : "No changes from the review app yet"), end: recent[0]?.at ? escapeHtml(shortAgo(recent[0].at)) : "" },
+    row: { icon: "clock", tone: "neutral", title: "Recent changes", meta: escapeHtml(recent.length ? `${plural(recent.length, "change")} from the review app` : "No changes from the review app yet"), end: shortTime(recent[0]?.at) },
     detail: detailSheet({ className: "recent-changes-sheet", head: badge("From the review app, newest first"), title: "Recent changes", body: `<div data-recent-changes>${recent.length ? `<ul class="recent-changes">${recent.map((entry) => changeHtml(entry, ctx)).join("")}</ul>` : emptyState("No changes yet", "No one changed settings, answered a question, or rebuilt an index from the review app yet.")}</div>` })
   }];
   const all = [...needs, ...shippedRows, ...waiting, ...watch, ...closed, ...history];

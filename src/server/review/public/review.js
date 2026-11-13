@@ -1173,13 +1173,32 @@ function startAppearanceMenu() {
   menu.addEventListener("prism-select", (event) => {
     const value = event.detail?.value;
     if (value === "catalog") {
-      window.open(new URL("./kit/catalog", location.href).href, "_blank", "noopener");
+      openCatalog();
       return;
     }
     const change = THEMES.includes(value) ? { theme: value } : DENSITIES.includes(value) ? { density: value } : null;
     if (!change) return;
     savePreferences(change).catch(() => showToast("The appearance applies here, but the review app could not store it."));
   });
+}
+
+function openCatalog() {
+  window.open(new URL("./kit/catalog", location.href).href, "_blank", "noopener");
+}
+
+// About Prism, from the small status bar button before Appearance: the version of the running review app and the way to the component catalog.
+function startAbout() {
+  const dialog = document.getElementById("about-dialog");
+  document.getElementById("about-button")?.addEventListener("click", () => dialog?.show());
+  document.getElementById("about-catalog")?.addEventListener("click", () => {
+    dialog?.close();
+    openCatalog();
+  });
+}
+
+function showAboutVersion(version) {
+  const shown = document.getElementById("about-version");
+  if (shown) shown.textContent = typeof version === "string" && version ? version : "not known";
 }
 
 function showToast(message, { tone = "neutral" } = {}) {
@@ -2782,6 +2801,7 @@ function renderStoreSync(data) {
 }
 
 startAppearanceMenu();
+startAbout();
 watchDiagramTheme();
 
 // The drawer holds a rail of its own beside the sidebar, which moves into the drawer while the drawer is open, so one set of trees serves both.
@@ -2930,6 +2950,7 @@ async function initialize() {
   sessionRevision = Number.isInteger(data.revision) ? data.revision : 0;
   sessionInstance = typeof data.instance === "string" ? data.instance : null;
   appVersion = typeof data.appVersion === "string" ? data.appVersion : null;
+  showAboutVersion(data.version ?? appVersion);
   const requestedPath = localTab(selectedPath);
   selectedPath = Object.hasOwn(data, "activeTab") ? data.activeTab : null;
   // A workspace that the app reads through its store's clone alone names no checkout, so the label shows the workspace alone.
