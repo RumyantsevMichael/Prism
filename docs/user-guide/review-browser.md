@@ -582,8 +582,8 @@ When the shared app cannot start or `PRISM_REVIEW_APP=off` is set, `prism review
 
 Every Prism process writes to one log file, `logs/prism.log` in the state directory above, so the review app, each session's MCP server, and their index builds leave one record.
 Each line is a JSON object with the time, level, event, process name and id, and the event's own fields.
-The log records each process start and stop, index builds with their phases, durations, and failures, review app requests that fail or take more than two seconds, MCP tool calls that fail, and uncaught errors.
-A tool call that Prism refuses with a reason you can act on, such as an invalid argument, is information named `request_refused` with that reason's code, not a warning.
+The log records each process start and stop, index builds with their phases, durations, and failures, review app requests that fail or take more than two seconds, apart from a page's event stream, which stays open while the page does, MCP tool calls that fail, and uncaught errors.
+A tool call that Prism refuses with a reason you can act on, such as an invalid argument, is information named `request_refused` with that reason's code, if it has one, not a warning.
 Each record store sync that commits, merges, or pushes records is information named `store_synced`, a sync that fails is a warning named `store_sync_failed` with its reason, once until the reason changes, and a sync with nothing to share leaves no line.
 It also records each time a process stops answering for more than a second, with what it was doing at the time, such as the index phase of the component being built.
 Past 5 MiB the file moves to `prism.log.1`, replacing the older one.

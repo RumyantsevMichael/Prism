@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { createHash, createHmac, randomBytes } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -49,6 +51,69 @@ test("a refused call logs its code as information without a stack, not as a fail
   assert.equal(refusal.level, "info");
   assert.equal(refusal.stack, undefined, "a refusal carries no stack");
   assert.equal(lines.some((line) => line.event === "request_failed"), false, "a refusal is no failure");
+});
+
+test("a projectRoot argument the server cannot use logs a refusal without a stack, not a failed request", async (context) => {
+  const place = await workspace(context);
+  const api = await checkout(place, "api");
+  const folder = await logFolder(context);
+  const prism = await server(context, place, api, { env: { PRISM_LOG_LEVEL: "info", PRISM_LOG_DIR: folder } });
+  const refused = await prism.call("get_roadmap", { projectRoot: "relative/checkout" });
+  assert.match(refused.error?.message ?? refused.result?.content?.[0]?.text ?? "", /absolute path/);
+  await prism.close();
+  const lines = await logLines(folder);
+  const refusal = lines.find((line) => line.event === "request_refused");
+  assert.ok(refusal, JSON.stringify(lines));
+  assert.equal(refusal.tool, "get_roadmap");
+  assert.equal(refusal.stack, undefined);
+  assert.equal(lines.some((line) => line.event === "request_failed"), false);
+});
+
+// A request to the app's control route, signed with the app's control token as the app's clients sign it.
+function controlRequest(discovery, route, body) {
+  const text = JSON.stringify(body);
+  const nonce = randomBytes(16).toString("hex");
+  const digest = createHash("sha256").update(text).digest("hex");
+  const header = `${nonce}.${createHmac("sha256", discovery.controlToken).update(`POST\n/control/${route}\n${nonce}\n${digest}`).digest("hex")}`;
+  return new Promise((resolve, reject) => {
+    const outgoing = http.request(`http://127.0.0.1:${discovery.port}/control/${route}`, { method: "POST", headers: { "X-Prism-Control": header, "Content-Type": "application/json" } }, (response) => {
+      let answer = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => { answer += chunk; });
+      response.on("end", () => resolve(JSON.parse(answer)));
+    });
+    outgoing.once("error", reject);
+    outgoing.end(text);
+  });
+}
+
+test("an event stream that stays open past the slow-request time is no slow request", async (context) => {
+  const { startReviewApp } = await import("../../dist/server/review/review-app-server.mjs");
+  const folder = await logFolder(context);
+  const directory = path.join(folder, "app");
+  const root = path.join(folder, "project");
+  await mkdir(path.join(root, "docs"), { recursive: true });
+  await writeFile(path.join(root, "docs", "notes.md"), "# Notes\n");
+  log.configure({ name: "test", directory: folder, level: 20 });
+  context.after(() => log.configure({ name: "test", directory: null }));
+  const app = await startReviewApp({ directory, idleMs: 60000 });
+  let closed = false;
+  context.after(() => closed ? undefined : app.close());
+  const discovery = JSON.parse(await readFile(path.join(directory, "review-app.json"), "utf8"));
+  const { url } = await controlRequest(discovery, "present", { projectRoot: root, open: false });
+  const stream = http.get(new URL("api/events/shared", url));
+  context.after(() => stream.destroy());
+  const response = await new Promise((resolve) => stream.once("response", resolve));
+  assert.equal(response.statusCode, 200);
+  response.resume();
+  // The app logs a request that takes 2 s or more, and closing the app ends the stream.
+  await new Promise((resolve) => setTimeout(resolve, 2300));
+  await app.close();
+  closed = true;
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await log.flush();
+  const slow = (await logLines(folder)).filter((line) => line.event === "slow_request");
+  assert.deepEqual(slow, [], "the stream's length is no slowness");
 });
 
 test("the log names a sync that shared records, a failure once until its reason changes, and the sync that ends the failures", async (context) => {
