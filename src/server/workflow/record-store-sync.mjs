@@ -2624,11 +2624,13 @@ async function boundedBlobReader(base, files, entriesOf, batchBytes = 32 * 1024 
       const batch = [];
       let total = 0;
       let end = index;
-      while (end < files.length && (end === index || total <= batchBytes)) {
-        for (const item of wanted[end]) {
-          const found = info.get(item.object);
-          if (found?.type === "blob" && found.size <= blobMax(files[end])) { batch.push({ file: files[end], entry: item }); total += found.size + 128; }
-        }
+      // A batch takes whole files while their blobs fit in batchBytes, and always its first file, so a file is never split across two batches.
+      while (end < files.length) {
+        const readable = wanted[end].filter((item) => { const found = info.get(item.object); return found?.type === "blob" && found.size <= blobMax(files[end]); });
+        const bytes = readable.reduce((sum, item) => sum + info.get(item.object).size + 128, 0);
+        if (end > index && total + bytes > batchBytes) break;
+        for (const item of readable) batch.push({ file: files[end], entry: item });
+        total += bytes;
         end += 1;
       }
       next = end;
@@ -3107,7 +3109,7 @@ async function apply(base, from, to, options, progress = {}, held = new Map(), d
           const listings = new Map();
           // A file is read only up to its kind's bound, so one above it is never read and holds no commit's bytes.
           const ownBytes = async (index, cache) => (await storedInSpelling(base, files[index], cache)) ? boundedBytes(targets[index], bound(files[index])) : null;
-          const blobOf = await boundedBlobReader(base, files, (file) => [before.get(file), after.get(file), held.get(file)?.disk ? null : held.get(file)]);
+          const blobOf = await boundedBlobReader(base, files, (file) => held.get(file)?.disk ? [after.get(file)] : [before.get(file), after.get(file), held.get(file)]);
           for (const [index, file] of files.entries()) {
             // A file withheld because it is above its kind's bound is never read: it must still be the file the sync held back, which the caller moves aside before replacing it.
             if (held.get(file)?.disk) {
