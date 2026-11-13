@@ -44,7 +44,7 @@ import { keptExplanation, shownPath } from "./workflow/artifact-migration.mjs";
 import { ARTIFACT_MIGRATIONS, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX } from "./workflow/artifact-paths.mjs";
 import { forgetAskedGates, recordAskedGates } from "./workflow/approval-deliveries.mjs";
 import { VERIFY_SLICE_SCHEMA, cancelVerifications, verificationBrief, verifySlice } from "./workflow/verification.mjs";
-import { handOffRecordSyncs } from "./workflow/record-store-sync.mjs";
+import { configureRecordSync, handOffRecordSyncs } from "./workflow/record-store-sync.mjs";
 import { stopClaimRenewals } from "./workflow/slice-claims.mjs";
 import { managedStoresDirectory } from "./workflow/remote-url.mjs";
 import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
@@ -1643,6 +1643,8 @@ input.on("line", async (line) => {
 // The host ends the session by closing input or by a signal, so the server exits once its cleanup ends, or after a short grace period,
 // even when index preparation, a store sync, or a child process started meanwhile would keep it alive.
 // Claude Code sends SIGINT and then SIGTERM about a tenth of a second apart, and ends the process soon after, so the stores' pending syncs go to a detached process first.
+// On Windows a signal ends the process without running any of its code, so a detached watcher holds the pending syncs while any are pending and finishes them however the server ends.
+configureRecordSync({ watchPending: true });
 const CLOSE_GRACE_MS = 5000;
 let closing = false;
 async function stop(reason) {

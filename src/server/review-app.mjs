@@ -3,12 +3,14 @@ import { pluginURL } from "./plugin-root.mjs";
 import { reviewAppDirectory } from "./review/review-app-discovery.mjs";
 import { startReviewApp } from "./review/review-app-server.mjs";
 import { errorFields, log, startProcessLog } from "./log.mjs";
-import { handOffRecordSyncs } from "./workflow/record-store-sync.mjs";
+import { configureRecordSync, handOffRecordSyncs } from "./workflow/record-store-sync.mjs";
 
 // The detached review app that no agent session owns; a start that loses the lock exits quietly, so concurrent starts leave one app.
 const { version } = JSON.parse(await readFile(pluginURL(".claude-plugin", "plugin.json"), "utf8"));
 // The app runs detached with no terminal, so the shared Prism log file is its only record.
 startProcessLog("review-app", { version });
+// A detached watcher finishes the app's pending store syncs if the app is ended by force.
+configureRecordSync({ watchPending: true });
 let app;
 try {
   app = await startReviewApp({ directory: reviewAppDirectory(), pluginVersion: version });

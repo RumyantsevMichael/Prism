@@ -11,7 +11,8 @@ import { checkout, eventually, git, isolateGit, ok, remoteFile, syncedWorkspace 
 
 // A host can end a session a fraction of a second after the agent's last write, well before the store's debounced sync comes due:
 // Claude Code sends SIGINT and SIGTERM about a tenth of a second apart, and Codex closes the server's input.
-// The server hands its pending syncs to a detached process, so the write still reaches the store's remote, and a later session neither repeats it nor conflicts with it.
+// On Windows any signal ends a process by force, and a host may also kill it, so no code of the server runs on its way out.
+// A detached process watches the server while it has syncs pending and finishes them once it ends, so the write still reaches the store's remote, and a later session neither repeats it nor conflicts with it.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 const { syncRecordStoreNow } = await import("../../dist/server/workflow/record-store-sync.mjs");
@@ -51,6 +52,11 @@ async function hostedServer(context, machine, root) {
       await exited;
       clearTimeout(timer);
     },
+    // As a host that kills the server ends a session, and as Windows ends it on any signal: by force, so none of the server's code runs.
+    async endByForce() {
+      child.kill("SIGKILL");
+      await exited;
+    },
     // As Codex ends a session: it closes the server's input.
     async endLikeCodex() {
       child.stdin.end();
@@ -65,8 +71,8 @@ const commits = (remote) => Number(git(remote, "rev-list", "--count", "main"));
 const handOffEnded = async (store) => assert.equal((await syncRecordStoreNow(store)).state, "ok");
 const savedCopies = async (store) => (await readdir(path.join(store, ".prism-sync", "conflicts"), { recursive: true }).catch(() => [])).length;
 
-for (const [host, end] of [["Claude Code", "endLikeClaudeCode"], ["Codex", "endLikeCodex"]]) {
-  test(`a write that ${host} ends the session right after still reaches the store's remote`, async (context) => {
+for (const [ending, end] of [["Claude Code ends the session", "endLikeClaudeCode"], ["Codex ends the session", "endLikeCodex"], ["the host kills the server", "endByForce"]]) {
+  test(`a write still reaches the store's remote when ${ending} right after it`, async (context) => {
     const place = await syncedWorkspace(context);
     const root = await checkout(place.a, "api");
     const prism = await hostedServer(context, place.a, root);
