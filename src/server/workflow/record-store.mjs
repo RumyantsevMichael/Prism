@@ -249,6 +249,25 @@ async function storeOf(projectRootPath) {
   return { ...store, repository: await checkedRepository(store) };
 }
 
+/**
+ * Where a project's records live, for a record tool's result: null in a project without a record store, else the store as .prism/workflow.md names it without credentials,
+ * the folder that holds it on this machine, whether store sync is on, and the outcome and time of the latest sync, or null before the first.
+ */
+export async function recordStoreSummary(projectRootPath) {
+  let store;
+  try { store = await resolveStore(projectRootPath); } catch { return null; }
+  if (!store.external) return null;
+  const configured = (await readWorkflowConfig(store.root)).workspace?.store ?? null;
+  const status = store.sync ? await readSyncStatus(store.base) : null;
+  return {
+    store: configured === null ? null : withoutCredentials(configured),
+    folder: store.base,
+    sync: store.sync ? "on" : "off",
+    lastSync: status ? { state: status.state, at: status.at } : null,
+    note: "This record lives in the project's record store, not in the checkout, and the store is shared with every checkout of the workspace; read and change it only through Prism's tools."
+  };
+}
+
 async function resolveStore(projectRootPath) {
   const root = await projectRoot(projectRootPath);
   const config = await readWorkflowConfig(root);
