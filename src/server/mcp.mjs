@@ -9,7 +9,7 @@ import { conservationStore } from "./conservation/conservation-store.mjs";
 import { ChangeMapError, GET_CHANGE_MAP_SCHEMA, UPDATE_CHANGE_MAP_SCHEMA, getChangeMap, updateChangeMap } from "./conservation/change-map.mjs";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { COMMENTS_PER_ARTIFACT_MAX, finishUnfinishedMoves, nameToolCallRoot, outsideToolCall, recordStoreOf, restoreMigrationReports, takeMigrationReports, toolCallContext, withToolCall } from "./workflow/record-store.mjs";
+import { COMMENTS_PER_ARTIFACT_MAX, finishUnfinishedMoves, nameToolCallRoot, outsideToolCall, recordStoreOf, recordStoreSummary, restoreMigrationReports, takeMigrationReports, toolCallContext, withToolCall } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
 import { confirmSavedConflicts, releaseSavedConflicts, takeSavedConflicts } from "./workflow/record-store-sync.mjs";
 import { callSessionId, withCallSession } from "./workflow/slice-claims.mjs";
@@ -1011,6 +1011,13 @@ async function callGateWait(argumentsValue, metadata, requestId) {
 }
 const repositoryTools = new Set([...NATIVE_INTELLIGENCE_TOOLS.map(tool => tool.name), "list_repository_intelligence_providers", "plan_repository_context", "resolve_session_capacity", "evaluate_repository_fit", "summarize_session_consumption", "set_workflow_recording", "read_workflow_decisions", "record_workflow_decision"]);
 
+// A record tool's result in a project with a record store names the store, so an agent never takes recordPath for a file in the checkout.
+async function withRecordStore(projectRoot, value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const recordStore = await recordStoreSummary(projectRoot).catch(() => null);
+  return recordStore ? { ...value, recordStore } : value;
+}
+
 async function callStateTool(name, argumentsValue) {
   const projectRoot = await requestedProjectRoot(argumentsValue);
   const input = { ...argumentsValue, projectRoot };
@@ -1038,6 +1045,7 @@ async function callStateTool(name, argumentsValue) {
   } else {
     throw new Error(`Unknown state tool: ${name}`);
   }
+  if (name === "get_coordination_state" || name === "update_coordination_state") resultValue = await withRecordStore(projectRoot, resultValue);
   // Closed gates are history for the review browser; agents never need them.
   if (resultValue?.state?.closed) {
     const { closed, ...state } = resultValue.state;
@@ -1527,6 +1535,7 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
       : name === "get_initiative" ? await getInitiative(input)
       : initiativeAcknowledgement(await updateInitiative(input), input.operations);
     if (name === "get_initiative") value = { ...value, runTotals: await readInitiativeRecordRunTotals(projectRoot, value.initiative, value) };
+    value = await withRecordStore(projectRoot, value);
     const marks = name === "get_initiative" ? await historyMarksContent(projectRoot, value.shippedHistory)
       : name === "get_roadmap" ? await Promise.all((value.markedHistory ?? []).map(async (item) => ({ type: "text", text: await historyMarksText(projectRoot, item.initiative, item.marked) })))
       : [];
