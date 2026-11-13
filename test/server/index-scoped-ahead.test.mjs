@@ -76,6 +76,9 @@ test("clause 20: a call whose components all have a stored index waits its turn 
 
 test("clause 20: a call that needs the running component does not pause it", async (t) => {
   const { root, runtime, control } = await runningNet(t);
+  // The held build has reported its structure; on a loaded machine storing it can outlast the call's short wait, so the call starts once it is stored.
+  const directory = (await runtime.location(root, NET)).directory;
+  await until(async () => JSON.parse(await readFile(path.join(directory, "current.json"), "utf8").catch(() => "{}")).stage === "structure", "net did not store its structure");
   const scoped = await search(root, runtime, ["packages/net"], 100);
   assert.equal(entry(scoped, "root/net").status, "included", "the running build's published structure answers the call, as clause 18 states");
   assert.equal(entry(scoped, "root/net").embeddings, "pending");
