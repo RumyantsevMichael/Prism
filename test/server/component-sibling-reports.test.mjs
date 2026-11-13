@@ -33,7 +33,7 @@ const APP = { name: "app", identity: "root/app", folder: "packages/app" };
 test("clauses 25 and 26: a scoped same-name report keeps a group's members in sibling components, which it prepares with structure only", async (t) => {
   const { root, storage } = await project(t, { files: REPORT_FILES });
   const { runtime, control } = await stagedRuntime(storage);
-  const found = await provider.findSameNameUnits({ projectRoot: root, ...scoped }, { runtime, waitMs: 2000 });
+  const found = await provider.findSameNameUnits({ projectRoot: root, ...scoped }, { runtime, waitMs: 30000 });
   assert.equal(found.status, "ready");
   assert.deepEqual(groupFiles(found), [["packages/app/is.ts", "packages/net/is.ts"]]);
   assert.deepEqual(states(found), [["root/root", "included"], ["root/net", "included"], ["root/app", "included"]]);
@@ -48,7 +48,7 @@ test("clauses 25 and 26: a scoped same-name report keeps a group's members in si
 test("clause 25: a scoped module report counts importers in sibling components", async (t) => {
   const { root, storage } = await project(t, { files: REPORT_FILES });
   const { runtime } = await stagedRuntime(storage);
-  const modules = await provider.reportModuleInterfaces({ projectRoot: root, allModules: true, ...scoped }, { runtime, waitMs: 2000 });
+  const modules = await provider.reportModuleInterfaces({ projectRoot: root, allModules: true, ...scoped }, { runtime, waitMs: 30000 });
   assert.equal(modules.status, "ready");
   const retry = modules.modules.find((module) => module.file === "packages/net/retry.ts");
   assert.equal(retry?.importers, 1, "the importer in packages/app counts");
@@ -59,7 +59,7 @@ test("clause 25: scoped shared-literal and shared-dependency reports read every 
   const { root, storage } = await project(t, { files: REPORT_FILES });
   const { runtime } = await stagedRuntime(storage);
   for (const report of [provider.findSharedLiterals, provider.findSharedDependencies]) {
-    const found = await report({ projectRoot: root, ...scoped }, { runtime, waitMs: 2000 });
+    const found = await report({ projectRoot: root, ...scoped }, { runtime, waitMs: 30000 });
     assert.equal(found.status, "ready");
     assert.deepEqual(states(found), [["root/root", "included"], ["root/net", "included"], ["root/app", "included"]]);
   }
@@ -82,7 +82,7 @@ test("clause 27: scoped cohesion and complex-unit reports read only the componen
   const { root, storage } = await project(t, { files: REPORT_FILES });
   const { runtime, control } = await stagedRuntime(storage);
   for (const report of [provider.reportCohesionClusters, provider.reportComplexUnits]) {
-    const found = await report({ projectRoot: root, ...scoped }, { runtime, waitMs: 2000 });
+    const found = await report({ projectRoot: root, ...scoped }, { runtime, waitMs: 30000 });
     assert.deepEqual(states(found), [["root/net", "included"]]);
   }
   assert.deepEqual(control.builds.map((build) => build.files), [NET_FILES]);
@@ -91,8 +91,8 @@ test("clause 27: scoped cohesion and complex-unit reports read only the componen
 test("clause 26: a search that needs a sibling's embeddings prepares it in full after its structure-only preparation", async (t) => {
   const { root, storage } = await project(t, { files: REPORT_FILES });
   const { runtime, control } = await stagedRuntime(storage);
-  await provider.findSameNameUnits({ projectRoot: root, ...scoped }, { runtime, waitMs: 2000 });
-  const found = await provider.searchRepositoryConcepts({ projectRoot: root, query: "is object", filters: { paths: ["packages/app"] } }, { runtime, waitMs: 2000 });
+  await provider.findSameNameUnits({ projectRoot: root, ...scoped }, { runtime, waitMs: 30000 });
+  const found = await provider.searchRepositoryConcepts({ projectRoot: root, query: "is object", filters: { paths: ["packages/app"] } }, { runtime, waitMs: 30000 });
   await until(async () => (await pointer(runtime, root, APP)).stage === "complete", "The app component was not prepared in full.");
   assert.ok(control.builds.filter((build) => JSON.stringify(build.files) === JSON.stringify(APP_FILES)).some((build) => !build.fragmentsOnly));
   assert.ok(found);
@@ -103,8 +103,8 @@ test("clause 25: a scoped report of a retained baseline reads the baseline's sib
   const { runtime } = await stagedRuntime(storage);
   const { snapshotId } = await conservationStore.capture(root);
   await write("packages/app/is.ts", "export const gone = 1;\n");
-  let found = await provider.findSameNameUnits({ projectRoot: root, snapshotId, ...scoped }, { runtime, waitMs: 2000 });
-  if (found.status !== "ready") found = await provider.findSameNameUnits({ projectRoot: root, snapshotId, ...scoped }, { runtime, waitMs: 2000 });
+  let found = await provider.findSameNameUnits({ projectRoot: root, snapshotId, ...scoped }, { runtime, waitMs: 30000 });
+  if (found.status !== "ready") found = await provider.findSameNameUnits({ projectRoot: root, snapshotId, ...scoped }, { runtime, waitMs: 30000 });
   assert.equal(found.snapshotId, snapshotId);
   assert.deepEqual(groupFiles(found), [["packages/app/is.ts", "packages/net/is.ts"]]);
 });

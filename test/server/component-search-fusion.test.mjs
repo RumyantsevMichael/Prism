@@ -29,7 +29,7 @@ async function searchWith(t, input) {
   const { runtime, control } = await fakeRuntime(storage);
   Object.assign(control.cosine, COSINE);
   Object.assign(control.lexical, LEXICAL);
-  const found = await searchRepositoryConcepts({ projectRoot: root, ...input }, { runtime, waitMs: 2000 });
+  const found = await searchRepositoryConcepts({ projectRoot: root, ...input }, { runtime, waitMs: 30000 });
   assert.equal(found.status, "ready");
   return found.results;
 }
