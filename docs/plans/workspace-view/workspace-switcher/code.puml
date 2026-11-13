@@ -1,0 +1,16 @@
+@startuml
+title workspace-switcher: units and dependencies
+component "workspaces.mjs\nlistWorkspaces" as workspaces
+component "review-app-server.mjs\n/api/workspaces, /w/<w>/, /p/ redirect, root" as app
+component "review-server.mjs\nworkspace review and session tabs" as review
+component "workspace-identity.mjs\nworkspace label" as identity
+component "cli.mjs\nprism review --workspaces" as cli
+component "review.js\nworkspace switcher" as page
+component "remote-url.mjs\nstoreIdentity" as url
+app ..> workspaces
+app ..> review
+workspaces ..> url
+workspaces ..> identity
+cli ..> app
+page ..> app
+@enduml

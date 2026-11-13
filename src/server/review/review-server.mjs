@@ -9,16 +9,20 @@ import { fileURLToPath } from "node:url";
 import { PLUGIN_ROOT } from "../plugin-root.mjs";
 import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
-import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { RECORD_DIRECTORY, artifactPathTest, artifactsInCheckout, describeRecordStore, inArtifactStore, outsideToolCall, keyOfPath, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile } from "../workflow/record-store.mjs";
-import { readStoreArtifact, reviewStoreArtifact } from "../workflow/store-artifacts.mjs";
+import { listComponents } from "../workflow/components.mjs";
+import { artifactKinds, parseWorkflowConfig, readWorkflowConfig } from "../workflow/workflow-config.mjs";
+import { RECORD_DIRECTORY, artifactPathTest, artifactsInCheckout, describeRecordStore, inArtifactStore, isStoreWithoutCheckout, outsideToolCall, keyOfPath, recordStoreOf, listRecordStoreConflicts, listStoreArtifacts, readRecordStoreConflict, recordPath, recordsUnavailable, recordSyncStatus, resolveRecordFile, withRecordReads } from "../workflow/record-store.mjs";
+import { artifactStoreLocation, readStoreArtifact, readStoreArtifactAt, reviewStoreArtifact, reviewStoreArtifactAt, storeArtifactLocation, workspaceArtifacts } from "../workflow/store-artifacts.mjs";
+import { codeRefOf, parseCodeRef, resolveLinks } from "./artifact-links.mjs";
+import { checkoutsOnMachine, knownComponents, registeredRepositories } from "./workspaces.mjs";
 import { withoutCredentials } from "../workflow/remote-url.mjs";
 import { readWorkspaceName } from "../workflow/roadmap.mjs";
 import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { entityContext, entityExists, forgetWorkspace, loadClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords } from "./workspace-model.mjs";
+import { entityContext, entityExists, forgetWorkspace, loadClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
+import { shippedCommit, sliceFiles } from "./slice-files.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
 import { listLaunches } from "../session/launched-sessions.mjs";
@@ -113,11 +117,15 @@ async function walkArtifacts(projectRoot, relativeRoot, results) {
   }
 }
 
-const SOURCE_SIZE_LIMIT = 512 * 1024;
+export const SOURCE_SIZE_LIMIT = 512 * 1024;
 const SOURCE_CHECKS = 8;
 const LISTING_MIN_MS = 5000;
 const LISTING_FACTOR = 5;
 const SECRET_NAME = /^(\.env(\..*)?|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.npmrc|\.pypirc|\.netrc|credentials(\.json)?)$|\.(pem|key|p12|pfx|jks|keystore|kdbx|gpg|asc)$/i;
+/** Whether review sources leave a path out as a secret by its file name, such as .env or a private key. */
+export const secretPath = (file) => SECRET_NAME.test(path.posix.basename(String(file)));
+/** Whether review sources leave a path out as a binary file by its extension. */
+export const binaryPath = (file) => BINARY_EXTENSION.test(path.posix.basename(String(file)));
 const BINARY_EXTENSION = /\.(png|jpe?g|gif|webp|ico|bmp|pdf|zip|gz|tgz|bz2|xz|7z|rar|jar|war|class|pyc|so|dylib|dll|exe|wasm|woff2?|ttf|otf|eot|mp3|mp4|mov|avi|sqlite|db)$/i;
 
 function gitListFiles(projectRoot) {
@@ -211,6 +219,24 @@ async function listReviewSources(projectRoot) {
   return (await listSourceFiles(projectRoot)).filter((file) => !isArtifact(file));
 }
 
+/** The store ref, store:<location>, of each store artifact the checkout sees, by path; a path that several scopes hold names the first by label. */
+async function storeArtifactRefs(projectRoot) {
+  const refs = {};
+  for (const entry of await storeArtifactEntries(projectRoot) ?? []) {
+    if (Object.hasOwn(refs, entry.path)) continue;
+    const location = await artifactStoreLocation(projectRoot, entry).catch(() => null);
+    if (location) refs[entry.path] = `store:${location}`;
+  }
+  return refs;
+}
+
+/** An open tab of a workspace's review: a store artifact that the checkout names by its path becomes store:<location>, and every other tab stays as it is. */
+export async function storeTabRef(projectRoot, tab) {
+  if (typeof tab !== "string" || tab.startsWith("store:") || parseEntityRef(tab) || !(await inArtifactStore(projectRoot, tab).catch(() => false))) return tab;
+  const found = await storeArtifactLocation(projectRoot, tab).catch(() => null);
+  return found ? `store:${found.location}` : tab;
+}
+
 /** The scope label of each store artifact the checkout sees, by path, or an empty object without a store; a path that several scopes hold names the first by label. */
 export async function listArtifactScopes(projectRoot) {
   const scopes = {};
@@ -238,6 +264,64 @@ async function listCheckoutArtifacts(projectRoot) {
   return [...results].sort();
 }
 
+// A workspace's page names each store artifact by its store location, store:<location>, never by a checkout's path, and lists the artifacts of every scope the store holds.
+const STORE_REF = "store:";
+const storeRefOf = (location) => `${STORE_REF}${location}`;
+
+// Every scope's artifacts in the store that a workspace's page reads through, or null when the page reads no store or its store cannot serve them.
+async function workspaceStoreArtifacts(projectRoot) {
+  return workspaceArtifacts(projectRoot).catch((error) => {
+    if (recordsUnavailable(error) || error?.name === "ArtifactError") return null;
+    throw error;
+  });
+}
+
+// Scopes listed workspace first and then by label.
+// The folder of a scope below artifacts/ with its trailing slash, or "" for the workspace scope.
+const scopePrefix = (scope) => scope.kind === "workspace" ? "" : scope.kind === "repository" ? `repositories/${scope.repository}/` : `repositories/${scope.repository}/components/${scope.component}/`;
+
+const byScope = (left, right) => left.kind === "workspace" ? -1 : right.kind === "workspace" ? 1 : left.label < right.label ? -1 : left.label > right.label ? 1 : 0;
+
+/**
+ * The store part of a workspace page's index: refs, the store:<location> of each artifact the page shows, artifactScopes, each ref's scope label, scopes, the scopes that hold an artifact with their counts,
+ * and, when filter names scope labels, scopeFilter, the labels it applied in the order given, and unknownScopes, the labels no scope of the store has, with refs narrowed to the applied scopes;
+ * notes says when the store holds no artifacts/ folder yet, naming the repositories that keep their artifacts in their checkouts.
+ */
+async function workspaceIndex(projectRoot, stored, filter, repositories) {
+  const listed = stored.entries.filter((entry) => TEXT_EXTENSIONS.has(path.posix.extname(entry.location).toLowerCase()));
+  const counts = new Map();
+  for (const entry of listed) counts.set(entry.scope.label, (counts.get(entry.scope.label) ?? 0) + 1);
+  const scopes = stored.scopes.filter((scope) => counts.has(scope.label)).sort(byScope)
+    .map((scope) => ({ kind: scope.kind, label: scope.label, repository: scope.repository ?? null, component: scope.component ?? null, artifacts: counts.get(scope.label) }));
+  const result = { scopes, notes: [] };
+  let shown = listed;
+  if (filter !== null) {
+    const known = new Set(stored.scopes.map((scope) => scope.label));
+    const given = [...new Set(filter)];
+    result.scopeFilter = given.filter((label) => known.has(label));
+    result.unknownScopes = given.filter((label) => !known.has(label));
+    const applied = new Set(result.scopeFilter);
+    shown = listed.filter((entry) => applied.has(entry.scope.label));
+  }
+  result.every = listed.map((entry) => storeRefOf(entry.location));
+  result.refs = shown.map((entry) => storeRefOf(entry.location));
+  result.artifactScopes = Object.fromEntries(shown.map((entry) => [storeRefOf(entry.location), entry.scope.label]));
+  if (!stored.held) {
+    const names = await repositories();
+    const named = names.length ? names.join(", ") : "Each repository";
+    const one = names.length === 1;
+    result.notes.push({ code: "store_without_artifacts", message: `The store holds no artifacts yet: ${named} ${one ? "keeps its" : "keep their"} artifacts in ${one ? "its" : "their"} checkouts until a Prism session there moves them into the store.` });
+  }
+  return result;
+}
+
+// The scope labels that an index request's scopes parameter names, or null when it names none.
+function scopeFilterOf(url) {
+  if (!url.searchParams.has("scopes")) return null;
+  const labels = url.searchParams.get("scopes").split(",").map((label) => label.trim()).filter(Boolean);
+  return labels.length ? labels : null;
+}
+
 // The checkout's artifacts with the text artifacts that the store's scopes hold, as the store lists them now.
 async function withStoreArtifacts(projectRoot, local) {
   const stored = await storeArtifactEntries(projectRoot);
@@ -259,11 +343,36 @@ function snippet(line, token) {
   return `${start ? "…" : ""}${text.slice(start, start + SEARCH_SNIPPET)}…`;
 }
 
+// A search query's lowercase words, or null when they hold fewer than two characters in all.
+function searchTokens(query) {
+  const tokens = String(query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+  return tokens.length && tokens.join("").length >= 2 ? tokens : null;
+}
+
+// How a text matches a query's words: null unless every word occurs in it, else its score, which ranks a name that holds every word and lines that hold them all together first,
+// and its first matching lines, those with the most words first.
+function matchText(content, tokens, name) {
+  const lower = content.toLowerCase();
+  if (!tokens.every((token) => lower.includes(token))) return null;
+  const matches = [];
+  let complete = 0;
+  content.split(/\r?\n/).forEach((line, index) => {
+    const lowerLine = line.toLowerCase();
+    const hits = tokens.filter((token) => lowerLine.includes(token)).length;
+    if (!hits) return;
+    if (hits === tokens.length) complete += 1;
+    matches.push({ line: index + 1, text: snippet(line, tokens.find((token) => lowerLine.includes(token))), hits });
+  });
+  matches.sort((left, right) => right.hits - left.hits || left.line - right.line);
+  const nameHit = tokens.every((token) => name.toLowerCase().includes(token));
+  return { score: (nameHit ? 1000 : 0) + complete * 10 + matches.length, matches: matches.slice(0, SEARCH_LINE_LIMIT).map(({ line, text }) => ({ line, text })) };
+}
+
 // Full-text search over the Prism artifacts the review lists, never over source files: every term must occur in a file,
 // and files whose lines hold all terms together rank first.
 export async function searchArtifacts(projectRoot, query) {
-  const tokens = String(query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
-  if (!tokens.length || tokens.join("").length < 2) return { query: query ?? "", results: [] };
+  const tokens = searchTokens(query);
+  if (!tokens) return { query: query ?? "", results: [] };
   const results = [];
   for (const artifactPath of await listArtifacts(projectRoot)) {
     let content;
@@ -278,24 +387,42 @@ export async function searchArtifacts(projectRoot, query) {
     } catch {
       continue;
     }
-    const lower = content.toLowerCase();
-    if (!tokens.every((token) => lower.includes(token))) continue;
-    const lines = content.split(/\r?\n/);
-    const matches = [];
-    let complete = 0;
-    lines.forEach((line, index) => {
-      const lowerLine = line.toLowerCase();
-      const hits = tokens.filter((token) => lowerLine.includes(token)).length;
-      if (!hits) return;
-      if (hits === tokens.length) complete += 1;
-      matches.push({ line: index + 1, text: snippet(line, tokens.find((token) => lowerLine.includes(token))), hits });
-    });
-    matches.sort((left, right) => right.hits - left.hits || left.line - right.line);
-    const pathHit = tokens.every((token) => artifactPath.toLowerCase().includes(token));
-    results.push({ path: artifactPath, score: (pathHit ? 1000 : 0) + complete * 10 + matches.length, matches: matches.slice(0, SEARCH_LINE_LIMIT).map(({ line, text }) => ({ line, text })) });
+    const matched = matchText(content, tokens, artifactPath);
+    if (matched) results.push({ path: artifactPath, ...matched });
   }
   results.sort((left, right) => right.score - left.score || left.path.localeCompare(right.path));
   return { query, results: results.slice(0, SEARCH_FILE_LIMIT).map(({ score, ...result }) => result) };
+}
+
+// Full-text search over a workspace's store artifacts of every scope, matched as a checkout's search matches its artifacts, each result { ref, scope, matches }.
+async function searchStoreArtifacts(projectRoot, stored, tokens) {
+  const results = [];
+  for (const entry of stored?.entries ?? []) {
+    if (!TEXT_EXTENSIONS.has(path.posix.extname(entry.location).toLowerCase())) continue;
+    const read = await readStoreArtifactAt(projectRoot, entry.location).catch(() => null);
+    if (!read || read.bytes.length > SEARCH_SIZE_LIMIT) continue;
+    const matched = matchText(read.bytes.toString("utf8"), tokens, entry.location);
+    if (matched) results.push({ ref: storeRefOf(entry.location), scope: entry.scope, ...matched });
+  }
+  results.sort((left, right) => right.score - left.score || left.ref.localeCompare(right.ref) || left.scope.label.localeCompare(right.scope.label));
+  return results.slice(0, SEARCH_FILE_LIMIT).map(({ score, ...result }) => result);
+}
+
+const SEARCH_PATH_LIMIT = 50;
+
+// The shortest folders and files of a checkout's review sources that lie outside every declared component's folder and hold none of them,
+// which select only the root component's index in a component search, or null when more are needed than one search takes.
+function rootComponentPaths(sources, folders) {
+  const inside = (file, folder) => file === folder || file.startsWith(`${folder}/`);
+  const paths = new Set();
+  for (const file of sources) {
+    if (folders.some((folder) => inside(file, folder))) continue;
+    const parts = file.split("/");
+    let prefix = parts[0];
+    for (let depth = 1; depth < parts.length && folders.some((folder) => inside(folder, prefix)); depth += 1) prefix = `${prefix}/${parts[depth]}`;
+    paths.add(prefix);
+  }
+  return paths.size <= SEARCH_PATH_LIMIT ? [...paths].sort() : null;
 }
 
 function linkedDiagramPaths(artifactPath, content) {
@@ -651,7 +778,7 @@ const ACTION_STATUS = {
 const ACTION_FIELDS = ["current", "reason", "field", "accepted"];
 export const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
 
-function sendJson(response, statusCode, body) {
+export function sendJson(response, statusCode, body) {
   send(response, statusCode, JSON.stringify(body), "application/json; charset=utf-8");
 }
 
@@ -666,7 +793,7 @@ function sendActionError(response, error) {
 }
 
 // A write comes from the review page itself: JSON, and an Origin, when the browser sends one, of the same host.
-function fromPage(request) {
+export function fromPage(request) {
   const origin = request.headers.origin;
   if (String(request.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase() !== "application/json") return false;
   if (!origin) return true;
@@ -677,7 +804,7 @@ function fromPage(request) {
   }
 }
 
-async function readJson(request) {
+export async function readJson(request) {
   const text = await readBody(request);
   try {
     return parseStoreJson(text);
@@ -686,15 +813,85 @@ async function readJson(request) {
   }
 }
 
+/** Exchange the one-time grant of a tab that Prism opened, from its URL fragment, for the write session the tab keeps. */
+export async function exchangeWriteGrant(request, response, writeSessions) {
+  if (!fromPage(request)) {
+    sendJson(response, 403, { code: "origin_refused", message: "A write session must be requested by the review page as JSON." });
+    return;
+  }
+  const body = await readJson(request);
+  const token = await writeSessions?.exchange(body?.grant) ?? null;
+  if (!token) {
+    sendJson(response, 403, { code: "grant_refused", message: "The grant was already used, has expired, or was not issued here. Ask the agent to present the review, or run prism review." });
+    return;
+  }
+  sendJson(response, 200, { token });
+}
+
+/**
+ * Answer a route of the review page itself, its scripts, styles, kit, and the person's preferences, which every page of a server or app shares,
+ * and resolve to whether the route was one of them.
+ */
+export async function servePageRoute(request, response, route) {
+  if (route === "/" || route === "/review") {
+    await serveFile(response, path.join(PUBLIC_DIR, "review.html"), "text/html; charset=utf-8");
+  } else if (route === "/review.js") {
+    await serveFile(response, path.join(PUBLIC_DIR, "review.js"), "text/javascript; charset=utf-8");
+  } else if (route === "/favicon.svg" || route === "/prism-mark.svg") {
+    await serveFile(response, path.join(PUBLIC_DIR, route.slice(1)), "image/svg+xml");
+  } else if (route === "/vendor/plantuml.js") {
+    await serveFile(response, path.join(VENDOR_DIR, "plantuml.js"), "text/javascript; charset=utf-8");
+  } else if (route === "/vendor/viz-global.js") {
+    await serveFile(response, path.join(VENDOR_DIR, "viz-global.js"), "text/javascript; charset=utf-8");
+  } else if (route === "/c4.min.js" || route === "/vendor/c4.min.js") {
+    await serveFile(response, path.join(VENDOR_DIR, "c4.min.js"), "text/javascript; charset=utf-8");
+  } else if (route === "/kit/catalog") {
+    await serveFile(response, path.join(KIT_DIR, "catalog.html"), "text/html; charset=utf-8");
+  } else if (route.startsWith("/kit/") || route.startsWith("/styles/")) {
+    const asset = publicAsset(route);
+    if (asset) await serveFile(response, asset.file, asset.type);
+    else send(response, 404, "Not found");
+  } else if (route === "/api/preferences" && request.method === "GET") {
+    send(response, 200, JSON.stringify(await readStoredPreferences()), "application/json; charset=utf-8");
+  } else if (route === "/api/preferences" && request.method === "PUT") {
+    if (!fromPage(request)) {
+      send(response, 403, "Preferences must come from the review page as JSON.");
+      return true;
+    }
+    try {
+      let change;
+      try {
+        change = parseStoreJson(await readBody(request));
+      } catch {
+        throw Object.assign(new Error("The preferences must be a JSON object that gives one or more preferences."), { code: "invalid_preference" });
+      }
+      send(response, 200, JSON.stringify(await writePreferences(change)), "application/json; charset=utf-8");
+    } catch (error) {
+      if (error.code !== "invalid_preference") throw error;
+      send(response, 400, JSON.stringify({ code: error.code, message: error.message }), "application/json; charset=utf-8");
+    }
+  } else if (/^\/views\/[a-z][a-z-]*\.js$/.test(route)) {
+    await serveFile(response, path.join(VIEWS_DIR, route.slice("/views/".length)), "text/javascript; charset=utf-8");
+  } else {
+    return false;
+  }
+  return true;
+}
+
 // One project's review context: its tab session, viewer streams, and routes, shared by the session server and the review app.
 // onViewer(send) runs when a viewer stream opens, after its first session event, and send writes a named event to that viewer only.
 // writeSessions is the write session store of the server or app that serves this page; without one, no request can write.
 // onAction(event, { shared, comment }) receives each applied action's event, the history entry with its initiative, instead of this page's viewer streams;
 // shared is false for an index target, whose history belongs to this checkout alone, and comment is the id of a stored comment, which names its file, or null.
 // Without it, the event reaches this page's viewer streams.
-// hub holds the shared viewer streams of the origin that serves this page; the review app passes one hub to every project, and a session server keeps its own.
-export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, onAction = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null, writeSessions = null, hub = createViewerHub(),
+// workspace, for a review of the review app's workspace, is { id, describe(), sync?(), viewers?(count), checkouts?() }, describe answering { id, name, kind, url } for the index,
+// sync the workspace's sync state that the index holds, or null when nothing syncs it, viewers receiving the number of connected pages whenever it changes,
+// and checkouts listing its registered checkouts as { root, repository }, whose configured paths resolve the links of their repository's store artifacts:
+// its open tabs then name each store artifact by its store location, store:<location>, never by a checkout path, and projectRoot is the checkout it reads through, which useCheckout(root) changes.
+// hub holds the shared viewer streams of the origin that serves this page; the review app passes one hub to every workspace and closes it itself, and a session server keeps its own.
+export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, onAction = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null, writeSessions = null, workspace = null, hub: sharedHub = null,
   rebuildIndex = (root, component, options = {}) => backgroundPreparation().then((module) => module.startIndexRebuild(root, { ...(component ? { component: { identity: component.identity, folder: component.folder } } : {}), ...options })), autoRebuild = (root) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }) {
+  const hub = sharedHub ?? createViewerHub();
   let fingerprint = null;
   function currentFingerprint() {
     if (!fingerprint || Date.now() - fingerprint.at >= rebuildTiming.freshnessMs) fingerprint = { at: Date.now(), value: gitFingerprint(projectRoot).catch(() => null) };
@@ -703,6 +900,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   // The index chip polls while a page is open, so an out-of-date index is rebuilt only while someone looks at the project.
   const rebuild = { key: null, changedAt: Date.now(), startedAt: 0 };
   async function indexingStatus() {
+    // A workspace read through its store's clone alone has no checkout and so no code to index.
+    if (await isStoreWithoutCheckout(projectRoot)) return { state: "unavailable", diagnostics: [], autoRebuild: false };
     const status = await readIndexingStatus(projectRoot, intelligenceDirectories(), { fingerprint: currentFingerprint });
     const auto = await autoRebuild(projectRoot).catch(() => false);
     const print = await currentFingerprint();
@@ -721,9 +920,11 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   // The registry's indexer serves each component's own index: with declared components, a target shows its component's entry in the status, or none
   // while that component has neither an index nor a preparation, and without them the root target shows the checkout's one index.
   // A person's request rebuilds only its own component, starts at once, and ignores the background opt-out, because it is not in the background.
+  // A workspace's page also lists the components of its other checkouts on this machine, whose status each one's own index storage holds.
   const indexer = {
-    status: async (_root, component) => componentIndexingStatus(await indexingStatus(), component),
-    rebuild: (root, component) => {
+    status: async (root, component) => componentIndexingStatus(root === projectRoot ? await indexingStatus() : await readIndexingStatus(root, intelligenceDirectories()), component),
+    rebuild: async (root, component) => {
+      if (await isStoreWithoutCheckout(root)) return;
       rebuild.startedAt = Date.now();
       Promise.resolve(rebuildIndex(root, component)).catch(() => {});
     }
@@ -768,6 +969,12 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     }
     clearInterval(viewer.heartbeat);
     viewers.delete(response);
+    reportViewers();
+  }
+
+  // A workspace's fetch timer runs while any page of it is connected, on its own stream or on the origin's shared one.
+  function reportViewers() {
+    workspace?.viewers?.(viewers.size + hub.count(hubKey));
   }
 
   function notify(event, data) {
@@ -785,6 +992,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   function openViewerStream(response, writable) {
     const heartbeat = openEventStream(response, () => removeViewer(response));
     viewers.set(response, { heartbeat, writable });
+    reportViewers();
     if (writable) clearViewerOpenLease();
     writeEvent(response, "session", sessionSnapshot());
     onViewer?.((event, data) => writeEvent(response, event, data));
@@ -794,6 +1002,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   // It starts from the session snapshot and the pending notices, sent on the shared stream for this page only.
   function joinHub(stream, tab, writable) {
     if (!hub.join(stream, tab, hubKey, writable)) return false;
+    reportViewers();
     if (writable) clearViewerOpenLease();
     hub.send(stream, hubKey, "session", sessionSnapshot());
     onViewer?.((event, data) => hub.send(stream, hubKey, event, data));
@@ -808,7 +1017,261 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
 
   async function reviewableFiles(wanted = []) {
     const { artifacts, sources } = await listedFiles(projectRoot, wanted);
-    return new Set([...artifacts, ...sources]);
+    const stored = workspace ? await workspaceStoreArtifacts(projectRoot) : null;
+    const refs = stored ? stored.entries.map((entry) => storeRefOf(entry.location)) : [];
+    return new Set([...artifacts, ...sources, ...refs, ...await codeRefs()]);
+  }
+
+  // The review sources of each registered checkout of a workspace whose repository is known, by repository, holding a repository only while one of its checkouts lists its sources.
+  async function codeSources() {
+    const sources = new Map();
+    for (const member of await workspace?.checkouts?.() ?? []) {
+      if (!member.repository) continue;
+      const files = await listReviewSources(member.root).catch(() => null);
+      if (files === null) continue;
+      const known = sources.get(member.repository) ?? new Set();
+      for (const file of files) known.add(file);
+      sources.set(member.repository, known);
+    }
+    return sources;
+  }
+
+  // A workspace page opens a code file that a store artifact links to by its ref, code:<repository>:<path>, as a tab like any other file,
+  // whether a registered checkout lists it or the repository's code clone holds it at the remote's default branch.
+  async function codeRefs() {
+    const refs = [];
+    for (const [repository, files] of await codeSources()) for (const file of files) refs.push(codeRefOf(repository, file));
+    if (workspace?.code) {
+      for (const repository of await storeRepositories()) for (const file of await workspace.code.defaultFiles(repository) ?? []) refs.push(codeRefOf(repository, file));
+    }
+    return refs;
+  }
+
+  // A workspace page's read of a code file by its ref, answered as a checkout's read of a review source is, from a registered checkout of that repository whose review sources list the path.
+  async function serveCodeFile(response, ref, code) {
+    for (const member of await workspace?.checkouts?.() ?? []) {
+      if (member.repository !== code.repository) continue;
+      if (!(await listReviewSources(member.root).catch(() => [])).includes(code.path)) continue;
+      let loaded;
+      try { loaded = await loadArtifact(member.root, code.path); }
+      catch (error) { if (error.code === "ENOENT") continue; throw error; }
+      const diagrams = (loaded.diagrams ?? []).map((diagram) => ({ ...diagram, path: codeRefOf(code.repository, diagram.path) }));
+      send(response, 200, JSON.stringify({ ...loaded, diagrams, ref, path: ref, file: code.path, repository: code.repository }), "application/json; charset=utf-8");
+      return;
+    }
+    // A path that no registered checkout lists is read from the repository's code clone at the remote's default branch, with the clone's own checks.
+    const cloned = workspace?.code && (await storeRepositories()).includes(code.repository) ? await workspace.code.defaultFile(code.repository, code.path) : null;
+    if (cloned?.withheld) {
+      sendJson(response, 404, withheldAnswer(cloned));
+      return;
+    }
+    if (cloned) {
+      send(response, 200, JSON.stringify({ ref, ...cloned }), "application/json; charset=utf-8");
+      return;
+    }
+    send(response, 404, "No registered checkout of that repository and no code clone of it on this machine holds the file for review.");
+  }
+
+  // A code file that a clone holds but does not show answers 404 with why, so the page says the file is not shown rather than gone.
+  function withheldAnswer(read) {
+    const why = read.withheld === "binary" ? "it is a binary file" : "it is over 512 KiB";
+    return { code: "file_not_shown", reason: read.withheld, message: `${read.path} is not available here because ${why}, which the review app does not show.` };
+  }
+
+  // The code routes of a workspace's page, which read the code clones Prism keeps and never answer a URL of a Git host.
+  async function serveCode(response, route, url) {
+    const repository = url.searchParams.get("repository");
+    if (!workspace?.code || !repository || !(await storeRepositories()).includes(repository)) {
+      sendJson(response, 404, { code: "repository_unknown", message: "The workspace has no repository of that name." });
+      return;
+    }
+    const off = () => sendJson(response, 404, { code: "code_off", message: `The code content of ${repository} is off or not fetched yet, so this machine keeps no clone of it.` });
+    if (route === "/api/code/tree") {
+      const folder = workspace.code.folder(url.searchParams.get("folder") ?? "");
+      if (folder === null) {
+        sendJson(response, 400, { code: "invalid_request", message: "The folder must be a path below the repository's root." });
+        return;
+      }
+      const entries = await workspace.code.tree(repository, folder);
+      if (entries === null) off();
+      else sendJson(response, 200, { repository, folder, entries });
+    } else if (route === "/api/code/file") {
+      const read = await workspace.code.file(repository, { branch: url.searchParams.get("branch"), commit: url.searchParams.get("commit"), path: url.searchParams.get("path") });
+      if (read?.withheld) sendJson(response, 404, withheldAnswer(read));
+      else if (read) sendJson(response, 200, read);
+      else sendJson(response, 404, { code: "file_unavailable", message: "The clone holds no such file to show: the branch or commit is unknown, the path is no file there, or the file is a secret, binary, or over 512 KiB." });
+    } else {
+      const components = await workspace.code.components(repository);
+      if (components === null) off();
+      else sendJson(response, 200, { repository, ...components });
+    }
+  }
+
+  // The roots of a workspace's checkouts on this machine, the checkout the page reads through first, or null for a checkout's own page,
+  // so that a repository without a checkout here offers no action that needs one.
+  async function machineCheckouts() {
+    if (!workspace) return null;
+    const own = await isStoreWithoutCheckout(projectRoot) ? [] : [{ root: projectRoot, repository: null }];
+    const store = await recordStoreOf(projectRoot).catch(() => null);
+    const folder = store?.external ? await realpath(store.base).catch(() => store.base) : null;
+    return checkoutsOnMachine([...own, ...await workspace.checkouts?.() ?? []], folder);
+  }
+
+  // The roots of the checkouts whose components a page offers as index targets, or null for a checkout's own page.
+  async function checkoutRoots() {
+    return (await machineCheckouts())?.map((checkout) => checkout.root) ?? null;
+  }
+
+  // A workspace's Knowledge search: the store artifacts of every scope that match, the code of each component whose checkout here has a ready index,
+  // and every other component the workspace knows with why the search left it out.
+  async function searchWorkspace(query) {
+    const tokens = searchTokens(query);
+    const stored = await workspaceStoreArtifacts(projectRoot);
+    const checkouts = await machineCheckouts();
+    const known = await knownComponents({ checkouts, repositories: await storeRepositories(), scopes: stored?.scopes ?? [], clones: workspace.code ? (repository) => workspace.code.components(repository) : null });
+    const checkedOut = new Set();
+    for (const component of known) if (component.root !== null) checkedOut.add(component.repository);
+    const leftOut = [];
+    const searchable = new Map();
+    for (const component of known) {
+      if (!checkedOut.has(component.repository)) leftOut.push({ component: component.identity, reason: "no_checkout" });
+      else if (component.root === null) leftOut.push({ component: component.identity, reason: "no_index" });
+      else searchable.set(component.root, [...searchable.get(component.root) ?? [], component]);
+    }
+    const code = [];
+    for (const [root, components] of searchable) {
+      const searched = await searchCheckoutCode(root, components, tokens ? query : null);
+      code.push(...searched.code);
+      leftOut.push(...searched.leftOut);
+    }
+    leftOut.sort((left, right) => (left.component < right.component ? -1 : left.component > right.component ? 1 : 0));
+    return { query: query ?? "", results: tokens ? await searchStoreArtifacts(projectRoot, stored, tokens) : [], code, leftOut };
+  }
+
+  // The code matches of one checkout's components whose index is ready, as search_repository_concepts answers them, each with its component,
+  // and its other components, left out with no_index, or with search_failed when their search failed; a query of null searches nothing.
+  async function searchCheckoutCode(root, components, query) {
+    const status = await readIndexingStatus(root, intelligenceDirectories()).catch(() => null);
+    const ready = components.filter((component) => componentIndexingStatus(status, component)?.state === "ready");
+    const leftOut = components.filter((component) => !ready.includes(component)).map((component) => ({ component: component.identity, reason: "no_index" }));
+    const code = [];
+    if (query === null || !ready.length) return { code, leftOut };
+    const { searchRepositoryConcepts } = await import("../repository-intelligence/semantic-native-provider.mjs");
+    const listed = listComponents(await readWorkflowConfig(root).catch(() => null));
+    const declared = Array.isArray(status?.components);
+    const folders = listed.declared.filter((entry) => entry.folder !== "").map((entry) => entry.folder);
+    for (const component of ready) {
+      const folder = listed.declared.find((entry) => entry.component === component.identity)?.folder ?? "";
+      // In a repository with components, the search names the component's own paths, so it reads only that component's index and starts no other build.
+      const paths = !declared ? null : folder !== "" ? [folder] : rootComponentPaths(await listReviewSources(root).catch(() => []), folders);
+      try {
+        if (declared && (paths === null || !paths.length)) throw new Error("The root component's files cannot be named in one search.");
+        const answer = await searchRepositoryConcepts({ projectRoot: root, query, ...(paths ? { filters: { paths } } : {}) });
+        if (answer.status === "preparing") {
+          leftOut.push({ component: component.identity, reason: "no_index" });
+          continue;
+        }
+        for (const result of answer.results ?? []) if ((result.component ?? component.identity) === component.identity) code.push({ ...result, component: component.identity });
+      } catch {
+        leftOut.push({ component: component.identity, reason: "search_failed" });
+      }
+    }
+    return { code, leftOut };
+  }
+
+  // The repositories a workspace's store registers, with those its registered checkouts name, by name.
+  async function storeRepositories() {
+    const store = await recordStoreOf(projectRoot).catch(() => null);
+    const names = new Set(store?.external ? await registeredRepositories(store.base) : []);
+    for (const member of await workspace?.checkouts?.() ?? []) if (member.repository) names.add(member.repository);
+    if (store?.repository) names.add(store.repository);
+    return [...names].sort();
+  }
+
+  // A workspace's code clones as a slice's files and presence read them, for the workspace's own repositories only, or null for a checkout's own page.
+  async function sliceCode() {
+    if (!workspace?.code) return null;
+    const known = new Set(await storeRepositories());
+    return {
+      state: async (repository) => known.has(repository) ? workspace.code.state(repository) : { state: "off" },
+      reachable: async (repository, commit) => known.has(repository) ? workspace.code.reachable(repository, commit) : null,
+      blobs: async (repository, commit, paths) => known.has(repository) ? workspace.code.blobs(repository, commit, paths) : null
+    };
+  }
+
+  // Each repository of the workspace with its code content state.
+  async function codeRepositories() {
+    return Promise.all((await storeRepositories()).map(async (name) => ({ name, code: workspace?.code ? await workspace.code.state(name) : { state: "off" } })));
+  }
+
+  // What resolves the links of a scope's artifacts: the configured artifact kinds of a registered checkout of its repository, of the checkout the page reads through for the workspace scope, or else Prism's default paths,
+  // the code repository its links to files name, that of the checkout the page reads through for the workspace scope or null without one, and the review sources registered checkouts of that repository list, or null with none.
+  async function linkContext(scope) {
+    const members = await workspace?.checkouts?.() ?? [];
+    const reading = members.find((member) => member.root === projectRoot) ?? null;
+    const repository = scope.repository ?? reading?.repository ?? null;
+    const root = scope.repository ? members.find((member) => member.repository === scope.repository)?.root ?? null : projectRoot;
+    const config = root ? await readWorkflowConfig(root).catch(() => null) : null;
+    const sources = repository === null ? null : (await codeSources()).get(repository) ?? null;
+    const cloned = repository === null || !workspace?.code ? null : await workspace.code.defaultFiles(repository);
+    return { kinds: artifactKinds(config ?? parseWorkflowConfig("")), repository, sources, cloned };
+  }
+
+  // A workspace page's read of a store artifact by its ref, answered as a checkout's artifact read is, with its location, scope, links, and the count of links that resolve to nothing.
+  async function serveStoreArtifact(response, ref, commentOffset) {
+    const location = ref.startsWith(STORE_REF) ? ref.slice(STORE_REF.length) : null;
+    let read = null;
+    try {
+      read = location ? await reviewStoreArtifactAt(projectRoot, location, { commentOffset }) : null;
+    } catch (error) {
+      if (recordsUnavailable(error) || error?.code === "store_unavailable") {
+        send(response, 503, await artifactStoreRefusal(projectRoot) ?? withoutCredentials(error.message));
+        return;
+      }
+      if (error?.name !== "ArtifactError") throw error;
+    }
+    if (!read) {
+      send(response, 404, "The record store holds no artifact at that location.");
+      return;
+    }
+    const stored = await workspaceStoreArtifacts(projectRoot);
+    const held = new Set((stored?.entries ?? []).map((entry) => entry.location));
+    const content = read.bytes.toString("utf8");
+    // Only a Markdown artifact's text is rendered with links, as the page renders it.
+    const links = location.toLowerCase().endsWith(".md") ? resolveLinks({ content, location, ...await linkContext(read.scope), has: (candidate) => held.has(candidate) }) : [];
+    const { scope, version, accepted, changed, comments, totalComments, nextCommentOffset } = read;
+    const below = location.slice(scopePrefix(scope).length);
+    const artifact = { scope, version, accepted, changed, comments, totalComments, nextCommentOffset, target: `artifact:${scope.label}:${below}` };
+    const answer = { ref, path: ref, location, scope, content, modifiedAt: read.modifiedAt, artifact, links, unresolvedLinks: links.filter((link) => link.resolved === false).length };
+    if (path.posix.extname(location).toLowerCase() === ".json") Object.assign(answer, { diagrams: [] }, await loadJsonArtifact(projectRoot, location, content));
+    else answer.diagrams = await storeDiagrams(location, content, links, held);
+    send(response, 200, JSON.stringify(answer), "application/json; charset=utf-8");
+  }
+
+  // The PlantUML diagrams a store artifact shows: the files its links name, and the diagram beside it of the same name, or itself when it is one.
+  async function storeDiagrams(location, content, links, held) {
+    const wanted = new Set(links.filter((link) => link.resolved && link.target.startsWith(STORE_REF) && link.target.toLowerCase().endsWith(".puml")).map((link) => link.target.slice(STORE_REF.length)));
+    if (location.toLowerCase().endsWith(".puml")) wanted.add(location);
+    else if (held.has(location.replace(/\.[^./]+$/, ".puml"))) wanted.add(location.replace(/\.[^./]+$/, ".puml"));
+    const diagrams = [];
+    for (const at of wanted) {
+      const found = at === location ? { bytes: Buffer.from(content, "utf8") } : await readStoreArtifactAt(projectRoot, at).catch(() => null);
+      if (found) diagrams.push({ path: storeRefOf(at), source: found.bytes.toString("utf8") });
+    }
+    return diagrams;
+  }
+
+  // A workspace's tabs name store artifacts by their store location, so a tab stays the same artifact from every checkout of the workspace.
+  async function storeTabs(tabs, from = projectRoot) {
+    return workspace ? Promise.all(tabs.map((tab) => storeTabRef(from, tab))) : tabs;
+  }
+
+  async function storeRequest(request) {
+    if (!workspace || !request || typeof request !== "object") return request;
+    const named = { ...request };
+    for (const key of ["openTabs", "agentTabs"]) if (Array.isArray(request[key])) named[key] = await storeTabs(request[key]);
+    for (const key of ["activeTab", "previewTab"]) if (typeof request[key] === "string") named[key] = await storeTabRef(projectRoot, request[key]);
+    return named;
   }
 
   async function assertAvailable(tabs, availableArtifacts) {
@@ -861,7 +1324,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   // The browser owns the preview tab: one replaceable tab for browsing, while kept and agent tabs stay open.
-  async function updateSession(request) {
+  async function updateSession(given) {
+    const request = await storeRequest(given);
     const available = await reviewableFiles();
     await followMovedRecords(available);
     // A page that has not yet seen a record move still names its old path, which follows the record the same way.
@@ -914,12 +1378,17 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   // present_review adds agent tabs beside the human's tabs and focuses the first one without replacing the preview.
+  // A workspace's review takes the tabs as from, the presenting checkout, names them, and reads through that checkout once a tab is one that only it shows, such as one of its source files.
   // A group name gathers the presented tabs into that group, made when no group has the name yet, and shows the group expanded;
   // a tab already in another group moves into it, and tabs presented without a name keep the groups they are in.
-  async function presentTabs(tabs, { group } = {}) {
-    const requestedTabs = normalizeTabs(tabs);
+  async function presentTabs(tabs, { group, from = projectRoot } = {}) {
+    const requestedTabs = [...new Set(await storeTabs(normalizeTabs(tabs), from))];
     const groupName = group === undefined || group === null ? null : groupNameOf(group);
-    const available = await reviewableFiles(requestedTabs);
+    let available = await reviewableFiles(requestedTabs);
+    if (workspace && from !== projectRoot && requestedTabs.some((tab) => !available.has(tab) && !parseEntityRef(tab))) {
+      useCheckout(from);
+      available = await reviewableFiles(requestedTabs);
+    }
     await assertAvailable(requestedTabs, available);
     await followMovedRecords(available);
     if (requestedTabs.length === 0) {
@@ -937,55 +1406,32 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     return commitSession({ openTabs, activeTab: requestedTabs[0], previewTab, agentTabs, groups, activeSource: "agent" });
   }
 
+  // A workspace's review reads through one checkout of the workspace, whose source files, index, and configured paths the page shows.
+  function useCheckout(root) {
+    if (root === projectRoot) return;
+    projectRoot = root;
+    fingerprint = null;
+  }
+
   function closeViewerStreams() {
     clearViewerOpenLease();
-    hub.close();
+    // A shared hub serves other pages too, so only a hub of this page alone closes with its viewers.
+    if (!sharedHub) hub.close();
     for (const response of viewers.keys()) {
       removeViewer(response);
       response.end();
     }
   }
 
-  async function handle(request, response, route, url) {
-    if (route === "/" || route === "/review") {
-      await serveFile(response, path.join(PUBLIC_DIR, "review.html"), "text/html; charset=utf-8");
-    } else if (route === "/review.js") {
-      await serveFile(response, path.join(PUBLIC_DIR, "review.js"), "text/javascript; charset=utf-8");
-    } else if (route === "/favicon.svg" || route === "/prism-mark.svg") {
-      await serveFile(response, path.join(PUBLIC_DIR, route.slice(1)), "image/svg+xml");
-    } else if (route === "/vendor/plantuml.js") {
-      await serveFile(response, path.join(VENDOR_DIR, "plantuml.js"), "text/javascript; charset=utf-8");
-    } else if (route === "/vendor/viz-global.js") {
-      await serveFile(response, path.join(VENDOR_DIR, "viz-global.js"), "text/javascript; charset=utf-8");
-    } else if (route === "/c4.min.js" || route === "/vendor/c4.min.js") {
-      await serveFile(response, path.join(VENDOR_DIR, "c4.min.js"), "text/javascript; charset=utf-8");
-    } else if (route === "/kit/catalog") {
-      await serveFile(response, path.join(KIT_DIR, "catalog.html"), "text/html; charset=utf-8");
-    } else if (route.startsWith("/kit/") || route.startsWith("/styles/")) {
-      const asset = publicAsset(route);
-      if (asset) await serveFile(response, asset.file, asset.type);
-      else send(response, 404, "Not found");
-    } else if (route === "/api/preferences" && request.method === "GET") {
-      send(response, 200, JSON.stringify(await readStoredPreferences()), "application/json; charset=utf-8");
-    } else if (route === "/api/preferences" && request.method === "PUT") {
-      if (!fromPage(request)) {
-        send(response, 403, "Preferences must come from the review page as JSON.");
-        return;
-      }
-      try {
-        let change;
-        try {
-          change = parseStoreJson(await readBody(request));
-        } catch {
-          throw Object.assign(new Error("The preferences must be a JSON object that gives one or more preferences."), { code: "invalid_preference" });
-        }
-        send(response, 200, JSON.stringify(await writePreferences(change)), "application/json; charset=utf-8");
-      } catch (error) {
-        if (error.code !== "invalid_preference") throw error;
-        send(response, 400, JSON.stringify({ code: error.code, message: error.message }), "application/json; charset=utf-8");
-      }
-    } else if (/^\/views\/[a-z][a-z-]*\.js$/.test(route)) {
-      await serveFile(response, path.join(VIEWS_DIR, route.slice("/views/".length)), "text/javascript; charset=utf-8");
+  // A page's reads resolve the record store and its folders once per request; the event streams stay open for the page's life, so they read afresh.
+  function handle(request, response, route, url) {
+    if (request.method !== "GET" || route.startsWith("/api/events")) return serve(request, response, route, url);
+    return withRecordReads(() => serve(request, response, route, url));
+  }
+
+  async function serve(request, response, route, url) {
+    if (await servePageRoute(request, response, route)) {
+      // The page, its assets, and the preferences are the same for every page.
     } else if (route === "/api/events" && request.method === "GET") {
       openViewerStream(response, canWrite(url.searchParams.get("write")));
     } else if (route === "/api/events/shared" && request.method === "GET") {
@@ -998,6 +1444,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const body = await readJson(request);
       if (route === "/api/events/leave") {
         hub.leave(body?.stream, body?.tab);
+        reportViewers();
         sendJson(response, 200, {});
       } else if (joinHub(body?.stream, body?.tab, writableRequest(request))) {
         sendJson(response, 200, { project: hubKey });
@@ -1005,11 +1452,33 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         sendJson(response, 404, { code: "stream_gone", message: "The event stream closed; join the stream that replaced it." });
       }
     } else if (route === "/api/index") {
-      const { artifacts, sources } = await listedFiles(projectRoot, session.openTabs);
-      const available = new Set([...artifacts, ...sources]);
+      let { artifacts, sources } = await listedFiles(projectRoot, session.openTabs);
+      // A workspace's page lists every scope's store artifacts by store location in place of the checkout's paths of its own.
+      const stored = workspace ? await workspaceStoreArtifacts(projectRoot) : null;
+      let storeIndex = null;
+      if (stored) {
+        const isArtifact = await artifactPathTest(projectRoot);
+        storeIndex = await workspaceIndex(projectRoot, stored, scopeFilterOf(url), storeRepositories);
+        artifacts = [...artifacts.filter((file) => !isArtifact(file)), ...storeIndex.refs];
+      }
+      const available = new Set([...artifacts, ...sources, ...(storeIndex?.every ?? []), ...(workspace ? await codeRefs() : [])]);
       const snapshot = await followMovedRecords(available);
       const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref) => entityExists(projectRoot, ref));
-      send(response, 200, JSON.stringify({ projectRoot, workspace: await readWorkspaceIdentity(projectRoot), artifacts, artifactScopes: await listArtifactScopes(projectRoot), sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
+      // A workspace read through its store's clone alone has no checkout to name.
+      const checkout = workspace && await isStoreWithoutCheckout(projectRoot) ? null : await readWorkspaceIdentity(projectRoot);
+      const named = workspace ? { workspace: await workspace.describe(), checkout, storeRefs: await storeArtifactRefs(projectRoot), sync: await workspace.sync?.() ?? null, repositories: await codeRepositories() } : { workspace: checkout };
+      const scoped = storeIndex ? { artifactScopes: storeIndex.artifactScopes, scopes: storeIndex.scopes, ...(storeIndex.scopeFilter ? { scopeFilter: storeIndex.scopeFilter, unknownScopes: storeIndex.unknownScopes } : {}), notes: storeIndex.notes } : { artifactScopes: await listArtifactScopes(projectRoot) };
+      send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, ...scoped, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
+    } else if (["/api/code/tree", "/api/code/file", "/api/code/components"].includes(route) && request.method === "GET") {
+      await serveCode(response, route, url);
+    } else if (route === "/api/slice-files" && request.method === "GET") {
+      const ref = `slice:${url.searchParams.get("initiative") ?? ""}/${url.searchParams.get("slice") ?? ""}`;
+      const parsed = parseEntityRef(ref);
+      if (parsed?.kind !== "slice" || !(await entityExists(projectRoot, ref))) {
+        sendJson(response, 404, { code: "slice_unknown", message: "The project has no slice of that initiative and slug." });
+        return;
+      }
+      sendJson(response, 200, await sliceFiles(projectRoot, parsed.id, parsed.slug, await sliceCode()));
     } else if (route === "/api/store/conflicts" && request.method === "GET") {
       // Saved local record versions are read-only here; a person redoes a lost change through an agent.
       send(response, 200, JSON.stringify({ conflicts: await listRecordStoreConflicts(projectRoot).catch(() => []) }), "application/json; charset=utf-8");
@@ -1024,7 +1493,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       send(response, 200, JSON.stringify(await inSessionOrder(() => updateSession(body))), "application/json; charset=utf-8");
     } else if (route === "/api/actions" && request.method === "GET") {
       try {
-        const listed = await listActions({ projectRoot, target: url.searchParams.get("target"), indexer });
+        const listed = await listActions({ projectRoot, target: url.searchParams.get("target"), indexer, checkouts: await checkoutRoots() });
         sendJson(response, 200, { target: listed.target, writable: writableRequest(request), actions: listed.actions });
       } catch (error) {
         sendActionError(response, error);
@@ -1034,7 +1503,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       sendJson(response, 200, await listLaunches({ projectRoot, env: process.env }));
     } else if (route === "/api/actions/targets" && request.method === "GET") {
       try {
-        sendJson(response, 200, await listActionTargets({ projectRoot, kind: url.searchParams.get("kind") }));
+        sendJson(response, 200, await listActionTargets({ projectRoot, kind: url.searchParams.get("kind"), checkouts: await checkoutRoots() }));
       } catch (error) {
         sendActionError(response, error);
       }
@@ -1053,7 +1522,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         return;
       }
       try {
-        const result = await applyAction({ projectRoot, target: body.target, action: body.action, input: body.input, revision: body.revision, confirmed: body.confirmed, via: "review-app", indexer });
+        const result = await applyAction({ projectRoot, target: body.target, action: body.action, input: body.input, revision: body.revision, confirmed: body.confirmed, via: "review-app", indexer, checkouts: await checkoutRoots() });
         if (result.applied) forgetWorkspace();
         // A launch, stop, or resume also answers with the launched session it changed; an approval's or comment's artifact stays in the event alone.
         sendJson(response, 200, { applied: result.applied, actions: result.actions, ...(result.launch !== undefined ? { launch: result.launch } : {}) });
@@ -1068,18 +1537,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         sendActionError(response, error);
       }
     } else if (route === "/api/write-session" && request.method === "POST") {
-      // A tab that Prism opened exchanges the one-time grant of its URL fragment for the write session it keeps.
-      if (!fromPage(request)) {
-        sendJson(response, 403, { code: "origin_refused", message: "A write session must be requested by the review page as JSON." });
-        return;
-      }
-      const body = await readJson(request);
-      const token = await writeSessions?.exchange(body?.grant) ?? null;
-      if (!token) {
-        sendJson(response, 403, { code: "grant_refused", message: "The grant was already used, has expired, or was not issued here. Ask the agent to present the review, or run prism review." });
-        return;
-      }
-      sendJson(response, 200, { token });
+      await exchangeWriteGrant(request, response, writeSessions);
     } else if (route === "/api/context") {
       send(response, 200, JSON.stringify(await entityContext(projectRoot, url.searchParams.get("ref"))), "application/json; charset=utf-8");
     } else if (route === "/api/entity") {
@@ -1088,7 +1546,17 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         send(response, 404, "The item no longer exists in this project.");
         return;
       }
-      send(response, 200, JSON.stringify(await loadEntity(projectRoot, ref, { intelligenceDirectories: intelligenceDirectories() })), "application/json; charset=utf-8");
+      if (ref === "code" && workspace) {
+        sendJson(response, 200, { ref, kind: "code", data: { repositories: await codeRepositories() } });
+        return;
+      }
+      const entity = await loadEntity(projectRoot, ref, { intelligenceDirectories: intelligenceDirectories() });
+      // A slice names work that exists only on the machine that holds it, unpushed or uncommitted, by its branch and host and never by its content.
+      if (entity.kind === "slice") {
+        const code = await sliceCode();
+        entity.presence = await slicePresence(projectRoot, entity.data.id, entity.data.slug, { reachable: code ? code.reachable : undefined, shipped: await shippedCommit(projectRoot, entity.data.id, entity.data.slug) });
+      }
+      send(response, 200, JSON.stringify(entity), "application/json; charset=utf-8");
     } else if (route === "/api/claims" && request.method === "GET") {
       send(response, 200, JSON.stringify(await loadClaims(projectRoot)), "application/json; charset=utf-8");
     } else if (route === "/api/evidence") {
@@ -1110,13 +1578,24 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       // Changed this week: the record files changed in the last 7 days, read from Git on each request.
       send(response, 200, JSON.stringify(await loadRecordChanges(projectRoot)), "application/json; charset=utf-8");
     } else if (route === "/api/search") {
-      send(response, 200, JSON.stringify(await searchArtifacts(projectRoot, url.searchParams.get("q"))), "application/json; charset=utf-8");
+      const query = url.searchParams.get("q");
+      send(response, 200, JSON.stringify(workspace ? await searchWorkspace(query) : await searchArtifacts(projectRoot, query)), "application/json; charset=utf-8");
     } else if (route === "/api/artifact") {
       const artifactPath = url.searchParams.get("path");
       // A store artifact's comments come one page at a time from commentOffset, which names a whole number of at least 1 in ASCII digits.
       const commentOffset = url.searchParams.has("commentOffset") ? url.searchParams.get("commentOffset") : "1";
       if (!/^[0-9]+$/.test(commentOffset) || Number(commentOffset) < 1) {
         send(response, 400, "commentOffset names the 1-based position of the first comment to read, a whole number of at least 1 in ASCII digits.");
+        return;
+      }
+      // A workspace's page reads a store artifact by its ref, store:<location>, which it also passes as the path of the page that shows it.
+      // A code file that a store artifact links to is read the same way by its ref, code:<repository>:<path>.
+      const ref = url.searchParams.get("ref") ?? (artifactPath?.startsWith(STORE_REF) || parseCodeRef(artifactPath) ? artifactPath : null);
+      if (ref !== null) {
+        const code = parseCodeRef(ref);
+        if (!workspace) send(response, 404, "Only a workspace's page reads a store artifact or a code file by its ref.");
+        else if (code) await serveCodeFile(response, ref, code);
+        else await serveStoreArtifact(response, ref, Number(commentOffset));
         return;
       }
       // Only listed documents and filtered source files are served, never an arbitrary project path such as .env.
@@ -1160,7 +1639,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
 
   return {
     baseUrl,
-    projectRoot,
+    get projectRoot() {
+      return projectRoot;
+    },
     handle,
     getOpenTabs() {
       return [...session.openTabs];
@@ -1172,6 +1653,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     viewerCount() {
       return viewers.size + hub.count(hubKey);
     },
+    reportViewers,
     writableViewerCount,
     notify,
     setOpenTabs,
@@ -1189,7 +1671,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       return true;
     },
     releaseBrowserOpen: clearViewerOpenLease,
-    closeViewers: closeViewerStreams
+    closeViewers: closeViewerStreams,
+    useCheckout
   };
 }
 

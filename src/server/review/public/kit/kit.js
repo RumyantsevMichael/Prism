@@ -12,6 +12,7 @@ import { PrismTabs } from "./elements/prism-tabs.js";
 import { PrismDocTab } from "./elements/prism-doc-tab.js";
 import { PrismDocTabGroup } from "./elements/prism-doc-tab-group.js";
 import { PrismDocTabs } from "./elements/prism-doc-tabs.js";
+import { PrismCanvas } from "./elements/prism-canvas.js";
 import { PrismMenu } from "./elements/prism-menu.js";
 import { PrismMenuGroup } from "./elements/prism-menu-group.js";
 import { PrismMenuItem } from "./elements/prism-menu-item.js";
@@ -108,6 +109,7 @@ export const KIT_ELEMENTS = [
   PrismStep,
   PrismBreadcrumbs,
   PrismDoc,
+  PrismCanvas,
   PrismContents,
   PrismCode,
   PrismInbox,

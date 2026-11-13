@@ -32,7 +32,7 @@ export class PrismDocTabGroup extends Base {
   constructor() {
     super();
     this.root = shadow(this, PrismDocTabGroup.styles, `<div class="group" part="group">
-      <span class="head" part="head" role="button" tabindex="-1" aria-expanded="true"><span class="dot"></span><span class="name"><slot></slot></span><span class="count"></span></span>
+      <span class="head" part="head" role="button" tabindex="-1" aria-expanded="true"><span class="name"><slot></slot></span><span class="count"></span></span>
       <prism-button class="close" data-action="close-group" size="sm" variant="ghost" tip="Close the group's tabs"><prism-icon name="close" size="xs"></prism-icon></prism-button>
     </div>`);
     this.head = this.root.querySelector(".head");

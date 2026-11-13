@@ -4,7 +4,7 @@ import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { closeServers, cloneOf, git, notes, prismServer, repository } from "./repository-checkouts.mjs";
+import { closeServers, closeWithServers, cloneOf, git, notes, prismServer, repository } from "./repository-checkouts.mjs";
 
 // Checkouts of repositories that share one record store holding their descriptive artifacts, each driven by a real Prism server.
 export { closeServers, cloneOf, git, notes };
@@ -43,7 +43,8 @@ export function refused(response, code) {
 /** A parent folder for one test, with a store folder beside the checkouts, removed after every server has stopped. */
 export async function workspace(context) {
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-artifacts-")));
-  context.after(async () => { await closeServers(); await rm(parent, { recursive: true, force: true }); });
+  // Windows can keep a folder busy for a moment after the server that used it has stopped, so the removal retries rather than fail a test whose assertions passed.
+  context.after(async () => { await closeServers(); await rm(parent, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }); });
   await mkdir(path.join(parent, "store"), { recursive: true });
   return { parent, store: await realpath(path.join(parent, "store")), app: path.join(parent, "app") };
 }
@@ -156,7 +157,8 @@ export async function reviewBrowser(context, root) {
   const { startReviewServer } = await import("../../../dist/server/review/review-server.mjs");
   const opened = [];
   const review = await startReviewServer({ projectRoot: root, openBrowser: async (url) => { opened.push(url); return true; } });
-  context.after(() => review.close());
+  // The workspace's folder is removed after its servers stop, and Windows refuses to remove a folder this server still works in, so closeServers stops it too.
+  context.after(closeWithServers(() => review.close()));
   await review.open([]);
   assert.ok(opened.length, "Prism opened the review page");
   const grant = new URLSearchParams(new URL(opened.at(-1)).hash.slice(1)).get("write");

@@ -1,6 +1,6 @@
-import { startStandaloneReview } from "./review/review-server-pool.mjs";
+import { startStandaloneReview, startWorkspacesReview } from "./review/review-server-pool.mjs";
 
-const USAGE = "Usage: prism review [artifact-path]\n\nOpens the Prism review browser for the project in the current directory.\nWithout an artifact path, the browser opens on Attention.\n";
+const USAGE = "Usage: prism review [artifact-path]\n       prism review --workspaces\n\nOpens the Prism review browser for the project in the current directory.\nWithout an artifact path, the browser opens on Attention.\nWith --workspaces, it opens the review app's list of workspaces from any folder.\n";
 
 const [command = "review", artifactPath, ...extra] = process.argv.slice(2);
 if (["-h", "--help", "help"].includes(command) || ["-h", "--help"].includes(artifactPath)) {
@@ -8,6 +8,16 @@ if (["-h", "--help", "help"].includes(command) || ["-h", "--help"].includes(arti
 } else if (command !== "review" || extra.length) {
   process.stderr.write(USAGE);
   process.exitCode = 2;
+} else if (artifactPath === "--workspaces") {
+  let result;
+  try {
+    result = await startWorkspacesReview();
+  } catch (error) {
+    process.stderr.write(`prism review: ${error.message}\n`);
+    process.exit(1);
+  }
+  process.stdout.write(`${result.url}\n`);
+  if (!result.opened) process.stderr.write("prism review: no new browser tab opened; an open review tab can switch workspaces; the URL above opens a tab that can only read.\n");
 } else {
   let result;
   try {

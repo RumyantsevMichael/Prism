@@ -66,7 +66,9 @@ test("packages compatible capacity and trace hooks at the default plugin path", 
     const answerHook = hookManifest.hooks[event].flatMap((group) => group.hooks).find((hook) => hook.command === "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/deliver-gate-answers.mjs\"");
     assert.deepEqual([answerHook.timeout, answerHook.additionalContextLimit], [5, 4000], event);
   }
-  assert.deepEqual(hookManifest.hooks.Stop.flatMap((group) => group.hooks), [{ type: "command", command: "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/wait-for-gate-answers.mjs\"", timeout: 3600 }]);
+  assert.deepEqual(hookManifest.hooks.Stop.flatMap((group) => group.hooks), [{ type: "command", command: "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/wait-for-gate-answers.mjs\"", statusMessage: "Prism: waiting for answers to open questions", timeout: 3600 }]);
+  // Each hook carries a short name of what it does, which Claude Code and Codex show instead of its command line.
+  for (const hook of Object.values(hookManifest.hooks).flat().flatMap((group) => group.hooks)) assert.match(hook.statusMessage ?? "", /^Prism: [a-z]/, hook.command);
   for (const event of ["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "PreCompact", "SubagentStart", "SubagentStop", "SessionEnd"]) {
     assert.ok(commands(event).includes(traceCommand));
   }

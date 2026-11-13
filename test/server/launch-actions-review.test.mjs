@@ -94,11 +94,12 @@ test("a stop request written for a run that already exited 0 keeps its superviso
   const gateId = await ask(s.root, id);
   await waitFor(async () => (await s.launchView(id))?.resumeCommand, { what: "the run to end" });
   // The answer as it is kept for a run that was running when the person answered, and the stop the person pressed while the run's end was recorded.
+  // The stop is written first: the supervisor resumes for an answer once after the run's end is recorded, so an answer that it read before the stop would resume the session.
   const folder = path.join(s.app, "launches", id);
   const { token } = JSON.parse(await readFile(path.join(folder, "launch.json"), "utf8")).runs[0];
+  await writeFile(path.join(folder, "stop.json"), JSON.stringify({ token, requestedAt: new Date().toISOString() }));
   const gates = JSON.parse(await readFile(gatesFile(s, id), "utf8"));
   await writeFile(gatesFile(s, id), JSON.stringify({ ...gates, answers: [{ entry: "c".repeat(32), gate: gateId, run: token, resumed: false }] }));
-  await writeFile(path.join(folder, "stop.json"), JSON.stringify({ token, requestedAt: new Date().toISOString() }));
   const { resumeForAnswers } = await import("../../dist/server/session/launched-sessions.mjs");
   assert.equal(await resumeForAnswers({ id, token, env: s.env }), false);
   assert.equal(s.runs("claude").length, 1);

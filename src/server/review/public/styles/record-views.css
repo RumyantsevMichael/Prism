@@ -367,7 +367,7 @@ mark.find-hit {
   overflow: auto;
   padding: var(--prism-space-6);
   border-radius: var(--prism-radius-md);
-  background: var(--prism-color-diagram-paper);
+  background-color: var(--prism-color-diagram-paper);
   color: var(--prism-color-diagram-ink);
   text-align: center;
 }
@@ -487,8 +487,7 @@ body.has-maximized::after {
   padding: var(--prism-space-4);
   border: var(--prism-stroke) solid var(--prism-color-line);
   border-radius: var(--prism-radius-md);
-  background: var(--prism-color-sunken);
-  cursor: grab;
+  background-color: var(--prism-color-sunken);
 }
 
 .graph-viewport.is-panning {
@@ -1366,6 +1365,58 @@ a.code-link:hover {
 .code-dirty {
   color: var(--prism-color-warning);
   font-weight: var(--prism-font-weight-bold);
+}
+
+/* ---------- Store artifacts of every scope ---------- */
+
+/* The scope filter wraps its chips across the sidebar's width, so many scopes or long labels never widen it. */
+.nav-scope-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  padding: 0 var(--prism-space-3);
+}
+
+/* A link that names no store artifact keeps its text and says so beside it, wrapping within the line's width. */
+.doc-link-unresolved {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2);
+  max-width: 100%;
+}
+
+/* ---------- Code content from code clones ---------- */
+
+/* A repository's code state and its switch share one row that wraps on a narrow page. */
+.code-repository-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--prism-space-2);
+  margin-bottom: var(--prism-space-3);
+}
+
+/* Each folder entry names its file or folder and then the branches that hold it, wrapping long names and many branches. */
+.code-entries > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.code-file {
+  display: grid;
+  gap: var(--prism-space-3);
+  margin-top: var(--prism-space-3);
+}
+
+.code-branches {
+  margin-bottom: var(--prism-space-2);
 }
 
 /* ---------- Knowledge's entry points and Diagrams: the pages lay out the kit's library table ---------- */

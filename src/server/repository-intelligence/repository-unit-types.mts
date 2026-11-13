@@ -2,30 +2,45 @@ export type Domain = "code" | "instruction" | "documentation" | "configuration";
 export interface SourceRange { startLine: number; endLine: number }
 export interface SourceFile { file: string; absolutePath: string; content: string; hash: string }
 export interface SourceSnapshot { root: string; sourceFingerprint: string; commit: string; files: SourceFile[]; filesByPath: Map<string, SourceFile>; complete: boolean }
-export interface Diagnostic { code: string; message: string; file?: string; count?: number; denied?: { path: string; write: boolean }[]; recovery?: string; component?: string; components?: string[] }
+export interface Diagnostic { code: string; message: string; file?: string; count?: number; denied?: { path: string; write: boolean }[]; recovery?: string; component?: string; components?: string[]; phase?: string }
 export interface SourceUnit { id: string; file: string; kind: string; name: string; selector?: string; domain?: Domain; range: SourceRange; sourceHash?: string; rangeComplete: boolean; qualifiedName?: string; signature?: string; docstring?: string; depth?: number; span?: { start: number; end: number }; contentHash?: string; isExported?: boolean; visibility?: string; containerId?: string }
 export interface Relationship { source: string; target: string; kind: string; provenance?: string; line?: number; column?: number; metadata?: Record<string, unknown> }
 export interface UnresolvedReference { source: string; name: string; kind: string }
+/** A reference that the code graph could not resolve, as the file that makes it reports it. */
+export interface FileReference { name: string; kind: string }
 export type FragmentRole = "whole" | "outline" | "part";
 export interface Fragment extends SourceUnit { parentId: string; role: FragmentRole; sourceStart: number; sourceEnd: number; prefixLength: number; text: string; embeddingText: string; context: string; excerpt?: string; tokens?: number; parts?: number; embeddingKey?: string; embedding?: number[] }
 export interface SearchResult extends SourceUnit { parentId?: string; role?: FragmentRole; tokens?: number; parts?: number; ancestry?: string[]; groupedMembers?: number; sourceStart?: number; sourceEnd?: number; fusedScore?: number; fusedRank: number; lexicalScore: number | null; cosineSimilarity: number | null; excerpt: string }
 export interface SearchFilters { domains?: Domain[]; paths?: string[]; kinds?: string[] }
 export interface Counts { files: number; units: number; fragments: number; searchExcludedFiles?: number; reusedEmbeddings: number; newEmbeddings: number }
-export interface IndexMetadata { schemaVersion: 1; chunkerVersion: string; modelIdentity: string; snapshot: string; units: SourceUnit[]; edges: Relationship[]; unresolvedReferences?: UnresolvedReference[]; fileCoverage: Record<string, boolean>; syntaxCoverage?: Record<string, boolean>; diagnostics: Diagnostic[]; counts: Counts; structureComplete: boolean; assetIdentity?: string; tokenCounts?: Record<string, number>; structureCounts?: Record<string, Record<string, number>>; resources: { rssBytes: number; peakRssBytes: number; indexMilliseconds?: number } }
+export interface IndexMetadata { schemaVersion: 1; chunkerVersion: string; modelIdentity: string; snapshot: string; units: SourceUnit[]; edges: Relationship[]; unresolvedReferences?: UnresolvedReference[]; unresolvedByFile?: Record<string, FileReference[]>; fileCoverage: Record<string, boolean>; syntaxCoverage?: Record<string, boolean>; diagnostics: Diagnostic[]; counts: Counts; structureComplete: boolean; assetIdentity?: string; tokenCounts?: Record<string, number>; structureCounts?: Record<string, Record<string, number>>; resources: { rssBytes: number; peakRssBytes: number; indexMilliseconds?: number } }
 export interface UnitIndex extends IndexMetadata { chunks: Fragment[] }
 export interface PublishedUnit { id: string; file: string; kind: string; name: string; qualifiedName?: string; range: SourceRange; sourceHash?: string }
 export interface PublishedUnits { schemaVersion: 1; snapshot: string; revision: string; units: PublishedUnit[]; edges: [string, string][] }
 export interface RuntimeAssets { runtime: string; modelDirectory: string; modelIdentity: string; assetIdentity: string }
-export interface PreparedIndex extends RuntimeAssets { index: IndexMetadata; indexPath: string; revision: string }
+// `stage` is "structure" for an index whose fragments carry no embedding yet, which answers structure and lexical search only; an index without it is complete.
+export type IndexStage = "structure" | "complete";
+export interface PreparedIndex extends RuntimeAssets { index: IndexMetadata; indexPath: string; revision: string; stage?: IndexStage }
 // A component preparation names its component's identity, may wait in the queue, and records why it failed.
-export interface Preparation { status: "waiting" | "preparing" | "ready" | "degraded"; preparationId: string; snapshot: string; diagnostics: Diagnostic[]; prepared?: PreparedIndex; component?: string; failure?: ComponentFailure | null }
-export interface ComponentFailure { code: string; message: string }
+// `structure` is the structure-only index of the preparation's content that its build published, while the preparation still embeds.
+// `waitingFor` names what a waiting preparation waits behind, and only a waiting preparation carries it.
+export interface Preparation { status: "waiting" | "preparing" | "ready" | "degraded"; preparationId: string; snapshot: string; diagnostics: Diagnostic[]; prepared?: PreparedIndex; structure?: PreparedIndex; component?: string; failure?: ComponentFailure | null; waitingFor?: WaitingFor }
+// The build a preparation waits behind: the build that runs in this process for `queue`, or, for `lock`, its own component, whose storage lock
+// another session holds, with that session's preparation id when its progress record names one.
+export interface WaitingFor { component: string; preparationId: string | null; reason: "queue" | "lock" }
+export interface ComponentFailure { code: string; message: string; phase?: string }
 // The component a runtime preparation indexes: its name, its identity <repository>/<component>, and its folder, "" for the root component.
 export interface IndexComponent { name: string; identity: string; folder: string }
 // How a component took part in a result: its up-to-date index answered, it waits or prepares, or its preparation failed.
-export interface ComponentState { component: string; folder: string; status: "included" | "waiting" | "preparing" | "failed"; indexRevision: string | null; failure: ComponentFailure | null }
-export interface Progress { phase: string; current?: number; total?: number; file?: string; unit?: "bytes" | "files"; item?: number; items?: number }
-export interface BuildArguments { mirror: string; files: Pick<SourceFile, "file" | "hash">[]; snapshot: string; modelDirectory: string; modelIdentity: string; previousEmbeddings?: Record<string, number[]>; fragmentsOnly?: boolean }
+// `embeddings: "pending"` marks a component included from its structure-only index, which a search reads lexically.
+// `waitingFor` is copied from a waiting preparation.
+export interface ComponentState { component: string; folder: string; status: "included" | "waiting" | "preparing" | "failed"; indexRevision: string | null; failure: ComponentFailure | null; embeddings?: "pending"; waitingFor?: WaitingFor }
+// `vectors` holds the embedding key and vector of each fragment embedded since the previous embedding value; Prism saves and strips them.
+export interface Progress { phase: string; current?: number; total?: number; file?: string; unit?: "bytes" | "files"; item?: number; items?: number; vectors?: [string, number[]][] }
+// `changedFiles` and `removedFiles` name, in sorted order, what changed since the build whose structure the runtime last returned for this mirror,
+// and a build without them is a full one; `files` always lists every file of the snapshot.
+export interface BuildArguments { mirror: string; files: Pick<SourceFile, "file" | "hash">[]; snapshot: string; modelDirectory: string; modelIdentity: string; previousEmbeddings?: Record<string, number[]>; fragmentsOnly?: boolean;
+  changedFiles?: string[]; removedFiles?: string[] }
 export interface SearchArguments { query: string; filters?: SearchFilters; limit: number; mode?: "lexical"; snapshot: string; modelDirectory: string; modelIdentity: string; indexPath: string }
 export type WorkerRequest = { id: number; method: "build"; args: BuildArguments } | { id: number; method: "search"; args: SearchArguments };
 export interface WorkerMethods { build: { input: BuildArguments; output: UnitIndex }; search: { input: SearchArguments; output: SearchResult[] } }
@@ -44,10 +59,17 @@ export interface NativeSource {
   validateSourceRange(range: { file: string; range: SourceRange }): Promise<{ file: string; range: SourceRange }>;
   verifySnapshot(): Promise<unknown>;
 }
+// `structure` returns the published structure of a preparation that still embeds, for a caller that can answer from it,
+// and `structureSuffices` also ends the call's wait once that structure is published, for a caller that needs structure only.
+export interface PrepareOptions { structure?: boolean; structureSuffices?: boolean }
 export interface SemanticRuntime {
-  prepare(source: NativeSource, expectedSnapshot?: string, waitMs?: number): Promise<Preparation>;
+  prepare(source: NativeSource, expectedSnapshot?: string, waitMs?: number, options?: PrepareOptions): Promise<Preparation>;
+  /** Searches a prepared index; a structure-only index is searched with `mode: "lexical"`. */
   search(prepared: PreparedIndex, source: NativeSource, query: string, filters: SearchFilters | undefined, limit: number): Promise<SearchResult[]>;
+  /** The complete index that replaced a structure-only index whose file a complete save removed, when one is stored. */
+  replacingIndex?(prepared: PreparedIndex): Promise<PreparedIndex | undefined>;
 }
 export interface ComponentRuntime extends SemanticRuntime {
-  prepareComponents(entries: { source: NativeSource; component: IndexComponent }[], waitMs?: number, options?: { retryLimited?: boolean }): Promise<Preparation[]>;
+  /** An entry with `structureOnly` builds with `fragmentsOnly`, stores a structure-only index, and ends ready, unless its content is built in full. */
+  prepareComponents(entries: { source: NativeSource; component: IndexComponent; structureOnly?: boolean }[], waitMs?: number, options?: { retryLimited?: boolean } & PrepareOptions): Promise<Preparation[]>;
 }

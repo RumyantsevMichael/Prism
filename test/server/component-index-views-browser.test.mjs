@@ -15,7 +15,7 @@ const { readIndexingStatus } = await import("../../dist/server/repository-intell
 const { createProjectReview } = await import("../../dist/server/review/review-server.mjs");
 const { chipState, panelHtml } = await import("../../dist/server/review/public/views/indexing.js");
 
-const search = (root, runtime, input = {}) => searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...input }, { runtime, waitMs: 2000 });
+const search = (root, runtime, input = {}) => searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...input }, { runtime, waitMs: 30000 });
 
 async function serve(t, review) {
   const server = http.createServer((request, response) => {

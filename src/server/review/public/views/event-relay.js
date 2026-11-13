@@ -23,7 +23,7 @@ function tabId() {
 /** The page path a tab's events are addressed to, and the app-wide scope its tabs share, from the page address. */
 export function relayScope(href) {
   const key = new URL("./", href).pathname;
-  return { key, scope: key.replace(/\/p\/[0-9a-f]{16}\/$/, "/") };
+  return { key, scope: key.replace(/\/[pw]\/[0-9a-f]{16}\/$/, "/") };
 }
 
 /**

@@ -37,7 +37,8 @@ export function openEventStream(response, onGone, heartbeatMs = HEARTBEAT_MS) {
 }
 
 /** The streams of one origin, the review app or a session server, and the tabs that joined each for a project. */
-export function createViewerHub({ heartbeatMs = HEARTBEAT_MS } = {}) {
+// onChange runs whenever the tabs that joined change, as when a tab joins or leaves or its browser closes the stream.
+export function createViewerHub({ heartbeatMs = HEARTBEAT_MS, onChange = null } = {}) {
   const streams = new Map();
 
   function drop(id) {
@@ -45,6 +46,7 @@ export function createViewerHub({ heartbeatMs = HEARTBEAT_MS } = {}) {
     if (!stream) return;
     clearInterval(stream.heartbeat);
     streams.delete(id);
+    if (stream.members.size) onChange?.();
   }
 
   function deliver(stream, event, data) {
@@ -72,10 +74,11 @@ export function createViewerHub({ heartbeatMs = HEARTBEAT_MS } = {}) {
       if (!stream || typeof tab !== "string" || !TAB_PATTERN.test(tab)) return false;
       if (!stream.members.has(tab) && stream.members.size >= MEMBER_LIMIT) return false;
       stream.members.set(tab, { project, writable: Boolean(writable) });
+      onChange?.();
       return true;
     },
     leave(id, tab) {
-      streams.get(id)?.members.delete(tab);
+      if (streams.get(id)?.members.delete(tab)) onChange?.();
     },
     /** Writes one project event to every stream with a tab of that project, once per stream. */
     notify(project, event, data) {

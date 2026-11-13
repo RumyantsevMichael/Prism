@@ -7,8 +7,8 @@ import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { DISPLAY_BANDS, readRoadmap } from "../workflow/roadmap.mjs";
 import { historyOrder, readCoordinationState } from "../workflow/state.mjs";
 import { readIndexHistory } from "../workflow/index-history.mjs";
-import { inArtifactStore, keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, listStoreArtifacts, locateRecord, readArtifactText, recordPath, recordsUnavailable, resolveRecordFile } from "../workflow/record-store.mjs";
-import { initiativeDirectory, readWorkflowConfig } from "../workflow/workflow-config.mjs";
+import { inArtifactStore, isStoreWithoutCheckout, keyOfPath, listClaimRecords, listInitiatives, listSliceRecords, listStoreArtifacts, locateRecord, readArtifactText, recordPath, recordsUnavailable, resolveRecordFile } from "../workflow/record-store.mjs";
+import { initiativeDirectory, readWorkflowConfig as readCheckoutConfig } from "../workflow/workflow-config.mjs";
 import { latestVerification, verifiedCode } from "../workflow/slice-design.mjs";
 import { lastChangeMapDerivation, startChangeMapDerivation } from "../conservation/derived-change-map.mjs";
 import { contractClauses, loadDesignView } from "../workflow/design-view.mjs";
@@ -17,6 +17,12 @@ import { readPublishedUnits } from "../repository-intelligence/index-status.mjs"
 import { parseStoreJson } from "../workflow/store-json.mjs";
 import { recordChanges } from "./record-changes.mjs";
 import { shippedActionReason, shippedDecision, shippedHistory, shippedHistoryLabel } from "../workflow/shipped-history.mjs";
+
+// A workspace read through its store's clone alone has no checkout and so no configuration of its own: its defaults are no setting to warn about.
+async function readWorkflowConfig(projectRoot) {
+  const config = await readCheckoutConfig(projectRoot);
+  return await isStoreWithoutCheckout(projectRoot) ? { ...config, diagnostics: [] } : config;
+}
 
 const LIBRARY_LIMIT = 500;
 const RECENT_CHANGES_LIMIT = 20;
@@ -40,8 +46,8 @@ export function forgetWorkspace() {
   memo.clear();
 }
 
-export const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary", "launches"]);
-const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary", launches: "Launched sessions" });
+export const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary", "code", "launches"]);
+const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary", code: "Code", launches: "Launched sessions" });
 
 // A record is read where it lives: under .prism, or beside its Markdown until the first write moves it there.
 async function recordFile(root, key) {
@@ -429,6 +435,36 @@ export async function loadSliceView(projectRoot, id, slug, { intelligenceDirecto
   };
 }
 
+// A slice's presence line, such as "in progress in feature-x on vm, not pushed", which names where work is without showing any of it.
+function presenceText(where, branch, host, suffix) {
+  return `in progress${branch ? ` in ${branch}` : ""}${where ?? (host ? ` on ${host}` : "")}${suffix}`;
+}
+
+/**
+ * Work on a slice that exists only on the machine that holds it, as { source, branch, host, text } entries:
+ * the latest verification run when no branch of the repository's code clone holds its verified commit or its checkout was dirty,
+ * and the live implementation claim, which names its holder and host.
+ * reachable(repository, commit) answers whether a branch of the repository's code clone holds a commit, or null where no clone says;
+ * a run whose files the commit recorded at ship holds, which a branch holds, is pushed work and shows no presence.
+ */
+export async function slicePresence(projectRoot, id, slug, { reachable = async () => null, shipped = null } = {}) {
+  const presence = [];
+  const run = await latestVerification(projectRoot, id, slug).catch(() => null);
+  const checkout = run?.checkout;
+  if (checkout && typeof checkout.head === "string") {
+    const repository = typeof checkout.repository === "string" ? checkout.repository : null;
+    const held = repository ? await reachable(repository, checkout.head).catch(() => null) : null;
+    const landed = repository && shipped ? await reachable(repository, shipped).catch(() => null) === true : false;
+    const branch = typeof checkout.branch === "string" && checkout.branch ? checkout.branch : null;
+    const host = typeof checkout.host === "string" && checkout.host ? checkout.host : null;
+    if (!landed && (held === false || checkout.dirty === true)) presence.push({ source: "run", branch, host, text: presenceText(null, branch, host, held === false ? ", not pushed" : ", not committed") });
+  }
+  const initiative = await loadInitiativeView(projectRoot, id).catch(() => null);
+  const claim = initiative?.record?.slices?.[slug]?.claim;
+  if (claim && typeof claim.label === "string" && claim.activity !== "design") presence.push({ source: "claim", branch: null, host: null, text: presenceText(` on ${claim.label}`, null, null, "") });
+  return presence;
+}
+
 async function initiativeReferences(projectRoot, config) {
   const references = new Map();
   for (const id of await initiativeFolders(projectRoot)) {
@@ -578,7 +614,11 @@ async function computeAttention(projectRoot) {
     // The Watch group lists every live and expired claim, read-only, beside the agent-side signals.
     const claimed = await claimedSlices(projectRoot, id);
     for (const claim of sliceClaims(claimed)) claims.push({ ...claim, initiative });
-    if (state?.valid) for (const entry of state.state?.history ?? []) changes.push({ ...entry, initiative: id });
+    if (state?.valid) {
+      // An answer in Recent changes names the question it answered, so the list can be reviewed on its own.
+      const questions = new Map([...(state.state?.pending ?? []), ...(state.state?.closed ?? [])].filter((gate) => gate && typeof gate === "object" && typeof gate.question === "string").map((gate) => [`gate:${id}/${gate.id}`, gate.question]));
+      for (const entry of state.state?.history ?? []) changes.push({ ...entry, initiative: id, ...(entry.action === "gate.answer" && questions.has(entry.target) ? { question: questions.get(entry.target) } : {}) });
+    }
     if (state?.exists && !state.valid) {
       watch.push({ type: "record-problem", initiative, path: await recordFile(projectRoot, { kind: "state", initiative: id }), message: state.errors.join(" ") });
     }
@@ -1148,6 +1188,8 @@ export async function entityContext(projectRoot, ref) {
   if (ref === "attention" || ref === "roadmap") return { trail: [placeCrumb(ref, ref)], scope: { kind: "global" }, place: ref };
   if (parsed?.kind === "requirements" || parsed?.kind === "decisions") return { trail: [placeCrumb("knowledge"), { ref, label: SECTION_LABELS[parsed.kind] }], scope: await libraryScope(projectRoot, parsed.kind), place: "knowledge" };
   if (parsed?.kind === "glossary") return { trail: [placeCrumb("knowledge"), { ref, label: "Glossary" }], scope: { kind: "global" }, place: "knowledge" };
+  // A workspace's code content belongs with its records in Knowledge.
+  if (parsed?.kind === "code") return { trail: [placeCrumb("knowledge"), { ref, label: "Code" }], scope: { kind: "global" }, place: "knowledge" };
   // The Launched sessions place belongs to no place of the rail, so its trail is its own name.
   if (parsed?.kind === "launches") return { trail: [{ ref, label: SECTION_LABELS.launches }], scope: { kind: "global" }, place: null };
   if (parsed?.kind === "initiative" || parsed?.kind === "slice") return initiativeContext(projectRoot, parsed.id, { slug: parsed.kind === "slice" ? parsed.slug : null });
@@ -1248,6 +1290,8 @@ export async function loadEntity(projectRoot, ref, options = {}) {
   if (parsed.kind === "roadmap") return { ref, kind: "roadmap", data: await loadRoadmapView(projectRoot) };
   if (parsed.kind === "requirements" || parsed.kind === "decisions") return { ref, kind: parsed.kind, data: await loadLibrary(projectRoot, parsed.kind) };
   if (parsed.kind === "glossary") return { ref, kind: "glossary", data: await loadGlossary(projectRoot) };
+  // A workspace's page lists its code repositories itself; a checkout's own page has none.
+  if (parsed.kind === "code") return { ref, kind: "code", data: { repositories: [] } };
   // The place reads its sessions from api/launches itself; the page carries only the initiatives' titles, so a running time never redraws it.
   if (parsed.kind === "launches") return { ref, kind: "launches", data: { titles: await initiativeTitles(projectRoot) } };
   if (parsed.kind === "knowledge" && parsed.page === "diagrams") return { ref, kind: "diagrams", data: { diagrams: (await loadDiagrams(projectRoot)).map(({ path: file, name, owner }) => ({ path: file, name, owner })) } };

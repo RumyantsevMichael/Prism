@@ -421,6 +421,16 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* A view being built lies over the page at the page's width, out of sight and out of the scrolling range, until it replaces the page whole. */
+.artifact-stage {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 100%;
+  overflow: clip;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* A record that is gone names where it was and what to do next. */
 .missing-path {
   margin: 0 auto var(--prism-space-5);
@@ -440,6 +450,27 @@ body {
 
 .welcome {
   margin: var(--prism-space-8) auto;
+}
+
+/* A welcome's actions wrap under each other on a narrow window. */
+.welcome-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--prism-space-3);
+  margin-top: var(--prism-space-5);
+}
+
+/* The Add workspace dialog: the address field, and what the store answered, such as that it holds no commit yet. */
+.workspace-add-form {
+  display: grid;
+  gap: var(--prism-space-4);
+  min-width: 0;
+}
+
+.workspace-add-note {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  overflow-wrap: anywhere;
 }
 
 /* ---------- The side panel island ---------- */
@@ -822,6 +853,14 @@ body {
   min-width: 0;
 }
 
+.palette-left-out {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  margin: 0 var(--prism-space-3) var(--prism-space-3);
+}
+
 .palette-kind {
   min-width: 0;
   overflow: hidden;
@@ -1001,6 +1040,11 @@ body {
   .topbar-project {
     flex: 1 1 auto;
     max-width: none;
+  }
+
+  /* A long workspace name ends in an ellipsis, so the navigation button keeps its size. */
+  .topbar-navigation {
+    flex: none;
   }
 
   .topbar-search {

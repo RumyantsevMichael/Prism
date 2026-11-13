@@ -49,8 +49,8 @@
         <p>The shared review app could not be reached, so another session may show this project at a different link, and this page stops when its session ends.</p>
         <p class="private-server-reason" id="private-server-reason"></p>
       </prism-banner>
-      <prism-banner id="missing-project" tone="info" heading="The link named a project that Prism no longer lists, so the project used last opened instead." dismissible hidden>
-        <p>Choose another project from the project menu at the top.</p>
+      <prism-banner id="missing-project" tone="info" heading="The link named a workspace or checkout that Prism no longer lists, so the workspace used last opened instead." dismissible hidden>
+        <p>Choose another workspace from the workspace switcher at the top.</p>
       </prism-banner>
       <div id="notice" class="notices" aria-live="polite" hidden></div>
       <prism-banner id="connection" tone="warning" heading="The review server is not responding. Retrying…" hidden></prism-banner>
@@ -132,6 +132,14 @@
     <p id="action-dialog-message" class="action-dialog-message"></p>
     <prism-button slot="footer" id="action-dialog-cancel">Cancel</prism-button>
     <prism-button slot="footer" id="action-dialog-confirm" variant="primary">Confirm</prism-button>
+  </prism-dialog>
+  <prism-dialog id="workspace-add-dialog" heading="Add a workspace">
+    <form id="workspace-add-form" class="workspace-add-form" novalidate>
+      <prism-field id="workspace-add-url" name="url" label="Store address" placeholder="https://github.com/acme/store.git" hint="An HTTPS or SSH URL, a host:path address, or the absolute path of a folder. Credentials come from this machine's Git configuration, never from the address." required></prism-field>
+      <p id="workspace-add-empty" class="workspace-add-note" hidden></p>
+    </form>
+    <prism-button slot="footer" id="workspace-add-cancel">Cancel</prism-button>
+    <prism-button slot="footer" id="workspace-add-submit" variant="primary">Add workspace</prism-button>
   </prism-dialog>
   <prism-dialog id="palette" class="palette" heading="Command palette" size="lg" placement="top" bare>
     <prism-field id="palette-input" type="search" variant="bare" label="Search or jump to" placeholder="An initiative, slice, document, or file, or text in a document">

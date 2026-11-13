@@ -3,7 +3,9 @@ import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import { copyFile, lstat, mkdir, open, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, IDENTITY_FILE_MAX, identityContent, identityOf, letterCaseKey, locationIdentity, STATUS_RECORD_NAME, uniqueIdentities, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
+import { markArtifactIndexStale } from "./artifact-index.mjs";
 import { renameWhenFree, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { commitProblem, gitFileName, isLinkMode, LINK_TARGET_BYTES_MAX, linkTargetProblem, TREE_DEPTH_MAX, TREE_DEPTH_TEXT, tooDeepTree, treeEntries, treeProblems } from "./git-objects.mjs";
 import { canonicalJson, hasRecordMerge, nestedDeeperThan, recordMergeFor } from "./record-merge.mjs";
@@ -36,10 +38,11 @@ const managed = new Set();
 // which the parent process may hold, as when a Git hook starts the server, so no store command inherits them.
 const INHERITED_OUT = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|QUARANTINE_PATH|REPLACE_REF_BASE|GRAFT_FILE|SHALLOW_FILE|LITERAL_PATHSPECS|GLOB_PATHSPECS|NOGLOB_PATHSPECS|ICASE_PATHSPECS|ATTR_SOURCE|REDIRECT_STDIN|REDIRECT_STDOUT|REDIRECT_STDERR)$/;
 
-/** Change the debounce, pull interval, or torn-read wait, or the bound on a store tree's files, which tests shorten, or turn off the pull that a record read starts. */
+/** Change the debounce, pull interval, or torn-read wait, or the bound on a store tree's files, which tests shorten, turn off the pull that a record read starts, or turn on the watcher that syncs what is pending when the process ends. */
 export function configureRecordSync(settings = {}) {
   for (const key of Object.keys(SETTINGS)) if (Number.isFinite(settings[key])) SETTINGS[key] = settings[key];
   if (typeof settings.pullOnRead === "boolean") pullOnRead = settings.pullOnRead;
+  if (typeof settings.watchPending === "boolean") watchPending = settings.watchPending;
 }
 
 /** Cancel every debounced sync and forget fetch times, so a process or a test can finish. */
@@ -48,6 +51,68 @@ export function cancelRecordSyncs() {
   scheduled.clear();
   lastFetch.clear();
   rerun.clear();
+  written.clear();
+}
+
+// The script that finishes the syncs a process hands off when it ends.
+const HANDOFF_SCRIPT = new URL("./record-store-handoff.mjs", import.meta.url);
+// A long-lived process, such as the MCP server, turns on a watcher process while it has syncs pending, since a host may end it in a way that runs none of its code.
+let watchPending = false;
+let watcher = null;
+let watcherList = "";
+// Stores with a record write that no sync has started on, and stores whose running sync started on one; a sync that only pulls is not pending.
+const written = new Set();
+const writing = new Set();
+
+const handOffOff = () => process.env.PRISM_STORE_HANDOFF === "off";
+const pendingStores = () => [...new Set([...written, ...writing, ...rerun])].map((base) => ({ base, managed: managed.has(base) }));
+
+function startWatcher() {
+  try {
+    const child = spawn(process.execPath, [fileURLToPath(HANDOFF_SCRIPT)], { detached: true, stdio: ["pipe", "ignore", "ignore"], windowsHide: true });
+    child.on("error", () => {});
+    child.stdin.on("error", () => {});
+    child.once("exit", () => { if (watcher === child) { watcher = null; watcherList = ""; } });
+    child.unref();
+    child.stdin.unref?.();
+    return child;
+  } catch {
+    // The next Prism process to sync the store pushes what this one wrote.
+    return null;
+  }
+}
+
+// Tell the watcher which stores have a sync pending, starting it on the first one and ending it once none is left.
+// It syncs the last list it was told when its input closes, which happens however this process ends: a signal, Windows' forced end, or SIGKILL.
+function updateWatcher() {
+  if (!watchPending || handOffOff()) return;
+  const stores = pendingStores();
+  if (!stores.length && !watcher) return;
+  const list = JSON.stringify(stores);
+  if (list === watcherList) return;
+  watcher ??= startWatcher();
+  if (!watcher) return;
+  watcherList = list;
+  if (stores.length) { watcher.stdin.write(`${list}\n`); return; }
+  watcher.stdin.end(`${list}\n`);
+  watcher = null;
+  watcherList = "";
+}
+
+/**
+ * Hand every store whose debounced sync has not run, or whose sync is running or due again, to the detached watcher process, which syncs it and exits, then cancel this process's syncs.
+ * A host can end a session within a fraction of a second, before the debounce comes due, so a process that ends calls this to push the records it wrote; it returns the stores handed off.
+ */
+export function handOffRecordSyncs() {
+  const stores = pendingStores();
+  cancelRecordSyncs();
+  // A test suite turns the hand-off off, so no detached process writes a folder that a test removes.
+  if (handOffOff()) return [];
+  const child = watcher ?? (stores.length ? startWatcher() : null);
+  watcher = null;
+  watcherList = "";
+  child?.stdin.end(`${JSON.stringify(stores)}\n`);
+  return stores.map((store) => store.base);
 }
 
 // The notice every view that Prism generates from a record carries, as generatedNotice in projection.mjs writes it.
@@ -293,17 +358,20 @@ export async function waitForStableStore(base) {
   while (Date.now() < deadline && await holderAlive(marker)) await new Promise((resolve) => setTimeout(resolve, 25));
 }
 
-/** Debounce a sync after a record write; a sync problem never reaches the write. */
-export function scheduleRecordSync(base) {
+/** Debounce a sync after a record write, or after a sync that must run again, which carries a write only when the one it repeats did; a sync problem never reaches the write. */
+export function scheduleRecordSync(base, carriesWrite = true) {
   watched.add(base);
+  if (carriesWrite) written.add(base);
   clearTimeout(scheduled.get(base));
   const timer = setTimeout(() => {
     scheduled.delete(base);
-    if (running.has(base)) { rerun.add(base); return; }
-    syncRecordStore(base).catch(() => {});
+    if (running.has(base)) rerun.add(base);
+    else syncRecordStore(base).catch(() => {});
+    updateWatcher();
   }, SETTINGS.debounceMs);
   timer.unref();
   scheduled.set(base, timer);
+  updateWatcher();
 }
 
 /** Start a background sync after a record read when the last fetch is older than the pull interval; the read never waits for it. */
@@ -530,7 +598,7 @@ export function syncRecordStore(base, options = {}) {
       }, undefined, { ...syncLockOptions(), timeoutMs: 1 });
     } catch (error) {
       // The holder may have committed before this process wrote, so a later sync picks the change up.
-      if (error.code === "lock_timeout") { scheduleRecordSync(base); return { state: "skipped" }; }
+      if (error.code === "lock_timeout") { scheduleRecordSync(base, writing.has(base)); return { state: "skipped" }; }
       // An upstream entry that no store may hold, or a path that leads outside the store, stops the merge before any file changes, so the branch stays and every sync reports it until the upstream drops it.
       if (error.unsafePath) return writeStatus(base, { state: "merge_failed", message: error.message, ...await counts(base).catch(() => ({})) }).catch(() => ({ state: "merge_failed", message: withoutCredentials(error.message) }));
       // A Git error outside fetch, merge, and push, such as a leftover index lock, is reported as it is and never repaired here.
@@ -538,9 +606,13 @@ export function syncRecordStore(base, options = {}) {
     }
   })().finally(() => {
     running.delete(base);
+    writing.delete(base);
     if (rerun.delete(base)) scheduleRecordSync(base);
+    updateWatcher();
   });
   running.set(base, pending);
+  if (written.delete(base)) writing.add(base);
+  updateWatcher();
   return pending;
 }
 
@@ -750,6 +822,26 @@ async function moveBranch(base, commit, previous, message) {
 const RAW_FILES = "raw-files.json";
 const migrated = new Set();
 const syncLockOptions = () => ({ renew: true, abandonWhenUnrenewed: true, staleMs: SETTINGS.gitTimeoutMs * 2 });
+
+/**
+ * Move a clone's folder from source to target while holding the clone's sync lock, so no sync of source, from this or an earlier Prism, runs while it moves.
+ * qualifies() runs under the lock and decides whether the move happens; renameFolder does the move.
+ * It answers whether the folder moved, throws an error with code lock_timeout when a sync holds the lock, and throws the rename's error when the move fails, leaving source as it was.
+ * The lock moves with the folder and is removed at its new place.
+ */
+export async function moveUnderSyncLock(source, target, qualifies, renameFolder = rename) {
+  await mkdir(syncPath(source), { recursive: true });
+  const lock = `${syncPath(source, "sync")}.lock`;
+  return withFileLock(syncPath(source, "sync"), async () => {
+    if (!(await qualifies())) return false;
+    const token = (await readFile(lock, "utf8").then(parseStoreJson).catch(() => null))?.token;
+    await renameFolder(source, target);
+    const moved = path.join(target, path.relative(source, lock));
+    const owner = await readFile(moved, "utf8").then(parseStoreJson).catch(() => null);
+    if (token && owner?.token === token) await rm(moved, { force: true });
+    return true;
+  }, undefined, { ...syncLockOptions(), timeoutMs: 1, closeHandle: true });
+}
 
 /**
  * Prepare a store's files for syncing, once per clone, before any Prism write in this process reaches them: an earlier Prism checked a first clone's files out through Git's line-ending conversion,
@@ -1831,6 +1923,8 @@ async function replaceFiles(base, run, { from, diskTree = from, to, copies, thei
     }
   };
   const applied = await apply(base, from, to, options, progress, held, diskTree);
+  // The files the sync replaced change what the store's artifact listings hold.
+  await markArtifactIndexStale(base);
   if (applied) for (const [file, entry] of copies) if (entry && held.get(file) === entry) { held.delete(file); run.withheld?.delete(file); }
   return { applied, conflicts: stage ? await settleStage(base, stage, applied) : [] };
 }
@@ -2533,6 +2627,43 @@ async function readBlobs(base, wanted) {
 }
 const readBlob = async (base, file, entry, max) => (await readBlobs(base, [{ file, entry, max }]))[0];
 
+/**
+ * A reader of the bounded blobs that a run of files takes, in the files' order: entriesOf(file) names the entries the run reads for a file.
+ * It reads the blobs of the next files together, in batches of bounded size, so a sync that replaces many files takes a few Git processes rather than two for each file,
+ * which on Windows, where a process starts slowly, decided how long a sync of a thousand comments took.
+ * A blob it did not read in a batch, as one above its kind's bound or one of no listed file, is read by boundedBlob, which refuses one above the bound by name.
+ */
+async function boundedBlobReader(base, files, entriesOf, batchBytes = 32 * 1024 * 1024) {
+  const { blobMax } = await storeLayout();
+  const wanted = files.map((file) => entriesOf(file).filter((entry) => entry && FILE_MODES.has(entry.mode)));
+  const info = await objectInfo(base, [...new Set(wanted.flat().map((entry) => entry.object))]);
+  const indexOf = new Map(files.map((file, index) => [file, index]));
+  const cache = new Map();
+  let next = 0;
+  return async (file, entry) => {
+    const index = indexOf.get(file);
+    if (entry && FILE_MODES.has(entry.mode) && !cache.has(entry.object) && index !== undefined && index >= next) {
+      cache.clear();
+      const batch = [];
+      let total = 0;
+      let end = index;
+      // A batch takes whole files while their blobs fit in batchBytes, and always its first file, so a file is never split across two batches.
+      while (end < files.length) {
+        const readable = wanted[end].filter((item) => { const found = info.get(item.object); return found?.type === "blob" && found.size <= blobMax(files[end]); });
+        const bytes = readable.reduce((sum, item) => sum + info.get(item.object).size + 128, 0);
+        if (end > index && total + bytes > batchBytes) break;
+        for (const item of readable) batch.push({ file: files[end], entry: item });
+        total += bytes;
+        end += 1;
+      }
+      next = end;
+      const contents = await readBlobs(base, batch);
+      batch.forEach((item, at) => { if (Buffer.isBuffer(contents[at])) cache.set(item.entry.object, contents[at]); });
+    }
+    return entry && cache.has(entry.object) ? cache.get(entry.object) : boundedBlob(base, file, entry);
+  };
+}
+
 // The bytes of a blob that the sync writes to disk, which a store holds within its bound wherever the sync writes from: a blob above it is refused by name rather than read.
 async function boundedBlob(base, file, entry) {
   const bytes = await readBlob(base, file, entry);
@@ -3001,18 +3132,19 @@ async function apply(base, from, to, options, progress = {}, held = new Map(), d
           const listings = new Map();
           // A file is read only up to its kind's bound, so one above it is never read and holds no commit's bytes.
           const ownBytes = async (index, cache) => (await storedInSpelling(base, files[index], cache)) ? boundedBytes(targets[index], bound(files[index])) : null;
+          const blobOf = await boundedBlobReader(base, files, (file) => held.get(file)?.disk ? [after.get(file)] : [before.get(file), after.get(file), held.get(file)]);
           for (const [index, file] of files.entries()) {
             // A file withheld because it is above its kind's bound is never read: it must still be the file the sync held back, which the caller moves aside before replacing it.
             if (held.get(file)?.disk) {
               if (!(await sameDiskFile(targets[index], held.get(file).disk))) return false;
-              next.push(await boundedBlob(base, file, after.get(file)));
+              next.push(await blobOf(file, after.get(file)));
               continue;
             }
             // The branch's version is read only within its bound, as every blob the sync reads is, and one above it, which only a commit made by hand puts on the branch, is refused by name.
-            const [bytes, expected] = await Promise.all([ownBytes(index, listings), boundedBlob(base, file, before.get(file))]);
+            const [bytes, expected] = await Promise.all([ownBytes(index, listings), blobOf(file, before.get(file))]);
             // A file whose local version the sync withheld still holds that version, which the caller saved.
-            if (!sameBytes(bytes, expected) && !(held.has(file) && sameBytes(bytes, await boundedBlob(base, file, held.get(file))))) return false;
-            next.push(await boundedBlob(base, file, after.get(file)));
+            if (!sameBytes(bytes, expected) && !(held.has(file) && sameBytes(bytes, await blobOf(file, held.get(file))))) return false;
+            next.push(await blobOf(file, after.get(file)));
           }
           // A comment that this machine wrote after the sync read its comment folders, as while the sync fetched or while an update held the artifact lock, is in neither commit,
           // so the merge did not count it; where the target's comments leave it no room in its folder, it is saved, named as a comment that the folder's bound left out, and leaves the disk,
@@ -3147,4 +3279,21 @@ export async function pruneArtifactFolders(base, target) {
       await rmdir(folder);
     } catch { return; }
   }
+}
+
+/**
+ * What a store clone holds that its upstream lacks: { commits, files, conflicts }, commits whether any branch has a commit that no remote branch holds,
+ * files whether a store file on disk differs from its branch's commit, is missing from it, or is a file the commit lacks, and conflicts whether a saved local copy of a conflict waits.
+ * It reads Git's objects and the files' bytes and changes nothing, so a caller decides from it whether deleting the clone loses work.
+ */
+export async function localStoreChanges(base) {
+  const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  const ahead = await git(base, ["rev-list", "--count", "--branches", "--not", "--remotes"]);
+  const commits = !ahead.ok || Number(ahead.text) > 0 || await unpublished(base);
+  const committed = head.ok ? (await partition(await treeFiles(base, head.text))).shared : new Map();
+  const withheld = new Map();
+  const onDisk = await localFiles(base, committed, withheld);
+  let files = withheld.size > 0 || onDisk.size !== committed.size;
+  for (const [file, entry] of onDisk) if (!files && committed.get(file)?.object !== entry.object) files = true;
+  return { commits, files, conflicts: (await listSavedConflicts(base)).length > 0 };
 }

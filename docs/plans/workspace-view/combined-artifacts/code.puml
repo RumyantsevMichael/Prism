@@ -1,0 +1,13 @@
+@startuml
+title combined-artifacts: units and dependencies
+component "review-server.mjs\nindex by store location, scope filter, artifact by ref" as review
+component "artifact-links.mjs\nresolveLinks" as links
+component "actions.mjs\nartifact target by location" as actions
+component "artifact-index.mjs\nartifactIndex" as index
+component "library.js, preview.js, artifact-review.js, markdown.js\nscope labels, filter, links" as views
+review ..> index
+review ..> links
+links ..> index
+review ..> actions
+views ..> review
+@enduml
