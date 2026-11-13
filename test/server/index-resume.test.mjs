@@ -17,11 +17,13 @@ const { readProgressRecords } = await import("../../dist/server/repository-intel
 // A build that stalls on purpose is stopped after this period, which must outlast a slow runner's start before the build's first report,
 // since a Windows runner took more than 250 ms there and the build then stalled while starting rather than in the phase a test holds.
 const STALL_MS = 3000;
+// A wait for a stalled build lasts the stall period and the late start of a slow runner's build before it.
+const STALL_WAIT = { timeoutMs: STALL_MS + 10000 };
 const RECORD = 32 + 384 * 4;
 // The files of the fixture project in path order, which is the order in which the staged runtime embeds them.
 const ORDER = [".prism/workflow.md", "README.md", "packages/app/client.ts", "packages/net/retry.ts", "packages/net/timeout.ts"];
 const prepare = async (runtime, root) => runtime.prepare(await openNativeRepositoryIntelligence(root), undefined, 0);
-const statusIs = (runtime, root, value) => until(async () => { const status = await runtime.status(root); return status.status === value && status; }, `The index did not become ${value}.`);
+const statusIs = (runtime, root, value) => until(async () => { const status = await runtime.status(root); return status.status === value && status; }, `The index did not become ${value}.`, STALL_WAIT);
 const contentOf = async (root, file) => readFile(path.join(root, file), "utf8");
 const keysOf = async (root, files) => Promise.all(files.map(async (file) => embeddingKey(await contentOf(root, file))));
 const storeOf = async (runtime, root, component) => path.join((await runtime.location(root, component)).directory, "embeddings.bin");
@@ -69,7 +71,7 @@ test("clause 10: a stalled component names its phase, and the next call prepares
   const status = await until(async () => {
     const value = await runtime.status(root);
     return value.components?.find((item) => item.component === "root/net")?.status === "degraded" && value;
-  }, "The net component did not stall.");
+  }, "The net component did not stall.", STALL_WAIT);
   const net = status.components.find((item) => item.component === "root/net");
   assert.equal(net.failure.code, "stalled");
   assert.equal(net.failure.phase, "graph:parsing");
@@ -173,7 +175,7 @@ test("clause 14: a component's later build reuses what its stalled build saved, 
   const first = await stagedRuntime(storage, { stallMs: STALL_MS });
   first.control.hold("packages/net/timeout.ts");
   await searchRepositoryConcepts({ projectRoot: root, query: "retry", filters: { paths: ["packages/net"] } }, { runtime: first.runtime, waitMs: 0 });
-  await until(async () => (await first.runtime.status(root)).components?.find((item) => item.component === "root/net")?.status === "degraded", "The net component did not stall.");
+  await until(async () => (await first.runtime.status(root)).components?.find((item) => item.component === "root/net")?.status === "degraded", "The net component did not stall.", STALL_WAIT);
   first.control.release("packages/net/timeout.ts");
   const later = await stagedRuntime(storage);
   const found = await searchRepositoryConcepts({ projectRoot: root, query: "retry", filters: { paths: ["packages/net"] } }, { runtime: later.runtime, waitMs: 2000 });

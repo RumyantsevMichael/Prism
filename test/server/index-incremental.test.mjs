@@ -16,7 +16,7 @@ const { openNativeRepositoryIntelligence } = await import("../../dist/server/rep
 const ALL = [".prism/workflow.md", "README.md", "packages/app/client.ts", "packages/net/retry.ts", "packages/net/timeout.ts"];
 const build = async (runtime, root, count, control) => {
   await runtime.prepare(await openNativeRepositoryIntelligence(root), undefined, 0);
-  await until(async () => control.builds.length >= count && ["ready", "degraded"].includes((await runtime.status(root)).status), `Build ${count} did not end.`);
+  await until(async () => control.builds.length >= count && ["ready", "degraded"].includes((await runtime.status(root)).status), `Build ${count} did not end.`, { timeoutMs: STALL_MS + 10000 });
   return runtime.status(root);
 };
 const hashes = async (root, files) => Object.fromEntries(await Promise.all(files.map(async (file) => [file, sha256(await readFile(path.join(root, file), "utf8"))])));

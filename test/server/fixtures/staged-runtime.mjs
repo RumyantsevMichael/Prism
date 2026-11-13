@@ -130,8 +130,10 @@ export async function stagedRuntime(storage, { stallMs } = {}) {
 }
 
 /** Polls until `check` returns a truthy value, or fails after about four seconds. */
-export async function until(check, message = "The expected state did not arrive.") {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
+export async function until(check, message = "The expected state did not arrive.", { timeoutMs = null } = {}) {
+  // Without a timeout the check runs 200 times; a wait that outlasts a stall period names its own timeout instead.
+  const deadline = timeoutMs === null ? null : Date.now() + timeoutMs;
+  for (let attempt = 0; deadline === null ? attempt < 200 : Date.now() < deadline; attempt += 1) {
     const value = await check();
     if (value) return value;
     await delay(20);
