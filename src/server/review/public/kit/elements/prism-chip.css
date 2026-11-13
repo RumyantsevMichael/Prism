@@ -73,15 +73,16 @@
 }
 
 .text {
-  flex: 0 1000 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .meta {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   font-weight: var(--prism-font-weight-regular);
