@@ -38,11 +38,18 @@ const managed = new Set();
 // which the parent process may hold, as when a Git hook starts the server, so no store command inherits them.
 const INHERITED_OUT = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|QUARANTINE_PATH|REPLACE_REF_BASE|GRAFT_FILE|SHALLOW_FILE|LITERAL_PATHSPECS|GLOB_PATHSPECS|NOGLOB_PATHSPECS|ICASE_PATHSPECS|ATTR_SOURCE|REDIRECT_STDIN|REDIRECT_STDOUT|REDIRECT_STDERR)$/;
 
-/** Change the debounce, pull interval, or torn-read wait, or the bound on a store tree's files, which tests shorten, turn off the pull that a record read starts, or turn on the watcher that syncs what is pending when the process ends. */
+// The log that sync outcomes are written to, which a server process passes; this module is also loaded where the log is not, so it writes nothing until one is given.
+let log = null;
+
+/**
+ * Change the debounce, pull interval, or torn-read wait, or the bound on a store tree's files, which tests shorten, turn off the pull that a record read starts,
+ * turn on the watcher that syncs what is pending when the process ends, or give the log, an object with info and warn, that sync outcomes are written to.
+ */
 export function configureRecordSync(settings = {}) {
   for (const key of Object.keys(SETTINGS)) if (Number.isFinite(settings[key])) SETTINGS[key] = settings[key];
   if (typeof settings.pullOnRead === "boolean") pullOnRead = settings.pullOnRead;
   if (typeof settings.watchPending === "boolean") watchPending = settings.watchPending;
+  if (settings.log !== undefined) log = settings.log;
 }
 
 /** Cancel every debounced sync and forget fetch times, so a process or a test can finish. */
@@ -591,7 +598,10 @@ export function syncRecordStore(base, options = {}) {
     await mkdir(syncPath(base), { recursive: true });
     try {
       return await withFileLock(syncPath(base, "sync"), async () => {
+        // Only a process that logs reads the state before the sync, so a sync where nothing logs runs no Git command more.
+        const before = log ? await Promise.all([readSyncStatus(base), headOf(base)]).catch(() => null) : null;
         const status = await sync(base, options);
+        if (before) await logSync(base, before[0], before[1], status).catch(() => {});
         // A caller that must act on the store exactly as this sync left it, such as a move that decides against this pull, does so before the lock is released.
         await options.whileLocked?.(status);
         return status;
@@ -614,6 +624,24 @@ export function syncRecordStore(base, options = {}) {
   if (written.delete(base)) writing.add(base);
   updateWatcher();
   return pending;
+}
+
+const headOf = async (base) => { const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]); return head.ok ? head.text : null; };
+
+// The log names each sync that changed the store's branch, each failure once until its reason changes, and the sync that ends a run of failures,
+// so a person reads in the log when records were shared and why they were not, without a line for every sync that found nothing to do.
+async function logSync(base, previous, head, status) {
+  if (!log || !status || status.state === "skipped") return;
+  const failed = (value) => value && value.state !== "ok";
+  if (failed(status)) {
+    if (previous?.state !== status.state || previous?.message !== status.message) log.warn("store_sync_failed", { store: base, state: status.state, message: status.message, ahead: status.ahead, behind: status.behind });
+    return;
+  }
+  const now = await headOf(base);
+  const conflicts = status.conflicts?.length ?? 0;
+  // A sync that pushed commits an earlier sync left unpushed changes no branch, so it shows by its count of unpushed commits.
+  if (now !== head || conflicts || (previous?.ahead > 0 && !status.ahead)) log.info("store_synced", { store: base, from: head, to: now, ahead: status.ahead, behind: status.behind, ...(conflicts ? { savedConflicts: conflicts } : {}) });
+  else if (failed(previous)) log.info("store_synced", { store: base, recovered: previous.state, ahead: status.ahead, behind: status.behind });
 }
 
 async function identity(base) {

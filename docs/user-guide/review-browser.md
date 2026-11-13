@@ -402,7 +402,7 @@ A maximized document keeps its Restore button in view while it scrolls, in its c
 
 In a project whose `.prism/workflow.md` names a record store, a requirement, ADR, plan file, glossary, or roadmap view opens with a Review card above its content.
 The card names the file's scope, `workspace`, the repository, or `<repository>/<component>`, and says whether a person accepted the file and whether it changed since.
-A file is accepted when a person approves it, when the design of the slices whose folder holds it is accepted, or when its initiative ships.
+A file is accepted when a person approves it, when the design of the slices whose folder holds it is accepted, when its initiative ships, or when it moves in from the checkout with a status that a person already moved on, such as `Approved`.
 Below that, the card shows the lines that changed since the accepted version, with the line numbers of both versions, or the whole file as added when no version was accepted yet.
 It then lists the comments on the file, oldest first, each with its author's Git name, the host it came from, the line it names, and its time, and marks a comment made on an earlier version of the file.
 Comments that a record store sync brings from other machines appear the next time the page checks the file, and comments from this machine's tabs appear at once.
@@ -585,7 +585,9 @@ When the shared app cannot start or `PRISM_REVIEW_APP=off` is set, `prism review
 
 Every Prism process writes to one log file, `logs/prism.log` in the state directory above, so the review app, each session's MCP server, and their index builds leave one record.
 Each line is a JSON object with the time, level, event, process name and id, and the event's own fields.
-The log records each process start and stop, index builds with their phases, durations, and failures, review app requests that fail or take more than two seconds, MCP tool calls that fail, and uncaught errors.
+The log records each process start and stop, index builds with their phases, durations, and failures, review app requests that fail or take more than two seconds, apart from a page's event stream, which stays open while the page does, MCP tool calls that fail, and uncaught errors.
+A tool call that Prism refuses with a reason you can act on, such as an invalid argument, is information named `request_refused` with that reason's code, if it has one, not a warning.
+Each record store sync that commits, merges, or pushes records is information named `store_synced`, a sync that fails is a warning named `store_sync_failed` with its reason, once until the reason changes, and a sync with nothing to share leaves no line.
 It also records each time a process stops answering for more than a second, with what it was doing at the time, such as the index phase of the component being built.
 Past 5 MiB the file moves to `prism.log.1`, replacing the older one.
 Set `PRISM_LOG_LEVEL` to `debug`, `info` (the default), `warn`, `error`, or `off`, and set `PRISM_LOG_DIR` to write the log to another folder.

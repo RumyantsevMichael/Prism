@@ -550,7 +550,7 @@ async function decideAndWrite(seen, access, files) {
       const stored = await storedArtifactIn(seen, holder.scope, address);
       if (stored.record?.version !== version) { keep(file, "differs", { location: stored.location }); continue; }
       // A store copy without its status record, as a move interrupted between the two leaves it, gets the written status before the checkout file goes.
-      if (hasStatus(address.kind)) statuses.push({ scope: holder.scope, address, written: writtenStatus(text) });
+      if (hasStatus(address.kind)) statuses.push({ scope: holder.scope, address, written: writtenStatus(text), bytes });
       moved.push({ from: file, to: stored.location, version, size: bytes.length });
       continue;
     }
@@ -570,7 +570,7 @@ async function decideAndWrite(seen, access, files) {
   for (const batch of batches(writes)) {
     for (const item of await createWrites(seen, access, batch, keep, held)) moved.push({ from: item.file, to: item.location, version: item.version, size: item.size });
   }
-  for (const { scope, address, written } of statuses) await recordMovedStatus(seen, scope, address, written);
+  for (const { scope, address, written, bytes } of statuses) await recordMovedStatus(seen, scope, address, written, bytes);
   const name = await writeLedger(seen, ledger, moved, kept);
   return { moved, kept, ledger: name };
 }
@@ -815,9 +815,10 @@ async function pruneCheckoutFolders(access, kinds, removed) {
 }
 
 /**
- * Each tracked file left in the checkout whose text names the former path of a moved file or a file moved earlier, or the configured folder of a kind that lost either, as { file, lines, more },
+ * Each tracked file left in the checkout, apart from the workflow configuration, whose text names the former path of a moved file or a file moved earlier, or the configured folder of a kind that lost either, as { file, lines, more },
  * with at most REFERENCE_LINES_MAX line numbers and the number of its other matching lines, at most REFERENCE_FILES_MAX files, with the count of the rest.
  */
+const WORKFLOW_CONFIG = ".prism/workflow.md";
 async function referencesOf(access, kinds, tracked, movedFiles) {
   const none = { references: [], moreReferences: 0 };
   if (!movedFiles.length) return none;
@@ -827,6 +828,8 @@ async function referencesOf(access, kinds, tracked, movedFiles) {
   const found = [];
   let more = 0;
   for (const file of tracked) {
+    // The workflow configuration names the configured folders as the artifacts' addresses, which stay after the move, so its lines are no reference to update.
+    if (file === WORKFLOW_CONFIG) continue;
     const bytes = (await access.read(file, REFERENCE_BYTES_MAX).catch(() => null))?.bytes ?? null;
     if (bytes === null || bytes.includes(0)) continue;
     const lines = [];

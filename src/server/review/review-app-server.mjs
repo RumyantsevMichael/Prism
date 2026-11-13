@@ -40,7 +40,7 @@ import { createWriteSessions } from "./write-sessions.mjs";
 import { watchWorkspace, WORKSPACE_FETCH_MAX_MS, WORKSPACE_FETCH_MS } from "./workspace-sync.mjs";
 import { codeFolder, createCodeClones, registeredRemotes } from "./code-clones.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
-import { createViewerHub } from "./viewer-hub.mjs";
+import { createViewerHub, isEventStream } from "./viewer-hub.mjs";
 import { createCachedValue } from "./cached-value.mjs";
 
 const LEASE_MS = 3 * 60 * 1000;
@@ -781,6 +781,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
   }
 
   // A request that takes longer than this is logged, by its route without the viewer credential, so a stalled app leaves a trace.
+  // An event stream stays open while its page does, by design, so its length is no slowness and is not logged.
   const SLOW_REQUEST_MS = 2000;
   const routeOf = (request) => {
     let pathname;
@@ -792,7 +793,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
     const started = performance.now();
     response.once("finish", () => {
       const ms = performance.now() - started;
-      if (ms >= SLOW_REQUEST_MS) log.warn("slow_request", { method: request.method, route: routeOf(request), status: response.statusCode, ms: Math.round(ms) });
+      if (ms >= SLOW_REQUEST_MS && !isEventStream(response)) log.warn("slow_request", { method: request.method, route: routeOf(request), status: response.statusCode, ms: Math.round(ms) });
     });
     try {
       if (!isTrustedHost(request.headers.host)) {

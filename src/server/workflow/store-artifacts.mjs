@@ -6,11 +6,11 @@ import { addComment, aheadOfClock, appliedComment, appliedComments, commentFolde
 import { artifactIndex, markArtifactIndexStale } from "./artifact-index.mjs";
 import { writeAtomically } from "./artifact-store.mjs";
 import { assertInput } from "./artifact-schema.mjs";
-import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_NAME_FORM, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, IDENTITY_FILE_MAX, identityContent, identityOf, kindInScope, letterCaseKey, locationArtifact, locationIdentity, malformedArtifactName, newIdentity, normalizeArtifactPath, repositoryScope, scopeFolder, uniqueIdentities, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
-import { acceptAtShip, acceptedLocation, answerApproval, askApproval, hasStatus, linkedPaths, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion } from "./artifact-status.mjs";
+import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_NAME_FORM, ARTIFACTS, ARTIFACT_STATUS, artifactAddress, artifactLocation, artifactPathOf, componentScope, holdsArtifactPaths, IDENTITY_FILE_MAX, identityContent, identityOf, kindInScope, letterCaseKey, locationArtifact, locationIdentity, malformedArtifactName, newIdentity, normalizeArtifactPath, repositoryScope, scopeFolder, uniqueIdentities, windowsDeviceName, WORKSPACE_SCOPE, wellFormedName } from "./artifact-paths.mjs";
+import { acceptAtShip, acceptedLocation, acceptedWhenMoved, answerApproval, askApproval, hasStatus, linkedPaths, movedWithoutAcceptance, newRecord, notAStatusArtifact, parseRecord, serializeRecord, statusFields, statusMismatch, statusRecordLocation, waitableGates, withAcceptedVersion, writtenStatus as writtenStatusOf } from "./artifact-status.mjs";
 import { ComponentError, readComponents } from "./components.mjs";
 import { checkArtifactFolders, folderChecks, noteToolCallWrite, recordStoreOf, repositoryScopes, resolveArtifactFile, resolveStatusFile, seenScopes, statusFileResolver, withArtifactStoreLock } from "./record-store.mjs";
-import { pruneArtifactFolders, scheduleRecordSync } from "./record-store-sync.mjs";
+import { pruneArtifactFolders, runGit, scheduleRecordSync } from "./record-store-sync.mjs";
 import { artifactKinds, readWorkflowConfig } from "./workflow-config.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 
@@ -379,6 +379,36 @@ async function statusRecordOf(seen, scope, address, resolve = (relative) => reso
   return parseRecord(address.kind, held?.bytes ?? null);
 }
 
+/**
+ * The status record of a requirement or ADR that a read shows, after a record that a move made before moves kept an accepted version takes the moved bytes as one, once:
+ * the bytes the file held when it came to its location, which carry the recorded status, or the record as it was when they cannot be found or the store is busy, for a later read to try again.
+ */
+async function withMovedAcceptance(seen, scope, address, name, status, current) {
+  if (!movedWithoutAcceptance(address.kind, status)) return status;
+  try {
+    const bytes = await movedBytes(seen, scope, address, current);
+    if (bytes === null || writtenStatusOf(artifactText(bytes) ?? "") !== status.status) return status;
+    const item = { operation: { op: "accept_moved", path: name, bytes, atScope: scope, event: { event: "moved", at: new Date().toISOString() } }, file: name, address, given: null };
+    await withArtifactStoreLock(seen, () => applyOperations(seen, [item]), { timeoutMs: MOVED_ACCEPTANCE_LOCK_MS });
+    return await statusRecordOf(seen, scope, address);
+  } catch { return status; }
+}
+// A read waits this long at most for the store's artifact lock to record a moved file's accepted version, so a long update elsewhere never holds a read up.
+const MOVED_ACCEPTANCE_LOCK_MS = 2000;
+
+/**
+ * The bytes an artifact held when it came to its location: in a store that Prism syncs, those of the latest commit that added its file, since an edit after the move may have changed them,
+ * or null before a sync committed it; in a store Prism runs no Git in, the current bytes, the only ones the store holds.
+ */
+async function movedBytes(seen, scope, address, current) {
+  if (!seen.store.sync) return current;
+  const file = `${ARTIFACTS}/${artifactLocation(scope, address)}`;
+  const added = await runGit(seen.store.base, ["--literal-pathspecs", "log", "-1", "--no-renames", "--diff-filter=A", "--format=%H", "--", file]);
+  if (!added.ok || !/^[0-9a-f]{40,64}$/.test(added.text)) return null;
+  const blob = await runGit(seen.store.base, ["cat-file", "blob", `${added.text}:./${file}`]);
+  return blob.ok ? blob.stdout : null;
+}
+
 // The bytes a person last accepted, which a read with accepted true returns.
 async function acceptedBytes(seen, file, version) {
   if (version === null) throw fail("artifact_not_accepted", `No person has accepted a version of ${file} yet: it is accepted at an approval, at the design acceptance of the slice whose folder holds it, or when its initiative ships.`);
@@ -465,8 +495,8 @@ async function readByLocation(seen, input) {
 
 // The page of one stored artifact that a read returns, with its status, accepted version, and comments.
 async function readResult(seen, input, { file, name, scope, address, record }) {
-  const status = await statusRecordOf(seen, scope, address);
   const current = contentOf(name, record);
+  const status = await withMovedAcceptance(seen, scope, address, name, await statusRecordOf(seen, scope, address), current);
   const bytes = input.accepted ? await acceptedBytes(seen, name, status.acceptedVersion) : current;
   const content = decode(bytes, name);
   const offset = input.offset ?? 1;
@@ -690,6 +720,13 @@ async function applyOperations(seenStore, checked, { held = null, noteWrites = f
     const target = await resolveStatusFile(seen, acceptedLocation(artifactVersion(bytes)));
     if ((await read(target)) === null) { state.set(target, stored(bytes)); names.set(target, file); }
   };
+  // A moved file whose written status a person had moved on from the new one, such as an Approved requirement, was accepted in those bytes, so the move keeps them as its accepted version.
+  const createdRecord = async (kind, written, file, bytes) => {
+    const record = newRecord(kind, written);
+    if (!acceptedWhenMoved(kind, written)) return record;
+    await keepAccepted(file, bytes);
+    return withAcceptedVersion(record, artifactVersion(bytes), { event: "moved", at: new Date().toISOString() });
+  };
   // Each artifact's comments move and go with it in the same update, so a sync commits the artifact and its comments together.
   // A comment folder's entries as the earlier operations of this update leave them, by folder: each holds { name, target, comment }, with comment null for an entry that is no comment.
   const folders = new Map();
@@ -782,9 +819,9 @@ async function applyOperations(seenStore, checked, { held = null, noteWrites = f
       if (current === null) {
         checkComponentName(file, scope);
         checkLocationLength(scope, address);
-        // A created artifact starts a record of its own: a new requirement is Draft and a new ADR Proposed, and a record a removed file left behind goes.
+        // A created artifact starts a record of its own: a new requirement is Draft and a new ADR Proposed, a moved one has its written status, and a record a removed file left behind goes.
         const status = await statusOf(scope, address);
-        if (hasStatus(address.kind)) setStatus(status.target, file, newRecord(address.kind, operation.writtenStatus ?? null));
+        if (hasStatus(address.kind)) setStatus(status.target, file, await createdRecord(address.kind, operation.writtenStatus ?? null, file, operation.bytes ?? Buffer.from(operation.content, "utf8")));
         else if (status.exists) setStatus(status.target, file, null);
         // A created artifact is a new one, whatever an earlier artifact at its location was, so a sync never merges a change made on that earlier one into it.
         await setIdentity(scope, address, file, newIdentity());
@@ -801,7 +838,7 @@ async function applyOperations(seenStore, checked, { held = null, noteWrites = f
     }
     // A ship names the scope of each ADR it accepts, which may be another repository's, so the ADR is found there alone.
     const source = operation.op === "move_scope" ? await moveSource(item, await holders(seen, address, scopesFor(seen, address.kind, null), read))
-      : operation.op === "accept_at_ship" ? await one(item, [operation.atScope])
+      : operation.op === "accept_at_ship" || operation.op === "accept_moved" ? await one(item, [operation.atScope])
       : await one(item, scopesFor(seen, address.kind, given));
     if (!source) {
       await refuseOthers(item);
@@ -862,6 +899,14 @@ async function applyOperations(seenStore, checked, { held = null, noteWrites = f
         setStatus(status.target, file, withAcceptedVersion(status.record, source.record.version, operation.event));
       }
       artifacts.push({ path: file, scope: source.scope, version: source.record.version, acceptedVersion: source.record.version });
+    } else if (operation.op === "accept_moved") {
+      // Another process may have accepted a version since the read, so only a record that still has none takes the moved bytes.
+      const status = await statusOf(source.scope, address);
+      if (movedWithoutAcceptance(address.kind, status.record)) {
+        await keepAccepted(file, operation.bytes);
+        setStatus(status.target, file, withAcceptedVersion(status.record, artifactVersion(operation.bytes), operation.event));
+      }
+      artifacts.push({ path: file, scope: source.scope, version: source.record.version });
     } else {
       const scope = scopeOf(seen, given);
       let removed = [];
@@ -1087,7 +1132,7 @@ export async function reviewStoreArtifact(projectRoot, file, { commentOffset = 1
     if (!held.length) return null;
     const [{ scope, target, record }] = held;
     const modifiedAt = (await lstat(target).catch(() => null))?.mtimeMs ?? null;
-    const { acceptedVersion } = await statusRecordOf(seen, scope, address);
+    const { acceptedVersion } = await withMovedAcceptance(seen, scope, address, normalized, await statusRecordOf(seen, scope, address), contentOf(normalized, record));
     const acceptedText = acceptedVersion === null ? null : await acceptedBytes(seen, normalized, acceptedVersion).then((bytes) => artifactText(bytes), () => null);
     return {
       path: normalized, scope, bytes: contentOf(normalized, record), version: record.version, modifiedAt,
@@ -1142,7 +1187,7 @@ export async function reviewStoreArtifactAt(projectRoot, location, { commentOffs
     const { scope, address, target, record } = held;
     const file = checkoutPath(seen.kinds, address);
     const modifiedAt = (await lstat(target).catch(() => null))?.mtimeMs ?? null;
-    const { acceptedVersion } = await statusRecordOf(seen, scope, address);
+    const { acceptedVersion } = await withMovedAcceptance(seen, scope, address, file ?? location, await statusRecordOf(seen, scope, address), contentOf(file ?? location, record));
     const acceptedText = acceptedVersion === null ? null : await acceptedBytes(seen, file ?? location, acceptedVersion).then((bytes) => artifactText(bytes), () => null);
     return {
       location, path: file, scope, kind: address.kind, bytes: contentOf(file ?? location, record), version: record.version, modifiedAt,
@@ -1308,13 +1353,25 @@ export async function createMovedArtifacts(seen, writes, { held = null } = {}) {
  * Record the written status of a moved requirement or ADR whose store location already holds its bytes but no status record, as a move interrupted between the two leaves it,
  * while the caller holds the store's artifact lock; returns whether it wrote the record.
  */
-export async function recordMovedStatus(seen, scope, address, written) {
+export async function recordMovedStatus(seen, scope, address, written, bytes) {
   if (!hasStatus(address.kind)) return false;
   const target = await resolveStatusFile(seen, statusRecordLocation(scope, address));
   if ((await locationKind(target, baseFor(seen, target))) !== "missing") return false;
+  let record = newRecord(address.kind, written ?? null);
+  // A status that counts as accepted keeps the moved bytes as the accepted version, as the move that created the artifact keeps them.
+  if (acceptedWhenMoved(address.kind, written)) {
+    const version = artifactVersion(bytes);
+    const kept = await resolveStatusFile(seen, acceptedLocation(version));
+    if ((await locationKind(kept, baseFor(seen, kept))) === "missing") {
+      await mkdir(path.dirname(kept), { recursive: true });
+      await resolveAgain(seen, kept);
+      await writeAtomically(kept, bytes);
+    }
+    record = withAcceptedVersion(record, version, { event: "moved", at: new Date().toISOString() });
+  }
   await mkdir(path.dirname(target), { recursive: true });
   await resolveAgain(seen, target);
-  await writeAtomically(target, serializeRecord(newRecord(address.kind, written ?? null)));
+  await writeAtomically(target, serializeRecord(record));
   await markArtifactIndexStale(seen.store.base);
   if (seen.store.sync) scheduleRecordSync(seen.store.base);
   return true;
