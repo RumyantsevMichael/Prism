@@ -156,6 +156,9 @@ async function server(argumentsValue, metadata) {
 
 // Claude Code gives its agent only the structured content of a result that has one, so the text items after the first, which carry notes such as a move report or a saved conflict,
 // also go into the structured content as notes, in their order, after any notes it already holds.
+// Prism's refusal codes are lower-case words joined by "_", such as validation_failed, unlike Node's system error codes, such as ENOENT.
+const isRefusal = (error) => typeof error?.code === "string" && /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(error.code);
+
 function withNotesInStructure(value) {
   const structured = value?.structuredContent;
   if (!structured || typeof structured !== "object" || Array.isArray(structured) || !Array.isArray(value.content) || value.content.length < 2) return value;
@@ -1635,7 +1638,10 @@ input.on("line", async (line) => {
       failure(request.id, -32601, `Method not found: ${request.method}`);
     }
   } catch (error) {
-    log.warn("request_failed", { method: request?.method, ...(callNames.has(request?.id) ? { tool: callNames.get(request.id) } : {}), ...errorFields(error) });
+    const tool = callNames.has(request?.id) ? { tool: callNames.get(request.id) } : {};
+    // A refusal, which names its reason by a code of Prism's own, answers a call that the caller can fix, so it is no warning and carries no stack; any other error is one.
+    if (isRefusal(error)) log.info("request_refused", { method: request?.method, ...tool, code: error.code, error: error.message });
+    else log.warn("request_failed", { method: request?.method, ...tool, ...errorFields(error) });
     if (request?.id !== undefined && !cancelledCalls.has(request.id)) {
       const data = stateErrorData(error);
       failure(request.id, -32603, errorMessage(error, data), data);
@@ -1653,7 +1659,7 @@ input.on("line", async (line) => {
 // even when index preparation, a store sync, or a child process started meanwhile would keep it alive.
 // Claude Code sends SIGINT and then SIGTERM about a tenth of a second apart, and ends the process soon after, so the stores' pending syncs go to a detached process first.
 // On Windows a signal ends the process without running any of its code, so a detached watcher holds the pending syncs while any are pending and finishes them however the server ends.
-configureRecordSync({ watchPending: true });
+configureRecordSync({ watchPending: true, log });
 const CLOSE_GRACE_MS = 5000;
 let closing = false;
 async function stop(reason) {

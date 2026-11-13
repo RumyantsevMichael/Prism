@@ -47,6 +47,8 @@ Both tools refuse a file outside these paths, such as a feature file or a test, 
 ### Statuses change only at gates
 
 Prism records each requirement's and ADR's status in the store: `Draft` for a new requirement, `Proposed` for a new ADR, and the status written in a file that moved in from the checkout.
+A file that moved in with any other status than `Draft` or `Proposed`, such as `Approved` or `Accepted`, reached it before the move, so its moved text counts as accepted, and the review browser shows later edits as changes since then.
+A file that moved in that way with an earlier Prism takes its accepted version on its next read: the text it moved in with, which a store that Prism syncs finds in the store's Git history, or its current text in a store that Prism runs no Git in.
 After that, only your answer at a gate changes it.
 An agent's edit of a `Status:` line is kept, but Prism still reads the file with its recorded status and tells the agent which gate changes it.
 To approve a requirement, or an amendment of an Approved one, the agent asks for your approval with the `ask_approval` operation of `update_artifact`, and the question appears on [Attention](review-browser.md#attention).
@@ -62,7 +64,8 @@ An initiative of a project with a record store ships only after you approve its 
 ### Existing files move into the store
 
 The first Prism tool call of an agent session in a checkout moves each file that Git tracks under those paths into its repository's scope and removes it from the checkout, so commit those removals.
-Its result lists each moved file with its place in the store, each file that stayed and why, such as a copy in the store with other text, and each tracked file left in the checkout that still names a moved file's former path, with its line numbers, so you can update those references.
+Its result lists each moved file with its place in the store, each file that stayed and why, such as a copy in the store with other text, and each tracked file left in the checkout that still names a moved file's former path or a folder that files moved out of, with its line numbers, so you can update those references.
+`.prism/workflow.md` is left out of that list, since its configured paths stay the files' addresses.
 Frozen tests of accepted designs stay in the checkout.
 [Sync status](#sync-status) says when a move happens and what an interrupted move leaves behind.
 
