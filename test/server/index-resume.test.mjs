@@ -34,9 +34,9 @@ const records = (bytes) => Array.from({ length: Math.floor(bytes.length / RECORD
 
 test("clause 7: a build that keeps making progress runs well past the stall period", async (t) => {
   const { root, storage } = await project(t, { components: null });
-  // Each batch arrives well inside the stall period, with room for the snapshot check that a slow machine runs before the first report, and the build lasts longer than that period.
-  const { runtime, control } = await stagedRuntime(storage, { stallMs: 1200 });
-  control.delayMs = 400;
+  // Each embedding takes a third of the stall period, which leaves a busy runner room for the snapshot check before the first report, and the five embeddings together last longer than that period.
+  const { runtime, control } = await stagedRuntime(storage, { stallMs: STALL_MS });
+  control.delayMs = STALL_MS / 3;
   await prepare(runtime, root);
   const status = await statusIs(runtime, root, "ready");
   assert.equal(status.coverage.newEmbeddings, ORDER.length);
