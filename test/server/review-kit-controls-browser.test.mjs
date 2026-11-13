@@ -254,16 +254,16 @@ test("clauses 31, 32: chips are static text, links, or buttons, and badges are s
 
 test("clause 31: a chip too narrow for its label shortens the label first and keeps short secondary text whole", { skip }, async (context) => {
   const { page } = await catalog(context);
-  await mount(page, `<prism-chip id="narrow" interactive>${UNBROKEN}<span slot="meta">30</span></prism-chip>`, { width: "120px" });
+  await mount(page, `<prism-chip id="narrow" interactive>${UNBROKEN}<span slot="meta">30</span></prism-chip><br><prism-chip id="wide" interactive>short<span slot="meta">30</span></prism-chip>`, { width: "120px" });
   const sizes = await page.evaluate(() => {
-    const chip = document.querySelector("#narrow");
-    const meta = chip.querySelector("[slot=meta]");
-    const text = chip.shadowRoot.querySelector(".text");
-    return { chip: chip.getBoundingClientRect().width, meta: meta.getBoundingClientRect().width, metaWhole: meta.scrollWidth, text: text.getBoundingClientRect().width, textWhole: text.scrollWidth };
+    const part = (id, name) => document.querySelector(id).shadowRoot.querySelector(name);
+    const meta = part("#narrow", ".meta");
+    const text = part("#narrow", ".text");
+    return { chip: document.querySelector("#narrow").getBoundingClientRect().width, meta: meta.getBoundingClientRect().width, metaOverflow: meta.scrollWidth - meta.clientWidth, metaWide: part("#wide", ".meta").getBoundingClientRect().width, text: text.getBoundingClientRect().width, textWhole: text.scrollWidth };
   });
   assert.ok(sizes.chip <= 120.5, `the chip stays inside its container: ${JSON.stringify(sizes)}`);
-  assert.ok(sizes.text < sizes.textWhole, "the label shortens");
-  assert.ok(sizes.meta >= sizes.metaWhole, "the count is shown whole");
+  assert.ok(sizes.text < sizes.textWhole, `the label shortens: ${JSON.stringify(sizes)}`);
+  assert.ok(sizes.metaOverflow <= 0 && Math.abs(sizes.meta - sizes.metaWide) < 0.5, `the count is shown whole, as wide as in a chip with room: ${JSON.stringify(sizes)}`);
 });
 
 test("clauses 33, 34: tabs are a named tablist with one selected tab, move focus with arrow keys, and select with Enter", { skip }, async (context) => {
