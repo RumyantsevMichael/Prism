@@ -58,6 +58,18 @@ function gh(args, input) {
   }
 }
 
+// A job log holds terminal colour codes, which newer gh releases refuse to print, so the log is fetched directly and the codes are dropped.
+async function jobLog(repository, id) {
+  for (let attempt = 1; ; attempt += 1) {
+    const response = await fetch(`https://api.github.com/repos/${repository}/actions/jobs/${id}/logs`, {
+      headers: { authorization: `Bearer ${process.env.GH_TOKEN}`, accept: "application/vnd.github+json" }
+    });
+    if (response.ok) return (await response.text()).replace(/\x1b\[[0-9;]*m/g, "");
+    if (attempt === 3) throw new Error(`The log of job ${id} answered ${response.status}.`);
+    await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+  }
+}
+
 async function main() {
   const [id, ...flags] = process.argv.slice(2);
   if (!/^\d+$/.test(id ?? "")) throw new Error("Give the run id of a failed Validate run.");
@@ -67,7 +79,7 @@ async function main() {
   const run = api(`actions/runs/${id}`);
   const jobs = api(`actions/runs/${id}/attempts/${run.run_attempt}/jobs?per_page=100`).jobs;
   for (const job of jobs) {
-    if (job.conclusion === "failure") job.log = gh(["api", `repos/${repository}/actions/jobs/${job.id}/logs`]);
+    if (job.conclusion === "failure") job.log = await jobLog(repository, job.id);
   }
   const report = failureReport({ run, jobs });
   if (flags.includes("--dry-run")) {
