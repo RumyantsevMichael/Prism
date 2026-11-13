@@ -49,8 +49,8 @@ async function fixture() {
   git(project, "init", "-q");
   git(project, "add", ".");
   git(project, "commit", "-q", "-m", "init");
-  // The clone path Prism promises, computed here independently: SHA-256 of the remote without .git, first 16 hex characters.
-  const id = createHash("sha256").update(url.replace(/\.git$/, "")).digest("hex").slice(0, 16);
+  // The clone path Prism promises, computed here independently: the first 16 hex characters of the SHA-256 of the store identity, which for a file:// store is file: and the folder's real path.
+  const id = createHash("sha256").update(`file:${await realpath(path.join(work, "store.git"))}`).digest("hex").slice(0, 16);
   return { project, id };
 }
 
