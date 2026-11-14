@@ -82,7 +82,7 @@ test("clause 40: with nothing answered this week the page says so", { skip, time
   assert.equal(await page.locator("#artifact").getByText("No question was answered or closed in the last 7 days.", { exact: true }).isVisible(), true);
 });
 
-test("clauses 36, 39, 73: the Attention sidebar and its filtered page match the mockup at three widths in both themes", { skip, timeout: 900000 }, async (context) => {
+test("clauses 36, 39, 73: the Attention sidebar and its filtered page match the mockup at three widths, and in their colors in the dark theme", { skip, timeout: 900000 }, async (context) => {
   const result = await comparePlaces(context, { scenes: "attention,attention-filtered", parts: "sidebar,head,trail,geometry,tokens" });
   assert.equal(result.status, 0, `the comparison found differences:\n${result.stdout}${result.stderr}`);
   for (const pair of result.report.pairs) assert.deepEqual(pair.differences, [], `${pair.scene} ${pair.width} ${pair.theme}`);

@@ -131,7 +131,7 @@ test("clause 35: the filter keeps the initiatives and slices whose title holds t
   assert.deepEqual(page.errors, []);
 });
 
-test("clauses 30, 32, 33, 73: the Work sidebar matches the mockup at three widths in both themes", { skip, timeout: 900000 }, async (context) => {
+test("clauses 30, 32, 33, 73: the Work sidebar matches the mockup at three widths, and in its colors in the dark theme", { skip, timeout: 900000 }, async (context) => {
   const result = await comparePlaces(context, { scenes: "work,collapsed,drawer-tablet,drawer-phone", parts: "sidebar,head,geometry,tokens" });
   assert.equal(result.status, 0, `the comparison found differences:\n${result.stdout}${result.stderr}`);
   for (const pair of result.report.pairs) assert.deepEqual(pair.differences, [], `${pair.scene} ${pair.width} ${pair.theme}`);

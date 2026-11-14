@@ -11,10 +11,11 @@ import { choosePlace, drawer, open, placesDemo, SLICE, sidebar } from "./fixture
 const LONG_QUERY = "a-filter-query-with-no-spaces-anywhere-that-is-longer-than-the-field-can-ever-show";
 const SHOTS = process.env.PRISM_FILTER_SHOTS;
 
-test("the Work filter hides the native search clear button at three widths in both themes and Escape clears it first", { skip, timeout: 180000 }, async (context) => {
+test("the Work filter hides the native search clear button at three widths and Escape clears it first", { skip, timeout: 180000 }, async (context) => {
   const { base, browser } = await placesDemo(context);
   for (const width of [1440, 820, 390]) {
-    for (const colorScheme of ["light", "dark"]) {
+    // The dark theme changes only colors, so the light theme's geometry is the dark theme's too.
+    for (const colorScheme of ["light"]) {
       const page = await open(browser, base, SLICE, { width, colorScheme });
       const narrow = width < 1000;
       if (narrow) {

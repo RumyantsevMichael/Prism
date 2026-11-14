@@ -101,9 +101,20 @@ export const tabs = (page) => page.evaluate(() => [...document.querySelectorAll(
 
 /**
  * Runs the places comparison of the demo app with the approved mockup and returns its exit status and report.
- * Every slice that changes a screen runs it for its scenes and parts at 390, 820, and 1440 pixels in both themes.
+ * Every slice that changes a screen runs it for its scenes and parts at 390, 820, and 1440 pixels in the light theme.
+ * The dark theme changes only colors, so it is compared only for the design values, and only at the widest width the scenes have.
  */
-export async function comparePlaces(context, { scenes, parts, widths = "1440,820,390", themes = "light,dark" }) {
+export async function comparePlaces(context, { scenes, parts, widths = "1440,820,390", themes = "light" }) {
+  const runs = [{ widths, themes, parts }];
+  const all = parts ?? "rail,head,sidebar,topbar,trail,geometry,tokens";
+  if (themes === "light" && all.split(",").includes("tokens")) runs.push({ widths: "1440", themes: "dark", parts: "tokens" });
+  const results = [];
+  for (const run of runs) results.push(await comparePlacesOnce(context, { scenes, ...run }));
+  const report = results.every((result) => result.report) ? { ...results[0].report, pairs: results.flatMap((result) => result.report.pairs) } : null;
+  return { status: Math.max(...results.map((result) => result.status ?? 2)), stdout: results.map((result) => result.stdout).join(""), stderr: results.map((result) => result.stderr).join(""), report, out: results[0].out };
+}
+
+async function comparePlacesOnce(context, { scenes, parts, widths, themes }) {
   const out = await mkdtemp(path.join(os.tmpdir(), "prism-places-pairs-"));
   context.after(() => rm(out, { recursive: true, force: true }));
   const args = [path.join(ROOT, "scripts/review-demo/places-compare.mjs"), "--out", out, "--scenes", scenes, "--widths", widths, "--themes", themes];

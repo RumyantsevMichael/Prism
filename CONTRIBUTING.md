@@ -212,7 +212,12 @@ It fails on content that escapes its container, a page that scrolls the whole wi
 It also checks the component catalog of the empty project at each viewport and theme, and prints each catalog problem as `catalog <entry>: <problem> at <viewport> (<width>px), <theme>`.
 `--catalog <url>` checks only the catalog at that URL.
 `--viewports`, `--themes`, and `--screenshots <directory>` widen the run or keep screenshots for a visual pass.
-Playwright is not a repository dependency, so the check uses an installed copy and is not part of CI.
+Playwright is not a repository dependency, so the check uses an installed copy.
+Run it with `--themes light,dark` before you finish a UI change.
+
+CI runs the layout check and the places comparison in the light theme only, and compares only the places' colors in the dark theme, at 1440 pixels.
+The dark theme changes only colors and shadows, which `test/server/review-kit-tokens.test.mjs` holds, so its layout is the light theme's, and the contrast tests check its colors.
+The person or agent who changes a screen still checks it in both themes, as the [verify-ui skill](.claude/skills/verify-ui/SKILL.md) describes.
 
 A change to a screen that the UI kit mockup shows is done only when the rendered screen matches the mockup, so compare them side by side:
 
@@ -237,7 +242,7 @@ An outline reads the rail, the place head, the sidebar's groups with their fixed
 A geometry value that differs by more than 2 pixels is a difference, and so is any other value that differs, except that the app may leave out a sidebar group that the mockup marks `data-optional`.
 `--scenes`, `--widths`, `--themes`, and `--parts` narrow the run to comma-separated values, `--mockup <file>` reads another mockup, and `--app-mockup <file>` renders that mockup in place of the app, so the comparison can check itself.
 It exits 0 when no pair differs, 1 when one does, after printing each difference, and 2 with a message for a missing `--out`, an unknown scene, part, width, or theme, an unreadable mockup, or no Playwright.
-A slice that changes a screen that a scene shows is done only when its frozen tests run this comparison for its scenes and parts at 390, 820, and 1440 pixels in both themes, it passes, and the implementer has looked at every pair it wrote and names in the pull request each difference that the outline does not measure.
+A slice that changes a screen that a scene shows is done only when its frozen tests run this comparison for its scenes and parts at 390, 820, and 1440 pixels, it passes, and the implementer has run it in both themes, looked at every pair it wrote, and names in the pull request each difference that the outline does not measure.
 
 With both manifests present the CLI validates the marketplace one.
 To validate `plugin.json` in isolation, copy the plugin into a scratch directory without `marketplace.json` and validate that.

@@ -72,7 +72,7 @@ test("clause 61: Changed this week lists an uncommitted change first, labeled No
   assert.deepEqual(page.errors, []);
 });
 
-test("clauses 55, 73: the Knowledge sidebar and the Touched page's trail match the mockup at three widths in both themes", { skip, timeout: 900000 }, async (context) => {
+test("clauses 55, 73: the Knowledge sidebar and the Touched page's trail match the mockup at three widths, and in their colors in the dark theme", { skip, timeout: 900000 }, async (context) => {
   const result = await comparePlaces(context, { scenes: "knowledge", parts: "sidebar,head,trail,geometry,tokens" });
   assert.equal(result.status, 0, `the comparison found differences:\n${result.stdout}${result.stderr}`);
   for (const pair of result.report.pairs) assert.deepEqual(pair.differences, [], `${pair.scene} ${pair.width} ${pair.theme}`);

@@ -247,3 +247,22 @@ test("clause 5: the build copies the kit and the area stylesheets to dist unchan
     for (const file of listed) assert.ok((await readFile(path.join(built, file))).equals(await readFile(path.join(source, file))), `dist holds ${folder}/${file} byte for byte`);
   }
 });
+
+// review-app-ui-kit §19: the layout checks run in the light theme only, which holds for the dark theme only while the dark theme changes paint alone, never a size, a space, or a font.
+test("the dark theme changes only paint: every value it sets is a light value with other colors, or a shadow", async () => {
+  const parsed = await tokens();
+  const light = ruleOf(parsed, ':root, [data-theme="light"]').declarations;
+  const base = ruleOf(parsed, ":root").declarations;
+  const dark = ruleOf(parsed, '[data-theme="dark"]').declarations;
+  // A value with its colors taken out: hex colors, color functions, and color keywords.
+  const shape = (value) => value.replace(/#[0-9a-f]{3,8}\b/gi, "COLOR").replace(/\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix)\([^()]*(?:\([^()]*\)[^()]*)*\)/gi, "COLOR").replace(/\b(?:transparent|currentcolor|black|white)\b/gi, "COLOR").replace(/\s+/g, " ").trim();
+  const problems = [];
+  for (const [name, value] of Object.entries(dark)) {
+    // A shadow paints outside the box and never moves or sizes it, so its offsets and blur may differ.
+    if (name === "color-scheme" || name.startsWith("--prism-shadow-")) continue;
+    const other = light[name] ?? base[name];
+    if (other === undefined) problems.push(`${name} has no light value`);
+    else if (shape(value) !== shape(other)) problems.push(`${name}: ${value} is not ${other} with other colors`);
+  }
+  assert.deepEqual(problems, []);
+});
