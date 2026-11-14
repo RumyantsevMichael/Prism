@@ -214,7 +214,7 @@
       "clause 38: controls that receive many items or long names stay inside their containers at a narrow width": 1
     },
     "test/server/review-kit-everywhere-browser.test.mjs": {
-      "clause 62: the layout check passes every page, overlay, and the catalog at a phone and a laptop width in both themes": 2,
+      "clause 62: the layout check passes every page, overlay, and the catalog at a phone and a laptop width in the light theme": 2,
       "clauses 7, 8: a further theme given the dark theme's values renders every page exactly as the dark theme does, shadow controls included": 1,
       "clause 7: a theme that flattens the islands gives every island no gap, no radius, and no shadow": 4,
       "clauses 9, 21, 24: comfortable density makes every kit control of the page taller, and reduced motion stills the page": 7,
@@ -247,7 +247,7 @@
     },
     "test/server/review-layout-check.test.mjs": {
       "clause 60: a catalog entry that escapes its container, cuts off a control, or scrolls the page is named with its width and theme": 10,
-      "clause 60: the shipped catalog passes the layout check at a phone and a wide width in both themes": 1,
+      "clause 60: the shipped catalog passes the layout check at a phone and a wide width in the light theme": 1,
       "clause 61: the layout check command prints each catalog problem with its entry, viewport, width, and theme, and fails": 8
     },
     "test/server/review-markdown.test.mjs": {

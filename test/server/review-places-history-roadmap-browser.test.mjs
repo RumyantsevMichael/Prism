@@ -137,7 +137,7 @@ test("clause 45: a lane link opens the board with that lane in view, and again w
   assert.deepEqual(page.errors, []);
 });
 
-test("clauses 44, 47, 73: the History and Roadmap sidebars match the mockup at three widths in both themes", { skip, timeout: 900000 }, async (context) => {
+test("clauses 44, 47, 73: the History and Roadmap sidebars match the mockup at three widths, and in their colors in the dark theme", { skip, timeout: 900000 }, async (context) => {
   const result = await comparePlaces(context, { scenes: "history,roadmap", parts: "sidebar,head,trail,geometry,tokens" });
   assert.equal(result.status, 0, `the comparison found differences:\n${result.stdout}${result.stderr}`);
   for (const pair of result.report.pairs) assert.deepEqual(pair.differences, [], `${pair.scene} ${pair.width} ${pair.theme}`);
