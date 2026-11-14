@@ -39,17 +39,22 @@ jobs:
           npm run build:native
           npm test
 
-  # The server tests, browser tests included, run in four shards on Linux and on Windows, since one runner takes about half an hour for them.
+  # The server tests, browser tests included, run in four shards on Linux and eight on Windows, since one runner takes about half an hour for them on Linux and about two hours on Windows.
   # A Windows shard runs two test files at a time instead of three, because three browser files at once on one runner fail with net::ERR_NO_BUFFER_SPACE.
   # Windows users install the same plugin, and its hooks, MCP server, and Git calls behave differently there.
-  # scripts/test-shard.mjs balances the shards by the file durations in test/server/durations.json.
+  # scripts/test-shard.mjs balances each system's shards by that system's file durations, test/server/durations.win32.json on Windows and test/server/durations.json on Linux.
   server-tests:
-    name: server tests (${{ matrix.os }}, ${{ matrix.shard }}/4)
+    name: server tests (${{ matrix.os }}, ${{ matrix.shard }}/${{ matrix.os == 'windows-2025' && 8 || 4 }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-2025]
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        exclude:
+          - { os: ubuntu-latest, shard: 5 }
+          - { os: ubuntu-latest, shard: 6 }
+          - { os: ubuntu-latest, shard: 7 }
+          - { os: ubuntu-latest, shard: 8 }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     defaults:
@@ -84,7 +89,7 @@ jobs:
           npm ci --prefix scripts/native-build --ignore-scripts --no-audit --no-fund
           npm ci --prefix src/native-runtime --ignore-scripts --no-audit --no-fund
           npm run build:native
-          node scripts/test-shard.mjs --shard ${{ matrix.shard }}/4 -- --test-timeout=1200000 ${{ runner.os == 'Windows' && '--test-concurrency=2' || '' }}
+          node scripts/test-shard.mjs --shard ${{ matrix.shard }}/${{ matrix.os == 'windows-2025' && 8 || 4 }} -- --test-timeout=1200000 ${{ runner.os == 'Windows' && '--test-concurrency=2' || '' }}
 
   checks:
     runs-on: ubuntu-latest
