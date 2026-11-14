@@ -128,9 +128,9 @@ npx playwright install chromium
 PRISM_REQUIRE_BROWSER=1 npm test
 ```
 
-CI splits the server tests into four shards on Linux and four on Windows, each on its own runner, so the browser tests do not hold one runner for half an hour.
+CI splits the server tests into four shards on Linux and eight on Windows, each on its own runner, so the browser and Git tests do not hold one runner for half an hour or more.
 A Windows shard runs two test files at a time with `--test-concurrency=2`, because three browser test files at once on one Windows runner fail with `net::ERR_NO_BUFFER_SPACE`.
-`scripts/test-shard.mjs` balances the shards by the file durations in `test/server/durations.json`, and the `validate` and `windows` checks pass only when every shard passed.
+`scripts/test-shard.mjs` balances the shards by recorded file durations, from `test/server/durations.win32.json` on Windows and `test/server/durations.json` elsewhere, and the `validate` and `windows` checks pass only when every shard passed.
 When Validate fails on main, the `Report main failures` workflow comments on the open issue labelled `ci-main-failure` with each failed test and its error, and opens that issue when none is open.
 Close that issue once main is stable again.
 A test file that the durations do not list counts as a median file, so a new file needs no update to run.
@@ -141,10 +141,12 @@ PRISM_REQUIRE_BROWSER=1 node scripts/test-shard.mjs --shard 2/4 -- --test-timeou
 node scripts/test-shard.mjs --shard 2/4 --list
 ```
 
-When a shard runs much longer than the others, record the durations again with a full run and commit the rewritten file:
+When a shard runs much longer than the others, record the durations again with a full run on that system and commit the rewritten file.
+The run writes the table of the system it runs on: run the first command on Linux, and the second on Windows, with the concurrency that CI uses there.
 
 ```bash
 PRISM_REQUIRE_BROWSER=1 node scripts/test-shard.mjs --record
+PRISM_REQUIRE_BROWSER=1 node scripts/test-shard.mjs --record -- --test-concurrency=2
 ```
 
 ### Review app design values

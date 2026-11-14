@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { DURATIONS, parseShard, shardFiles, testFiles } from "./test-shard.mjs";
+import { DURATIONS, durationsFile, parseShard, shardFiles, testFiles } from "./test-shard.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const run = promisify(execFile);
@@ -46,4 +47,14 @@ test("a shard is named k/n with 1 <= k <= n", async () => {
   assert.deepEqual(listed.stdout.trim().split("\n").sort(), testFiles());
   const refused = await run(process.execPath, [path.join(ROOT, "scripts/test-shard.mjs"), "--shard", "5/4"], { cwd: ROOT }).then(() => null, (error) => error);
   assert.ok(refused, "an out-of-range shard fails");
+});
+
+test("a system balances by its own durations table when there is one, and by the shared one otherwise", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "prism-test-shard-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, "test/server"), { recursive: true });
+  await writeFile(path.join(root, "test/server/durations.win32.json"), "{}\n");
+  assert.equal(durationsFile("win32", root), path.join("test/server", "durations.win32.json"));
+  assert.equal(durationsFile("linux", root), DURATIONS);
+  assert.equal(durationsFile("darwin", root), DURATIONS);
 });
