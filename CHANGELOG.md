@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.25.0](https://github.com/RumyantsevMichael/Prism/compare/v0.24.0...v0.25.0) (2026-11-14)
+
+
+### Added
+
+* open a whole workspace in the review app ([#265](https://github.com/RumyantsevMichael/Prism/issues/265)) ([0632fe1](https://github.com/RumyantsevMichael/Prism/commit/0632fe1ecdaca30e1d91fa64623de2bba5b99f5e))
+
+
+### Fixed
+
+* **review:** keep times current, let a chosen answer be cleared, add About ([#283](https://github.com/RumyantsevMichael/Prism/issues/283)) ([b047572](https://github.com/RumyantsevMichael/Prism/commit/b0475724cea27b29e8cb39ef83c40fba001a2b35)), closes [#279](https://github.com/RumyantsevMichael/Prism/issues/279) [#280](https://github.com/RumyantsevMichael/Prism/issues/280) [#281](https://github.com/RumyantsevMichael/Prism/issues/281)
+* **store:** read a sync's blobs in batches, and steady three Windows test waits ([#270](https://github.com/RumyantsevMichael/Prism/issues/270)) ([40eec8b](https://github.com/RumyantsevMichael/Prism/commit/40eec8b198b942cef4fd90a9d39ee77aa6dd1dcf)), closes [#269](https://github.com/RumyantsevMichael/Prism/issues/269) [#262](https://github.com/RumyantsevMichael/Prism/issues/262)
+* **store:** report, log, and accept moved artifacts as a person reads them ([#282](https://github.com/RumyantsevMichael/Prism/issues/282)) ([b39b91f](https://github.com/RumyantsevMichael/Prism/commit/b39b91f6d2edad3a27b780ede3dd3db3aaf12ecf))
+
 ## [0.24.0](https://github.com/RumyantsevMichael/Prism/compare/v0.23.0...v0.24.0) (2026-11-13)
 
 
