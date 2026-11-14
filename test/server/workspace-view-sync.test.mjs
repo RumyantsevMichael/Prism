@@ -73,17 +73,21 @@ test("clause 23: failed fetches back off by doubling up to the maximum, and a su
   const { store, prism, id, sync } = await addedWorkspace(context);
   await rename(store.bare, `${store.bare}.away`);
   openPage(context, prism, id);
-  const attempts = [];
-  const deadline = Date.now() + 6000;
-  while (Date.now() < deadline) {
+  // Each wait is read from the attempt it follows, from its start to the next fetch it schedules, so a slow Git fetch does not lengthen it.
+  // While a fetch runs, the next fetch is still the one it started at, which a timer can fire a millisecond early, so a wait shorter than the interval is that one.
+  const waits = new Map();
+  const deadline = Date.now() + 20000;
+  while (waits.size < 4 && Date.now() < deadline) {
     const state = await sync();
-    if (state?.lastAttemptAt && attempts.at(-1) !== state.lastAttemptAt) attempts.push(state.lastAttemptAt);
+    const wait = Date.parse(state?.nextFetchAt) - Date.parse(state?.lastAttemptAt);
+    if (wait >= 300) waits.set(state.lastAttemptAt, wait);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  const gaps = attempts.slice(1).map((at, index) => Date.parse(at) - Date.parse(attempts[index]));
-  assert.ok(gaps.length >= 3, `several failed fetches were attempted: ${attempts.join(", ")}`);
-  assert.ok(gaps[0] >= 500, `the second wait doubles: ${gaps.join(", ")}`);
-  assert.ok(gaps.every((gap) => gap <= 1200 + 400), `no wait passes the maximum: ${gaps.join(", ")}`);
+  const observed = [...waits.values()];
+  assert.ok(observed.length >= 4, `several failed fetches were attempted: ${observed.join(", ")}`);
+  assert.ok(observed.every((wait, index) => index === 0 || wait === Math.min(observed[index - 1] * 2, 1200)), `each wait doubles: ${observed.join(", ")}`);
+  assert.ok(observed[0] >= 600, `the wait after a failure is twice the interval or more: ${observed.join(", ")}`);
+  assert.equal(observed.at(-1), 1200, `the waits stop at the maximum: ${observed.join(", ")}`);
   await rename(`${store.bare}.away`, store.bare);
   const restored = await eventually(async () => { const state = await sync(); return state.state === "ok" && state; }, 10000, "a fetch succeeding again");
   assert.ok(Date.parse(restored.nextFetchAt) - Date.parse(restored.lastAttemptAt) <= 300 + 200, "the wait is the interval again");
