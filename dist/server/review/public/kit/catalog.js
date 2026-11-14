@@ -30,7 +30,7 @@ const densityItems = `<prism-menu-group label="Density"><prism-menu-item type="r
 const themeTiles = `<prism-menu-group label="Theme" layout="tiles"><prism-menu-item type="radio" variant="tile" preview="system" value="system" checked><prism-icon name="monitor" size="xs"></prism-icon>System</prism-menu-item><prism-menu-item type="radio" variant="tile" preview="light" value="light"><prism-icon name="sun" size="xs"></prism-icon>Light</prism-menu-item><prism-menu-item type="radio" variant="tile" preview="dark" value="dark"><prism-icon name="moon" size="xs"></prism-icon>Dark</prism-menu-item></prism-menu-group>`;
 const densitySegments = `<prism-menu-group label="Density" layout="segmented"><prism-menu-item type="radio" variant="segment" value="compact" checked>Compact</prism-menu-item><prism-menu-item type="radio" variant="segment" value="comfortable">Comfortable</prism-menu-item></prism-menu-group>`;
 const tabsOf = (labels, selected = 0, extra = "") => `<prism-tabs label="Specimen tabs">${labels.map((label, index) => `<prism-tab value="t${index}"${index === selected ? " selected" : ""}${extra && index === labels.length - 1 ? ` ${extra}` : ""}>${html(label)}</prism-tab>`).join("")}</prism-tabs>`;
-const choiceOf = (options, { label = "Your answer", value = "" } = {}) => `<prism-choice label="${html(label)}" name="${id("catalog-choice")}"${value ? ` value="${value}"` : ""}>${options}</prism-choice>`;
+const choiceOf = (options, { label = "Your answer", value = "", clearable = false } = {}) => `<prism-choice label="${html(label)}" name="${id("catalog-choice")}"${value ? ` value="${value}"` : ""}${clearable ? " clearable" : ""}>${options}</prism-choice>`;
 const answers = `<prism-choice-option value="accept">Accept<span slot="detail">The slices start in order.</span></prism-choice-option><prism-choice-option value="changes" tone="danger">Request changes<span slot="detail">Design revises the contract.</span></prism-choice-option>`;
 
 // A document with its contents beside it: the contents list its sections, one of them current, and the document holds a short paragraph under each.
@@ -82,6 +82,10 @@ function claimOf({ variant, label = "Claude on build-2", host = "", activity = "
   const at = (minutes) => new Date(Date.now() + minutes * 60000).toISOString();
   return `<prism-claim variant="${variant}" label="${html(label)}"${host ? ` host="${html(host)}"` : ""} activity="${activity}" claimed-at="${at(left - 90)}" renewed-at="${at(left - 30)}" expires-at="${at(left)}"></prism-claim>`;
 }
+
+// A time `count` minutes from now, as an ISO timestamp, and a prism-time of it in the default format.
+const minutesFrom = (count) => new Date(Date.now() + count * 60000).toISOString();
+const timeOf = (count) => `<prism-time datetime="${minutesFrom(count)}"></prism-time>`;
 
 // The six phases with the first `reached` done and the next one current.
 // A table of figures with one row per subject and one column per measure, each value cell named by its column for the narrow layout.
@@ -146,6 +150,7 @@ const SPECIMENS = {
     tones: TONES.map((tone) => `<prism-chip tone="${tone}">${tone}</prism-chip>`).join(""),
     link: `<prism-chip href="#entry-prism-chip" tone="accent">Kit controls</prism-chip>`,
     interactive: `<prism-chip interactive>Filter by status</prism-chip>`,
+    pressed: `<prism-chip interactive pressed="true">api<span slot="meta">3</span></prism-chip><prism-chip interactive pressed="false">web<span slot="meta">1</span></prism-chip>`,
     meta: `<prism-chip tone="danger">Open findings<span slot="meta">3</span></prism-chip><prism-chip>Change map<span slot="meta">12 planned</span></prism-chip>`,
     "long-text": `<prism-chip tone="warning">${LONG}</prism-chip>`,
     "unbroken-name": `<prism-chip>${UNBROKEN}</prism-chip>`
@@ -271,6 +276,7 @@ const SPECIMENS = {
   "prism-choice": {
     unchosen: choiceOf(answers),
     chosen: choiceOf(answers, { value: "accept" }),
+    clearable: choiceOf(answers, { label: "Your answer · click the chosen option again to clear it", value: "accept", clearable: true }),
     "with-detail": choiceOf(`<prism-choice-option value="now">Start now<span slot="detail">The first slice starts at once and the others wait for it.</span></prism-choice-option><prism-choice-option value="later">Later<span slot="detail">Nothing starts until you come back.</span></prism-choice-option>`, { label: "When to start" }),
     "many-items": choiceOf(repeat(12, (index) => `<prism-choice-option value="v${index}">${index % 3 ? `Option ${index + 1}` : `${UNBROKEN}-${index + 1}`}</prism-choice-option>`), { label: "Pick one of many" }),
     "long-text": choiceOf(`<prism-choice-option value="long">${LONG}<span slot="detail">${LONG}</span></prism-choice-option>`, { label: LONG }),
@@ -454,6 +460,14 @@ const SPECIMENS = {
     "expired-strip": claimOf({ variant: "strip", label: "Claude on vm", left: -95 }),
     "long-text": claimOf({ variant: "inline", label: LONG }) + claimOf({ variant: "strip", label: LONG, left: 3000 }),
     "unbroken-name": claimOf({ variant: "inline", label: UNBROKEN }) + claimOf({ variant: "strip", label: UNBROKEN, left: -3000 })
+  },
+  "prism-time": {
+    ago: timeOf(-7) + " · " + timeOf(-0.2) + " · " + timeOf(-3000),
+    short: `<prism-time format="short" datetime="${minutesFrom(-7)}"></prism-time> · <prism-time format="short" datetime="${minutesFrom(-0.2)}"></prism-time> · <prism-time format="short" datetime="${minutesFrom(-150)}"></prism-time>`,
+    left: `<prism-time format="left" datetime="${minutesFrom(30)}"></prism-time> · <prism-time format="left" datetime="${minutesFrom(180)}"></prism-time>`,
+    expired: `<prism-time format="left" datetime="${minutesFrom(-4)}"></prism-time>`,
+    "long-text": `<span class="catalog-note">${html(LONG)}, asked <prism-time datetime="${minutesFrom(-12)}"></prism-time></span>`,
+    "unbroken-name": `<span class="catalog-note">${UNBROKEN} <prism-time format="short" datetime="${minutesFrom(-12)}"></prism-time></span>`
   },
   "prism-stepper": {
     default: stepper(3),

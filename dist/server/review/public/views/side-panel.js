@@ -34,7 +34,7 @@ function fileBody(data, { renderMarkdown }) {
     return `<ol class="source-lines">${lines.map((line, index) => `<li id="${HEADING_PREFIX}L${index + 1}"><code>${line || " "}</code></li>`).join("")}</ol>`;
   }
   if (data.path.toLowerCase().endsWith(".md")) {
-    return `<prism-doc class="document-content">${renderMarkdown(data.path, data.content) || '<p class="muted">The document is empty.</p>'}</prism-doc>`;
+    return `<prism-doc class="document-content">${renderMarkdown(data.path, data.content, data.links) || '<p class="muted">The document is empty.</p>'}</prism-doc>`;
   }
   if (data.path.toLowerCase().endsWith(".puml")) return "";
   const note = data.kind ? '<p class="side-panel-note">Open it as a page to see it as a structured view.</p>' : "";

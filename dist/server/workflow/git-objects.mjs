@@ -2,6 +2,11 @@
 // so the store sync applies them whatever this machine's Git checks: a commit or a tree that passes here passes the check of every Git release from 2.25 to 2.52.
 // Each rule names the Git function it ports; the releases that added a rule are noted where an older supported Git lacks it.
 
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execute = promisify(execFile);
+
 // Code points that HFS+ ignores in a name, as Git 2.43's next_hfs_char in utf8.c lists them.
 const HFS_IGNORED = new Set([0x200c, 0x200d, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x206a, 0x206b, 0x206c, 0x206d, 0x206e, 0x206f, 0xfeff]);
 
@@ -380,4 +385,56 @@ export function linkTargetProblem(target) {
     at = end + 1;
   }
   return parts.some(dotGitName) ? { id: "symlinkPointsToGitDir", text: "symlink target points to git dir" } : null;
+}
+
+// Git's object identifier of no object, which a raw diff names for the side where a path is absent.
+const NO_OBJECT = /^0+$/;
+
+/**
+ * The paths that differ between two trees of a project's repository and each path's object in the second tree:
+ * [{ path, blob }] in Git's order, blob null where the second tree does not hold the path, and a moved file a removal and an addition.
+ * A project below its Git top folder counts only its own paths, relative to the project root, as its content trees hold the whole checkout.
+ * Returns null when Git cannot compare the trees, such as when it no longer holds one of them.
+ */
+export async function changedBlobs(projectRoot, from, to) {
+  try {
+    const env = { ...process.env, GIT_OPTIONAL_LOCKS: "0" };
+    const prefix = (await execute("git", ["rev-parse", "--show-prefix"], { cwd: projectRoot, env, windowsHide: true })).stdout.trim();
+    const { stdout } = await execute("git", ["diff-tree", "-r", "-z", "--raw", "--no-abbrev", "--no-renames", ...(prefix ? [`--relative=${prefix}`] : []), "--end-of-options", from, to], { cwd: projectRoot, env, maxBuffer: 256 * 1024 * 1024, windowsHide: true });
+    const fields = stdout.split("\0");
+    const changed = [];
+    for (let at = 0; at + 1 < fields.length; at += 2) {
+      const object = fields[at].split(" ")[3];
+      if (fields[at][0] !== ":" || object === undefined) return null;
+      changed.push({ path: fields[at + 1], blob: NO_OBJECT.test(object) ? null : object });
+    }
+    return changed;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The object that a tree of a project's repository holds at each of the given project-relative paths: Map(path, object), null where the tree holds no such path.
+ * The paths are taken literally, so a path with a pattern character names only itself.
+ * Returns null when Git cannot read the tree.
+ */
+export async function objectsAt(projectRoot, tree, paths) {
+  const found = new Map(paths.map((item) => [item, null]));
+  if (!paths.length) return found;
+  try {
+    const env = { ...process.env, GIT_OPTIONAL_LOCKS: "0" };
+    const { stdout } = await execute("git", ["--literal-pathspecs", "ls-tree", "-z", "--full-name", "--end-of-options", tree, "--", ...paths], { cwd: projectRoot, env, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
+    const prefix = (await execute("git", ["rev-parse", "--show-prefix"], { cwd: projectRoot, env, windowsHide: true })).stdout.trim();
+    for (const line of stdout.split("\0")) {
+      const tab = line.indexOf("\t");
+      if (tab < 0) continue;
+      const name = line.slice(tab + 1);
+      const relative = name.startsWith(prefix) ? name.slice(prefix.length) : null;
+      if (relative !== null && found.has(relative)) found.set(relative, line.slice(0, tab).split(" ")[2]);
+    }
+    return found;
+  } catch {
+    return null;
+  }
 }

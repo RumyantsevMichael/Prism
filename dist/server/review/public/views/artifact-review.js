@@ -5,8 +5,11 @@ import { badge, chip, emptyNote, escapeHtml, formatTime, keyValues, plural } fro
 // The review view of a store artifact, shown above its content: its scope, its lines against the version a person last accepted, and the comments people left on it,
 // with a form that comments through the review app's artifact.comment action, as every other change of the page goes through the actions registry.
 
-/** The action target of a store artifact: artifact:<scope label>:<path>, which no scope label or artifact name can make ambiguous, since neither holds a ":". */
-export const commentTarget = (data) => `artifact:${data.artifact.scope?.label ?? "workspace"}:${data.path}`;
+/**
+ * The action target of a store artifact: artifact:<scope label>:<location below the scope's folder> as a workspace's read names it, or else artifact:<scope label>:<path>,
+ * which no scope label or artifact name can make ambiguous, since neither holds a ":".
+ */
+export const commentTarget = (data) => data.artifact.target ?? `artifact:${data.artifact.scope?.label ?? "workspace"}:${data.path}`;
 
 function acceptance(review) {
   if (!review.accepted) return badge("Never accepted", "warning");
@@ -150,7 +153,7 @@ export function artifactReviewHtml(data, state = {}) {
   const review = data.artifact;
   if (!review) return "";
   return `<prism-panel class="view-section artifact-review" heading="Review">
-    ${keyValues([["Scope", chip(escapeHtml(review.scope?.label ?? "workspace"))], ["Accepted", acceptance(review)]])}
+    ${keyValues([["Scope", chip(escapeHtml(review.scope?.label ?? "workspace"), { attributes: " data-scope-label" })], ["Accepted", acceptance(review)]])}
     <div class="artifact-review-changes">${changes(data)}</div>
     ${numberedLines(data, state.artifactLinesOpen === true)}
     <section class="artifact-review-comments" aria-labelledby="artifact-comments-heading">

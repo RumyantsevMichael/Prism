@@ -44,7 +44,7 @@ async function configuredStore(root, env) {
   const configured = workspace?.store ?? null;
   if (configured === null) return { store: null, repository: null };
   if (isRemoteStore(configured)) {
-    const id = managedStoreId(configured);
+    const id = await managedStoreId(configured);
     return { store: id ? await real(path.join(managedStoresDirectory(env), id)) : null, repository: workspace.repository };
   }
   return { store: await real(path.resolve(root, configured)), repository: workspace.repository };
@@ -82,4 +82,11 @@ export async function recordCheckout({ store, repository, path: checkout, env = 
     await writeAtomically(file, `${JSON.stringify({ schemaVersion: SCHEMA_VERSION, checkouts }, null, 2)}\n`, { mode: 0o600 });
     return true;
   }, undefined, { timeoutMs: LOCK_TIMEOUT_MS }));
+}
+
+/** The entries of this machine's checkout list whose folder still holds a .prism/workflow.md that names the listed store and repository, as { store, repository, path }; [] when the list cannot be read. */
+export async function listMachineCheckouts(env = process.env) {
+  const listed = await readEntries(checkoutsFile(env)).catch(() => null) ?? [];
+  const held = await Promise.all(listed.map(async (entry) => (await stillHolds(entry, env)) ? { store: entry.store, repository: entry.repository, path: entry.path } : null));
+  return held.filter(Boolean);
 }

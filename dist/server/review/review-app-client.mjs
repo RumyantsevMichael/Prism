@@ -229,6 +229,11 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
     return call("POST", "/control/present", { projectRoot, open: true, start: true, acceptsGrant: true, ...storage });
   }
 
+  // Opens the app's root, which lists every workspace, without naming a checkout.
+  function presentRoot() {
+    return call("POST", "/control/present", { open: true, acceptsGrant: true });
+  }
+
   // Starts the app without a project, for a host that names its project only with its first tool call.
   async function start() {
     await app();
@@ -242,5 +247,5 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
     await Promise.allSettled(released.map((lease) => controlRequest(current, "DELETE", `/control/projects/${lease.id}`)));
   }
 
-  return { directory, register, release, present, openAtStart, start, close };
+  return { directory, register, release, present, presentRoot, openAtStart, start, close };
 }

@@ -1952,6 +1952,13 @@ prism-toast[tone="danger"] .prism-toast-icon { color: var(--prism-color-danger);
   min-width: 0;
 }
 
+/* ---------- prism-time: a time in words that keeps itself current ---------- */
+
+prism-time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 /* ---------- prism-claim: an agent avatar, the holder, the activity with its phase facet, and the time left ---------- */
 
 prism-claim {

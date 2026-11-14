@@ -5,6 +5,7 @@ import { copyFile, lstat, mkdir, open, readdir, readFile, rename, rm, rmdir, wri
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, IDENTITY_FILE_MAX, identityContent, identityOf, letterCaseKey, locationIdentity, STATUS_RECORD_NAME, uniqueIdentities, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
+import { markArtifactIndexStale } from "./artifact-index.mjs";
 import { renameWhenFree, withFileLock, writeAtomically } from "./artifact-store.mjs";
 import { commitProblem, gitFileName, isLinkMode, LINK_TARGET_BYTES_MAX, linkTargetProblem, TREE_DEPTH_MAX, TREE_DEPTH_TEXT, tooDeepTree, treeEntries, treeProblems } from "./git-objects.mjs";
 import { canonicalJson, hasRecordMerge, nestedDeeperThan, recordMergeFor } from "./record-merge.mjs";
@@ -37,11 +38,18 @@ const managed = new Set();
 // which the parent process may hold, as when a Git hook starts the server, so no store command inherits them.
 const INHERITED_OUT = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|QUARANTINE_PATH|REPLACE_REF_BASE|GRAFT_FILE|SHALLOW_FILE|LITERAL_PATHSPECS|GLOB_PATHSPECS|NOGLOB_PATHSPECS|ICASE_PATHSPECS|ATTR_SOURCE|REDIRECT_STDIN|REDIRECT_STDOUT|REDIRECT_STDERR)$/;
 
-/** Change the debounce, pull interval, or torn-read wait, or the bound on a store tree's files, which tests shorten, turn off the pull that a record read starts, or turn on the watcher that syncs what is pending when the process ends. */
+// The log that sync outcomes are written to, which a server process passes; this module is also loaded where the log is not, so it writes nothing until one is given.
+let log = null;
+
+/**
+ * Change the debounce, pull interval, or torn-read wait, or the bound on a store tree's files, which tests shorten, turn off the pull that a record read starts,
+ * turn on the watcher that syncs what is pending when the process ends, or give the log, an object with info and warn, that sync outcomes are written to.
+ */
 export function configureRecordSync(settings = {}) {
   for (const key of Object.keys(SETTINGS)) if (Number.isFinite(settings[key])) SETTINGS[key] = settings[key];
   if (typeof settings.pullOnRead === "boolean") pullOnRead = settings.pullOnRead;
   if (typeof settings.watchPending === "boolean") watchPending = settings.watchPending;
+  if (settings.log !== undefined) log = settings.log;
 }
 
 /** Cancel every debounced sync and forget fetch times, so a process or a test can finish. */
@@ -590,7 +598,10 @@ export function syncRecordStore(base, options = {}) {
     await mkdir(syncPath(base), { recursive: true });
     try {
       return await withFileLock(syncPath(base, "sync"), async () => {
+        // Only a process that logs reads the state before the sync, so a sync where nothing logs runs no Git command more.
+        const before = log ? await Promise.all([readSyncStatus(base), headOf(base)]).catch(() => null) : null;
         const status = await sync(base, options);
+        if (before) await logSync(base, before[0], before[1], status).catch(() => {});
         // A caller that must act on the store exactly as this sync left it, such as a move that decides against this pull, does so before the lock is released.
         await options.whileLocked?.(status);
         return status;
@@ -613,6 +624,24 @@ export function syncRecordStore(base, options = {}) {
   if (written.delete(base)) writing.add(base);
   updateWatcher();
   return pending;
+}
+
+const headOf = async (base) => { const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]); return head.ok ? head.text : null; };
+
+// The log names each sync that changed the store's branch, each failure once until its reason changes, and the sync that ends a run of failures,
+// so a person reads in the log when records were shared and why they were not, without a line for every sync that found nothing to do.
+async function logSync(base, previous, head, status) {
+  if (!log || !status || status.state === "skipped") return;
+  const failed = (value) => value && value.state !== "ok";
+  if (failed(status)) {
+    if (previous?.state !== status.state || previous?.message !== status.message) log.warn("store_sync_failed", { store: base, state: status.state, message: status.message, ahead: status.ahead, behind: status.behind });
+    return;
+  }
+  const now = await headOf(base);
+  const conflicts = status.conflicts?.length ?? 0;
+  // A sync that pushed commits an earlier sync left unpushed changes no branch, so it shows by its count of unpushed commits.
+  if (now !== head || conflicts || (previous?.ahead > 0 && !status.ahead)) log.info("store_synced", { store: base, from: head, to: now, ahead: status.ahead, behind: status.behind, ...(conflicts ? { savedConflicts: conflicts } : {}) });
+  else if (failed(previous)) log.info("store_synced", { store: base, recovered: previous.state, ahead: status.ahead, behind: status.behind });
 }
 
 async function identity(base) {
@@ -821,6 +850,26 @@ async function moveBranch(base, commit, previous, message) {
 const RAW_FILES = "raw-files.json";
 const migrated = new Set();
 const syncLockOptions = () => ({ renew: true, abandonWhenUnrenewed: true, staleMs: SETTINGS.gitTimeoutMs * 2 });
+
+/**
+ * Move a clone's folder from source to target while holding the clone's sync lock, so no sync of source, from this or an earlier Prism, runs while it moves.
+ * qualifies() runs under the lock and decides whether the move happens; renameFolder does the move.
+ * It answers whether the folder moved, throws an error with code lock_timeout when a sync holds the lock, and throws the rename's error when the move fails, leaving source as it was.
+ * The lock moves with the folder and is removed at its new place.
+ */
+export async function moveUnderSyncLock(source, target, qualifies, renameFolder = rename) {
+  await mkdir(syncPath(source), { recursive: true });
+  const lock = `${syncPath(source, "sync")}.lock`;
+  return withFileLock(syncPath(source, "sync"), async () => {
+    if (!(await qualifies())) return false;
+    const token = (await readFile(lock, "utf8").then(parseStoreJson).catch(() => null))?.token;
+    await renameFolder(source, target);
+    const moved = path.join(target, path.relative(source, lock));
+    const owner = await readFile(moved, "utf8").then(parseStoreJson).catch(() => null);
+    if (token && owner?.token === token) await rm(moved, { force: true });
+    return true;
+  }, undefined, { ...syncLockOptions(), timeoutMs: 1, closeHandle: true });
+}
 
 /**
  * Prepare a store's files for syncing, once per clone, before any Prism write in this process reaches them: an earlier Prism checked a first clone's files out through Git's line-ending conversion,
@@ -1902,6 +1951,8 @@ async function replaceFiles(base, run, { from, diskTree = from, to, copies, thei
     }
   };
   const applied = await apply(base, from, to, options, progress, held, diskTree);
+  // The files the sync replaced change what the store's artifact listings hold.
+  await markArtifactIndexStale(base);
   if (applied) for (const [file, entry] of copies) if (entry && held.get(file) === entry) { held.delete(file); run.withheld?.delete(file); }
   return { applied, conflicts: stage ? await settleStage(base, stage, applied) : [] };
 }
@@ -2604,6 +2655,43 @@ async function readBlobs(base, wanted) {
 }
 const readBlob = async (base, file, entry, max) => (await readBlobs(base, [{ file, entry, max }]))[0];
 
+/**
+ * A reader of the bounded blobs that a run of files takes, in the files' order: entriesOf(file) names the entries the run reads for a file.
+ * It reads the blobs of the next files together, in batches of bounded size, so a sync that replaces many files takes a few Git processes rather than two for each file,
+ * which on Windows, where a process starts slowly, decided how long a sync of a thousand comments took.
+ * A blob it did not read in a batch, as one above its kind's bound or one of no listed file, is read by boundedBlob, which refuses one above the bound by name.
+ */
+async function boundedBlobReader(base, files, entriesOf, batchBytes = 32 * 1024 * 1024) {
+  const { blobMax } = await storeLayout();
+  const wanted = files.map((file) => entriesOf(file).filter((entry) => entry && FILE_MODES.has(entry.mode)));
+  const info = await objectInfo(base, [...new Set(wanted.flat().map((entry) => entry.object))]);
+  const indexOf = new Map(files.map((file, index) => [file, index]));
+  const cache = new Map();
+  let next = 0;
+  return async (file, entry) => {
+    const index = indexOf.get(file);
+    if (entry && FILE_MODES.has(entry.mode) && !cache.has(entry.object) && index !== undefined && index >= next) {
+      cache.clear();
+      const batch = [];
+      let total = 0;
+      let end = index;
+      // A batch takes whole files while their blobs fit in batchBytes, and always its first file, so a file is never split across two batches.
+      while (end < files.length) {
+        const readable = wanted[end].filter((item) => { const found = info.get(item.object); return found?.type === "blob" && found.size <= blobMax(files[end]); });
+        const bytes = readable.reduce((sum, item) => sum + info.get(item.object).size + 128, 0);
+        if (end > index && total + bytes > batchBytes) break;
+        for (const item of readable) batch.push({ file: files[end], entry: item });
+        total += bytes;
+        end += 1;
+      }
+      next = end;
+      const contents = await readBlobs(base, batch);
+      batch.forEach((item, at) => { if (Buffer.isBuffer(contents[at])) cache.set(item.entry.object, contents[at]); });
+    }
+    return entry && cache.has(entry.object) ? cache.get(entry.object) : boundedBlob(base, file, entry);
+  };
+}
+
 // The bytes of a blob that the sync writes to disk, which a store holds within its bound wherever the sync writes from: a blob above it is refused by name rather than read.
 async function boundedBlob(base, file, entry) {
   const bytes = await readBlob(base, file, entry);
@@ -3072,18 +3160,19 @@ async function apply(base, from, to, options, progress = {}, held = new Map(), d
           const listings = new Map();
           // A file is read only up to its kind's bound, so one above it is never read and holds no commit's bytes.
           const ownBytes = async (index, cache) => (await storedInSpelling(base, files[index], cache)) ? boundedBytes(targets[index], bound(files[index])) : null;
+          const blobOf = await boundedBlobReader(base, files, (file) => held.get(file)?.disk ? [after.get(file)] : [before.get(file), after.get(file), held.get(file)]);
           for (const [index, file] of files.entries()) {
             // A file withheld because it is above its kind's bound is never read: it must still be the file the sync held back, which the caller moves aside before replacing it.
             if (held.get(file)?.disk) {
               if (!(await sameDiskFile(targets[index], held.get(file).disk))) return false;
-              next.push(await boundedBlob(base, file, after.get(file)));
+              next.push(await blobOf(file, after.get(file)));
               continue;
             }
             // The branch's version is read only within its bound, as every blob the sync reads is, and one above it, which only a commit made by hand puts on the branch, is refused by name.
-            const [bytes, expected] = await Promise.all([ownBytes(index, listings), boundedBlob(base, file, before.get(file))]);
+            const [bytes, expected] = await Promise.all([ownBytes(index, listings), blobOf(file, before.get(file))]);
             // A file whose local version the sync withheld still holds that version, which the caller saved.
-            if (!sameBytes(bytes, expected) && !(held.has(file) && sameBytes(bytes, await boundedBlob(base, file, held.get(file))))) return false;
-            next.push(await boundedBlob(base, file, after.get(file)));
+            if (!sameBytes(bytes, expected) && !(held.has(file) && sameBytes(bytes, await blobOf(file, held.get(file))))) return false;
+            next.push(await blobOf(file, after.get(file)));
           }
           // A comment that this machine wrote after the sync read its comment folders, as while the sync fetched or while an update held the artifact lock, is in neither commit,
           // so the merge did not count it; where the target's comments leave it no room in its folder, it is saved, named as a comment that the folder's bound left out, and leaves the disk,
@@ -3218,4 +3307,21 @@ export async function pruneArtifactFolders(base, target) {
       await rmdir(folder);
     } catch { return; }
   }
+}
+
+/**
+ * What a store clone holds that its upstream lacks: { commits, files, conflicts }, commits whether any branch has a commit that no remote branch holds,
+ * files whether a store file on disk differs from its branch's commit, is missing from it, or is a file the commit lacks, and conflicts whether a saved local copy of a conflict waits.
+ * It reads Git's objects and the files' bytes and changes nothing, so a caller decides from it whether deleting the clone loses work.
+ */
+export async function localStoreChanges(base) {
+  const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  const ahead = await git(base, ["rev-list", "--count", "--branches", "--not", "--remotes"]);
+  const commits = !ahead.ok || Number(ahead.text) > 0 || await unpublished(base);
+  const committed = head.ok ? (await partition(await treeFiles(base, head.text))).shared : new Map();
+  const withheld = new Map();
+  const onDisk = await localFiles(base, committed, withheld);
+  let files = withheld.size > 0 || onDisk.size !== committed.size;
+  for (const [file, entry] of onDisk) if (!files && committed.get(file)?.object !== entry.object) files = true;
+  return { commits, files, conflicts: (await listSavedConflicts(base)).length > 0 };
 }

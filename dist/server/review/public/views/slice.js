@@ -7,6 +7,7 @@ import { codeParts } from "./code-location.js";
 import { claimChip } from "./claims.js";
 import { componentChip } from "./components.js";
 import { mountInitiativeSettings } from "./actions.js";
+import { mountSliceFiles, presenceChips } from "./slice-files.js";
 import { shippedHistoryHtml } from "./shipped-history.js";
 
 function sliceChip(data, slug, ctx) {
@@ -369,9 +370,11 @@ function changeMapPanel(slice, artifacts, data, ctx) {
   return slice.design ? card("Change map", line, { eyebrow: "Derived from the verified result" }) : line;
 }
 
+// The Files tab shows the files the slice's latest passing run verified, read after the page renders, and then the slice folder.
 function filesPanel(artifacts, ctx) {
-  if (!artifacts.files.length) return emptyState("No files yet", "The slice folder is empty.");
-  return card("Slice folder", `<ul class="row-list">${artifacts.files.map((file) => {
+  const verified = '<div class="slice-verified-files" data-slice-files><prism-spinner label="Loading the verified files"></prism-spinner></div>';
+  if (!artifacts.files.length) return verified + emptyState("No files yet", "The slice folder is empty.");
+  return verified + card("Slice folder", `<ul class="row-list">${artifacts.files.map((file) => {
     const { label, code } = fileLabel(file, artifacts.folder);
     return `<li${code ? " data-code-subject" : ""}>${artifactChip(file, ctx, label)}</li>`;
   }).join("")}</ul>`, { eyebrow: plural(artifacts.files.length, "file") });
@@ -456,6 +459,7 @@ export async function render(container, entity, ctx) {
           ["Children", data.children.length ? `<span class="chip-row">${data.children.map((slug) => sliceChip(data, slug, ctx)).join("")}</span>` : null],
           ["Depends on", data.effectiveDependencies?.length ? `<span class="chip-row">${data.effectiveDependencies.map((slug) => sliceChip(data, slug, ctx)).join("")}</span>` : null],
           ["Needed by", data.dependents.length ? `<span class="chip-row">${data.dependents.map((slug) => sliceChip(data, slug, ctx)).join("")}</span>` : null],
+          ["Work in progress", presenceChips(entity.presence) || null],
           ["Active work", data.active.length ? `<span class="chip-row">${data.active.map((entry) => badge(`${entry.activity} · ${(entry.workers ?? []).join(", ")}${entry.label ? ` · ${entry.label}` : ""}`, "info")).join("")}</span>` : null]
         ])}
       </section>
@@ -470,6 +474,7 @@ export async function render(container, entity, ctx) {
   });
   bindLinks(container, ctx);
   pageActions(diagrams, ctx, details);
+  void mountSliceFiles(container.querySelector("[data-slice-files]"), data);
   const showTab = (value) => {
     ctx.state.tab = value;
     for (const panel of container.querySelectorAll("[data-tab-panel]")) panel.hidden = panel.dataset.tabPanel !== value;

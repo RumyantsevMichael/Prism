@@ -38,6 +38,30 @@ const nameChecks = new Map();
 
 export { repositoryId };
 
+// Folders that stand for a store's managed clone where no checkout of it is registered, by their real path: { base, label, sync }.
+// Such a root holds no file of its own, so it has no configuration, sources, or legacy records, and every record it names lives in the clone.
+const checkoutlessRoots = new Map();
+
+/**
+ * Read and write the records of a store through root, an empty folder that stands for no checkout: base is the store's managed clone or folder,
+ * label names the store without credentials, and sync says whether record writes schedule the store's sync, which commits and pushes them.
+ * The store's sync, not a record read, fetches it, so a read never starts a fetch.
+ */
+export async function useStoreWithoutCheckout(root, { base, label, sync = true }) {
+  checkoutlessRoots.set(await realpath(root), { base: await realpath(base), label, sync: sync === true });
+}
+
+/** Stop serving root as a store without a checkout. */
+export async function forgetStoreWithoutCheckout(root) {
+  checkoutlessRoots.delete(await realpath(root).catch(() => path.resolve(root)));
+}
+
+/** Whether root is a folder that useStoreWithoutCheckout made stand for a store without a checkout. */
+export async function isStoreWithoutCheckout(root) {
+  if (typeof root !== "string" || !path.isAbsolute(root)) return false;
+  return checkoutlessRoots.has(await realpath(root).catch(() => path.resolve(root)));
+}
+
 export class RecordStoreError extends Error {
   constructor(code, message, details = {}) {
     super(message);
@@ -245,7 +269,7 @@ const currentScope = () => {
 
 async function storeOf(projectRootPath) {
   const store = await resolveStore(projectRootPath);
-  if (!store.external) return { ...store, repository: null };
+  if (!store.external || store.checkoutless) return { ...store, repository: null };
   return { ...store, repository: await checkedRepository(store) };
 }
 
@@ -270,6 +294,8 @@ export async function recordStoreSummary(projectRootPath) {
 
 async function resolveStore(projectRootPath) {
   const root = await projectRoot(projectRootPath);
+  const checkoutless = checkoutlessRoots.get(root);
+  if (checkoutless) return { root, base: checkoutless.base, contain: checkoutless.base, external: true, sync: checkoutless.sync, checkoutless: true };
   const config = await readWorkflowConfig(root);
   const { workspace } = config;
   const configured = workspace?.store ?? null;
@@ -303,7 +329,9 @@ async function resolveStore(projectRootPath) {
 async function checkedRepository(store) {
   const key = `${store.root}\0${store.base}`;
   const cached = nameChecks.get(key);
-  let pending = cached && Date.now() - cached.at < MIGRATION_TTL_MS ? cached.pending : null;
+  // A check still running is never checked again beside itself: its confirming sync can wait for the store's sync lock longer than the trust lasts,
+  // and a second check would take its own pending registration for another's and refuse, so the trust lasts from when the check settled.
+  let pending = cached && (cached.at === null || Date.now() - cached.at < MIGRATION_TTL_MS) ? cached.pending : null;
   if (!pending) {
     pending = (async () => {
       const name = (await readWorkflowConfig(store.root)).workspace?.repository ?? null;
@@ -311,7 +339,9 @@ async function checkedRepository(store) {
     })();
     // A refusal is trusted as long as an acceptance, so a refused checkout does not ask Git again on every operation; any other failure, and a refusal because a registration is still pending, is checked again at once.
     pending.catch((error) => { if ((!REPOSITORY_REFUSALS.includes(error?.code) || error?.pending === true) && nameChecks.get(key)?.pending === pending) nameChecks.delete(key); });
-    nameChecks.set(key, { at: Date.now(), pending });
+    const entry = { at: null, pending };
+    nameChecks.set(key, entry);
+    pending.then(() => { entry.at = Date.now(); }, () => { entry.at = Date.now(); });
   }
   return (await pending).repository;
 }
@@ -353,6 +383,8 @@ export async function recordSyncStatus(projectRootPath) {
  */
 export async function describeRecordStore(projectRootPath) {
   const root = await projectRoot(projectRootPath);
+  const checkoutless = checkoutlessRoots.get(root);
+  if (checkoutless) return { kind: "remote", label: checkoutless.label, location: checkoutless.base, sync: checkoutless.sync };
   const configured = (await readWorkflowConfig(root)).workspace?.store ?? null;
   if (configured === null) return { kind: "project", label: RECORD_DIRECTORY, location: path.join(root, RECORD_DIRECTORY), sync: false };
   const kind = isRemoteStore(configured) ? "remote" : "folder";
@@ -889,6 +921,8 @@ export async function moveLegacyRecords(projectRootPath) {
  * In a tool call whose project root is the checkout, the checkout's existing artifacts then move into its record store, and no other access moves them.
  */
 export async function ensureRecords(root) {
+  // A store without a checkout has no checkout records or artifacts to move in.
+  if (checkoutlessRoots.has(root)) return { moved: [], conflicts: [] };
   const { report, store, config } = await recordsMoved(root);
   if (store.external && inToolCallOf(root)) {
     const artifacts = await migrateArtifactsOnce(root, store, config);
@@ -923,12 +957,20 @@ export function forgetMigrations() {
 
 const storeLabel = (store) => store.external ? "the record store" : "the project root";
 
+// Record reads in a fetchless context, such as every read of the review app, whose timed watcher fetches for the pages it serves, start no fetch.
+const fetchlessReads = new AsyncLocalStorage();
+
+/** Run so that no record read in it, or in work it starts, starts a background fetch of the store, while an agent's Prism server keeps fetching on its own record reads. */
+export function withFetchlessReads(run) {
+  return fetchlessReads.run(true, run);
+}
+
 // A synced store prepares its files for syncing before any record or artifact access, pulls in the background when its last fetch is old, and record access waits while a merge replaces record files.
 // A preparation that fails is tried again by the next access and by every sync, which runs it first.
 async function synced(store) {
   if (!store.sync) return;
   await prepareStoreFiles(store.base).catch(() => {});
-  pullRecordStoreIfStale(store.base);
+  if (!store.checkoutless && !fetchlessReads.getStore()) pullRecordStoreIfStale(store.base);
   await waitForStableStore(store.base);
 }
 
@@ -1151,14 +1193,16 @@ export async function sameRecord(projectRootPath, left, right) {
 }
 
 /**
- * The store artifacts a checkout sees: { root, config, kinds, store, base, repository, scopes }, where base is the store's artifacts folder and scopes lists
- * the workspace scope, the repository's scope under its accepted name, and the scope of each component folder of the repository that the store holds.
+ * The store artifacts a checkout sees: { root, config, kinds, store, base, repository, scopes, all }, where base is the store's artifacts folder, scopes lists
+ * the workspace scope, the repository's scope under its accepted name, and the scope of each component folder of the repository that the store holds, which the checkout writes,
+ * and all lists those and every other repository folder with a valid name and its component folders, which the checkout reads, sorted by label.
  * It refuses with store_not_configured without a store, and with the store's own refusal when the store is unavailable or the repository name is refused, before it reads or writes anything else.
  */
 export async function seenScopes(projectRootPath) {
   const root = await projectRoot(projectRootPath);
   const config = await readWorkflowConfig(root);
-  if ((config.workspace?.store ?? null) === null) throw fail("store_not_configured", "This project's .prism/workflow.md names no record store under ## Workspace, so its descriptive artifacts stay in the checkout: read and edit them there with your own file tools.");
+  // A folder that stands for a store without a checkout names no store in a configuration of its own, and reads the store's artifacts with Prism's default paths.
+  if ((config.workspace?.store ?? null) === null && !checkoutlessRoots.has(root)) throw fail("store_not_configured", "This project's .prism/workflow.md names no record store under ## Workspace, so its descriptive artifacts stay in the checkout: read and edit them there with your own file tools.");
   const store = await recordStoreOf(root);
   await ensureRecords(store.root);
   await synced(store);
@@ -1168,13 +1212,30 @@ export async function seenScopes(projectRootPath) {
 // The scopes a checkout sees in its store, read without moving records or artifacts, so the move of a checkout's artifacts can read them itself.
 async function scopesOf(root, config, store) {
   const base = path.join(store.base, ARTIFACTS);
-  const own = repositoryScope(store.repository);
-  const components = path.join(base, scopeFolder(own), "components");
-  await assertUnlinked(store.base, path.join(components, "x"));
-  let names = [];
-  try { names = (await readdir(components, { withFileTypes: true })).filter((entry) => entry.isDirectory() && COMPONENT_NAME.test(entry.name)).map((entry) => entry.name).sort(); }
-  catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
-  return { root, config, kinds: artifactKinds(config), store, base, repository: store.repository, scopes: [WORKSPACE_SCOPE, own, ...names.map((name) => componentScope(store.repository, name))] };
+  // A store without a checkout belongs to no repository, so its own scope is the workspace scope alone.
+  let scopes = [WORKSPACE_SCOPE];
+  if (store.repository !== null) {
+    const own = repositoryScope(store.repository);
+    const components = path.join(base, scopeFolder(own), "components");
+    await assertUnlinked(store.base, path.join(components, "x"));
+    scopes = [WORKSPACE_SCOPE, own, ...(await folderNames(components, COMPONENT_NAME)).map((name) => componentScope(store.repository, name))];
+  }
+  // Agents read every scope the store holds, so the scopes of other repositories and their components are listed beside the checkout's own, which alone it writes.
+  const others = [];
+  for (const name of await folderNames(path.join(base, REPOSITORIES), portableRepositoryName)) {
+    if (name === store.repository) continue;
+    others.push(repositoryScope(name));
+    for (const component of await folderNames(path.join(base, REPOSITORIES, name, "components"), COMPONENT_NAME)) others.push(componentScope(name, component));
+  }
+  const all = [...scopes, ...others].sort((left, right) => left.label < right.label ? -1 : left.label > right.label ? 1 : 0);
+  return { root, config, kinds: artifactKinds(config), store, base, repository: store.repository, scopes, all };
+}
+
+// The sorted names of the folders in a folder that match a name form or test, without following a link; none when the folder is missing.
+async function folderNames(folder, form) {
+  const named = typeof form === "function" ? form : (name) => form.test(name);
+  try { return (await readdir(folder, { withFileTypes: true })).filter((entry) => entry.isDirectory() && named(entry.name)).map((entry) => entry.name).sort(); }
+  catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return []; throw error; }
 }
 
 /** The scopes of a repository in a seen store, its repository scope and each component scope whose folder the store holds, or none for a name that no repository may have; a ship reads them whichever checkout ships. */

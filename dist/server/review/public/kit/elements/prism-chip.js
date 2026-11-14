@@ -1,4 +1,4 @@
-// prism-chip: a short label in a tone; static text, a link with href, or a button with interactive.
+// prism-chip: a short label in a tone; static text, a link with href, or a button with interactive, which pressed makes a toggle.
 import { Base, setAttribute, shadow } from "./base.js";
 import { remeasure, unwatchShortening, watchShortening } from "../shorten.js";
 
@@ -7,19 +7,20 @@ export const TONES = Object.freeze(["neutral", "accent", "danger", "warning", "s
 export class PrismChip extends Base {
   static tag = "prism-chip";
   static styles = ["prism-chip.css"];
-  static observedAttributes = ["href", "interactive", "target", "label"];
+  static observedAttributes = ["href", "interactive", "target", "label", "pressed"];
   static catalog = {
-    purpose: "A short label in a tone, with quieter secondary text from slot=\"meta\"; static text, a link with href, or a button with interactive.",
+    purpose: "A short label in a tone, with quieter secondary text from slot=\"meta\"; static text, a link with href, or a button with interactive, which pressed makes a toggle such as a filter.",
     options: [
       { name: "tone", values: TONES, default: "neutral", description: "The color of the chip; the text stays at 4.5:1 on its soft fill." },
       { name: "href", values: ["URL"], default: "", description: "Makes the chip a link to that address." },
       { name: "interactive", values: ["boolean"], default: "false", description: "Makes the chip a button that sends click." },
       { name: "label", values: ["text"], default: "", description: "The accessible name of a link or button chip whose text alone does not say what it does." },
+      { name: "pressed", values: ["true", "false"], default: "", description: "Makes a button chip a toggle, exposed as aria-pressed and filled in the accent while true." },
       { name: "slot=\"meta\"", values: ["children"], default: "", description: "Secondary text shown after the label, such as a count or a kind." },
       { name: "tip", values: ["text"], default: "", description: "A short description the kit tooltip shows on hover and keyboard focus." }
     ],
-    states: ["static", "tones", "link", "interactive", "meta"],
-    keyboard: ["A link chip opens with Enter and a button chip activates with Enter and Space.", "A static chip whose text is shortened joins the Tab order so its full text can be read."]
+    states: ["static", "tones", "link", "interactive", "pressed", "meta"],
+    keyboard: ["A link chip opens with Enter and a button chip activates with Enter and Space, which also toggles a pressed chip's state through its click handler.", "A static chip whose text is shortened joins the Tab order so its full text can be read."]
   };
 
   constructor() {
@@ -49,6 +50,10 @@ export class PrismChip extends Base {
   attributeChangedCallback(name) {
     if (name === "label") {
       if (this.control) setAttribute(this.control, "aria-label", this.getAttribute("label") || null);
+      return;
+    }
+    if (name === "pressed") {
+      this.showPressed();
       return;
     }
     this.render();
@@ -101,6 +106,14 @@ export class PrismChip extends Base {
       }
     }
     if (this.control) setAttribute(this.control, "aria-label", this.getAttribute("label") || null);
+    this.showPressed();
     if (this.isConnected) remeasure(this);
+  }
+
+  // A button chip with pressed is a toggle whose state assistive technology reads from aria-pressed.
+  showPressed() {
+    if (this.mode !== "button" || !this.control) return;
+    const pressed = this.getAttribute("pressed");
+    setAttribute(this.control, "aria-pressed", pressed === "true" || pressed === "false" ? pressed : null);
   }
 }

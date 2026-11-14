@@ -763,8 +763,14 @@ a.inspect-tile:focus-visible {
   min-width: 0;
 }
 
-.gate-choices > :last-child:not(:first-child):not(:nth-child(2)) {
-  justify-self: start;
+/* "Your answer" with Clear choice at its end; the row keeps the button's height, so the options do not move when it shows. */
+.gate-choices-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  min-height: var(--prism-control-height-sm);
 }
 
 .gate-note {
@@ -1250,6 +1256,17 @@ a.inspect-tile:focus-visible {
 
 .slice-claim-strip {
   min-width: 0;
+}
+
+/* Each verified file names its path, which wraps when long, and then its state. */
+.slice-verified-files {
+  min-width: 0;
+}
+
+.slice-file-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* The claim strip runs the page's full width; a covering scope's note follows it. */

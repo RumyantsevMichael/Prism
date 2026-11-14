@@ -41,6 +41,7 @@ import { PrismEmptyState } from "./elements/prism-empty-state.js";
 import { PrismBanner } from "./elements/prism-banner.js";
 import { PrismToast } from "./elements/prism-toast.js";
 import { PrismClaim } from "./elements/prism-claim.js";
+import { PrismTime } from "./elements/prism-time.js";
 import { PrismStepper } from "./elements/prism-stepper.js";
 import { PrismStep } from "./elements/prism-step.js";
 import { PrismBreadcrumbs } from "./elements/prism-breadcrumbs.js";
@@ -105,6 +106,7 @@ export const KIT_ELEMENTS = [
   PrismBanner,
   PrismToast,
   PrismClaim,
+  PrismTime,
   PrismStepper,
   PrismStep,
   PrismBreadcrumbs,

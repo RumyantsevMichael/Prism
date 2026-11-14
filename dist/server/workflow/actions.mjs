@@ -5,6 +5,7 @@ import { listComponents } from "./components.mjs";
 import { appendIndexHistory } from "./index-history.mjs";
 import { readInitiativeWithClaims } from "./initiative.mjs";
 import { SLUG_PATTERN } from "./initiative-graph.mjs";
+import { isStoreWithoutCheckout, recordStoreOf } from "./record-store.mjs";
 import { runGit } from "./record-store-sync.mjs";
 import { REPOSITORY_NAME } from "./repository-names.mjs";
 import { readRoadmap } from "./roadmap.mjs";
@@ -51,6 +52,7 @@ export class ActionError extends Error {
 }
 
 const fail = (code, message, details) => new ActionError(code, message, details);
+const order = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const option = (value, label, consequence = null) => ({ value, label, consequence });
 
@@ -86,19 +88,35 @@ export function parseTarget(reference) {
 
 const unknownTarget = (reference) => fail("unknown_target", `No action target ${JSON.stringify(String(reference ?? ""))} exists on this page.`);
 
-// The checkout's components as index targets: the root component first and the declared ones in declaration order.
-async function indexComponents(projectRoot) {
-  const config = await readWorkflowConfig(projectRoot);
+// A checkout's components as index targets: the root component first and the declared ones in declaration order, each with the checkout that indexes it.
+async function checkoutComponents(root) {
+  const config = await readWorkflowConfig(root);
   const listed = listComponents(config);
   const repository = listed.repository ?? "root";
-  if (listed.problem || listed.declared.length === 0) return [{ identity: `${repository}/${repository}`, folder: "" }];
-  return listed.declared.map((component) => ({ identity: component.component, folder: component.folder }));
+  if (listed.problem || listed.declared.length === 0) return [{ identity: `${repository}/${repository}`, folder: "", root }];
+  return listed.declared.map((component) => ({ identity: component.component, folder: component.folder, root }));
 }
 
-/** The targets of a kind on a checkout's page: { targets }, which only the index kind lists. */
-export async function listActionTargets({ projectRoot, kind }) {
+// The index targets of a page: the checkout's own components, or, for a workspace's page, given checkouts, the components of every checkout of the workspace on this machine,
+// by repository name and each repository's root component first, so a repository without a checkout here offers no index rebuild.
+async function indexComponents(projectRoot, checkouts = null) {
+  if (checkouts === null) return checkoutComponents(projectRoot);
+  const byRepository = new Map();
+  for (const root of checkouts) {
+    const components = await checkoutComponents(root).catch(() => []);
+    const repository = components[0]?.identity.split("/")[0];
+    if (repository && !byRepository.has(repository)) byRepository.set(repository, components);
+  }
+  return [...byRepository].sort(([left], [right]) => order(left, right)).flatMap(([, components]) => components);
+}
+
+/**
+ * The targets of a kind on a page: { targets }, which only the index kind lists.
+ * checkouts, for a workspace's page, lists the roots of the workspace's checkouts on this machine, whose components are its index targets.
+ */
+export async function listActionTargets({ projectRoot, kind, checkouts = null }) {
   if (kind !== "index") throw fail("unknown_target", "Only index targets are listed.");
-  return { targets: (await indexComponents(projectRoot)).map((component) => `index:${component.identity}`) };
+  return { targets: (await indexComponents(projectRoot, checkouts)).map((component) => `index:${component.identity}`) };
 }
 
 async function initiativeExists(projectRoot, initiative, record) {
@@ -131,7 +149,7 @@ async function seenArtifact(projectRoot, parsed) {
 }
 
 // Reads what a target's actions need: the initiative's coordination state and record, the index component, the approval gate, the store artifact, or the launched session, and refuses a target that does not exist.
-async function readTarget(projectRoot, parsed, indexer, state = undefined, env = process.env) {
+async function readTarget(projectRoot, parsed, indexer, state = undefined, env = process.env, checkouts = null) {
   if (parsed.kind === "artifact") {
     const artifact = await seenArtifact(projectRoot, parsed);
     if (!artifact) throw unknownTarget(parsed.reference);
@@ -154,9 +172,9 @@ async function readTarget(projectRoot, parsed, indexer, state = undefined, env =
     return { ...parsed, view, initiative: view.initiative, running: status === "running", resumeReason, shipped };
   }
   if (parsed.kind === "index") {
-    const component = (await indexComponents(projectRoot)).find((item) => item.identity === parsed.identity);
+    const component = (await indexComponents(projectRoot, checkouts)).find((item) => item.identity === parsed.identity);
     if (!component) throw unknownTarget(parsed.reference);
-    const status = await Promise.resolve(indexer.status(projectRoot, component)).catch(() => null);
+    const status = await Promise.resolve(indexer.status(component.root, component)).catch(() => null);
     return { ...parsed, component, indexState: status?.state ?? null };
   }
   const coordination = state ?? await readCoordinationState({ projectRoot, initiative: parsed.initiative }).then((read) => ({ exists: read.exists, revision: read.revision, state: read.state, valid: read.valid }));
@@ -500,10 +518,10 @@ export const prismIndexer = Object.freeze({
 // ---- Listing ----
 
 /** The actions that apply to a target: { target, actions }, available or not. */
-export async function listActions({ projectRoot, target, indexer = prismIndexer, env = process.env }) {
+export async function listActions({ projectRoot, target, indexer = prismIndexer, env = process.env, checkouts = null }) {
   const parsed = parseTarget(target);
   if (!parsed) throw unknownTarget(target);
-  const context = await readTarget(projectRoot, parsed, indexer, undefined, env);
+  const context = await readTarget(projectRoot, parsed, indexer, undefined, env, checkouts);
   return { target, actions: definitionsFor(parsed.kind).map((definition) => view(definition, context)) };
 }
 
@@ -570,13 +588,18 @@ function sameValue(left, right) {
 }
 
 // The author is what the applying checkout's Git configuration claims, with the checkout's label on this host; nothing checks it.
-async function authorOf(projectRoot) {
-  const read = async (key) => {
-    const result = await runGit(projectRoot, ["config", key]);
+// A comment on a store artifact is the store's change, so its author is what the Git configuration of the store's clone claims, or the checkout's where the clone names no user.
+async function authorOf(projectRoot, { store = false } = {}) {
+  const clone = store ? await recordStoreOf(projectRoot).then((found) => found.external ? found.base : null, () => null) : null;
+  const read = async (where, key) => {
+    const result = await runGit(where, ["config", key]);
     const value = result.ok ? result.text.replace(/\s+/g, " ").trim().slice(0, 200) : "";
     return value || null;
   };
-  const [name, email, identity] = await Promise.all([read("user.name"), read("user.email"), readWorkspaceIdentity(projectRoot)]);
+  const where = clone && await read(clone, "user.name") ? clone : projectRoot;
+  // A workspace's page without a registered checkout applies its actions in the store's clone, which is the review app's, not a checkout's.
+  const checkoutless = await isStoreWithoutCheckout(projectRoot);
+  const [name, email, identity] = await Promise.all([read(where, "user.name"), read(where, "user.email"), checkoutless ? { repository: "review app", worktree: null, branch: null, detached: false } : readWorkspaceIdentity(projectRoot)]);
   return { name, email, checkout: checkoutLabel(identity).slice(0, 400) };
 }
 
@@ -599,11 +622,11 @@ function check(definition, context, { revision, input, confirmed }) {
  * Applies one action to a target: { applied, actions }, where applied is the history entry or null for an unchanged value, and actions the target's listing after it;
  * an approval's or a comment's result also names its artifact as artifact { path, scope }, since its entry belongs to no initiative, and a comment's result names its stored comment's id as comment.
  */
-export async function applyAction({ projectRoot, target, action, input, revision, confirmed, via = "review-app", indexer = prismIndexer, env = process.env }) {
+export async function applyAction({ projectRoot, target, action, input, revision, confirmed, via = "review-app", indexer = prismIndexer, env = process.env, checkouts = null }) {
   const parsed = parseTarget(target);
   if (!parsed) throw unknownTarget(target);
   const definition = definitionsFor(parsed.kind).find((item) => item.id === action);
-  const read = await readTarget(projectRoot, parsed, indexer, undefined, env);
+  const read = await readTarget(projectRoot, parsed, indexer, undefined, env, checkouts);
   if (!definition) throw fail("unknown_action", `The target ${target} has no action ${JSON.stringify(String(action ?? ""))}.`);
   const request = { revision, input, confirmed };
   const entryOf = async (checked, context) => ({
@@ -613,10 +636,10 @@ export async function applyAction({ projectRoot, target, action, input, revision
     before: checked.current.value,
     after: checked.after,
     at: new Date().toISOString(),
-    by: await authorOf(projectRoot),
+    by: await authorOf(projectRoot, { store: parsed.kind === "artifact" }),
     via: typeof via === "string" && via ? via : "review-app"
   });
-  if (definition.launch) return applyLaunchAction({ projectRoot, definition, context: read, request, entryOf, env, target, indexer });
+  if (definition.launch) return applyLaunchAction({ projectRoot, definition, context: read, request, entryOf, env, target, indexer, checkouts });
   let applied = null;
   // The comment as stored, whose id names its own file, so the review app hands it to another checkout's tabs by reading that one file.
   let stored = null;
@@ -643,7 +666,7 @@ export async function applyAction({ projectRoot, target, action, input, revision
     if (!applied.by.name) throw fail("author_unknown", "Git names no user.name for this checkout, so the comment cannot record who wrote it; set one with git config user.name and comment again.");
     // The store write repeats the artifact and version checks under the artifact lock, so a change that lands after the read above is refused as stale.
     const { artifact } = read;
-    stored = await commentOnArtifact(projectRoot, { path: artifact.path, label: artifact.scope.label, version: checked.after.version, line: checked.after.line, text: checked.after.text, author: { name: applied.by.name, host: os.hostname().slice(0, 255) }, entry: applied }).catch((error) => {
+    stored = await commentOnArtifact(projectRoot, { path: artifact.path, location: artifact.location ?? null, label: artifact.scope.label, version: checked.after.version, line: checked.after.line, text: checked.after.text, author: { name: applied.by.name, host: os.hostname().slice(0, 255) }, entry: applied }).catch((error) => {
       if (error?.code === "artifact_not_found") throw unknownTarget(target);
       if (error?.code === "comment_limit") throw fail("comment_limit", error.message);
       if (error?.code === "version_conflict") throw fail("stale_revision", "The file changed since the page read it.", { current: view(definition, { ...read, artifact: { ...artifact, version: error.version ?? null } }) });
@@ -653,13 +676,14 @@ export async function applyAction({ projectRoot, target, action, input, revision
     const checked = check(definition, read, request);
     if (checked) {
       applied = await entryOf(checked, read);
-      await indexer.rebuild(projectRoot, read.component);
-      await appendIndexHistory(projectRoot, applied);
+      // The rebuild and its history entry belong to the checkout that indexes the component.
+      await indexer.rebuild(read.component.root, read.component);
+      await appendIndexHistory(read.component.root, applied);
     }
   } else {
     // The checks repeat under the state lock on the state it holds, so a change that lands between the read above and the write is never overwritten.
     const written = await recordPersonAction({ projectRoot, initiative: parsed.initiative, prepare: async (coordination) => {
-      const context = await readTarget(projectRoot, parsed, indexer, coordination);
+      const context = await readTarget(projectRoot, parsed, indexer, coordination, env, checkouts);
       const checked = check(definition, context, request);
       if (!checked) return null;
       const entry = await entryOf(checked, context);
@@ -670,8 +694,8 @@ export async function applyAction({ projectRoot, target, action, input, revision
   // An answered approval gate leaves its artifact's pending gates, so its target has no actions left, and the result names the artifact the answer applied to.
   if (parsed.kind === "approval") return { applied, actions: [], artifact: { path: read.gateRecord.artifact.path, scope: read.gateRecord.artifact.scope } };
   // A comment leaves its artifact unchanged, so the target lists its action again, and the result names the artifact it commented on.
-  if (parsed.kind === "artifact") return { applied, actions: [view(definition, read)], artifact: { path: read.artifact.path, scope: read.artifact.scope }, comment: stored.id };
-  const actions = (await listActions({ projectRoot, target, indexer, env })).actions;
+  if (parsed.kind === "artifact") return { applied, actions: [view(definition, read)], artifact: { path: read.artifact.path, ...(read.artifact.path === null ? { location: read.artifact.location } : {}), scope: read.artifact.scope }, comment: stored.id };
+  const actions = (await listActions({ projectRoot, target, indexer, env, checkouts })).actions;
   // An answer to a gate that a launched session of this machine asked is recorded for that session, which it may resume.
   if (parsed.kind === "gate") {
     const launch = applied ? await answerLaunchGate({ projectRoot, initiative: parsed.initiative, gate: parsed.gate, entry: applied.id, env }).catch(() => null) : null;
@@ -685,7 +709,7 @@ const launchRefusal = (error) => (error instanceof LaunchError ? fail(error.code
 
 // Applies a launch, stop, or resume: the common checks, then the action's own step, which confirms outside the page where it starts a
 // session, and only once that took effect the history entry, which names the launch id and never the host session id.
-async function applyLaunchAction({ projectRoot, definition, context, request, entryOf, env, target, indexer }) {
+async function applyLaunchAction({ projectRoot, definition, context, request, entryOf, env, target, indexer, checkouts = null }) {
   const checked = check(definition, context, request);
   let outcome;
   try {
@@ -694,7 +718,7 @@ async function applyLaunchAction({ projectRoot, definition, context, request, en
     throw launchRefusal(error);
   }
   const entry = await entryOf({ ...checked, after: outcome.after }, context);
-  if (outcome.record === false) return { applied: entry, actions: (await listActions({ projectRoot, target, indexer, env })).actions, launch: outcome.launch };
+  if (outcome.record === false) return { applied: entry, actions: (await listActions({ projectRoot, target, indexer, env, checkouts })).actions, launch: outcome.launch };
   try {
     await recordPersonAction({ projectRoot, initiative: outcome.initiative, prepare: async () => ({ entry }) });
   } catch (error) {
@@ -702,5 +726,5 @@ async function applyLaunchAction({ projectRoot, definition, context, request, en
     if (outcome.started) await stopLaunch({ id: outcome.started, env }).catch(() => {});
     throw error;
   }
-  return { applied: entry, actions: (await listActions({ projectRoot, target, indexer, env })).actions, launch: outcome.launch };
+  return { applied: entry, actions: (await listActions({ projectRoot, target, indexer, env, checkouts })).actions, launch: outcome.launch };
 }

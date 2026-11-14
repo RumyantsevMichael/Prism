@@ -6,6 +6,7 @@ export const ENTITY_LABELS = Object.freeze({
   requirements: "Requirements",
   decisions: "Decisions",
   glossary: "Glossary",
+  code: "Code",
   launches: "Launched sessions"
 });
 
@@ -18,6 +19,7 @@ const VIEWS = {
   requirements: () => import("./library.js"),
   decisions: () => import("./library.js"),
   glossary: () => import("./library.js"),
+  code: () => import("./code.js"),
   launches: () => import("./launched-sessions.js"),
   diagrams: () => import("./library.js"),
   touched: () => import("./knowledge.js"),
@@ -105,6 +107,7 @@ export function entityLabel(entity) {
   if (entity.kind === "slice") return { eyebrow: `Slice · ${data.initiativeTitle}`, title: data.slice.title, subtitle: data.artifacts?.folder ?? null };
   if (entity.kind === "launches") return { title: ENTITY_LABELS.launches, lead: null, subtitle: null };
   if (entity.kind === "glossary") return { eyebrow: "Library", title: "Glossary", subtitle: data.path };
+  if (entity.kind === "code") return { eyebrow: "Library", title: "Code", subtitle: null };
   if (Object.hasOwn(KNOWLEDGE_PAGES, entity.kind)) return { eyebrow: "Knowledge", title: KNOWLEDGE_PAGES[entity.kind], subtitle: null };
   return { eyebrow: "Library", title: ENTITY_LABELS[entity.kind], subtitle: data.directory };
 }

@@ -1,4 +1,3 @@
-import { agoText, exactTime } from "../kit/claim-time.js";
 import { artifactLink, bindLinks, emptyState, escapeHtml, pageSub, setPageSub } from "./util.js";
 
 // Knowledge's two entry points: Touched by my work, the records behind the open slice, and Changed this week, the records changed in the last 7 days.
@@ -78,7 +77,7 @@ export function renderTouched(answer, inProgress, ctx) {
 function changedWhen(record) {
   if (record.uncommitted) return '<prism-chip tone="warning">Not committed</prism-chip>';
   if (!Number.isFinite(Date.parse(record.at ?? ""))) return "";
-  return `<time datetime="${escapeHtml(record.at)}" tip="${escapeHtml(exactTime(record.at))}">${escapeHtml(agoText(record.at))}</time>`;
+  return `<prism-time datetime="${escapeHtml(record.at)}"></prism-time>`;
 }
 
 /** The records changed in the last 7 days, uncommitted first, or why the history cannot tell and which records it could not date, as { sub, body }. */
