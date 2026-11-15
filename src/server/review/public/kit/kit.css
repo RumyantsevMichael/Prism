@@ -334,7 +334,7 @@ prism-menu-group[layout="segmented"] prism-menu-item {
   flex: 1 1 0;
 }
 
-/* ---------- prism-segmented: a few views or modes as one switch; the chosen segment stands on the surface ---------- */
+/* ---------- prism-segmented: a few views or modes as one switch; the chosen segment stands on the surface inside the control line, so the choice reaches 3:1 ---------- */
 prism-segmented {
   display: inline-flex;
   align-self: flex-start;
@@ -354,7 +354,7 @@ prism-segmented {
   min-width: 0;
   height: calc(var(--prism-control-height) - 2 * var(--prism-space-1) - 2 * var(--prism-stroke));
   padding: 0 var(--prism-space-4);
-  border: 0;
+  border: var(--prism-stroke) solid transparent;
   border-radius: var(--prism-radius-xs);
   background: none;
   color: var(--prism-color-ink-muted);
@@ -376,6 +376,7 @@ prism-segmented {
 }
 
 .prism-segment[aria-checked="true"] {
+  border-color: var(--prism-color-line-control);
   background: var(--prism-color-surface);
   color: var(--prism-color-ink);
   box-shadow: var(--prism-shadow-lift);
