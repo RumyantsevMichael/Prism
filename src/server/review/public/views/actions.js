@@ -123,7 +123,7 @@ function fieldHtml(action, field, input, { disabled, key }) {
   return `<div class="action-choice">${group}${consequence}</div>`;
 }
 
-function actionHtml(action, entry, { writable, renderMarkdown, heading, submitLabel }) {
+function actionHtml(action, entry, { writable, renderMarkdown, heading, submitLabel, batch }) {
   const { key, draft, error, sending } = entry;
   const state = actionFormState(action, draft);
   const id = `action-${entry.id}`;
@@ -137,7 +137,8 @@ function actionHtml(action, entry, { writable, renderMarkdown, heading, submitLa
     control = `<div class="action-submit"><prism-button size="sm" data-apply data-focus-key="${escapeHtml(`${key}|apply`)}"${disabled ? " disabled" : ""}>${escapeHtml(submitLabel?.(action) ?? action.label)}</prism-button></div>`;
   } else {
     const fields = shownFields(action, state.input).map((field) => fieldHtml(action, field, state.input, { disabled, key })).join("");
-    const submit = appliesOnPick(action) ? "" : `<div class="action-submit"><prism-button size="sm" variant="primary" data-apply data-focus-key="${escapeHtml(`${key}|apply`)}"${disabled || !state.ready ? " disabled" : ""}>${escapeHtml(submitLabel?.(action) ?? "Apply")}</prism-button>${draft ? `<prism-button size="sm" data-reset data-focus-key="${escapeHtml(`${key}|reset`)}"${sending ? " disabled" : ""}>Reset</prism-button>` : ""}<p class="action-hint" id="${id}-hint" aria-live="polite">${escapeHtml(state.hint)}</p></div>`;
+    // A batch list applies its changes together from its own button, so its rows draw no button of their own.
+    const submit = batch || appliesOnPick(action) ? "" : `<div class="action-submit"><prism-button size="sm" variant="primary" data-apply data-focus-key="${escapeHtml(`${key}|apply`)}"${disabled || !state.ready ? " disabled" : ""}>${escapeHtml(submitLabel?.(action) ?? "Apply")}</prism-button>${draft ? `<prism-button size="sm" data-reset data-focus-key="${escapeHtml(`${key}|reset`)}"${sending ? " disabled" : ""}>Reset</prism-button>` : ""}<p class="action-hint" id="${id}-hint" aria-live="polite">${escapeHtml(state.hint)}</p></div>`;
     control = `${contextHtml(action, renderMarkdown)}${guidanceHtml(action, choice)}<div class="action-fields">${fields}</div>${submit}`;
   }
   return `<div class="action-row${action.available ? "" : " is-unavailable"}" data-action-key="${escapeHtml(key)}" aria-busy="${Boolean(sending)}">
@@ -182,7 +183,7 @@ const lastListings = new WeakMap();
  * keepStaleDrafts keeps the person's input when the record changed under it, for input such as a comment that stays meaningful against the current record.
  * notice false leaves out the read-only notice, for a page that shows many lists and says it once for all of them.
  */
-export function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, notice = true, onRender = null, keepStaleDrafts = false }) {
+export function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, notice = true, onRender = null, keepStaleDrafts = false, groups = null, batch = false }) {
   if (!lastListings.has(api)) lastListings.set(api, new Map());
   const known = lastListings.get(api);
   const listings = new Map(targets.filter((target) => known.has(target)).map((target) => [target, known.get(target)]));
@@ -200,7 +201,7 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     return entry;
   }
 
-  const actionsOf = () => wanted.flatMap((target) => (listings.get(target)?.actions ?? []).map((action) => ({ target, action })));
+  const actionsOf = () => wanted.flatMap((target) => (listings.get(target)?.actions ?? []).filter((action) => !groups || groups.includes(action.group)).map((action) => ({ target, action })));
   const writable = () => wanted.length > 0 && wanted.every((target) => listings.get(target)?.writable === true);
 
   function html() {
@@ -208,7 +209,7 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     if (!wanted.every((target) => listings.has(target))) return '<p class="muted action-loading">Loading…</p>';
     const items = actionsOf();
     if (!items.length) return `<p class="empty-note">${escapeHtml(emptyText)}</p>`;
-    const options = { writable: writable(), renderMarkdown, heading, submitLabel };
+    const options = { writable: writable(), renderMarkdown, heading, submitLabel, batch };
     const readOnly = writable() || !notice ? "" : readOnlyNotice();
     return `${readOnly}<div class="action-list${compact ? " is-compact" : ""}">${items.map(({ target, action }) => actionHtml(action, entryOf(target, action), options)).join("")}</div>`;
   }
@@ -344,7 +345,7 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     if (button.hasAttribute("data-option")) {
       values[button.dataset.field] = button.dataset.value;
       item.entry.error = null;
-      if (appliesOnPick(item.action)) {
+      if (!batch && appliesOnPick(item.action)) {
         if (actionFormState(item.action, { values }).ready) void send(item, values);
         return;
       }
@@ -393,9 +394,35 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     if (actionFormState(item.action, item.entry.draft).ready) void send(item, item.entry.draft.values);
   });
 
+  // A batch list's changes: each available action whose unsent input differs from its value and is complete.
+  const pending = () => actionsOf().map(({ target, action }) => ({ target, action, entry: entryOf(target, action) }))
+    .filter(({ action, entry }) => action.available && entry.draft && actionFormState(action, entry.draft).ready);
+
   const panel = {
     root,
     palette,
+    /** The number of changes a batch list holds. */
+    changes: () => pending().length,
+    /**
+     * Applies a batch list's changes one by one in the list's order, and stops at the first one that is refused or not confirmed; true when all applied.
+     * Each change is read from the listing that the change before it returned, since settings that share a record share its revision.
+     */
+    async applyAll() {
+      for (let item = pending()[0]; item; item = pending()[0]) {
+        if (!await send(item, item.entry.draft.values)) return false;
+      }
+      return true;
+    },
+    /** Forgets every unsent change of the list. */
+    discard() {
+      for (const { target, action } of actionsOf()) {
+        const entry = entryOf(target, action);
+        entry.error = null;
+        setDraft(entry, null);
+      }
+      rendered = "";
+      render();
+    },
     entries: () => actionsOf().filter(({ action }) => action.available).map(({ target, action }) => ({
       ref: `action:${keyOf(target, action)}`,
       kind: "action",

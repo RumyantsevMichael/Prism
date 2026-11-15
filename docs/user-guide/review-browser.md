@@ -208,13 +208,15 @@ Every setting can change at any time, including after work on the initiative sta
 Once an initiative ships, its state is history, so every action on the initiative, its slices, and its questions shows as unavailable with the reason `The initiative shipped on <date>, so its state is history.`, and Prism refuses one sent anyway and changes nothing.
 Index actions are not part of an initiative, so shipping one leaves them available.
 
-### Initiative settings card
+### Initiative settings
 
-The initiative page ends with an **Initiative settings** card, and on every slice page of the initiative the card opens from **Details and settings** at the end of the page bar, below the slice's details.
-An initiative whose record cannot be read and that the roadmap does not list has no settings, so its page shows no card.
+**Settings** at the top of the initiative page opens the **Settings of <initiative>** dialog, and on every slice page of the initiative an **Initiative settings** card opens from **Details and settings** at the end of the page bar, below the slice's details.
+An initiative whose record cannot be read and that the roadmap does not list has no settings, so its page offers none.
 On a slice page the card names the initiative above its title, because the settings belong to the whole initiative and a change there applies to every slice.
 Each setting shows its options as a button group, the sentence on when a change takes effect, and for an on or off setting what the picked option does.
-Picking an option applies it at once, except for Models, whose model names you type and then send with **Apply** or Enter; **Reset** drops what you typed.
+In the dialog, the options you pick wait for **Apply**, which counts them, such as **Apply 2 changes**, and applies them one by one; it stops at a change that is refused or that you do not confirm, and closes once all of them applied.
+**Cancel**, Esc, or **Close** closes the dialog and drops the changes you have not applied.
+On a slice page's card, picking an option applies it at once, except for Models, whose model names you type and then send with **Apply** or Enter; **Reset** drops what you typed.
 Choosing **Custom** for Models shows the delivery, review, security review, and examples model fields, and **Apply** stays disabled with a hint such as `Fill in Delivery model.` until every required name is filled in.
 A change that needs your confirmation opens a dialog that says what it lets agents do, with **Confirm** and **Cancel**; Esc or **Cancel** leaves the setting as it was.
 Every control works with Tab, Enter, and Space.
@@ -235,7 +237,7 @@ It works on the initiative as an agent you started in a terminal would, and you 
 
 ### Launch an initiative
 
-The initiative page's **Initiative settings** card ends with **Launch with Claude Code** and **Launch with Codex** under **Launched session**; a slice page offers no launch.
+**Launch** at the top of the initiative page opens **Launch an orchestration** with **Launch with Claude Code** and **Launch with Codex**, each started with its own **Launch** button; a slice page offers no launch.
 A launch action is unavailable with a reason such as `Claude Code was not found: no claude executable on PATH.` while its host's executable, `claude` or `codex`, is not on the review app's `PATH`, and with `A launched session of <initiative> is running on this machine.` while a launched session of the initiative runs on this computer.
 Checkouts whose records live in the same place, such as two checkouts of one shared store, count as one initiative here, so only one launched session of an initiative runs on this computer at a time.
 Like every action, a launch needs a tab that can make changes.
@@ -316,12 +318,16 @@ Click a lane's arrow to collapse it.
 Next to the counts at the top, a link names how many open roadmap questions there are and opens Attention showing only them, where they are answered; the Roadmap page itself lists none.
 A superseded initiative's page says below its title when it was superseded and by which initiative, linked, and the decision's reason.
 
-An initiative page shows its slices as a board, a list, or a graph.
+An initiative page names its lane and its rank there above its title, such as `Initiative · Now · #1`, and under the title its state and intent.
+Its run totals, **Launch**, and **Settings** sit at the end of its head.
+A bar shows one segment per leaf slice in its status's color, done first and not started last, with a count such as `0 of 4 done · 2 in progress · 1 blocked`.
+Below it a fold, open until you close it, shows the rationale, the initiatives it needs and unblocks by title, its requirements with one chip per file that lists their numbers, and its records.
+An initiative page shows its slices as a board, a list, or a graph, and keeps the view you choose as a preference.
 The board has one column per slice status, and the card of an active slice also shows its activity, workers, and review lanes.
 A slice whose design waits for your answer at its design gate shows as in design review until the agent accepts the design, even though its record still says not started.
 The list shows the slice tree, and the graph orders leaf slices by execution order.
 A slice that records a [component](workflow.md#components) carries a small label with its `<repository>/<component>` identity in the slice tree, on its board card, and on its slice page, and a slice without one, such as a split scope or a slice accepted before components existed, has no label.
-Below them, the page lists the unstarted leaves that can be designed next, leaving out those in design review.
+Beside the view choice, a line lists the unstarted leaves that can be designed next, leaving out those in design review, and those that can start once their prerequisites finish.
 A slice page shows the slice's diagrams, its design from `slice.md`, the verification run, the review ledger, its [verified files](#a-slices-files-after-verification), and every file in the slice folder.
 It is the page to read at a design gate.
 Under its title a tag names the slice's phase with its gate or status, such as `Design · design gate open`, beside its requirements, and below the lifecycle a strip shows who holds the slice, since when, when the holder last renewed the claim, and the time left, with the exact times on hover or focus.
@@ -364,6 +370,7 @@ An evidence link, such as a receipt or a baseline snapshot, opens the evidence d
 The graph mode shows the same changes as before, change, and after nodes, and a node jumps to its card.
 
 Each review wave card, slice page, and initiative page shows run totals from the recorded runs: runs, wall time, elapsed and summed active time, token categories, and tool calls.
+On an initiative page the head sums them up, such as `3 h 55 min active · ≈ 19.9M tokens`, and opens the whole table.
 Every measure carries a visible coverage mark, such as `exact`, `approximate`, `partial`, or `unavailable`.
 An unavailable measure shows `—`, never `0`, and a scope without recorded runs says "No run recorded yet."
 A split parent's slice page shows its own totals and its totals with descendants.

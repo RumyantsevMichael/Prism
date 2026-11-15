@@ -135,6 +135,8 @@ const SPECIMENS = {
     search: `<prism-button variant="search" label="Search or jump to (Ctrl K)"><prism-icon name="search" size="sm"></prism-icon><span>Search or jump to…</span><prism-kbd>Ctrl K</prism-kbd></prism-button>`,
     round: `<prism-button size="sm" shape="round" pressed>All</prism-button><prism-button size="sm" shape="round" pressed="false">Slices</prism-button>`,
     square: `<prism-button variant="status" shape="square" label="Settings" tip="Settings (Ctrl ,)"><prism-icon name="settings" size="sm"></prism-icon></prism-button><prism-button variant="ghost" shape="square" label="Hide the sidebar"><prism-icon name="panel-left" size="sm"></prism-icon></prism-button>`,
+    menu: `<prism-button size="sm"><prism-icon name="play" size="xs"></prism-icon><span>Launch</span><prism-icon name="chevron-down" size="xs"></prism-icon></prism-button><prism-button size="sm" variant="ghost"><prism-icon name="clock" size="xs"></prism-icon><span>3 h 55 min active</span><prism-icon name="chevron-down" size="xs"></prism-icon></prism-button>`,
+    shrink: `<span class="catalog-narrow"><prism-button variant="chrome" shrink><prism-avatar kind="workspace" name="P" aria-hidden="true"></prism-avatar><span>payments-platform / feature/retry-total-deadline</span><prism-badge variant="count" tone="danger">12</prism-badge><prism-icon name="chevron-down" size="xs"></prism-icon></prism-button></span>`,
     badge: `<prism-button variant="ghost" label="Attention, 5 items"><prism-icon name="bell"></prism-icon><prism-badge slot="badge" solid size="sm">5</prism-badge></prism-button>`,
     "long-text": `<prism-button>${LONG}</prism-button>`,
     "unbroken-name": `<prism-button variant="primary">${UNBROKEN}</prism-button>`

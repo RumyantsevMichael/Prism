@@ -69,6 +69,11 @@ button {
   margin-inline-end: 0;
 }
 
+/* An icon after the label, such as the chevron of a button that opens a menu, keeps its distance from the label before it; the label then goes in a span, so the leading icon is not the last child. */
+::slotted(prism-icon:last-child:not(:first-child)) {
+  margin-inline-start: var(--prism-space-2);
+}
+
 button:hover {
   background: var(--prism-color-hover);
 }
@@ -287,6 +292,29 @@ button:disabled[aria-pressed="true"],
 
 :host([variant="search"]) ::slotted(prism-kbd) {
   flex: none;
+}
+
+/* shrink: the content is a row whose icons, avatars, and badges keep their size while the span of text shortens, so a trailing chevron never leaves a narrow button. */
+:host([shrink]) .content {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-4);
+}
+
+:host([shrink]) ::slotted(*) {
+  flex: none;
+}
+
+:host([shrink]) ::slotted(prism-icon) {
+  margin-inline: 0;
+}
+
+:host([shrink]) ::slotted(span) {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* shape square: an icon-only button as wide as it is tall, its icon centered, as the status bar's Settings gear is. */

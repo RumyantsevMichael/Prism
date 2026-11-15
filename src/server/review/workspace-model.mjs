@@ -354,6 +354,10 @@ async function computeInitiativeView(projectRoot, id) {
     recordPath: await recordFile(projectRoot, { kind: "initiative", initiative: id }),
     statePath: await recordFile(projectRoot, { kind: "state", initiative: id }),
     roadmapItem: roadmap.items.find((item) => item.id === id) ?? null,
+    // The initiative's priority within its band among the band's open initiatives, as the roadmap board numbers its cards.
+    bandRank: bandRank(roadmap, id),
+    // The titles of the initiatives it needs and unblocks, so its page names them rather than their ids.
+    relatedTitles: relatedTitles(roadmap, id),
     // A superseded initiative's page names the initiative that superseded it by its title.
     supersededBy: supersedingItem(roadmap, id),
     exists: loaded.exists,
@@ -1237,6 +1241,19 @@ async function fileContext(projectRoot, config, ref) {
   const roadmapPaths = await readRoadmap(projectRoot).then(({ resolved }) => [resolved.recordPath, resolved.projectionPath]).catch(() => []);
   if (roadmapPaths.includes(ref)) return { trail: [placeCrumb("roadmap"), fileCrumb], scope: { kind: "global" }, place: "roadmap" };
   return { trail: [{ ref: null, label: "Files" }, { ref, label: ref }], scope: { kind: "global" }, place: null };
+}
+
+function relatedTitles(roadmap, id) {
+  const item = roadmap.items.find((entry) => entry.id === id);
+  const related = new Set([...(item?.requires ?? []), ...(item?.requiredBy ?? [])]);
+  return Object.fromEntries(roadmap.items.filter((entry) => related.has(entry.id)).map((entry) => [entry.id, entry.title]));
+}
+
+function bandRank(roadmap, id) {
+  const item = roadmap.items.find((entry) => entry.id === id);
+  if (!item || item.state === "shipped" || item.state === "superseded") return null;
+  const rank = roadmap.items.filter((entry) => entry.band === item.band && entry.state !== "shipped" && entry.state !== "superseded").findIndex((entry) => entry.id === id);
+  return rank < 0 ? null : rank + 1;
 }
 
 // Entity tabs name Prism concepts rather than files, so they never collide with artifact paths, which always carry an extension.
