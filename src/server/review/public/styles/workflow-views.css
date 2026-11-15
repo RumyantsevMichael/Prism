@@ -262,10 +262,6 @@
   max-width: var(--prism-list-width);
 }
 
-.data-table td.dates {
-  white-space: nowrap;
-}
-
 /* A slice count bar: done, in progress, blocked, and deferred shares of an initiative's slices. */
 .progress {
   display: flex;
@@ -1616,11 +1612,6 @@ a.inspect-tile:focus-visible {
   flex-wrap: wrap;
   gap: var(--prism-space-1) var(--prism-space-3);
   min-width: 0;
-}
-
-.decision-list > li > .muted {
-  margin-left: auto;
-  font-size: var(--prism-font-size-xs);
 }
 
 /* ---------- Launched sessions: one card per session, its facts, its terminal command, and its actions ---------- */

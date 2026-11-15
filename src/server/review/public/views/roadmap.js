@@ -293,7 +293,7 @@ export async function render(container, entity, ctx) {
     });
   }
   const choose = (key, value) => {
-    void setPreference(key, value).catch(() => ctx.toast?.("The view changed here, but the review app could not store the choice."));
+    void setPreference(key, value).catch(() => ctx.showToast?.("The view changed here, but the review app could not store the choice."));
     ctx.rerender();
   };
   container.querySelector("[data-roadmap-view]").addEventListener("change", (event) => {

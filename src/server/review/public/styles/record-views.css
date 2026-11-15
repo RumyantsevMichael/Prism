@@ -1467,7 +1467,7 @@ a.code-link:hover {
 /* ---------- Knowledge's entry points and Diagrams: the pages lay out the kit's library table ---------- */
 
 /* A library table stands a small gap further below the line under the title than the page's usual gap, as the mockup's table stands below its page subtitle. */
-.artifact-header + .structured-view > :is(.knowledge-table, .diagram-list):first-child {
+.artifact-header + .structured-view > :is(.knowledge-table, .library-toolbar):first-child {
   margin-top: var(--prism-space-2);
 }
 
@@ -1479,7 +1479,43 @@ a.code-link:hover {
   --prism-lib-columns: minmax(0, 1fr) 120px;
 }
 
-.knowledge-table.is-slices,
-.diagram-list {
+.knowledge-table.is-slices {
   --prism-lib-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+/* ---------- Requirements, Decisions, and Diagrams: a filter and Group by above one library table ---------- */
+
+.library-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-3) var(--prism-space-6);
+  min-width: 0;
+  margin-bottom: var(--prism-space-5);
+}
+
+.library-filter {
+  flex: 0 1 320px;
+  min-width: 0;
+}
+
+.library-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.library-toolbar-label {
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  white-space: nowrap;
+}
+
+.library-table {
+  --prism-lib-columns: minmax(0, 2fr) 120px 120px minmax(0, 2fr);
+}
+
+.library-table.is-diagrams {
+  --prism-lib-columns: minmax(0, 2fr) 140px minmax(0, 2fr);
 }

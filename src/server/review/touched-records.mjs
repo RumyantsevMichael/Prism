@@ -2,6 +2,7 @@ import path from "node:path";
 import { loadDesignView } from "../workflow/design-view.mjs";
 import { changedPaths, treeId } from "../workflow/slice-gate.mjs";
 import { listRecordEntries, readArtifactText, sliceDocumentFolder } from "../workflow/record-store.mjs";
+import { relativeLinkTargets } from "./artifact-links.mjs";
 import { glossaryEntries, loadGlossary, loadInitiativeView, recordFiles } from "./workspace-model.mjs";
 
 const GIT_TIMEOUT_MS = 10000;
@@ -29,20 +30,6 @@ const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function namesTerm(text, term) {
   const pattern = term.trim().split(/\s+/).map(escapeRegExp).join("\\s+");
   return pattern ? new RegExp(`(?<![\\p{L}\\p{N}_])${pattern}(?![\\p{L}\\p{N}_])`, "iu").test(text) : false;
-}
-
-// The project-relative targets of a Markdown document's links, resolved against the document's folder, without their anchors.
-function linkTargets(source, documentPath) {
-  const targets = [];
-  for (const match of (source ?? "").matchAll(/!?\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g)) {
-    const raw = match[1].split("#")[0];
-    if (!raw || /^[a-z][a-z0-9+.-]*:/i.test(raw) || raw.startsWith("/")) continue;
-    let decoded = raw;
-    try { decoded = decodeURIComponent(raw); } catch { /* keep the raw target */ }
-    const target = path.posix.normalize(path.posix.join(path.posix.dirname(documentPath), decoded));
-    if (!target.startsWith("../")) targets.push(target);
-  }
-  return targets;
 }
 
 /**
@@ -106,7 +93,7 @@ export async function touchedRecords(projectRoot, sliceId) {
     const record = recordAt(file, ["requirement"]) ?? { kind: "requirement", title: path.posix.basename(file, ".md"), status: null, ref: file };
     add(cites, file, record, anchors.length ? numbered("Section", anchors) : WHY.linked);
   }
-  for (const target of linkTargets(designSource, designPath ?? "")) {
+  for (const target of relativeLinkTargets(designSource, designPath ?? "")) {
     const record = recordAt(target, ["requirement", "decision", "diagram"]);
     if (record) add(cites, target, record, WHY.linked);
   }
