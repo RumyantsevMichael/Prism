@@ -54,6 +54,7 @@ import { PrismPageSub } from "./elements/prism-page-sub.js";
 import { PrismLibTable } from "./elements/prism-lib-table.js";
 import { PrismPhase } from "./elements/prism-phase.js";
 import { PrismSliceBar } from "./elements/prism-slice-bar.js";
+import { PrismSeverity } from "./elements/prism-severity.js";
 import { PrismStatus } from "./elements/prism-status.js";
 import { PrismResizer } from "./elements/prism-resizer.js";
 import { PrismKbd } from "./elements/prism-kbd.js";
@@ -122,6 +123,7 @@ export const KIT_ELEMENTS = [
   PrismLibTable,
   PrismPhase,
   PrismSliceBar,
+  PrismSeverity,
   PrismStatus,
   PrismResizer
 ];
