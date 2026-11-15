@@ -67,6 +67,11 @@ function noRuns(totals) {
   return totals.runs?.value === 0 && totals.runs.coverage === "exact";
 }
 
+/** Whether `totals` holds at least one run, or may: totals that are known to have none hold no run. */
+export function hasRuns(totals) {
+  return Boolean(totals) && !noRuns(totals);
+}
+
 /**
  * Renders the run totals of one or more scopes (wave, slice, descendants, or initiative) as one compact table, a row per scope,
  * or one line when no scope has a recorded run; "" without totals.

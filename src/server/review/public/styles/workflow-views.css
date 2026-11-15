@@ -1382,10 +1382,6 @@ a.inspect-tile:focus-visible {
 
 /* ---------- Slice ---------- */
 
-.slice-claim-strip {
-  min-width: 0;
-}
-
 /* Each verified file names its path, which wraps when long, and then its state. */
 .slice-verified-files {
   min-width: 0;
@@ -1397,15 +1393,31 @@ a.inspect-tile:focus-visible {
   overflow-wrap: anywhere;
 }
 
-/* The claim strip runs the page's full width; a covering scope's note follows it. */
-.slice-claim-strip > .claim-held {
+/* The tag line holds the phase and the slice's chips at the start and the claim at the end, whose times show on hover. */
+.slice-head-tags {
   display: flex;
   flex-wrap: wrap;
-  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--prism-space-3) var(--prism-space-5);
+  min-width: 0;
+  margin-top: calc(-1 * var(--prism-space-2));
 }
 
-.slice-head-tags {
-  margin-top: calc(-1 * var(--prism-space-2));
+/* The claim keeps to the end of the line, also when it wraps onto a line of its own. */
+.slice-head-claim {
+  margin-inline-start: auto;
+}
+
+.slice-head-tags > .chip-row,
+.slice-head-claim,
+.slice-head-claim > .claim-held {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .slice-details-facts {
@@ -1774,44 +1786,4 @@ a.inspect-tile:focus-visible {
   .change-where {
     margin-left: 0;
   }
-}
-
-/* ---------- Slice review card ---------- */
-
-.deferred-list {
-  display: grid;
-  gap: var(--prism-space-2);
-  min-width: 0;
-  margin: var(--prism-space-2) 0 var(--prism-space-4);
-  padding: 0;
-  list-style: none;
-}
-
-.deferred-list li {
-  display: grid;
-  gap: var(--prism-space-1);
-  min-width: 0;
-  padding: var(--prism-space-2) var(--prism-space-3);
-  border: var(--prism-stroke) solid var(--prism-color-line);
-  border-radius: var(--prism-radius-sm);
-  background: var(--prism-color-surface);
-  font-size: var(--prism-font-size-sm);
-  overflow-wrap: anywhere;
-}
-
-.deferred-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--prism-space-2);
-  min-width: 0;
-}
-
-.deferred-title {
-  min-width: 0;
-}
-
-.deferred-meta code {
-  font-family: var(--prism-font-code);
-  font-size: var(--prism-font-size-code);
 }

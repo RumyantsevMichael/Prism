@@ -88,7 +88,7 @@ test("clause 28: Attention shows the review loop gate's summary with the finding
   assert.deepEqual(page.errors, []);
 });
 
-test("clauses 26, 29: the findings board shows deferred findings in their own column with their gate and follow-up", { skip, timeout: 120000 }, async (context) => {
+test("clauses 26, 29: the review ledger groups deferred findings after verified ones and shows each with its gate and follow-up", { skip, timeout: 120000 }, async (context) => {
   await useAppDirectory(context);
   const { root, gate } = await deferred(context);
   const { base } = await serveProject(context, root);
@@ -99,16 +99,17 @@ test("clauses 26, 29: the findings board shows deferred findings in their own co
   const page = await openPage(browser, reviewUrl(base, ledger));
   await waitForView(page);
   const view = page.locator("#artifact");
-  const heads = await view.locator(".board-column-head").allInnerTexts();
-  const columns = heads.map((text) => text.replace(/\s*\d+\s*$/, "").trim());
-  assert.deepEqual(columns.slice(-2), ["Verified", "Deferred"], "the Deferred column follows Verified");
-  const deferredColumn = view.locator(".board-column").filter({ has: page.locator(".board-column-head", { hasText: "Deferred" }) });
-  for (const finding of LOWS) assert.equal(await deferredColumn.getByText(finding.title).count(), 1, finding.title);
-  assert.equal(await view.locator('prism-stat[label="unresolved findings"]').getAttribute("value"), "0", "deferred findings are not unresolved");
-  const deferredStat = view.locator('prism-stat[label*="deferred"]');
-  assert.equal(await deferredStat.count(), 1, "a deferred count appears");
-  assert.equal(await deferredStat.getAttribute("value"), "2");
-  await deferredColumn.getByText(LOWS[0].title).click();
+  const heads = await view.locator(".ledger-group-head").allInnerTexts();
+  const groups = heads.map((text) => text.replace(/\s*\d+\s*$/, "").trim());
+  assert.deepEqual(groups.slice(-2), ["Verified", "Deferred"], "the Deferred group follows Verified");
+  const deferredGroup = view.getByRole("listbox", { name: "Deferred findings" });
+  for (const finding of LOWS) assert.equal(await deferredGroup.getByText(finding.title).count(), 1, finding.title);
+  assert.match(await deferredGroup.innerText(), new RegExp(`gate ${gate}[\\s\\S]*follow-up #101`), "a deferred row names its gate and follow-up");
+  assert.equal(await view.locator('[data-count="unresolved"]').innerText(), "0 unresolved findings", "deferred findings are not unresolved");
+  const deferredCount = view.locator('[data-count="deferred"]');
+  assert.equal(await deferredCount.count(), 1, "a deferred count appears");
+  assert.equal(await deferredCount.innerText(), "2 deferred with a follow-up");
+  await deferredGroup.getByText(LOWS[0].title).click();
   const detail = view.locator("[data-detail]");
   await detail.getByText("#101").waitFor({ timeout: 5000 });
   assert.match(await detail.innerText(), new RegExp(gate));
@@ -118,25 +119,24 @@ test("clauses 26, 29: the findings board shows deferred findings in their own co
   assert.deepEqual(page.errors, []);
 });
 
-test("clause 27: the slice page counts deferred findings apart and lists each with its gate and follow-up", { skip, timeout: 120000 }, async (context) => {
+test("clause 27: the slice's Review tab counts deferred findings apart and lists each with its gate and follow-up", { skip, timeout: 120000 }, async (context) => {
   await useAppDirectory(context);
   const { root, gate } = await deferred(context);
   const { base } = await serveProject(context, root);
   const browser = await launch(context);
   const page = await openPage(browser, reviewUrl(base, `slice:${INITIATIVE}/${INITIATIVE}`));
   await waitForView(page);
-  const card = page.locator("#artifact prism-panel").filter({ has: page.locator('prism-stat[label="unresolved"]') });
-  assert.equal(await card.count(), 1, "the slice page has its review card");
-  assert.equal(await card.locator('prism-stat[label="unresolved"]').getAttribute("value"), "0");
-  const deferredStat = card.locator('prism-stat[label*="deferred"]');
-  assert.equal(await deferredStat.count(), 1);
-  assert.equal(await deferredStat.getAttribute("value"), "2");
-  const text = await card.innerText();
+  await page.locator("#artifact").getByRole("tablist", { name: "Slice" }).getByRole("tab", { name: "Review", exact: true }).click();
+  const pane = page.locator('#artifact [data-tab-panel="review"]');
+  await pane.locator("[data-ledger-summary]").waitFor({ timeout: 10000 });
+  assert.equal(await pane.locator('[data-count="unresolved"]').innerText(), "0 unresolved findings");
+  assert.equal(await pane.locator('[data-count="deferred"]').innerText(), "2 deferred with a follow-up");
+  const text = await pane.getByRole("listbox", { name: "Deferred findings" }).innerText();
   for (const [finding, followUp] of [[LOWS[0], "#101"], [LOWS[1], "#102"]]) {
     assert.ok(text.includes(finding.title), finding.title);
     assert.ok(text.includes(followUp), followUp);
   }
   assert.ok(text.includes(gate), "each deferred finding names its decision gate");
-  assert.match(text, /low/);
+  assert.equal(await pane.getByRole("listbox", { name: "Deferred findings" }).locator('prism-severity[level="low"]').count(), 2, "each shows its severity");
   assert.deepEqual(page.errors, []);
 });

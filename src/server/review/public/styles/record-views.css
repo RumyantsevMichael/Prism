@@ -774,222 +774,216 @@ body.has-maximized::after {
 
 /* ---------- Review ledger ---------- */
 
-.wave-timeline {
-  display: grid;
-  gap: var(--prism-space-5);
+/* One summary line: the current wave's state, the counts that matter, its reviewers, and its run totals at the end. */
+.ledger-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-3) var(--prism-space-6);
+  min-width: 0;
+  margin: 0 0 var(--prism-space-4);
+}
+
+.ledger-state,
+.ledger-reviewers,
+.ledger-counts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2) var(--prism-space-3);
   min-width: 0;
   margin: 0;
-  padding: 0;
-  list-style: none;
+  overflow-wrap: anywhere;
 }
 
-.wave {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: var(--prism-space-4);
-  min-width: 0;
-}
-
-.wave-marker {
-  display: inline-grid;
-  place-items: center;
-  width: var(--prism-control-height);
-  height: var(--prism-control-height);
-  border: var(--prism-stroke) solid var(--prism-color-line-strong);
-  border-radius: var(--prism-radius-round);
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-xs);
-  font-variant-numeric: tabular-nums;
-  font-weight: var(--prism-font-weight-semibold);
-}
-
-.wave.is-current .wave-marker {
-  border-color: var(--prism-color-accent);
-  color: var(--prism-color-accent-text);
-}
-
-.wave.is-accepted .wave-marker {
-  border-color: var(--prism-color-success);
-  color: var(--prism-color-success);
-}
-
-.wave-body {
-  display: grid;
+.ledger-counts {
   gap: var(--prism-space-2);
-  min-width: 0;
 }
 
-.wave-body p {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.wave-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--prism-space-3);
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.lane-list {
-  display: grid;
-  gap: var(--prism-space-1);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.lane-list li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--prism-space-3);
-  min-width: 0;
-  font-size: var(--prism-font-size-sm);
-  overflow-wrap: anywhere;
-}
-
-.lane-name {
-  font-family: var(--prism-font-code);
-  font-size: var(--prism-font-size-code);
-}
-
-.wave-findings {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--prism-space-2) var(--prism-space-4);
-  font-size: var(--prism-font-size-sm);
-}
-
-.split-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-  align-items: start;
-  gap: var(--prism-space-5);
-  min-width: 0;
-}
-
-.ledger-filters {
-  margin-bottom: var(--prism-space-4);
-}
-
-.ledger-filter {
-  flex: 1 1 calc(var(--prism-control-height) * 5);
-  min-width: 0;
-}
-
-.board {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(var(--prism-control-height) * 7)), 1fr));
-  gap: var(--prism-space-4);
-  min-width: 0;
-}
-
-.board-column {
-  min-width: 0;
-  padding: var(--prism-space-3);
-  border-radius: var(--prism-radius-md);
-  background: var(--prism-color-sunken);
-}
-
-.board-column-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--prism-space-2);
-  min-width: 0;
-  margin: 0 0 var(--prism-space-3);
-}
-
-.finding-list {
-  display: grid;
-  gap: var(--prism-space-2);
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.finding-item {
-  display: grid;
-  gap: var(--prism-space-1);
-  min-width: 0;
-  padding: var(--prism-space-3);
-  border: var(--prism-stroke) solid var(--prism-color-line);
-  border-radius: var(--prism-radius-sm);
-  background: var(--prism-color-surface);
-  font-size: var(--prism-font-size-sm);
-  overflow-wrap: anywhere;
-}
-
-.finding-item.is-selected {
-  border-color: var(--prism-color-accent);
-  background: var(--prism-color-selected);
-}
-
-.finding-head {
-  display: flex;
-  flex-wrap: wrap;
+.ledger-count {
+  display: inline-flex;
   align-items: center;
   gap: var(--prism-space-2);
   min-width: 0;
 }
 
-.finding-head code,
-.finding-path code {
-  font-family: var(--prism-font-code);
-  font-size: var(--prism-font-size-code);
+.ledger-conflicts {
+  color: var(--prism-color-danger);
 }
 
-.column-none {
-  padding: var(--prism-space-2);
-  text-align: center;
+.ledger-totals {
+  margin-inline-start: auto;
 }
 
-.ledger-detail-body {
-  min-width: 0;
-}
-
-.ledger-detail-body .item-title {
-  margin: var(--prism-space-1) 0 var(--prism-space-3);
-}
-
-.detail-block {
-  margin-top: var(--prism-space-5);
-}
-
-.detail-block p {
-  margin: var(--prism-space-1) 0;
-  overflow-wrap: anywhere;
-}
-
-.timeline {
-  display: grid;
-  gap: var(--prism-space-3);
-  min-width: 0;
-  margin: var(--prism-space-2) 0 0;
-  padding: 0 0 0 var(--prism-space-4);
-  border-inline-start: var(--prism-stroke) solid var(--prism-color-line);
-  list-style: none;
-}
-
-.timeline p {
-  margin: var(--prism-space-1) 0;
-  font-size: var(--prism-font-size-sm);
-  overflow-wrap: anywhere;
-}
-
-.timeline-head {
+/* The filters sit on one wrapping line, each after its caption. */
+.ledger-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--prism-space-2) var(--prism-space-3);
   min-width: 0;
-  font-size: var(--prism-font-size-sm);
+  margin: 0 0 var(--prism-space-4);
+}
+
+.ledger-toolbar-label {
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+}
+
+.ledger-shown {
+  margin-inline-start: auto;
+  font-size: var(--prism-font-size-xs);
+}
+
+/* The findings list beside the chosen finding, stacked on narrow screens. */
+.ledger-split {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: var(--prism-space-5);
+  align-items: start;
+  min-width: 0;
+}
+
+.ledger-findings,
+.ledger-finding {
+  min-width: 0;
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-lg);
+  background: var(--prism-color-surface);
+}
+
+.ledger-findings {
+  padding: var(--prism-space-3);
+}
+
+.ledger-group-head {
+  margin: var(--prism-space-4) 0 var(--prism-space-2);
+}
+
+.ledger-findings > .ledger-group-head:first-child {
+  margin-top: 0;
+}
+
+.ledger-finding-id {
+  color: var(--prism-color-ink-muted);
+  font-family: var(--prism-font-code);
+  font-size: var(--prism-font-size-xs);
+}
+
+.ledger-empty-groups {
+  margin: var(--prism-space-3) 0 0;
+  font-size: var(--prism-font-size-xs);
+}
+
+.ledger-detail {
+  min-width: 0;
+}
+
+.ledger-finding {
+  padding: var(--prism-space-5);
   overflow-wrap: anywhere;
+}
+
+.ledger-finding-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-3);
+  margin: 0;
+}
+
+.ledger-finding-title {
+  margin: var(--prism-space-3) 0 var(--prism-space-4);
+  font-size: var(--prism-font-size-lg);
+  line-height: var(--prism-line-height-tight);
+}
+
+.ledger-finding p {
+  max-width: var(--prism-measure);
+}
+
+.ledger-sub {
+  margin: var(--prism-space-5) 0 var(--prism-space-2);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.ledger-step-evidence {
+  display: block;
+}
+
+/* The waves, assessments, history, and record details fold below the list. */
+.ledger-more {
+  display: grid;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  margin-top: var(--prism-space-6);
+}
+
+.ledger-waves,
+.ledger-operations,
+.ledger-conflict-list {
+  display: grid;
+  gap: var(--prism-space-4);
+  min-width: 0;
+  margin: var(--prism-space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ledger-operations {
+  gap: 0;
+}
+
+.ledger-wave-head,
+.ledger-wave-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2) var(--prism-space-3);
+  min-width: 0;
+  margin: 0 0 var(--prism-space-2);
+  overflow-wrap: anywhere;
+}
+
+.ledger-wave-line > .muted:first-child {
+  min-width: calc(var(--prism-space-8) * 2.5);
+}
+
+.ledger-lanes,
+.ledger-lane {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+.ledger-operations li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--prism-space-3);
+  min-width: 0;
+  padding: var(--prism-space-1) 0;
+  overflow-wrap: anywhere;
+}
+
+.ledger-operations time {
+  color: var(--prism-color-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 900px) {
+  .ledger-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ledger-totals,
+  .ledger-shown {
+    margin-inline-start: 0;
+  }
 }
 
 /* ---------- Coordination state ---------- */

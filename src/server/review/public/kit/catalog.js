@@ -596,6 +596,14 @@ const third = 3;</code></pre></prism-code>`,
     "long-text": `<prism-slice-bar statuses="done,in-progress,design-review,blocked,not-started,deferred" label="${LONG}"></prism-slice-bar>`,
     "unbroken-name": `<prism-slice-bar statuses="done,in-progress" label="${UNBROKEN}"></prism-slice-bar>`
   },
+  "prism-severity": {
+    default: `<prism-severity level="blocker"></prism-severity>`,
+    blocker: `<prism-severity level="blocker"></prism-severity>`,
+    high: `<prism-severity level="high"></prism-severity>`,
+    medium: `<prism-severity level="medium"></prism-severity>`,
+    low: `<prism-severity level="low"></prism-severity>`,
+    "glyph-only": `<prism-severity level="blocker" glyph-only></prism-severity> <prism-severity level="high" glyph-only></prism-severity> <prism-severity level="medium" glyph-only></prism-severity> <prism-severity level="low" glyph-only></prism-severity>`
+  },
   "prism-resizer": {
     default: `<div class="catalog-resize-demo"><prism-resizer label="Resize the sidebar" min="200" max="480" value="248"></prism-resizer></div>`,
     start: `<div class="catalog-resize-demo"><prism-resizer edge="start" label="Resize the side panel" min="320" value="400"></prism-resizer></div>`,
