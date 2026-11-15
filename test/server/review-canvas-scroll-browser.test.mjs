@@ -4,6 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { demoProject, launch, openPage, reviewUrl, serveProject, settle, skip, useAppDirectory } from "./fixtures/kit-browser.mjs";
+import { repainted, settled } from "./fixtures/wait.mjs";
 
 // The review page's canvases, scrolling, and refreshes: Attention's list and detail scroll apart, graphs and diagrams draw on a dotted grid that follows their zoom,
 // a long menu keeps its scroll position, a text area grows with its text, a contents link scrolls smoothly, and a refresh never shows a half-built view.
@@ -20,7 +21,7 @@ async function stressPage(context, ref, options = {}) {
 const graphView = async (page) => {
   await page.locator("#artifact").getByText("Graph", { exact: true }).first().click();
   await page.waitForFunction(() => document.querySelector("#artifact prism-canvas.graph-viewport svg"), null, { timeout: 15000 });
-  await page.waitForTimeout(300);
+  await repainted(page);
 };
 
 test("Attention's list and detail scroll apart, so the picked item stays in view at the bottom of a long list", { skip, timeout: 90000 }, async (context) => {
@@ -89,7 +90,7 @@ test("a menu taller than the window keeps its scroll position when the page plac
     menu.append(group);
   });
   await page.locator("#project-button").click();
-  await page.waitForTimeout(300);
+  await repainted(page);
   const kept = await page.evaluate(async () => {
     const menu = document.getElementById("project-menu");
     menu.scrollTop = 400;
@@ -113,12 +114,12 @@ test("a gate's note grows with its text up to a limit", { skip, timeout: 90000 }
   const note = page.locator(".attention-sheet:not([hidden]) .gate-note textarea");
   const empty = await note.evaluate((element) => element.getBoundingClientRect().height);
   await note.fill(Array.from({ length: 8 }, (_, index) => `Line ${index + 1} of a longer note.`).join("\n"));
-  await page.waitForTimeout(100);
+  await repainted(page);
   const grown = await note.evaluate((element) => ({ height: element.getBoundingClientRect().height, hidden: element.scrollHeight - element.clientHeight }));
   assert.ok(grown.height > empty, "the note grows with its text");
   assert.ok(grown.hidden <= 1, "and shows all of it");
   await note.fill(Array.from({ length: 80 }, (_, index) => `Line ${index + 1}.`).join("\n"));
-  await page.waitForTimeout(100);
+  await repainted(page);
   const capped = await note.evaluate((element) => ({ height: element.getBoundingClientRect().height, scrolls: element.scrollHeight > element.clientHeight }));
   assert.ok(capped.height < 800 && capped.scrolls, "past its limit the note scrolls");
   assert.deepEqual(page.errors, []);
@@ -143,7 +144,8 @@ test("a refresh of a graph page replaces the view whole, never showing it shorte
   record.slices[slug].title = `${record.slices[slug].title} renamed`;
   await writeFile(file, `${JSON.stringify(record, null, 2)}\n`);
   await page.waitForFunction((title) => document.querySelector("#artifact")?.textContent.includes(title), `${record.slices[slug].title}`, { timeout: 20000 }).catch(() => {});
-  await page.waitForTimeout(800);
+  await settled(() => page.locator(".artifact-stage").count(), 0);
+  await repainted(page);
   const heights = await page.evaluate(() => {
     window.sampling = false;
     return window.heights;

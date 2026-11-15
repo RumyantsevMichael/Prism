@@ -7,6 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { INITIATIVE, LAUNCH_ID, launchFixture, waitFor } from "./fixtures/launched-sessions.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { actionOf, apply, get, listing, pageSession, startActionReview } from "./fixtures/review-actions.mjs";
 
 // Launch, stop, and resume as review app actions: listed on the initiative and on each launched session, confirmed outside
@@ -245,7 +246,7 @@ test("an answer given while the session runs reaches it there, and resumes it on
   assert.deepEqual(answered.json.launch, { id, resumed: false, reason: "The session is running and receives the answer there." });
   await waitFor(() => s.runs("claude").length === 2, { what: "the one resume after the run ended" });
   await s.settled(id, ["finished"]);
-  await new Promise((resolve) => setTimeout(resolve, 800));
+  await pause(800, "no second resume may follow, and a change that must not happen leaves nothing to wait for");
   assert.equal(s.runs("claude").length, 2, "one answer causes at most one resume");
 });
 
@@ -274,7 +275,7 @@ test("an answer that arrives from another machine through the store waits for a 
   assert.equal(view.answerWaits, true);
   assert.equal(view.state, "finished");
   assert.equal(view.reason, "An answer given on another machine waits; resume this session here to continue.");
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  await pause(500, "no resume may follow, and a change that must not happen leaves nothing to wait for");
   assert.equal(s.runs("claude").length, 1, "nothing resumes on an answer from another machine");
 });
 

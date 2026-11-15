@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { escapes, shownTooltip, skip, stateFileNames } from "./fixtures/kit-browser.mjs";
+import { pause, settled } from "./fixtures/wait.mjs";
 import { buttonNames, choosePlace, comparePlaces, drawer, item, open, placeButton, PLACES, placesDemo, placeTitle, rail, reviewUrl, row as rowOf, settledOn, shownPlace, shownRef, sidebar, SLICE, tabs } from "./fixtures/places-browser.mjs";
 
 // The rail of places and the sidebar that shows only the current place, on the real review page over the demo project.
@@ -49,19 +50,16 @@ test("clauses 1, 2, 3, 4, 5, 6: a wide window shows a borderless rail of the fiv
   assert.equal(await bell(page).filter({ visible: true }).count(), 0, "the top bar shows no Attention bell");
   assert.equal(await sidebarButton(page.locator("header")).filter({ visible: true }).count(), 0, "the sidebar button left the top bar");
   await placeButton(page, "Work").hover();
-  await page.waitForTimeout(700);
-  assert.equal(await shownTooltip(page), "Work", "hovering names the place");
+  assert.equal(await settled(() => shownTooltip(page), "Work"), "Work", "hovering names the place");
   await placeButton(page, "Knowledge").focus();
-  await page.waitForTimeout(400);
-  assert.equal(await shownTooltip(page), "Knowledge", "keyboard focus names the place");
+  assert.equal(await settled(() => shownTooltip(page), "Knowledge"), "Knowledge", "keyboard focus names the place");
   for (const [name, subtitle] of [["Work", "Designed and not shipped"], ["Knowledge", "Requirements, decisions, glossary"], ["History", "Shipped and superseded"], ["Attention", "What waits on you"]]) {
     await choosePlace(page, name);
     assert.deepEqual((await pressed(page)).map((label) => label.split(",")[0]), [name], `${name} is pressed`);
     assert.equal((await placeTitle(sidebar(page)).innerText()).trim(), name, `the sidebar's head names ${name}`);
     assert.equal(await sidebar(page).getByText(subtitle, { exact: true }).count(), 0, `the head shows no subtitle line for ${name}`);
     await placeTitle(sidebar(page)).hover();
-    await page.waitForTimeout(700);
-    assert.equal(await shownTooltip(page), `${name}: ${subtitle}`, `hovering the title says what ${name} holds`);
+    assert.equal(await settled(() => shownTooltip(page), `${name}: ${subtitle}`), `${name}: ${subtitle}`, `hovering the title says what ${name} holds`);
     await page.mouse.move(0, 0);
   }
   await choosePlace(page, "Work");
@@ -135,8 +133,7 @@ test("clauses 7, 8, 9: only Roadmap opens a page, and the place stays while tabs
   assert.equal(await sidebar(page).getByRole("treeitem", { selected: true }).count(), 0, "Knowledge does not list the slice, so it marks nothing");
   await page.getByRole("tab", { name: /^Roadmap/ }).click().catch(() => {});
   await page.goBack();
-  await page.waitForTimeout(500);
-  assert.equal((await placeTitle(sidebar(page)).innerText()).trim(), "Knowledge", "Back kept the place");
+  assert.equal(await settled(async () => (await placeTitle(sidebar(page)).innerText()).trim(), "Knowledge"), "Knowledge", "Back kept the place");
   await choosePlace(page, "Work");
   await page.goto(reviewUrl(base, SLICE));
   await settledOn(page, SLICE);
@@ -205,8 +202,7 @@ test("clauses 14, 15, 16: [ and the head's button hide the sidebar and keep the 
   await choosePlace(page, "Work");
   await page.locator("body").click({ position: { x: 700, y: 400 } }).catch(() => {});
   await page.keyboard.press("[");
-  await page.waitForTimeout(400);
-  assert.equal(await sidebar(page).isVisible(), false, "[ hid the sidebar");
+  assert.equal(await settled(() => sidebar(page).isVisible(), false), false, "[ hid the sidebar");
   assert.equal(await rail(page).isVisible(), true, "the rail stays");
   const mainLeft = async () => (await page.locator("#main").boundingBox()).x;
   const hiddenLeft = await mainLeft();
@@ -214,50 +210,42 @@ test("clauses 14, 15, 16: [ and the head's button hide the sidebar and keep the 
   assert.equal(await shownPlace(page), "Work", "the reload kept the place");
   assert.equal(await sidebar(page).isVisible(), false, "the hidden sidebar stays hidden after a reload");
   await choosePlace(page, "Knowledge");
-  await page.waitForTimeout(300);
-  assert.equal(await sidebar(page).isVisible(), true, "choosing a place on the rail opens its sidebar");
+  assert.equal(await settled(() => sidebar(page).isVisible(), true), true, "choosing a place on the rail opens its sidebar");
   assert.equal((await placeTitle(sidebar(page)).innerText()).trim(), "Knowledge");
   assert.equal(await mainLeft(), hiddenLeft, "the sidebar opens over the page without moving it");
   const keep = sidebarButton(sidebar(page));
   assert.equal(await sidebar(page).getByRole("button", { name: "Keep the sidebar open", expanded: true }).count(), 1, "its button offers to keep it open");
   await keep.hover();
-  await page.waitForTimeout(700);
-  assert.match(await shownTooltip(page) ?? "", /\(\[\)$/, "the tooltip names the key");
+  assert.match(await settled(async () => await shownTooltip(page) ?? "", (tip) => /\(\[\)$/.test(tip)), /\(\[\)$/, "the tooltip names the key");
   await page.keyboard.press("Escape");
-  await page.waitForTimeout(300);
-  assert.equal(await sidebar(page).isVisible(), false, "Escape hides it again");
+  assert.equal(await settled(() => sidebar(page).isVisible(), false), false, "Escape hides it again");
   await choosePlace(page, "Knowledge");
   await page.locator("#main").click({ position: { x: 600, y: 300 } });
-  await page.waitForTimeout(300);
-  assert.equal(await sidebar(page).isVisible(), false, "a click outside hides it again");
+  assert.equal(await settled(() => sidebar(page).isVisible(), false), false, "a click outside hides it again");
   await choosePlace(page, "Knowledge");
   await item(sidebar(page), "Decisions").click();
   await settledOn(page, "decisions");
-  await page.waitForTimeout(300);
-  assert.equal(await sidebar(page).isVisible(), false, "choosing a page hides it again");
+  assert.equal(await settled(() => sidebar(page).isVisible(), false), false, "choosing a page hides it again");
   await page.reload();
   assert.equal(await shownPlace(page), "Knowledge", "the reload kept the place");
   assert.equal(await sidebar(page).isVisible(), false, "and the sidebar still hidden");
   await choosePlace(page, "Knowledge");
   await sidebarButton(sidebar(page)).click();
-  await page.waitForTimeout(300);
-  assert.ok(await mainLeft() > hiddenLeft, "keeping it open gives the sidebar its column back");
+  assert.ok(await settled(mainLeft, (left) => left > hiddenLeft) > hiddenLeft, "keeping it open gives the sidebar its column back");
   assert.equal(await sidebar(page).getByRole("button", { name: "Hide the sidebar", expanded: true }).count(), 1, "and the button hides it again");
   await page.reload();
-  assert.equal(await sidebar(page).isVisible(), true, "the shown sidebar is stored");
+  assert.equal(await settled(() => sidebar(page).isVisible(), true), true, "the shown sidebar is stored");
   await sidebarButton(sidebar(page)).click();
-  await page.waitForTimeout(300);
-  assert.equal(await sidebar(page).isVisible(), false, "the head's button hides it");
+  assert.equal(await settled(() => sidebar(page).isVisible(), false), false, "the head's button hides it");
   await page.keyboard.press("[");
-  await page.waitForTimeout(300);
-  assert.equal(await sidebar(page).isVisible(), true, "and [ shows it again");
+  assert.equal(await settled(() => sidebar(page).isVisible(), true), true, "and [ shows it again");
   await page.setViewportSize({ width: 900, height: 900 });
-  await page.waitForTimeout(400);
+  await rail(page).waitFor({ state: "hidden" });
   await page.keyboard.press("[");
-  await page.waitForTimeout(300);
+  await pause(300, "a key that should change nothing leaves no state to wait for");
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.waitForTimeout(400);
-  assert.equal(await sidebar(page).isVisible(), true, "[ on a narrow window changed nothing");
+  await rail(page).waitFor();
+  assert.equal(await settled(() => sidebar(page).isVisible(), true), true, "[ on a narrow window changed nothing");
   assert.deepEqual(page.errors, []);
 });
 
@@ -282,8 +270,7 @@ test("clause 17: a sidebar entry is a link: Shift and middle click open the brow
   await settledOn(page, "initiative:retry-hardening");
   assert.ok((await tabs(page)).includes("initiative:retry-hardening*(p)"), "a click opened the preview tab");
   await rowOf(sidebar(page), "Harden request retries").dblclick();
-  await page.waitForTimeout(400);
-  assert.ok((await tabs(page)).includes("initiative:retry-hardening*"), "a double click kept it");
+  assert.ok((await settled(() => tabs(page), (shown) => shown.includes("initiative:retry-hardening*"))).includes("initiative:retry-hardening*"), "a double click kept it");
   assert.deepEqual(page.errors, []);
 });
 
@@ -316,8 +303,7 @@ test("clauses 18, 19, 20, 21: each page names its place, the trail starts with i
   assert.equal(address.searchParams.get("artifact"), SLICE);
   assert.equal(address.searchParams.get("place"), "work");
   await crumb.click();
-  await page.waitForTimeout(400);
-  assert.equal((await placeTitle(sidebar(page)).innerText()).trim(), "Work", "the crumb chose Work");
+  assert.equal(await settled(async () => (await placeTitle(sidebar(page)).innerText()).trim(), "Work"), "Work", "the crumb chose Work");
   assert.equal(await shownRef(page), SLICE, "and kept the page");
   assert.deepEqual(page.errors, []);
 });
@@ -351,17 +337,14 @@ test("clauses 22, 23, 24, 25: a narrow window hides the rail, keeps the bell, an
   assert.equal((await placeTitle(panel).innerText()).trim(), "Knowledge");
   await item(panel, "Decisions").click();
   await settledOn(page, "decisions");
-  await page.waitForTimeout(400);
-  assert.equal(await panel.isVisible(), false, "choosing a page closed the drawer");
+  assert.equal(await settled(() => panel.isVisible(), false), false, "choosing a page closed the drawer");
   await page.locator("header").getByRole("button", { name: "Navigation" }).click();
   await drawer(page).waitFor();
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.waitForTimeout(600);
-  assert.equal(await drawer(page).isVisible(), false, "widening closed the drawer");
-  assert.equal(await rail(page).isVisible(), true, "the rail is back");
+  assert.equal(await settled(() => drawer(page).isVisible(), false), false, "widening closed the drawer");
+  assert.equal(await settled(() => rail(page).isVisible(), true), true, "the rail is back");
   assert.equal((await placeTitle(sidebar(page)).innerText()).trim(), "Knowledge", "with the sidebar of the place chosen in the drawer");
   await page.setViewportSize({ width: 820, height: 900 });
-  await page.waitForTimeout(400);
   await bell(page).click();
   await settledOn(page, "attention");
   assert.deepEqual(page.errors, []);
@@ -383,7 +366,7 @@ test("clauses 26, 65: the rail, the drawer, and every place stay inside the wind
         assert.deepEqual(await escapes(page), [], `${seed} at ${width}px in ${name}`);
         if (width <= 1100) {
           await page.keyboard.press("Escape");
-          await page.waitForTimeout(300);
+          await drawer(page).waitFor({ state: "hidden" });
         }
       }
       assert.deepEqual(page.errors, []);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { coalesce, createPoller, deadline } from "../../dist/server/review/public/views/poller.js";
+import { settled } from "./fixtures/wait.mjs";
 
 // A fake clock and document, so a test steps through the schedule without waiting.
 function harness() {
@@ -170,7 +171,7 @@ test("a coalesced call made while one runs shares one follow-up run", async () =
 
 test("a deadline aborts a request that is not answered in time", async () => {
   const signal = deadline(20);
-  await new Promise((resolve) => setTimeout(resolve, 60));
+  await settled(() => signal.aborted, true);
   assert.equal(signal.aborted, true);
   assert.equal(signal.reason?.name, "TimeoutError");
 });

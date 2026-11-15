@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { skip } from "./fixtures/kit-browser.mjs";
+import { settled } from "./fixtures/wait.mjs";
 import { choosePlace, item, open, placesDemo, reviewUrl, row as rowOf, settledOn, shownRef, sidebar, SLICE, tabs } from "./fixtures/places-browser.mjs";
 
 // What the review app did before the places must keep working with them: shortcuts, tabs, banners, and every page within reach without the palette.
@@ -45,19 +46,15 @@ test("clause 27: the strip of tabs keeps its preview, Keep, close, middle-click 
   assert.deepEqual(await tabs(page), ["initiative:activity-reports(p)", "decisions*"], "Ctrl-click kept a tab");
   await page.getByRole("tab", { name: /^Export activity reports/ }).click();
   await page.getByRole("tablist", { name: "Open artifacts" }).getByRole("button", { name: "Keep", exact: true }).click();
-  await page.waitForTimeout(400);
-  assert.deepEqual(await tabs(page), ["initiative:activity-reports*", "decisions"], "Keep kept the preview tab");
+  assert.deepEqual(await settled(() => tabs(page), ["initiative:activity-reports*", "decisions"]), ["initiative:activity-reports*", "decisions"], "Keep kept the preview tab");
   await page.reload();
   // The page draws the tabs once the review server answers with the session, which takes longer than a second on a slow disk.
   await page.waitForFunction(() => document.querySelectorAll("#open-tabs prism-doc-tab").length > 0, null, { timeout: 15000 }).catch(() => {});
-  await page.waitForTimeout(400);
-  assert.deepEqual(await tabs(page), ["initiative:activity-reports*", "decisions"], "the tabs came back after a reload");
+  assert.deepEqual(await settled(() => tabs(page), ["initiative:activity-reports*", "decisions"]), ["initiative:activity-reports*", "decisions"], "the tabs came back after a reload");
   await page.getByRole("tab", { name: /^Decisions/ }).click({ button: "middle" });
-  await page.waitForTimeout(400);
-  assert.deepEqual(await tabs(page), ["initiative:activity-reports*"], "a middle click closed the tab");
+  assert.deepEqual(await settled(() => tabs(page), ["initiative:activity-reports*"]), ["initiative:activity-reports*"], "a middle click closed the tab");
   await page.getByRole("tablist", { name: "Open artifacts" }).getByRole("button", { name: /^Close/ }).first().click();
-  await page.waitForTimeout(400);
-  assert.deepEqual(await tabs(page), [], "the close button closed the last tab");
+  assert.deepEqual(await settled(() => tabs(page), []), [], "the close button closed the last tab");
   assert.deepEqual(page.errors, []);
 });
 

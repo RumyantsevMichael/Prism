@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { CODEX_THREAD, FOREIGN_SESSION, INITIATIVE, LAUNCH_ID, STRIPPED, UUID_V4, launchFixture, processesNaming, stubBin, waitFor } from "./fixtures/launched-sessions.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { actionProject } from "./fixtures/review-actions.mjs";
 
 // The launched-session module: finding the hosts, starting a supervised headless session, reading its state from the host's
@@ -190,7 +191,7 @@ test("a Claude Code run keeps its input open while a background task it reported
   const { startLaunch } = await module();
   const { launch } = await startLaunch({ projectRoot: fixture.root, initiative: INITIATIVE, host: "claude-code", env: fixture.env });
   const [run] = await waitFor(() => fixture.runs("claude").length ? fixture.runs("claude") : null, { what: "the stub to start" });
-  await new Promise((resolve) => setTimeout(resolve, 900));
+  await pause(900, "the input must stay open, and a change that must not happen leaves nothing to wait for");
   assert.equal(fixture.closed(run.pid), null, "the input stays open while the background task runs");
   assert.equal((await viewOf(fixture, launch.id)).state, "running");
   const finished = await settledIn(fixture, launch.id, ["finished"]);

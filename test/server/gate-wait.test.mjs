@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -121,7 +122,7 @@ test("ends when the gate is resolved, missing, timed out, or cancelled", async (
   const { revision } = await readCoordinationState({ projectRoot: root, initiative: INITIATIVE });
   await updateCoordinationState({ projectRoot: root, initiative: INITIATIVE, expectedRevision: revision, changes: { gateOperations: [{ op: "resolve", id: gateId, reason: "Answered in the conversation." }] } });
   assert.equal((await mcp.response(5)).result.structuredContent.status, "resolved");
-  await delay(1200);
+  await pause(1200, "the other wait must not answer, and a response that does not come leaves nothing to wait for");
   assert.equal(mcp.messages.some((message) => message.id === 4), false);
 });
 

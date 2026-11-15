@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { demoProject, launch, openPage, reviewUrl, ROOT, serveProject, useAppDirectory, waitForView } from "./kit-browser.mjs";
+import { repainted, WAIT_MS } from "./wait.mjs";
 
 export { reviewUrl, waitForView, ROOT };
 
@@ -86,8 +87,8 @@ export async function buttonNames(scope) {
 export const shownRef = (page) => page.evaluate(() => new URL(location.href).searchParams.get("artifact"));
 
 export async function settledOn(page, ref) {
-  await page.waitForFunction((ref) => new URL(location.href).searchParams.get("artifact") === ref && document.querySelector("#artifact")?.getAttribute("aria-busy") === "false", ref, { timeout: 10000 });
-  await page.waitForTimeout(200);
+  await page.waitForFunction((ref) => new URL(location.href).searchParams.get("artifact") === ref && document.querySelector("#artifact")?.getAttribute("aria-busy") === "false", ref, { timeout: WAIT_MS });
+  await repainted(page);
 }
 
 /** Chooses a place on the rail of `scope`, a page or the drawer, and waits until the rail marks it current. */

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { execFile, spawn } from "node:child_process";
 import { access, chmod, mkdtemp, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
@@ -849,7 +850,7 @@ test("returns a review URL without opening a system browser", async (context) =>
   const review = await callTool(mcp, 2, "get_review_url", { projectRoot: root, artifact: "docs/artifact.md" });
 
   assert.match(review.result.structuredContent.url, /^http:\/\/127\.0\.0\.1:/);
-  await delay(100);
+  await pause(100, "no browser may open, and a change that must not happen leaves nothing to wait for");
   assert.equal(await markerContents(browser.marker), "");
 });
 
@@ -874,7 +875,7 @@ test("selects and updates persistent artifact tabs without opening a browser", a
   assert.equal(updated.result.structuredContent.activeTab, "docs/second.md");
   const attention = await callTool(mcp, 4, "get_review_url", { projectRoot: root, artifacts: [] });
   assert.deepEqual([attention.result.structuredContent.activeTab, attention.result.structuredContent.openTabs.length], ["attention", 3]);
-  await delay(100);
+  await pause(100, "no browser may open, and a change that must not happen leaves nothing to wait for");
   assert.equal(await markerContents(browser.marker), "");
 });
 

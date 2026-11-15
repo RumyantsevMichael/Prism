@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { demoProject, launch, openPage, reviewUrl, serveProject, skip, stateFileNames, useAppDirectory, waitForView } from "./fixtures/kit-browser.mjs";
+import { pause } from "./fixtures/wait.mjs";
 
 // The review shell's palette, history keys, drawer, and file headings at the edges a reviewer found: Enter right after typing, the preview's widths,
 // Alt+arrows at the ends of the visited pages, a window that widens with the drawer open, and a repository file's heading.
@@ -57,10 +58,10 @@ test("Alt+ArrowLeft and Alt+ArrowRight do nothing at the ends of the visited pag
   assert.equal(await page.locator("#page-back").evaluate((element) => element.hasAttribute("disabled")), true, "Back is disabled on the first visited page");
   await page.locator("#sidebar").getByRole("treeitem").first().focus();
   await page.keyboard.press("Alt+ArrowLeft");
-  await page.waitForTimeout(500);
+  await pause(500, "a navigation that must not happen leaves nothing to wait for");
   assert.match(page.url(), /\/review\?/, "Alt+ArrowLeft stays on the review page");
   await page.keyboard.press("Alt+ArrowRight");
-  await page.waitForTimeout(500);
+  await pause(500, "a navigation that must not happen leaves nothing to wait for");
   assert.equal(await shownPage(page), "attention", "Alt+ArrowRight stays on the last visited page");
 });
 

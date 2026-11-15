@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { shownTooltip, skip } from "./fixtures/kit-browser.mjs";
+import { repainted, settled } from "./fixtures/wait.mjs";
 import { open, placesDemo, sidebar } from "./fixtures/places-browser.mjs";
 
 // Requirements: docs/requirements/review-app-places.md §45 and §48.
@@ -23,8 +24,7 @@ test("§45: the status bar starts with a Settings button as tall as the bar that
   const [bar, box] = [await page.locator("#statusbar").boundingBox(), await button.boundingBox()];
   assert.ok(Math.abs(box.height - bar.height) <= 1 && Math.abs(box.width - box.height) <= 1, `the button is a square as tall as the bar: ${box.width}x${box.height} in ${bar.height}`);
   await button.hover();
-  await page.waitForTimeout(700);
-  assert.equal(await shownTooltip(page), "Settings (Ctrl ,)", "its tooltip names the key");
+  assert.equal(await settled(() => shownTooltip(page), "Settings (Ctrl ,)"), "Settings (Ctrl ,)", "its tooltip names the key");
   await button.click();
   await settings(page).waitFor();
   const sections = await settings(page).getByRole("treeitem").allInnerTexts();
@@ -39,8 +39,7 @@ test("§45: the status bar starts with a Settings button as tall as the bar that
   const layout = settings(page).getByRole("region", { name: "Layout" });
   assert.equal(await layout.getByRole("radiogroup", { name: "Sidebar" }).getByRole("radio", { name: "Shown" }).getAttribute("aria-checked"), "true", "Layout says the sidebar is shown");
   await layout.getByRole("radiogroup", { name: "Sidebar" }).getByRole("radio", { name: "Hidden" }).click();
-  await page.waitForTimeout(300);
-  assert.equal((await preferences(base))["sidebar.collapsed"], true, "choosing Hidden hides the sidebar and stores it");
+  assert.equal(await settled(async () => (await preferences(base))["sidebar.collapsed"], true), true, "choosing Hidden hides the sidebar and stores it");
   await layout.getByRole("radiogroup", { name: "Sidebar" }).getByRole("radio", { name: "Shown" }).click();
   await settings(page).getByRole("treeitem", { name: "Record store" }).click();
   assert.equal(await settings(page).getByRole("region", { name: "Record store" }).isVisible(), true, "Record store shows where the records live");
@@ -70,29 +69,26 @@ test("§48: dragging the sidebar's edge sets its width between 200 and 480 pixel
     await page.mouse.move(x + by / 2, y, { steps: 4 });
     await page.mouse.move(x + by, y, { steps: 4 });
     await page.mouse.up();
-    await page.waitForTimeout(300);
+    await repainted(page);
   };
   assert.equal(await width(), 248, "the sidebar starts at its default width");
   await edge.hover();
-  await page.waitForTimeout(700);
-  assert.match(await shownTooltip(page) ?? "", /double-click to reset/, "the edge says how to use it");
+  assert.match(await settled(async () => await shownTooltip(page) ?? "", (tip) => /double-click to reset/.test(tip)), /double-click to reset/, "the edge says how to use it");
   await drag(100);
-  assert.equal(await width(), 348, "dragging widens the sidebar");
-  assert.equal((await preferences(base))["sidebar.width"], 348, "and keeps the width as a preference");
+  assert.equal(await settled(width, 348), 348, "dragging widens the sidebar");
+  assert.equal(await settled(async () => (await preferences(base))["sidebar.width"], 348), 348, "and keeps the width as a preference");
   await drag(400);
-  assert.equal(await width(), 480, "the width stops at 480");
+  assert.equal(await settled(width, 480), 480, "the width stops at 480");
   await drag(-600);
-  assert.equal(await width(), 200, "and at 200");
+  assert.equal(await settled(width, 200), 200, "and at 200");
   await page.reload();
   await sidebar(page).waitFor();
-  assert.equal(await width(), 200, "a reload keeps the width");
+  assert.equal(await settled(width, 200), 200, "a reload keeps the width");
   await edge.dblclick();
-  await page.waitForTimeout(300);
-  assert.equal(await width(), 248, "a double click returns it to 248");
-  assert.equal((await preferences(base))["sidebar.width"], null, "and forgets the width");
+  assert.equal(await settled(width, 248), 248, "a double click returns it to 248");
+  assert.equal(await settled(async () => (await preferences(base))["sidebar.width"], null), null, "and forgets the width");
   await edge.focus();
   await page.keyboard.press("ArrowRight");
-  await page.waitForTimeout(300);
-  assert.ok(await width() > 248, "the arrow keys widen it from the keyboard too");
+  assert.ok(await settled(width, (shown) => shown > 248) > 248, "the arrow keys widen it from the keyboard too");
   assert.deepEqual(page.errors, []);
 });

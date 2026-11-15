@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
+import { pause } from "./fixtures/wait.mjs";
 import {
   CODEGRAPH_SUPPORTED_VERSION,
   CodeGraphAvailabilityError,
@@ -568,7 +569,7 @@ test("the command runner ignores settled output and force-terminates an uncooper
   child.stdout.write("0123456789");
   await assert.rejects(result, (error) => error instanceof CodeGraphRuntimeError && error.code === "output-too-large");
   for (let index = 0; index < 100; index += 1) child.stdout.emit("data", "more output");
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await pause(25, "output after the failure must be ignored, and a change that must not happen leaves nothing to wait for");
 
   assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
   assert.equal(child.stdout.listenerCount("data"), 0);
@@ -589,7 +590,7 @@ test("the command runner force-terminates an uncooperative timed-out child", asy
   const run = createCodeGraphCommandRunner({ command: "codegraph", spawnImpl: () => child, timeoutMs: 5, killGraceMs: 10 });
 
   await assert.rejects(run(["status"], { cwd: process.cwd() }), (error) => error instanceof CodeGraphRuntimeError && error.code === "timeout");
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  await pause(25, "the timed-out process must not answer late, and a change that must not happen leaves nothing to wait for");
 
   assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
   assert.equal(child.stdout.listenerCount("data"), 0);

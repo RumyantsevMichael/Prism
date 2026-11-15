@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { demoProject, launch, movingElements, openPage, paintedBackgrounds, reviewUrl, rootToken, serveProject, settle, skip, useAppDirectory } from "./fixtures/kit-browser.mjs";
+import { settled } from "./fixtures/wait.mjs";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §1, §3, §4, §5, §6, §13.
 // Contract: docs/plans/review-app-ui-kit/slice.md clauses 9, 12, 17, 18, 19, 20, and 24.
@@ -25,8 +26,8 @@ test("clauses 17, 18, 19: by default the page follows the operating system's the
   await page.emulateMedia({ colorScheme: "dark" });
   await page.waitForFunction(() => document.documentElement.dataset.theme === "dark", null, { timeout: 3000 });
   assert.equal(await page.evaluate(() => window.__sameDocument), true, "the switch happens without a reload");
-  await page.waitForTimeout(100);
-  assert.equal(await themeColor(page), (await rootToken(page, "--prism-color-chrome")).toLowerCase(), "the theme color follows to the dark chrome color");
+  const chrome = (await rootToken(page, "--prism-color-chrome")).toLowerCase();
+  assert.equal(await settled(() => themeColor(page), chrome), chrome, "the theme color follows to the dark chrome color");
   assert.notEqual(await themeColor(page), lightColor, "the theme color changes with the theme");
   await page.emulateMedia({ colorScheme: "light" });
   await page.waitForFunction(() => document.documentElement.dataset.theme === "light", null, { timeout: 3000 });

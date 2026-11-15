@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { contrastFailures, demoProject, launch, movingElements, openPage, reviewUrl, ROOT, serveProject, skip, stateFileNames, useAppDirectory, waitForView, writeClaim } from "./fixtures/kit-browser.mjs";
+import { repainted } from "./fixtures/wait.mjs";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §5, §8, §11, §13.
 // Contract: docs/plans/review-app-ui-kit/slice.md clauses 7, 8, 9, 21, 24, 62, and 69.
@@ -73,7 +74,7 @@ test("clauses 7, 8: a further theme given the dark theme's values renders every 
       document.documentElement.dataset.themeChoice = "dark";
       document.documentElement.dataset.theme = "dark";
     });
-    await page.waitForTimeout(300);
+    await repainted(page);
     const dark = await computedColors(page);
     // A theme rule of another name that copies every value of the dark rule; the page must not tell the two apart.
     await page.evaluate(() => {
@@ -88,7 +89,7 @@ test("clauses 7, 8: a further theme given the dark theme's values renders every 
       document.adoptedStyleSheets = [...document.adoptedStyleSheets, copy];
       document.documentElement.dataset.theme = "probe";
     });
-    await page.waitForTimeout(300);
+    await repainted(page);
     const probe = await computedColors(page);
     for (const [element, value] of Object.entries(dark)) if (probe[element] !== undefined && probe[element] !== value) differences.push(`${ref}: ${element} computes ${probe[element]} in the probe theme but ${value} in dark`);
     await page.context().close();
@@ -172,7 +173,7 @@ test("clause 69: no page or overlay of the review app names Prism's own files", 
     await waitForView(page);
     for (const failure of await stateFileNames(page)) failures.push(`${ref}: ${failure}`);
     await page.locator("header").getByRole("button", { name: /working/ }).click();
-    await page.waitForTimeout(300);
+    await repainted(page);
     for (const failure of await stateFileNames(page)) failures.push(`${ref} with Who's working open: ${failure}`);
     await page.keyboard.press("Escape");
     await page.context().close();

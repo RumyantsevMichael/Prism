@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promi
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { READY_WAIT_MS, settled as settledValue } from "./wait.mjs";
 
 // Projects that declare components, and a native runtime whose helper builds and searches small indexes in process, for the acceptance tests of
 // components.md §20-§26. A test file sets PLUGIN_DATA before it uses these helpers, because Prism modules read their data folder when they load,
@@ -140,13 +141,10 @@ export async function fakeRuntime(storage) {
 
 /** Waits until no component of the project is waiting or preparing, reading only the runtime's status. */
 export async function settled(runtime, root) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const status = await runtime.status(root, 200);
-    const busy = (status.components ?? []).some((entry) => ["waiting", "preparing"].includes(entry.status)) || status.status === "preparing";
-    if (!busy) return status;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error("The component preparations did not settle.");
+  const busy = (status) => (status.components ?? []).some((entry) => ["waiting", "preparing"].includes(entry.status)) || status.status === "preparing";
+  const status = await settledValue(() => runtime.status(root, 200), (value) => !busy(value), { timeout: READY_WAIT_MS, every: 20 });
+  if (busy(status)) throw new Error("The component preparations did not settle.");
+  return status;
 }
 
 /** The entry of `components` that names `identity`. */

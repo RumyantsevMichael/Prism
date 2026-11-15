@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CHROMIUM_OPTIONS } from "../../../scripts/review-demo/layout-audit.mjs";
 import { defer } from "./teardown.mjs";
+import { repainted, WAIT_MS } from "./wait.mjs";
 
 export const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
@@ -110,12 +111,12 @@ export async function settle(page) {
   await page.waitForLoadState("load");
   await page.evaluate(() => document.fonts.ready);
   await page.waitForFunction(() => document.querySelector("#artifact")?.getAttribute("aria-busy") !== "true", null, { timeout: 10000 }).catch(() => {});
-  await page.waitForTimeout(400);
+  await repainted(page);
 }
 
 export async function waitForView(page) {
-  await page.waitForFunction(() => document.querySelector("#artifact")?.getAttribute("aria-busy") === "false", null, { timeout: 10000 });
-  await page.waitForTimeout(200);
+  await page.waitForFunction(() => document.querySelector("#artifact")?.getAttribute("aria-busy") === "false", null, { timeout: WAIT_MS });
+  await repainted(page);
 }
 
 export function reviewUrl(base, ref) {

@@ -4,6 +4,7 @@ import { rename, rm } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { checkout, eventually, git, isolateGit, networkStore, ok, place, pushToRemote, server, startApp, storeFolderId, workspaceId } from "./fixtures/workspace-view.mjs";
+import { pause } from "./fixtures/wait.mjs";
 
 // Contract clauses 22-25 of the workspace-view design: an open workspace fetches on its own, shows its last synced copy, and pushes the app's writes.
 const environment = await isolateGit();
@@ -40,7 +41,7 @@ test("clause 22: an open page makes the app fetch the store on its own timer, an
   close();
   await new Promise((resolve) => setTimeout(resolve, 600));
   await pushToRemote(where, store.bare, { "artifacts/requirements/second.md": "# Second\n" });
-  await new Promise((resolve) => setTimeout(resolve, 1500));
+  await pause(1500, "no page is connected, so no fetch may happen, and a change that must not happen leaves nothing to wait for");
   assert.equal(fetched(clone, "artifacts/requirements/second.md"), false, "no page is connected, so nothing fetches");
 });
 
@@ -65,7 +66,7 @@ test("clause 22: reading the index of a workspace served through a checkout star
     assert.equal(index.status, 200, index.body);
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await pause(1000, "no page is connected, so no fetch may happen, and a change that must not happen leaves nothing to wait for");
   assert.equal(fetched(clone, "artifacts/requirements/unread.md"), false, "no page is connected, so reading the index fetches nothing");
 });
 

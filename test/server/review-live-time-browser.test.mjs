@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { launch, openPage, ROOT, serveProject, skip, useAppDirectory } from "./fixtures/kit-browser.mjs";
+import { repainted } from "./fixtures/wait.mjs";
 
 // Times in words keep themselves current, a clearable choice can go back to no option, and About, in Settings, names the running version.
 
@@ -33,7 +34,7 @@ async function mount(page, html) {
     document.body.prepend(region);
     window.scrollTo(0, 0);
   }, html);
-  await page.waitForTimeout(150);
+  await repainted(page);
 }
 
 test("a prism-time shows its time in words, gives the exact time as its tip, and updates every minute without a reload", { skip }, async (context) => {
