@@ -29,15 +29,16 @@ When the selected browser is unavailable, Prism presents the URL and source arti
 The browser follows the operating system's light or dark setting and changes with it while the page is open.
 It shows compact density by default.
 The review app keeps the theme and density for you, so every project and every later session shows the same choice.
-Choose the theme and density from the **Appearance** button at the end of the status bar.
-Its menu offers the themes System, Light, and Dark, the densities Compact and Comfortable, and **Component catalog**.
+The **Settings** button, the gear at the start of the status bar, or Ctrl+, (Cmd+, on a Mac) opens Settings, and the same key closes it.
+**Appearance** offers the themes System, Light, and Dark and the densities Compact and Comfortable.
 A choice applies at once, and System follows the operating system again.
-**Component catalog** opens the review app's component catalog in a new tab, which shows every control of the interface with its options, states, and keys.
+**Layout** shows or hides the sidebar on windows wider than 1100 pixels and returns the sidebar to its default width.
+**Record store** says where the project's records live and opens the store's details.
+**About Prism** names the version of Prism that runs the review app, and **Open the catalog** opens the review app's component catalog in a new tab, which shows every control of the interface with its options, states, and keys.
 The catalog's own toolbar changes its theme, density, and width for that tab only, and stores nothing.
-The small **About Prism** button just before **Appearance** names the version of Prism that runs the review app and also opens the component catalog.
 
 The top bar holds the Prism mark, the workspace switcher, the search button that opens the Jump palette, and **Who's working**.
-The status bar at the bottom shows where the project's records live, naming a shared store, their sync state, and the repository index.
+The status bar at the bottom starts with **Settings**, then shows where the project's records live, naming a shared store, with their sync state, whose color the store icon takes, and ends with the repository index.
 Times in words, such as when a question was asked, how long ago the records synced, or how long a claim has left, count on while the page is open, and hovering one shows the exact date and time.
 The rail at the left edge switches between five places, and the sidebar beside it shows only the current place, under its title and a line that says what it holds.
 **Attention** shows what waits on you, and the rail's Attention button carries the number of recorded questions that wait for an answer.
@@ -75,7 +76,10 @@ An initiative expands when you expand it, when its page or one of its slices' pa
 Type in **Filter work** to keep only the initiatives and slices whose titles hold the text, ignoring case, each matching slice under its initiative; clear the field, or press Escape in it, to see every group again.
 Below the groups, a note says that shipped work moves to History and that emerging and unplanned items stay on the Roadmap.
 Every row is a link, so a middle-click or a Shift click opens the page in a new browser tab or window, and the browser's context menu can copy its address; a crumb of the page bar works the same way.
-Above 1100 pixels, press `[` or use the sidebar button at the top of the rail to hide the sidebar and keep the rail, and again to show it; the review app keeps the choice for every project and later session, and choosing a place shows the sidebar again.
+The sidebar's head names the place, and hovering its title says what the place holds.
+Above 1100 pixels, press `[` or use the button at the end of the sidebar's head to hide the sidebar and keep the rail, and press `[` again to show it; the review app keeps the choice for every project and later session.
+While the sidebar is hidden, choosing a place on the rail opens its sidebar over the page without moving the page, and choosing a page in it, Escape, or a click outside it hides it again; the button in its head, now **Keep the sidebar open**, shows the sidebar again for good.
+Drag the sidebar's edge to make it from 200 to 480 pixels wide, or focus the edge and use the arrow keys; a double click on the edge returns it to its default width, and the review app keeps the width for you.
 At a window width of 1100 pixels or less the rail and the sidebar are hidden, and the Navigation button at the left of the top bar opens a drawer that holds the rail and the current place's sidebar; choosing a place in it switches the sidebar, and choosing a page opens it and closes the drawer.
 The bell at the right of the top bar then keeps the Attention count and opens the Attention page.
 If you widen the window past that width while the drawer is open, the drawer closes and the rail and the sidebar return; if you narrow it while the sidebar has the focus, the focus moves to the Navigation button.

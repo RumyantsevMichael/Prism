@@ -134,6 +134,7 @@ const SPECIMENS = {
     status: `<prism-button variant="status"><prism-icon name="store" size="xs"></prism-icon>Shared store</prism-button><prism-button variant="status" aria-expanded="true"><prism-icon name="contrast" size="sm"></prism-icon>Theme and density</prism-button>`,
     search: `<prism-button variant="search" label="Search or jump to (Ctrl K)"><prism-icon name="search" size="sm"></prism-icon><span>Search or jump to…</span><prism-kbd>Ctrl K</prism-kbd></prism-button>`,
     round: `<prism-button size="sm" shape="round" pressed>All</prism-button><prism-button size="sm" shape="round" pressed="false">Slices</prism-button>`,
+    square: `<prism-button variant="status" shape="square" label="Settings" tip="Settings (Ctrl ,)"><prism-icon name="settings" size="sm"></prism-icon></prism-button><prism-button variant="ghost" shape="square" label="Hide the sidebar"><prism-icon name="panel-left" size="sm"></prism-icon></prism-button>`,
     badge: `<prism-button variant="ghost" label="Attention, 5 items"><prism-icon name="bell"></prism-icon><prism-badge slot="badge" solid size="sm">5</prism-badge></prism-button>`,
     "long-text": `<prism-button>${LONG}</prism-button>`,
     "unbroken-name": `<prism-button variant="primary">${UNBROKEN}</prism-button>`
@@ -141,6 +142,7 @@ const SPECIMENS = {
   "prism-icon": {
     decorative: ICON_NAMES.map((name) => `<prism-icon name="${name}"></prism-icon>`).join(""),
     labelled: `<prism-icon name="warning" label="Warning"></prism-icon><prism-icon name="info" label="Information"></prism-icon>`,
+    tones: `<prism-icon name="store" tone="ok"></prism-icon><prism-icon name="store" tone="warn"></prism-icon><prism-icon name="store" tone="danger"></prism-icon><prism-icon name="store"></prism-icon>`,
     sizes: `<prism-icon name="agent"></prism-icon><prism-icon name="agent" size="sm"></prism-icon><prism-icon name="agent" size="xs"></prism-icon>`,
     "long-text": `<prism-chip tone="info"><prism-icon name="info" size="xs"></prism-icon>${LONG}</prism-chip>`,
     "unbroken-name": `<prism-chip><prism-icon name="file" size="xs"></prism-icon>${UNBROKEN}</prism-chip>`
@@ -381,7 +383,8 @@ const SPECIMENS = {
   "prism-place-head": {
     default: `<prism-place-head heading="Work" subtitle="Designed and not shipped"></prism-place-head>`,
     "no-subtitle": `<prism-place-head heading="Attention"></prism-place-head>`,
-    "long-text": `<prism-place-head heading="${LONG}" subtitle="${LONG}"></prism-place-head>`,
+    end: `<prism-place-head heading="Knowledge" subtitle="Records behind the work"><prism-button slot="end" variant="ghost" shape="square" size="sm" label="Hide the sidebar" tip="Hide the sidebar ([)"><prism-icon name="panel-left" size="sm"></prism-icon></prism-button></prism-place-head>`,
+    "long-text": `<prism-place-head heading="${LONG}" subtitle="${LONG}"><prism-button slot="end" variant="ghost" shape="square" size="sm" label="Hide the sidebar"><prism-icon name="panel-left" size="sm"></prism-icon></prism-button></prism-place-head>`,
     "unbroken-name": `<prism-place-head heading="${UNBROKEN}" subtitle="${UNBROKEN}"></prism-place-head>`
   },
   "prism-listbox": {
@@ -589,6 +592,13 @@ const third = 3;</code></pre></prism-code>`,
     shipped: `<prism-phase-bar phases="shipped,shipped" label="2 of 2 shipped"></prism-phase-bar>`,
     "long-text": `<prism-phase-bar phases="${PHASES.join(",")}" label="${LONG}"></prism-phase-bar>`,
     "unbroken-name": `<prism-phase-bar phases="design,build" label="${UNBROKEN}"></prism-phase-bar>`
+  },
+  "prism-resizer": {
+    default: `<div class="catalog-resize-demo"><prism-resizer label="Resize the sidebar" min="200" max="480" value="248"></prism-resizer></div>`,
+    start: `<div class="catalog-resize-demo"><prism-resizer edge="start" label="Resize the side panel" min="320" value="400"></prism-resizer></div>`,
+    hover: `<div class="catalog-resize-demo"><prism-resizer label="Resize the sidebar" dragging></prism-resizer></div>`,
+    "long-text": `<div class="catalog-resize-demo"><prism-resizer label="${LONG}" tip="${LONG}"></prism-resizer></div>`,
+    "unbroken-name": `<div class="catalog-resize-demo"><prism-resizer label="${UNBROKEN}" tip="${UNBROKEN}"></prism-resizer></div>`
   },
   "prism-status": {
     idle: `<prism-status value="envisioned"></prism-status> <prism-status value="not-started"></prism-status> <prism-status value="open"></prism-status>`,

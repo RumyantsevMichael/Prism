@@ -75,12 +75,13 @@ test("clause 23: failed fetches back off by doubling up to the maximum, and a su
   openPage(context, prism, id);
   // Each wait is read from the attempt it follows, from its start to the next fetch it schedules, so a slow Git fetch does not lengthen it.
   // While a fetch runs, the next fetch is still the one it started at, which a timer can fire a millisecond early, so a wait shorter than the interval is that one.
+  // The first fetch has no next fetch until it ends, so a sample taken while it still syncs is not a wait.
   const waits = new Map();
   const deadline = Date.now() + 20000;
   while (waits.size < 4 && Date.now() < deadline) {
     const state = await sync();
     const wait = Date.parse(state?.nextFetchAt) - Date.parse(state?.lastAttemptAt);
-    if (wait >= 300) waits.set(state.lastAttemptAt, wait);
+    if (state?.state !== "syncing" && wait >= 300) waits.set(state.lastAttemptAt, wait);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   const observed = [...waits.values()];

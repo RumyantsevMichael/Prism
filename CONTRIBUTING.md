@@ -168,7 +168,7 @@ A screen's own rules go in its area stylesheet, read only tokens, and lay out ki
 Each element class also carries a static `tag` and a static `catalog` of its purpose, options, states, and keys.
 The component catalog at `<review URL>/kit/catalog` shows one entry per element from that `catalog`, with a live specimen per state from `SPECIMENS` in `kit/catalog.js`, plus long text and an unbroken name.
 To add an element, add its file, list it in `KIT_ELEMENTS`, and add its specimens to `SPECIMENS`.
-The review page's **Appearance** menu, at the end of the status bar, and the **About Prism** dialog beside it link to the catalog.
+The **About Prism** section of the review page's **Settings**, which the gear at the start of the status bar opens, links to the catalog.
 
 The kit guard names each raw design value and each control styled or written around the kit:
 
@@ -225,7 +225,7 @@ A change to a screen that the UI kit mockup shows is done only when the rendered
 node scripts/review-demo/mockup-compare.mjs --out /tmp/mockup-compare
 ```
 
-It puts the demo app into the state of each mockup scene (Attention with a gate and the Appearance menu, the roadmap with Who's working, a slice with its diagram beside it, the command palette, and the navigation drawer) and writes one picture per scene, width, theme, and density, the mockup on the left and the app on the right, with an `index.html` that shows them in pairs.
+It puts the demo app into the state of each mockup scene (Attention with a gate and Settings open, the roadmap with Who's working, a slice with its diagram beside it, the command palette, and the navigation drawer) and writes one picture per scene, width, theme, and density, the mockup on the left and the app on the right, with an `index.html` that shows them in pairs.
 `--scenes`, `--widths`, `--themes`, and `--densities` narrow the run.
 Read every pair: the layout check finds broken layouts, but only this comparison shows a screen that works and still looks nothing like the design.
 Differences that come from the demo's data, or from mockup content that is deliberately out of scope, are expected; name them in the pull request.

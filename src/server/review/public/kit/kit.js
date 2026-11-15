@@ -55,6 +55,7 @@ import { PrismLibTable } from "./elements/prism-lib-table.js";
 import { PrismPhase } from "./elements/prism-phase.js";
 import { PrismPhaseBar } from "./elements/prism-phase-bar.js";
 import { PrismStatus } from "./elements/prism-status.js";
+import { PrismResizer } from "./elements/prism-resizer.js";
 import { PrismKbd } from "./elements/prism-kbd.js";
 import { PrismTable } from "./elements/prism-table.js";
 import { PrismMaximize } from "./elements/prism-maximize.js";
@@ -121,7 +122,8 @@ export const KIT_ELEMENTS = [
   PrismLibTable,
   PrismPhase,
   PrismPhaseBar,
-  PrismStatus
+  PrismStatus,
+  PrismResizer
 ];
 
 /** Defines each kit element once; a second call, or an element that is already defined, changes nothing. */

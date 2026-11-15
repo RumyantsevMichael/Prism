@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { launch, openPage, ROOT, serveProject, skip, useAppDirectory } from "./fixtures/kit-browser.mjs";
 
-// Times in words keep themselves current, a clearable choice can go back to no option, and About names the running version.
+// Times in words keep themselves current, a clearable choice can go back to no option, and About, in Settings, names the running version.
 
 async function project(context) {
   await useAppDirectory(context);
@@ -79,17 +79,19 @@ test("a clearable choice goes back to no option when its chosen option is clicke
   assert.equal(await value("plain"), "a", "a choice that is not clearable keeps its option");
 });
 
-test("About Prism opens from the status bar and names the running plugin version", { skip }, async (context) => {
+test("About Prism opens from the status bar's Settings and names the running plugin version", { skip }, async (context) => {
   const { base } = await project(context);
   const { version } = JSON.parse(await readFile(path.join(ROOT, ".claude-plugin", "plugin.json"), "utf8"));
   const index = await (await fetch(`${base}/api/index`)).json();
   assert.equal(index.version, version, "the page's index carries the plugin version");
   const browser = await launch(context);
   const page = await openPage(browser, `${base}/review`);
-  await page.getByRole("button", { name: "About Prism" }).click();
-  const dialog = page.getByRole("dialog", { name: "About Prism" });
+  await page.locator("#statusbar").getByRole("button", { name: "Settings", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Settings" });
   await dialog.waitFor();
-  assert.match(await dialog.innerText(), new RegExp(`Version ${version.replace(/\./g, "\\.")}`));
-  assert.equal(await dialog.getByRole("button", { name: /component catalog/i }).isVisible(), true, "About links to the component catalog");
+  await dialog.getByRole("treeitem", { name: "About Prism" }).click();
+  const about = dialog.getByRole("region", { name: "About Prism" });
+  assert.match(await about.innerText(), new RegExp(`Version ${version.replace(/\./g, "\\.")}`));
+  assert.equal(await about.getByRole("button", { name: /Open the catalog/ }).isVisible(), true, "About links to the component catalog");
   assert.deepEqual(page.errors, []);
 });

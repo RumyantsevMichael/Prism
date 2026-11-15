@@ -412,6 +412,9 @@
   "replaced": {
     "test/server/review-shell-browser.test.mjs": {
       "clause 75: the shell is a top bar, one sidebar of trees, the main island with its strip of open documents above its page bar, and a status bar on a canvas": "test/server/review-places-shell-browser.test.mjs"
+    },
+    "test/server/review-appearance-browser.test.mjs": {
+      "clause 25: the status bar ends with an Appearance button whose menu offers the theme, the density, and the catalog": "test/server/review-places-settings-browser.test.mjs"
     }
   }
 }

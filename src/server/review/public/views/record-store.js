@@ -113,6 +113,12 @@ export function createRecordStoreStatus({ storeButton, storeLabel, syncPart, syn
     syncPart.hidden = !sync;
     if (sync) syncLabel.textContent = sync.label;
     storeButton.dataset.tone = sync?.tone ?? where.tone;
+    // The store's icon takes the sync state's color, so the bar says whether records are safe without a dot of its own.
+    const tone = sync?.tone ?? where.tone;
+    const storeIcon = storeButton.querySelector("prism-icon");
+    if (tone === "muted") storeIcon?.removeAttribute("tone");
+    else storeIcon?.setAttribute("tone", tone);
+    storeButton.dataset.name = where.short;
     const tip = [where.title, sync ? [sync.label, sync.message ?? status?.message].filter(Boolean).join(": ") : "", sync?.problem ? "Click for details" : ""];
     storeButton.setAttribute("tip", tip.filter(Boolean).join("\n"));
   }

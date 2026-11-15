@@ -217,27 +217,16 @@ export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown
   });
   closeButton.addEventListener("click", close);
 
-  // Dragging the panel's edge sets its width, which the review app keeps as the person's preference.
-  resizer.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    resizer.setPointerCapture(event.pointerId);
-    const right = shell.getBoundingClientRect().right;
-    const move = (next) => applyWidth(right - next.clientX);
-    const stop = (last) => {
-      resizer.removeEventListener("pointermove", move);
-      resizer.removeEventListener("pointerup", stop);
-      resizer.removeEventListener("pointercancel", stop);
-      storeWidth(applyWidth(right - last.clientX));
-    };
-    resizer.addEventListener("pointermove", move);
-    resizer.addEventListener("pointerup", stop);
-    resizer.addEventListener("pointercancel", stop);
+  // Dragging the panel's edge, or moving it with the arrow keys, sets its width, which the review app keeps as the person's preference; a double click returns to the default.
+  resizer.addEventListener("prism-resize", (event) => {
+    const width = applyWidth(event.detail.width);
+    resizer.setAttribute("value", String(width));
+    if (event.detail.done) storeWidth(width);
   });
-  resizer.addEventListener("keydown", (event) => {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    event.preventDefault();
-    const width = root.getBoundingClientRect().width + (event.key === "ArrowLeft" ? 32 : -32);
-    storeWidth(applyWidth(width));
+  resizer.addEventListener("prism-resize-reset", () => {
+    shell.style.removeProperty("--side-panel-width");
+    resizer.removeAttribute("value");
+    void setPreference("sidePanel.width", null).catch(() => {});
   });
 
   return { showFile, showContent, close, refresh, isOpen: () => !root.hidden, body, current: () => current };
