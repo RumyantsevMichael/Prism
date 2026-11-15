@@ -348,8 +348,7 @@
 /* ---------- Attention: a list of what needs the person beside the picked item ---------- */
 
 /* The summary figures sit in the page head beside the title. */
-.attention-stats,
-.roadmap-controls {
+.attention-stats {
   display: flex;
   flex-wrap: wrap;
   gap: var(--prism-space-4);
@@ -358,7 +357,7 @@
 }
 
 /* The page titles take the room the summary leaves them, so the summary sits beside a title as long as the titles keep a readable width. */
-.artifact-header:has(.attention-stats, .roadmap-controls) > :first-child {
+.artifact-header:has(.attention-stats) > :first-child {
   flex: 1 1 calc(var(--prism-sidebar-width) + var(--prism-space-8));
 }
 
@@ -1119,44 +1118,127 @@ a.inspect-tile:focus-visible {
   font-size: var(--prism-font-size-xs);
 }
 
-.roadmap-questions {
+/* The metrics and the count of open questions share one row, which wraps the count below the metrics in a narrow window. */
+.roadmap-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-3) var(--prism-space-5);
   min-width: 0;
-  padding: var(--prism-space-5);
-  border: var(--prism-stroke) solid var(--prism-color-line);
-  border-radius: var(--prism-radius-lg);
 }
 
-.roadmap-questions h2 {
+.roadmap-meta > .roadmap-metrics {
+  flex: 1 1 auto;
+}
+
+/* The view, the grouping, and the archive toggle sit in one toolbar above what they change; the archive toggle keeps to the end of the row. */
+.roadmap-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-3) var(--prism-space-6);
+  min-width: 0;
+}
+
+.roadmap-toolbar-group {
   display: flex;
   align-items: center;
   gap: var(--prism-space-3);
-  margin: 0 0 var(--prism-space-3);
-  font-size: var(--prism-font-size-md);
-  font-weight: var(--prism-font-weight-semibold);
+  min-width: 0;
 }
 
-.roadmap-questions ul {
-  display: grid;
+.roadmap-toolbar-label {
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  white-space: nowrap;
+}
+
+.roadmap-toolbar-archive {
+  margin-left: auto;
+}
+
+/* The card's footer keeps its signals and holders at the start and the dependency icons at its end. */
+.roadmap-item-foot-start {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.roadmap-deps {
+  display: flex;
+  flex: none;
   gap: var(--prism-space-2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
+  margin-inline-start: auto;
 }
 
-.roadmap-questions li {
+/* While a dependency icon is traced, the cards it names keep their look with an accent ring and every other card fades. */
+.roadmap-item {
+  transition: opacity var(--prism-duration-fast) var(--prism-easing-standard);
+}
+
+.roadmap-board.is-tracing .roadmap-item:not(.is-related, .is-source) {
+  opacity: 0.4;
+}
+
+.roadmap-board.is-tracing .roadmap-item.is-related {
+  border-color: var(--prism-color-accent);
+  box-shadow: 0 0 0 var(--prism-stroke) var(--prism-color-accent), var(--prism-shadow-island);
+}
+
+/* The list's title cell holds the rank, then the title, the intent, and the dependency links, which wrap under the title. */
+.roadmap-list {
+  --prism-lib-columns: minmax(0, 3fr) minmax(0, 1fr) minmax(calc(var(--prism-space-8) * 5), 1.2fr) minmax(0, 1.4fr);
+}
+
+.roadmap-list-title {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: var(--prism-space-3);
   min-width: 0;
 }
 
-.roadmap-questions li > span {
+.roadmap-list-title > .item-rank {
+  flex: none;
+  white-space: nowrap;
+}
+
+.roadmap-list-text {
+  display: grid;
+  gap: var(--prism-space-1);
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.roadmap-questions li > :first-child {
-  color: var(--prism-color-accent-text);
+.roadmap-rels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--prism-space-1) var(--prism-space-5);
+  min-width: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+}
+
+.roadmap-rel {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-1) var(--prism-space-2);
+  min-width: 0;
+}
+
+.roadmap-rel-word {
+  white-space: nowrap;
+}
+
+.roadmap-list-signals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2);
+  min-width: 0;
 }
 
 .item-rank {

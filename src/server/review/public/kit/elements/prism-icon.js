@@ -55,7 +55,9 @@ const GLYPHS = {
   book: '<path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z"/><path d="M22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"/>',
   layers: '<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/>',
   branch: '<circle cx="6" cy="5.5" r="2.5"/><circle cx="6" cy="18.5" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8v8M18 10.5a6 6 0 0 1-6 6H8.5"/>',
-  enter: '<path d="M20 5v6a3 3 0 0 1-3 3H5M9 10l-4 4 4 4"/>'
+  enter: '<path d="M20 5v6a3 3 0 0 1-3 3H5M9 10l-4 4 4 4"/>',
+  needs: '<circle cx="18" cy="12" r="2.6"/><path d="M3.5 12h11.9M11 7.5l4.4 4.5-4.4 4.5"/>',
+  unblocks: '<circle cx="6" cy="12" r="2.6"/><path d="M8.6 12H20M15.5 7.5 20 12l-4.5 4.5"/>'
 };
 
 /** The names of every glyph the icon set draws. */

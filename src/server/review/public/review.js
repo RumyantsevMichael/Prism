@@ -23,7 +23,7 @@ import { themeDiagram } from "./kit/diagram-theme.js";
 import { createWorkspaceForms } from "./views/workspace-forms.js";
 import { currentPhase } from "./views/slice.js";
 import { messageHtml, shortDate } from "./views/util.js";
-import { LANES, laneHeading, ROADMAP_VIEWS } from "./views/roadmap.js";
+import { LANES, laneHeading } from "./views/roadmap.js";
 import { createPoller, deadline, POLL_DEADLINE_MS } from "./views/poller.js";
 import { createEventRelay } from "./views/event-relay.js";
 import { shippedHistoryHtml } from "./views/shipped-history.js";
@@ -1428,10 +1428,10 @@ function pageLabel(path) {
   return parsed.kind === "slice" ? parsed.slug : parsed.id;
 }
 
-// A filtered page of Attention is named by its filter: a kind, Answered in the last 7 days, or an initiative's title.
+// A filtered page of Attention is named by its filter: a kind, Answered in the last 7 days, the roadmap's questions, or an initiative's title.
 function attentionPageLabel(path, page) {
   if (currentContext?.ref === path) return currentContext.value.trail.at(-1)?.label ?? path;
-  const kind = [...ATTENTION_KINDS, ["answered", "Answered in the last 7 days"]].find(([name]) => name === page);
+  const kind = [...ATTENTION_KINDS, ["answered", "Answered in the last 7 days"], ["roadmap-questions", "Roadmap questions"]].find(([name]) => name === page);
   if (kind) return kind[1];
   const id = page.replace(/^work\//, "");
   return navigation.places?.attention?.work?.find((entry) => entry.id === id)?.title ?? navigation.initiatives?.find((item) => item.id === id)?.title ?? id;
@@ -1730,9 +1730,7 @@ function storePlace(name) {
   }
 }
 
-// The view the Roadmap page shows, which only the Roadmap place's sidebar switches, is the person's preference, so every roadmap opens in the view
-// they last chose; a lane whose heading the next drawn board scrolls into view.
-const roadmapView = () => preference("roadmap.view");
+// A lane whose heading the next drawn board scrolls into view.
 let pendingLane = null;
 {
   const address = new URLSearchParams(location.search);
@@ -1913,35 +1911,13 @@ function workNavigation({ scope }) {
   return parts;
 }
 
-// The Roadmap place's view switch stays one element across renders, so the arrow keys keep their focus on it while the sidebar redraws.
-let roadmapViewSwitch = null;
 const LANE_VALUE = "roadmap-lane:";
-
-function roadmapViews() {
-  if (!roadmapViewSwitch) {
-    roadmapViewSwitch = kitElement("prism-segmented", { label: "View", class: "nav-views" });
-    roadmapViewSwitch.append(...ROADMAP_VIEWS.map(([value, label]) => kitElement("span", { value }, label)));
-    roadmapViewSwitch.addEventListener("change", (event) => {
-      event.stopPropagation();
-      showRoadmapView(event.detail?.value);
-    });
-  }
-  roadmapViewSwitch.setAttribute("value", roadmapView());
-  return roadmapViewSwitch;
-}
-
-// Switching the view redraws the Roadmap page in it, and opens the page when another one shows, keeping the drawer open as a place's choice does.
-function showRoadmapView(view) {
-  if (!ROADMAP_VIEWS.some(([name]) => name === view)) return;
-  void setPreference("roadmap.view", view).catch(() => showToast("The view changed here, but the review app could not store the choice."));
-  renderNavigation();
-  openRef("roadmap", { keepDrawer: true });
-}
 
 // A lane link opens the Roadmap's board with that lane's heading in view, and scrolls to it again while the board shows.
 function showLane(lane, { keep = false } = {}) {
   if (!LANES.some(([name]) => name === lane)) return;
   void setPreference("roadmap.view", "board").catch(() => {});
+  void setPreference("roadmap.groupBy", "band").catch(() => {});
   pendingLane = { path: "roadmap", lane };
   openRef("roadmap", { keep });
 }
@@ -1954,8 +1930,8 @@ function revealLane() {
 }
 
 /**
- * Roadmap: the choice of the page's view, Board, List, or Graph, marked with the view the page shows, then one entry per lane with its open initiatives;
- * a lane entry is a link to the board at that lane.
+ * Roadmap: Whole roadmap, which opens the Roadmap page, then one entry per lane with its open initiatives; a lane entry is a link to the board at that lane.
+ * The page's views are chosen in its own toolbar, beside what they change.
  */
 function roadmapNavigation() {
   const open = (navigation.initiatives ?? []).filter((item) => item.band && item.state !== "shipped" && item.state !== "superseded" && item.state !== "unlisted");
@@ -1963,7 +1939,8 @@ function roadmapNavigation() {
     const count = open.filter((item) => item.band === band).length;
     return treeItem(`${LANE_VALUE}${lane}`, band, { start: [navIcon("roadmap")], end: [meta(String(count))], tip: `${band} · ${count} open ${count === 1 ? "initiative" : "initiatives"}`, href: `./review?artifact=roadmap&lane=${lane}` });
   });
-  return [section("View"), roadmapViews(), section("Lanes"), tree("Lanes", lanes)];
+  const whole = treeItem("roadmap", "Whole roadmap", { selected: selectedPath === "roadmap" && !pendingLane, start: [navIcon("roadmap")], end: [meta(String(open.length))], tip: `Whole roadmap · ${open.length} open ${open.length === 1 ? "initiative" : "initiatives"}` });
+  return [tree("Roadmap", [whole]), section("Lanes"), tree("Lanes", lanes)];
 }
 
 // Knowledge's search field stays one element across renders, so typing in it keeps its focus and its text while the results below it change.
@@ -2109,7 +2086,7 @@ function renderNavigation() {
   for (const rail of [shellRail, drawerRail]) renderRail(rail, attention.gates ?? 0);
   const entity = Boolean(parseEntityRef(selectedPath ?? ""));
   const claims = claimIndex ? [...claimIndex.live(), ...claimIndex.expired()].map((claim) => [claim.ref, claim.expiresAt, claim.label]) : [];
-  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", knowledgeQuery(), knowledgeResults, attentionMoreOpen, roadmapView(), currentPlace === "knowledge" ? [lastSlice, touchedCount] : null, storeSignature, scopeFilter && [...scopeFilter]]);
+  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", knowledgeQuery(), knowledgeResults, attentionMoreOpen, currentPlace === "knowledge" ? [lastSlice, touchedCount] : null, storeSignature, scopeFilter && [...scopeFilter]]);
   if (key === navigationKey) return;
   navigationKey = key;
   const focused = document.activeElement?.closest?.("prism-tree-item");
@@ -2698,8 +2675,7 @@ function viewContext(path, state) {
   return {
     path,
     state,
-    // The Roadmap page's view as its place's sidebar chose it, and the lane a lane link asks it to show.
-    roadmapView: roadmapView(),
+    // The lane a lane link asks the Roadmap page to show.
     lane: pendingLane?.path === path ? pendingLane.lane : null,
     // Touched by my work reads the slice in the selected tab, or else the one selected last, and passes its answer back for the sidebar's count.
     touchedSlice: () => lastSlice,

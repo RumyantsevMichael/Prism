@@ -45,7 +45,7 @@ The rail at the left edge switches between five places, and the sidebar beside i
 Its sidebar lists **Everything**, then under **By kind** **Questions**, **Review findings**, **Failed verifications**, **Blocked work**, **Ready to ship**, and **Problems**, each with its count, also at 0, then under **By work** the three initiatives with the most items and a row such as `2 more` that shows the rest below it, and under **Answered** **Answered in the last 7 days**.
 **Work** lists each initiative that has an initiative record and is neither shipped nor superseded, with its slices, under the groups **In progress**, **Blocked**, **Designed, not started**, and **Not on the roadmap**, each with its count, and leaves out an empty group.
 An initiative is **Blocked** when one of its slices is blocked and none is in progress or claimed, and it keeps the roadmap's order inside its group; initiatives that are not on the roadmap go by title.
-**Roadmap** switches the Roadmap page between **Board**, **List**, and **Graph** under **View**, marking the view the page shows, and lists **Now**, **Next**, **Later**, and **Parked** under **Lanes**, each with its count of open initiatives; choosing it on the rail also opens the Roadmap page.
+**Roadmap** starts with **Whole roadmap**, which opens the Roadmap page, and lists **Now**, **Next**, **Later**, and **Parked** under **Lanes**, each with its count of open initiatives; choosing it on the rail also opens the Roadmap page.
 A lane opens the board with that lane's heading scrolled into view, also again while the board is open, and its address, such as `review?artifact=roadmap&lane=parked`, does the same in a new window.
 **Knowledge** starts with a search field, such as `Search 11 records`, that counts the requirements files, decisions, glossary terms, and diagrams.
 Below it, **Start from** holds **Touched by my work** and **Changed this week**, and **Browse by kind** holds **Requirements**, **Decisions**, **Glossary**, and **Diagrams**, each with its count.
@@ -305,11 +305,15 @@ Only the review page launches, stops, or resumes a session: no agent tool and no
 
 ## Roadmap, initiatives, and slices
 
-The roadmap shows initiatives as a board, a list, or a dependency graph, chosen under **View** in the Roadmap place's sidebar, which is the only place to switch them.
-The review app keeps the chosen view, the archive toggle, and the collapsed lanes, so every later roadmap opens the way you left it.
-The board stacks one full-width lane per band in priority order, an empty band on one line, and each card shows its priority rank within its band and its state.
+The roadmap shows initiatives as a board, a list, or a dependency graph, chosen under **View** in the toolbar above them.
+Beside it, **Group by** groups the board and the list by **Band** or by **Status**, and "Show shipped and superseded" adds the archived initiatives.
+The review app keeps the chosen view, the grouping, the archive toggle, and the collapsed lanes, so every later roadmap opens the way you left it; a lane link always shows the board grouped by band.
+The board stacks one full-width lane per band in priority order, or per status in the order work moves through them, with an empty group on one line.
+A card shows its priority rank within its band, or its band when grouped by status, its state, and one bar segment per slice in the slice's status color with the count of done slices.
+At its end, a **needs** icon and an **unblocks** icon count the initiatives it depends on and those that depend on it; hovering or focusing one marks those initiatives on the board, dims the others, and names them in its tooltip, and pressing it keeps them marked.
+The list shows the same groups with each initiative's dependencies as links under its title.
 Click a lane's arrow to collapse it.
-Shipped and superseded initiatives appear only with "Show shipped and superseded".
+Next to the counts at the top, a link names how many open roadmap questions there are and opens Attention showing only them, where they are answered; the Roadmap page itself lists none.
 A superseded initiative's page says below its title when it was superseded and by which initiative, linked, and the decision's reason.
 
 An initiative page shows its slices as a board, a list, or a graph.

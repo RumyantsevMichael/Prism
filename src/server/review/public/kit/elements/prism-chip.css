@@ -79,6 +79,13 @@
   text-overflow: ellipsis;
 }
 
+/* A leading glyph keeps its size while the label shortens. */
+.start:not([hidden]) {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
 .meta {
   flex: 0 0 auto;
   min-width: 0;

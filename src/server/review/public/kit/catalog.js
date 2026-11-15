@@ -153,6 +153,7 @@ const SPECIMENS = {
     link: `<prism-chip href="#entry-prism-chip" tone="accent">Kit controls</prism-chip>`,
     interactive: `<prism-chip interactive>Filter by status</prism-chip>`,
     pressed: `<prism-chip interactive pressed="true">api<span slot="meta">3</span></prism-chip><prism-chip interactive pressed="false">web<span slot="meta">1</span></prism-chip>`,
+    start: `<prism-chip interactive tone="accent"><prism-icon slot="start" name="question" size="xs"></prism-icon>2 open questions</prism-chip><prism-chip interactive label="Needs Harden request retries"><prism-icon slot="start" name="needs" size="xs"></prism-icon>1</prism-chip>`,
     meta: `<prism-chip tone="danger">Open findings<span slot="meta">3</span></prism-chip><prism-chip>Change map<span slot="meta">12 planned</span></prism-chip>`,
     "long-text": `<prism-chip tone="warning">${LONG}</prism-chip>`,
     "unbroken-name": `<prism-chip>${UNBROKEN}</prism-chip>`
@@ -586,12 +587,12 @@ const third = 3;</code></pre></prism-code>`,
     "long-text": `<prism-phase phase="build" variant="tag">${LONG}</prism-phase>`,
     "unbroken-name": `<prism-phase phase="review">${UNBROKEN}</prism-phase>`
   },
-  "prism-phase-bar": {
-    default: `<prism-phase-bar phases="review,design,build,,frozen" label="0 of 5 shipped"></prism-phase-bar>`,
-    "not-started": `<prism-phase-bar phases=",," label="0 of 3 started"></prism-phase-bar>`,
-    shipped: `<prism-phase-bar phases="shipped,shipped" label="2 of 2 shipped"></prism-phase-bar>`,
-    "long-text": `<prism-phase-bar phases="${PHASES.join(",")}" label="${LONG}"></prism-phase-bar>`,
-    "unbroken-name": `<prism-phase-bar phases="design,build" label="${UNBROKEN}"></prism-phase-bar>`
+  "prism-slice-bar": {
+    default: `<prism-slice-bar statuses="done,in-progress,design-review,blocked,not-started" label="1 of 5 done"></prism-slice-bar>`,
+    "not-started": `<prism-slice-bar statuses="not-started,not-started,not-started" label="0 of 3 started"></prism-slice-bar>`,
+    done: `<prism-slice-bar statuses="done,done" label="2 of 2 done"></prism-slice-bar>`,
+    "long-text": `<prism-slice-bar statuses="done,in-progress,design-review,blocked,not-started,deferred" label="${LONG}"></prism-slice-bar>`,
+    "unbroken-name": `<prism-slice-bar statuses="done,in-progress" label="${UNBROKEN}"></prism-slice-bar>`
   },
   "prism-resizer": {
     default: `<div class="catalog-resize-demo"><prism-resizer label="Resize the sidebar" min="200" max="480" value="248"></prism-resizer></div>`,
@@ -610,6 +611,7 @@ const third = 3;</code></pre></prism-code>`,
     retired: `<prism-status value="superseded"></prism-status> <prism-status value="deferred"></prism-status> <prism-status value="deprecated"></prism-status>`,
     pill: `<prism-status value="in-progress" variant="pill"></prism-status> <prism-status value="design-review" variant="pill"></prism-status> <prism-status value="shipped" variant="pill"></prism-status>`,
     "glyph-only": `<prism-status value="envisioned" glyph-only></prism-status> <prism-status value="planned" glyph-only></prism-status> <prism-status value="in-progress" glyph-only></prism-status> <prism-status value="design-review" glyph-only></prism-status> <prism-status value="blocked" glyph-only></prism-status> <prism-status value="done" glyph-only></prism-status> <prism-status value="superseded" glyph-only></prism-status>`,
+    segment: `<span class="catalog-segments"><prism-status value="done" variant="segment" glyph-only></prism-status><prism-status value="in-progress" variant="segment" glyph-only></prism-status><prism-status value="design-review" variant="segment" glyph-only></prism-status><prism-status value="blocked" variant="segment" glyph-only></prism-status><prism-status value="not-started" variant="segment" glyph-only></prism-status></span>`,
     "long-text": `<prism-status value="planned">${LONG}</prism-status>`,
     "unbroken-name": `<prism-status value="in-progress">${UNBROKEN}</prism-status>`
   }
