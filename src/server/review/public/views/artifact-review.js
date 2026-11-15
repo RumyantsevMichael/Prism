@@ -1,4 +1,5 @@
 import { createActionList } from "./actions.js";
+import { blockDiff } from "./block-diff.js";
 import { diffHtml } from "./line-diff.js";
 import { badge, chip, emptyNote, escapeHtml, formatTime, keyValues, plural } from "./util.js";
 
@@ -16,17 +17,36 @@ function acceptance(review) {
   return review.changed ? badge("Changed since accepted", "warning") : badge("Matches the accepted version", "success");
 }
 
-// The changed lines against the accepted version, or the whole file as added when nothing was accepted yet; the diff's line numbers are the ones a comment names.
-function changes(data) {
+// The changes of a store artifact's text against the version a person last accepted, or against nothing when no version was accepted yet.
+// A line above the text says that it changed and shows or hides the changes, which the text then shows on its rendered blocks or as numbered source lines.
+
+/**
+ * The line above a store artifact's text, and the text's body while its changes show, as { row, body }, with body null when the text shows as it is.
+ * render(content) renders a version of the file as the page renders the file; state keeps whether the changes show and how.
+ */
+export function artifactChangesView(data, state, render) {
   const review = data.artifact;
+  if (!review) return { row: "", body: null };
   if (review.accepted && review.accepted.content === null) {
-    return '<p class="notice">The record store no longer holds the accepted version of this file, so its changes cannot be shown.</p>';
+    return { row: '<p class="notice artifact-changes-notice">The record store no longer holds the accepted version of this file, so its changes cannot be shown.</p>', body: null };
   }
-  if (review.accepted && !review.changed) return emptyNote("The file is the version a person last accepted.");
+  if (review.accepted && !review.changed) return { row: "", body: null };
   const before = review.accepted ? review.accepted.content : "";
+  const diff = blockDiff(render(before), render(data.content));
+  const shown = state.changesShown === true;
+  const as = state.changesAs === "source" || !diff ? "source" : "rendered";
+  const label = shown ? "Hide changes" : diff ? `Show ${plural(diff.changes, "change")}` : "Show changes";
+  const choice = shown && diff ? `<prism-segmented label="Changes as" value="${as}" data-changes-as><span value="rendered">Rendered</span><span value="source">Source lines</span></prism-segmented>` : "";
+  const legend = shown && as === "rendered" ? '<p class="artifact-diff-legend muted"><span class="artifact-diff-key" data-diff="added">Added</span><span class="artifact-diff-key" data-diff="changed">Changed</span><span class="artifact-diff-key" data-diff="removed">Removed</span></p>' : "";
+  const row = `<div class="artifact-changes" data-artifact-changes>
+    ${badge(review.accepted ? "Changed since the accepted version" : "Never accepted, so every block is new", "warning")}
+    <prism-button size="sm" pressed="${shown}" data-changes-toggle><prism-icon name="eye" size="xs" aria-hidden="true"></prism-icon><span>${escapeHtml(label)}</span></prism-button>
+    ${choice}
+  </div>${legend}`;
+  if (!shown) return { row, body: null };
   const labels = review.accepted ? { beforeLabel: "accepted version", afterLabel: "current version" } : { beforeLabel: "nothing accepted yet", afterLabel: "whole file" };
-  const summary = review.accepted ? "Changes since the accepted version" : "The whole file, as nothing was accepted yet";
-  return `<prism-disclosure summary="${escapeHtml(summary)}" open>${diffHtml(before, data.content, labels)}</prism-disclosure>`;
+  const body = as === "rendered" ? `<prism-doc class="document-content" data-diff-view>${diff.html}</prism-doc>` : `<div class="artifact-source-diff" data-diff-view>${diffHtml(before, data.content, labels)}</div>`;
+  return { row, body };
 }
 
 // The lines of a text as get_artifact numbers them for offset: each ends at a line feed, and a last line without one still counts.
@@ -154,7 +174,6 @@ export function artifactReviewHtml(data, state = {}) {
   if (!review) return "";
   return `<prism-panel class="view-section artifact-review" heading="Review">
     ${keyValues([["Scope", chip(escapeHtml(review.scope?.label ?? "workspace"), { attributes: " data-scope-label" })], ["Accepted", acceptance(review)]])}
-    <div class="artifact-review-changes">${changes(data)}</div>
     ${numberedLines(data, state.artifactLinesOpen === true)}
     <section class="artifact-review-comments" aria-labelledby="artifact-comments-heading">
       <h3 class="artifact-review-subheading" id="artifact-comments-heading">${escapeHtml(plural(totalOf(review), "comment"))}</h3>

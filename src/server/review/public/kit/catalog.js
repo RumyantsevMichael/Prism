@@ -518,6 +518,7 @@ const SPECIMENS = {
   "prism-doc": {
     default: `<prism-doc><h3>Contract</h3><p>The review server serves every file under the kit folder.</p></prism-doc>`,
     rich: `<prism-doc><h2>Retries</h2><p>A request retries with <code>backoff</code> until <a href="#entry-prism-doc">a total deadline</a>.</p><ul><li>Each retry waits longer.</li><li>No retry outlives the deadline.</li></ul><blockquote><p>Retries never hide a failure.</p></blockquote><table><tr><th>Term</th><th>Meaning</th></tr><tr><td>Deadline</td><td>The time the last retry must end by.</td></tr></table><pre><code><span class="tok-keyword">const</span> deadline = <span class="tok-number">30</span>;</code></pre></prism-doc>`,
+    diff: `<prism-doc><h3>Retries</h3><p data-diff="changed">A request retries until the total deadline<ins class="prism-doc-ins">, counted from the first attempt,</ins> elapses<del class="prism-doc-del">, at most three times</del>.</p><p data-diff="removed">Each retry waits between 100 and 400 milliseconds.</p><p data-diff="added">Each retry waits up to half the previous wait.</p></prism-doc>`,
     "long-text": `<prism-doc><h3>${LONG}</h3><p>${LONG} ${LONG}</p></prism-doc>`,
     "unbroken-name": `<prism-doc><h3>${UNBROKEN}</h3><p><code>${UNBROKEN}</code></p><table><tr><th>${UNBROKEN}</th><td>${UNBROKEN}</td></tr></table></prism-doc>`
   },

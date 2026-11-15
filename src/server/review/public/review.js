@@ -18,7 +18,7 @@ import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createPresence } from "./views/presence.js";
 import { DENSITIES, onPreferencesChange, preference, preferencesReady, savePreferences, setPreference, THEMES } from "./kit/preferences.js";
 import { shownActionEntries } from "./views/actions.js";
-import { artifactReviewHtml, focusAfterMore, mountArtifactReview, readListedComments } from "./views/artifact-review.js";
+import { artifactChangesView, artifactReviewHtml, focusAfterMore, mountArtifactReview, readListedComments } from "./views/artifact-review.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
 import { createWorkspaceForms } from "./views/workspace-forms.js";
 import { currentPhase } from "./views/slice.js";
@@ -2415,6 +2415,20 @@ async function showError(response) {
   setBusy(false);
 }
 
+// A Markdown or text file's sheet: the file as rendered, and for a store artifact the line above it that shows its changes, on the rendered blocks or as numbered source lines.
+function documentSheet(data, state) {
+  const options = markdownOptions(data.path, data.links);
+  const changes = artifactChangesView(data, state, (content) => renderText(data.path, content, options));
+  return `${changes.row}<section class="document-sheet">${changes.body ?? `<prism-doc class="document-content">${renderText(data.path, data.content, options)}</prism-doc>`}</section>`;
+}
+
+// Showing or hiding a file's changes, or choosing how they show, draws the page again and keeps the choice in the file's view state.
+function bindChanges(root, state, path) {
+  const redraw = () => { lastSnapshot = ""; void showArtifact(path); };
+  root.querySelector("[data-changes-toggle]")?.addEventListener("click", () => { state.changesShown = !state.changesShown; redraw(); });
+  root.querySelector("[data-changes-as]")?.addEventListener("change", (event) => { state.changesAs = event.detail?.value === "source" ? "source" : "rendered"; redraw(); });
+}
+
 // A view's own actions, such as the structured and raw modes of a record, sit at the end of the page bar.
 function modeButtons(state, path) {
   return [["structured", "Structured"], ["raw", "Raw"]].map(([mode, text]) => {
@@ -2585,7 +2599,7 @@ async function showArtifact(path) {
     ? `<section class="document-sheet source-sheet" data-code-subject><ol class="source-lines">${highlightLines(data.content.replace(/\r\n/g, "\n").replace(/\n$/, ""), languageOf(data.path)).map((line, index) => `<li id="${HEADING_PREFIX}L${index + 1}"><code>${line || " "}</code></li>`).join("")}</ol></section>`
     : structured || data.path.toLowerCase().endsWith(".puml")
       ? ""
-      : `<section class="document-sheet"><prism-doc class="document-content">${renderText(data.path, data.content, markdownOptions(data.path, data.links))}</prism-doc></section>`;
+      : documentSheet(data, state);
   const memory = beginRebuild(path);
   // A repository file is named by its path; a record of Prism's by its title and kind, never its file name.
   const named = describe(data.path);
@@ -2614,6 +2628,7 @@ async function showArtifact(path) {
   // A store artifact shows its review view above its content, and its comment form keeps an unsent comment across the page's live updates.
   // More comments lists further comments in place, so the page takes what the card now lists as what it shows and redraws only when that changes.
   mountArtifactReview(memory.stage, data, { actionApi, state, readPage, onListed: (listed) => { if (listed.path === selectedPath) lastSnapshot = JSON.stringify(listed); } });
+  bindChanges(memory.stage, state, path);
   pageBar.setActions(structured ? modeButtons(state, path) : []);
   if (structured) {
     const container = document.createElement("div");

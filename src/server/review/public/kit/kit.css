@@ -2596,6 +2596,47 @@ prism-doc img {
   border-radius: var(--prism-radius-md);
 }
 
+/* A block marked by data-diff shows a change against an earlier version: added in the added color, removed in the removed color with its text struck, and changed in the warning color with the words it gained and lost marked inside. */
+prism-doc > [data-diff] {
+  padding-inline-start: var(--prism-space-4);
+  border-inline-start: var(--prism-stroke-strong) solid var(--diff-edge);
+  border-radius: 0 var(--prism-radius-xs) var(--prism-radius-xs) 0;
+  background: var(--diff-fill);
+}
+
+prism-doc > [data-diff="added"] {
+  --diff-edge: var(--prism-color-diff-added);
+  --diff-fill: var(--prism-color-diff-added-soft);
+}
+
+prism-doc > [data-diff="removed"] {
+  --diff-edge: var(--prism-color-diff-removed);
+  --diff-fill: var(--prism-color-diff-removed-soft);
+  text-decoration: line-through;
+}
+
+prism-doc > [data-diff="changed"] {
+  --diff-edge: var(--prism-color-warning);
+  --diff-fill: transparent;
+}
+
+prism-doc > :is(table, pre)[data-diff] {
+  padding-inline-start: 0;
+  border-inline-start-width: var(--prism-stroke-strong);
+}
+
+prism-doc ins.prism-doc-ins {
+  background: var(--prism-color-diff-added-soft);
+  color: var(--prism-color-diff-added);
+  text-decoration: none;
+}
+
+prism-doc del.prism-doc-del {
+  background: var(--prism-color-diff-removed-soft);
+  color: var(--prism-color-diff-removed);
+  text-decoration: line-through;
+}
+
 /* ---------- prism-maximize: the icon button that maximizes a region and restores it ---------- */
 
 prism-maximize {

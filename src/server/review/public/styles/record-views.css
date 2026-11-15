@@ -89,9 +89,60 @@
   margin: 0 0 var(--prism-space-5);
 }
 
-.artifact-review-changes {
+/* The line above a store artifact's text: whether it changed since accepted, the button that shows the changes, and how they show. */
+.artifact-changes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2) var(--prism-space-3);
   min-width: 0;
-  margin: var(--prism-space-4) 0;
+  margin: 0 0 var(--prism-space-3);
+}
+
+.artifact-changes-notice {
+  margin: 0 0 var(--prism-space-3);
+}
+
+.artifact-diff-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2) var(--prism-space-4);
+  margin: 0 0 var(--prism-space-3);
+  font-size: var(--prism-font-size-xs);
+}
+
+.artifact-diff-key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--prism-space-2);
+}
+
+.artifact-diff-key::before {
+  content: "";
+  width: var(--prism-space-3);
+  height: var(--prism-space-3);
+  border-inline-start: var(--prism-stroke-strong) solid var(--key-edge);
+  background: var(--key-fill);
+}
+
+.artifact-diff-key[data-diff="added"] {
+  --key-edge: var(--prism-color-diff-added);
+  --key-fill: var(--prism-color-diff-added-soft);
+}
+
+.artifact-diff-key[data-diff="changed"] {
+  --key-edge: var(--prism-color-warning);
+  --key-fill: transparent;
+}
+
+.artifact-diff-key[data-diff="removed"] {
+  --key-edge: var(--prism-color-diff-removed);
+  --key-fill: var(--prism-color-diff-removed-soft);
+}
+
+.artifact-source-diff {
+  min-width: 0;
 }
 
 /* The numbered lines of the current version: each line shows its number before its text, and a long line wraps rather than widening the card. */
