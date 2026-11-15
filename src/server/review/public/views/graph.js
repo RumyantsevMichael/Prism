@@ -227,7 +227,7 @@ export function graphCard({ title, eyebrow, legend = "" }) {
     <div slot="tools" class="diagram-tools" role="group" aria-label="Graph controls">
       <prism-button variant="ghost" size="sm" data-zoom="out" label="Zoom out" tip="Zoom out">−</prism-button>
       <prism-button variant="ghost" size="sm" data-zoom="fit" tip="Fit to width">Fit</prism-button>
-      <prism-button variant="ghost" size="sm" data-zoom="reset" label="Actual size" tip="Actual size" data-zoom-label>100%</prism-button>
+      <prism-button variant="ghost" size="sm" data-zoom="reset" tip="Actual size" data-zoom-label>100%</prism-button>
       <prism-button variant="ghost" size="sm" data-zoom="in" label="Zoom in" tip="Zoom in">+</prism-button>
     </div>
     ${legend ? `<div class="graph-legend">${legend}</div>` : ""}

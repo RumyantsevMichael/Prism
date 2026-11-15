@@ -15,6 +15,7 @@ export const PREFERENCES = Object.freeze({
   "sidebar.width": Object.freeze({ kind: "integer", min: 200, max: 480, default: null }),
   "sidePanel.width": Object.freeze({ kind: "integer", min: 320, max: 4096, default: null }),
   "roadmap.view": Object.freeze({ kind: "enum", values: Object.freeze(["board", "list", "graph"]), default: "board" }),
+  "roadmap.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["band", "status"]), default: "band" }),
   "roadmap.showArchived": Object.freeze({ kind: "boolean", default: false }),
   "roadmap.collapsedLanes": Object.freeze({ kind: "set", default: Object.freeze([]) }),
   "initiative.view": Object.freeze({ kind: "enum", values: Object.freeze(["board", "list", "graph"]), default: "board" }),

@@ -3,7 +3,7 @@ import { Base, setAttribute, shadow } from "./base.js";
 import { STATUS_CLASSES, STATUSES, statusOf } from "../statuses.js";
 import { unwatchShortening, watchShortening } from "../shorten.js";
 
-const VARIANTS = ["plain", "pill"];
+const VARIANTS = ["plain", "pill", "segment"];
 
 export class PrismStatus extends Base {
   static tag = "prism-status";
@@ -13,11 +13,11 @@ export class PrismStatus extends Base {
     purpose: "The status of a record, such as an initiative, slice, requirement, decision, or review finding, as a glyph and a word in the color of its class: idle, ready, active, waiting, problem, done, or retired. Every status word maps to one class in kit/statuses.js. Static text that is never a control.",
     options: [
       { name: "value", values: Object.keys(STATUSES), default: "", description: "The status word as the record holds it; the registry gives its class and its word, and an unknown word is idle and shows as written." },
-      { name: "variant", values: VARIANTS, default: "plain", description: "pill sets the status on a soft fill of its color, for a status that leads a page or a card." },
+      { name: "variant", values: VARIANTS, default: "plain", description: "pill sets the status on a soft fill of its color, for a status that leads a page or a card; segment draws it as a short bar in its color, one per slice of prism-slice-bar." },
       { name: "glyph-only", values: ["boolean"], default: "false", description: "Shows only the glyph, such as in a tree row or a column head; the word becomes its accessible name and tooltip." },
       { name: "label", values: ["text"], default: "", description: "A word to show in place of the registry's, such as Wave 1 open; text content does the same." }
     ],
-    states: Object.keys(STATUS_CLASSES).concat(["pill", "glyph-only"]),
+    states: Object.keys(STATUS_CLASSES).concat(["pill", "glyph-only", "segment"]),
     keyboard: ["A status whose word is shortened joins the Tab order so its full word can be read."]
   };
 

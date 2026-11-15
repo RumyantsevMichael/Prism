@@ -140,3 +140,21 @@
 :host([glyph-only]) .text {
   display: none;
 }
+
+/* A segment is the status as a short bar in its class's color, one per slice of a progress bar; an idle segment draws the strong line. */
+:host([variant="segment"]) {
+  display: block;
+  flex: 1 1 0;
+  min-width: 0;
+  height: var(--prism-meter-height);
+  border-radius: var(--prism-radius-round);
+  background: var(--tone);
+}
+
+:host([variant="segment"][data-class="idle"]) {
+  background: var(--prism-color-line-strong);
+}
+
+:host([variant="segment"]) .status {
+  display: none;
+}

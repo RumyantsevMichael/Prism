@@ -770,13 +770,16 @@ function attentionPlace(attention) {
   return { everything: items.length, questions: attention.gateCount, kinds, work: ordered, shown: ATTENTION_WORK_SHOWN, answered: attention.answeredThisWeek.length };
 }
 
-// A filtered page of Attention: the items of one kind or of one initiative, with the filter's name and the total it is part of.
+// A filtered page of Attention: the items of one kind, of one initiative, or the roadmap's open questions, with the filter's name and the total it is part of.
 async function attentionPage(projectRoot, page) {
   const attention = await loadAttention(projectRoot);
   if (page === "answered") return { answered: attention.answeredThisWeek };
   const items = attentionItems(attention);
   const work = /^work\/(.+)$/.exec(page);
-  const shown = work ? items.filter(({ item }) => item.initiative?.id === work[1]) : items.filter((entry) => entry.kind === page);
+  // The roadmap's open questions are problems of the roadmap, which the Roadmap page's header counts and leads here.
+  const shown = work
+    ? items.filter(({ item }) => item.initiative?.id === work[1])
+    : page === "roadmap-questions" ? items.filter(({ item }) => item.type === "open-question") : items.filter((entry) => entry.kind === page);
   let label = PLACE_PAGE_LABELS.attention[page];
   if (work) label = shown[0]?.item.initiative.title ?? (await loadRoadmapView(projectRoot).catch(() => ({ items: [] }))).items.find((item) => item.id === work[1])?.title ?? work[1];
   return { filter: { key: page, label, total: items.length, items: shown } };
@@ -1137,7 +1140,7 @@ async function libraryScope(projectRoot, section) {
 const PLACE_LABELS = Object.freeze({ attention: "Attention", work: "Work", roadmap: "Roadmap", knowledge: "Knowledge", history: "History" });
 // The pages of Attention's and Knowledge's own addresses, by the part after their place's prefix.
 const PLACE_PAGE_LABELS = Object.freeze({
-  attention: { questions: "Questions", findings: "Review findings", failed: "Failed verifications", blocked: "Blocked work", ready: "Ready to ship", problems: "Problems", answered: "Answered in the last 7 days" },
+  attention: { questions: "Questions", findings: "Review findings", failed: "Failed verifications", blocked: "Blocked work", ready: "Ready to ship", problems: "Problems", answered: "Answered in the last 7 days", "roadmap-questions": "Roadmap questions" },
   knowledge: { touched: "Touched by my work", changed: "Changed this week", diagrams: "Diagrams" }
 });
 
@@ -1239,8 +1242,8 @@ async function fileContext(projectRoot, config, ref) {
 // Entity tabs name Prism concepts rather than files, so they never collide with artifact paths, which always carry an extension.
 export function parseEntityRef(ref) {
   if (SECTION_REFS.includes(ref)) return { kind: ref };
-  // Attention's filtered pages: one kind, one initiative's items, or the questions answered this week.
-  let match = /^attention:(questions|findings|failed|blocked|ready|problems|answered|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
+  // Attention's filtered pages: one kind, one initiative's items, the roadmap's open questions, or the questions answered this week.
+  let match = /^attention:(questions|findings|failed|blocked|ready|problems|answered|roadmap-questions|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "attention", page: match[1] };
   // Knowledge's own pages: the diagrams, the records behind the open slice, and this week's record changes.
   match = /^knowledge:(diagrams|touched|changed)$/.exec(ref ?? "");
