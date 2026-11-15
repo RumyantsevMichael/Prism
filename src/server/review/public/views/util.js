@@ -133,6 +133,24 @@ export function setPageSub(container, html, ctx) {
   return true;
 }
 
+/**
+ * Puts an eyebrow above the title and `end`, the page's own controls, at the end of the page head above `container`, in place of what an earlier draw put there,
+ * and answers the element that holds `end`, or null when the page has no head or nothing to put there.
+ */
+export function setPageHead(container, { eyebrow = "", end = "" } = {}, ctx = null) {
+  const header = container.parentElement?.querySelector?.(".artifact-header");
+  const head = header?.querySelector(":scope > div:first-child");
+  if (!head) return null;
+  head.querySelector(":scope > [data-page-eyebrow]")?.remove();
+  header.querySelector(":scope > [data-page-end]")?.remove();
+  if (eyebrow) head.insertAdjacentHTML("afterbegin", `<p class="eyebrow" data-page-eyebrow>${escapeHtml(eyebrow)}</p>`);
+  if (!end) return null;
+  header.insertAdjacentHTML("beforeend", `<div class="artifact-meta page-end" data-page-end>${end}</div>`);
+  const holder = header.querySelector(":scope > [data-page-end]");
+  if (ctx) bindLinks(holder, ctx);
+  return holder;
+}
+
 export function emptyState(heading, text = "") {
   return `<prism-empty-state heading="${escapeHtml(heading)}">${text ? `<p>${escapeHtml(text)}</p>` : ""}</prism-empty-state>`;
 }
@@ -212,6 +230,24 @@ export function requirementLinks(references, ctx, { icon = null } = {}) {
     return ctx.hasArtifact(file)
       ? `<prism-chip interactive tone="accent" data-artifact="${escapeHtml(file)}"${anchor ? ` data-doc-anchor="${escapeHtml(anchor)}"` : ""}>${glyph}${escapeHtml(label)}</prism-chip>`
       : `<prism-chip>${glyph}${escapeHtml(label)}</prism-chip>`;
+  }).join(" ");
+}
+
+/** Requirement references as one chip per requirements file, named by the file's title and the numbers it cites, which opens the file at the first one. */
+export function requirementGroups(references, ctx) {
+  const files = new Map();
+  for (const reference of references) {
+    const [file, anchor] = reference.split("#");
+    if (!files.has(file)) files.set(file, []);
+    if (anchor) files.get(file).push(anchor);
+  }
+  return [...files].map(([file, anchors]) => {
+    const title = documentTitle(file, ctx);
+    const numbers = anchors.length ? `<span slot="meta">${escapeHtml(anchors.join(", "))}</span>` : "";
+    const tip = anchors.length ? `${anchors.length === 1 ? "Requirement" : "Requirements"} ${anchors.join(", ")} of ${title}` : title;
+    return ctx.hasArtifact(file)
+      ? `<prism-chip interactive tone="accent" data-artifact="${escapeHtml(file)}"${anchors[0] ? ` data-doc-anchor="${escapeHtml(anchors[0])}"` : ""} tip="${escapeHtml(tip)}">${escapeHtml(title)}${numbers}</prism-chip>`
+      : `<prism-chip tip="${escapeHtml(tip)}">${escapeHtml(title)}${numbers}</prism-chip>`;
   }).join(" ");
 }
 

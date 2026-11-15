@@ -1247,6 +1247,52 @@ a.inspect-tile:focus-visible {
 
 /* ---------- Initiative ---------- */
 
+/* The page head keeps the initiative's controls level with its eyebrow, and they wrap below the title in a narrow window. */
+.artifact-header:has(> .page-end) {
+  align-items: flex-start;
+}
+
+.page-end {
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.initiative-facts {
+  min-width: 0;
+}
+
+/* The view switch and the slices that can be designed next share one row above the slices. */
+.initiative-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-3) var(--prism-space-5);
+  min-width: 0;
+}
+
+.initiative-frontier {
+  display: flex;
+  flex: 1 1 calc(var(--prism-sidebar-width) * 1.5);
+  align-items: baseline;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+/* The glyph keeps its size however long the line beside it grows. */
+.initiative-frontier-glyph {
+  display: inline-flex;
+  flex: none;
+}
+
+.initiative-settings-lead {
+  margin: 0 0 var(--prism-space-4);
+  color: var(--prism-color-ink-muted);
+}
+
 .slice-columns {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(var(--prism-list-width) * 0.75)), 1fr));

@@ -21,7 +21,7 @@ export class PrismButton extends Base {
       { name: "tip", values: ["text"], default: "", description: "A short description the kit tooltip shows on hover and keyboard focus." },
       { name: "slot=\"badge\"", values: ["children"], default: "", description: "A prism-badge on the button's top end corner, such as a count on an icon button." }
     ],
-    states: ["default", "primary", "ghost", "danger", "chrome", "status", "search", "round", "square", "small", "disabled", "pressed", "icon-only", "badge"],
+    states: ["default", "primary", "ghost", "danger", "chrome", "status", "search", "round", "square", "small", "disabled", "pressed", "icon-only", "badge", "menu"],
     keyboard: ["Enter and Space activate the button.", "A disabled button is skipped by Tab."]
   };
 

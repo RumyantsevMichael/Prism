@@ -69,6 +69,11 @@ button {
   margin-inline-end: 0;
 }
 
+/* An icon after the label, such as the chevron of a button that opens a menu, keeps its distance from the label before it; the label then goes in a span, so the leading icon is not the last child. */
+::slotted(prism-icon:last-child:not(:first-child)) {
+  margin-inline-start: var(--prism-space-2);
+}
+
 button:hover {
   background: var(--prism-color-hover);
 }
