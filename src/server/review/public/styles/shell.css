@@ -52,6 +52,13 @@ body {
   text-decoration: none;
 }
 
+/* Above 1100px the mark stands in the rail's column, centered over the places, as the Settings gear does under them. */
+.brand-col {
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
 .brand-mark {
   display: block;
   width: var(--prism-mark-size);
@@ -255,10 +262,11 @@ body {
 /* ---------- Body: the rail and the current place's sidebar on the canvas beside the islands ---------- */
 
 /* The rail stands at the window's start edge and sizes its own column; the sidebar's head lines up with the main island's tab strip and page bar. */
+/* The rail's column has its own even gutter, so the sidebar follows it directly; the islands keep the island gap between them. */
 .shell-body {
   position: relative;
   display: grid;
-  grid-template-columns: auto var(--prism-sidebar-width) minmax(0, 1fr);
+  grid-template-columns: auto var(--sidebar-width, var(--prism-sidebar-width)) minmax(0, 1fr);
   gap: var(--prism-island-gap);
   min-width: 0;
   min-height: 0;
@@ -266,7 +274,7 @@ body {
 }
 
 .shell-body.side-panel-open {
-  grid-template-columns: auto var(--prism-sidebar-width) minmax(0, 1fr) var(--side-panel-width, var(--prism-panel-width));
+  grid-template-columns: auto var(--sidebar-width, var(--prism-sidebar-width)) minmax(0, 1fr) var(--side-panel-width, var(--prism-panel-width));
 }
 
 .rail-dock {
@@ -277,14 +285,16 @@ body {
 }
 
 .sidebar {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--prism-space-2);
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 0 var(--prism-space-4) var(--prism-space-4);
+  padding: 0 var(--prism-space-3) var(--prism-space-4) var(--prism-space-2);
 }
+
 
 .nav {
   display: flex;
@@ -519,21 +529,6 @@ body {
   font-size: var(--prism-font-size-sm);
 }
 
-.side-resizer {
-  position: absolute;
-  top: var(--prism-space-6);
-  bottom: var(--prism-space-6);
-  left: 0;
-  z-index: var(--prism-layer-raised);
-  width: var(--prism-space-2);
-  cursor: col-resize;
-}
-
-.side-resizer:hover,
-.side-resizer:focus-visible {
-  background: var(--prism-color-accent-soft);
-}
-
 /* ---------- Status bar on the canvas ---------- */
 
 .statusbar {
@@ -553,13 +548,74 @@ body {
   min-width: 0;
 }
 
-.statusbar-appearance {
-  display: inline-flex;
+/* The Settings gear stands first, in the rail's column above 1100px, centered under the places. */
+.statusbar-settings {
+  display: grid;
+  place-items: center;
   flex: none;
 }
 
-.statusbar-about {
-  flex: none;
+/* Settings: its sections down the start edge, the chosen section's settings beside them. */
+.settings {
+  display: grid;
+  grid-template-columns: minmax(0, 11rem) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--prism-space-6);
+  min-width: 0;
+  min-height: calc(var(--prism-space-8) * 8);
+}
+
+.settings-body {
+  min-width: 0;
+}
+
+.settings-section[hidden] {
+  display: none;
+}
+
+.settings-section h3 {
+  margin: 0 0 var(--prism-space-4);
+  font-size: var(--prism-font-size-md);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--prism-space-3) var(--prism-space-6);
+  min-width: 0;
+  padding: var(--prism-space-4) 0;
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.settings-row > div:first-child {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.settings-row strong {
+  display: block;
+  font-weight: var(--prism-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.settings-hint {
+  display: block;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.settings-section .about {
+  margin-bottom: var(--prism-space-4);
+}
+
+@media (max-width: 720px) {
+  .settings {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* About Prism: the mark beside the name and the running version. */
@@ -609,13 +665,16 @@ body {
   min-width: 0;
 }
 
-/* The store button's sync state follows the store's name after a gap, so the one control reads as name, then state. */
+/* The store shows its icon in the sync state's color and one short state; its name and where it lives are in its tooltip and its details. */
 .store-sync {
   display: inline-flex;
   align-items: center;
   min-width: 0;
-  margin-inline-start: var(--prism-space-4);
   white-space: nowrap;
+}
+
+#store-status:has(.store-sync:not([hidden])) #store-status-label {
+  display: none;
 }
 
 .store-sync[hidden] {
@@ -624,6 +683,7 @@ body {
 
 .status-dot {
   display: inline-block;
+  flex: none;
   width: var(--prism-dot-size);
   height: var(--prism-dot-size);
   margin-inline-end: var(--prism-space-3);
@@ -1009,6 +1069,51 @@ body {
 
   .shell.sidebar-collapsed .shell-body > .sidebar {
     display: none;
+  }
+
+  /* The rail's column carries its own even gutter, so the sidebar and the main island follow it with no further gap. */
+  .shell-body,
+  .shell-body.side-panel-open {
+    column-gap: 0;
+  }
+
+  .shell-body > .sidebar {
+    margin-inline-end: var(--prism-island-gap);
+  }
+
+  .shell-body > .side {
+    margin-inline-start: var(--prism-island-gap);
+  }
+
+  /* The top bar and the status bar start with the rail's column, so the mark, the places, and the gear share one vertical axis. */
+  .topbar,
+  .statusbar {
+    padding-inline-start: 0;
+  }
+
+  .brand-col,
+  .statusbar-settings {
+    width: var(--prism-rail-width);
+  }
+
+  .brand {
+    gap: var(--prism-space-2);
+  }
+
+  /* Hidden, the sidebar opens over the page beside the rail when a place is chosen there, on frosted glass, without moving the page. */
+  .shell.sidebar-collapsed.sidebar-flyout .shell-body > .sidebar {
+    position: absolute;
+    top: 0;
+    bottom: var(--prism-island-gap);
+    left: var(--prism-rail-width);
+    z-index: var(--prism-layer-drawer);
+    display: flex;
+    width: var(--sidebar-width, var(--prism-sidebar-width));
+    border: var(--prism-stroke) solid var(--prism-color-glass-edge);
+    border-radius: var(--prism-radius-island);
+    background: var(--prism-color-glass);
+    backdrop-filter: blur(var(--prism-blur-glass));
+    box-shadow: var(--prism-shadow-lift);
   }
 }
 

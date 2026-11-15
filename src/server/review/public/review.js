@@ -684,6 +684,7 @@ function openRef(given, { keep = false, fromHistory = false, keepDrawer = false 
   lastSnapshot = "";
   updateLocation(path, moved && !fromHistory);
   if (navDrawer.isOpen && !keepDrawer) navDrawer.close();
+  if (sidebarFlyoutOpen() && !keepDrawer) setSidebarFlyout(false);
   setBusy(true);
   renderTabs();
   renderNavigation();
@@ -1157,43 +1158,65 @@ function requireApp() {
   return false;
 }
 
-// The status bar's Appearance menu: its radio items show the theme and density the page applies, and choosing one applies and stores it.
-function startAppearanceMenu() {
-  const menu = document.getElementById("appearance-menu");
-  if (!menu) return;
-  const root = document.documentElement;
-  const showChoice = () => {
-    for (const item of menu.querySelectorAll('prism-menu-item[type="radio"]')) {
-      const value = item.getAttribute("value");
-      item.toggleAttribute("checked", value === root.dataset.themeChoice || value === root.dataset.density);
-    }
+// Settings, from the status bar's gear or Ctrl+,: sections down its start edge for the appearance, the layout, the record store, and About Prism.
+// Each choice applies at once and is kept as the person's preference, as the appearance menu's did.
+const settingsDialog = document.getElementById("settings-dialog");
+
+function startSettings() {
+  const sections = document.getElementById("settings-sections");
+  const showSection = (name) => {
+    for (const section of settingsDialog.querySelectorAll(".settings-section")) section.hidden = section.dataset.section !== name;
+    for (const item of sections.querySelectorAll("prism-tree-item")) item.toggleAttribute("selected", item.getAttribute("value") === name);
   };
-  showChoice();
-  new MutationObserver(showChoice).observe(root, { attributes: true, attributeFilter: ["data-theme-choice", "data-density"] });
-  menu.addEventListener("prism-select", (event) => {
+  sections.addEventListener("prism-select", (event) => {
     const value = event.detail?.value;
-    if (value === "catalog") {
-      openCatalog();
-      return;
-    }
-    const change = THEMES.includes(value) ? { theme: value } : DENSITIES.includes(value) ? { density: value } : null;
-    if (!change) return;
-    savePreferences(change).catch(() => showToast("The appearance applies here, but the review app could not store it."));
+    if (value) showSection(value);
   });
+  document.getElementById("settings-button").addEventListener("click", () => openSettings());
+  const root = document.documentElement;
+  const theme = document.getElementById("settings-theme");
+  const density = document.getElementById("settings-density");
+  const sidebarChoice = document.getElementById("settings-sidebar");
+  const showChoices = () => {
+    theme.setAttribute("value", root.dataset.themeChoice || "system");
+    density.setAttribute("value", root.dataset.density || "compact");
+    sidebarChoice.setAttribute("value", shell.classList.contains("sidebar-collapsed") ? "hidden" : "shown");
+    const width = preference("sidebar.width");
+    document.getElementById("settings-sidebar-width").textContent = width ? `${width} pixels wide; drag the sidebar's edge to change it.` : "The default width; drag the sidebar's edge to change it.";
+  };
+  showChoices();
+  new MutationObserver(showChoices).observe(root, { attributes: true, attributeFilter: ["data-theme-choice", "data-density"] });
+  new MutationObserver(showChoices).observe(shell, { attributes: true, attributeFilter: ["class", "style"] });
+  theme.addEventListener("change", (event) => {
+    const value = event.detail?.value;
+    if (THEMES.includes(value)) savePreferences({ theme: value }).catch(() => showToast("The appearance applies here, but the review app could not store it."));
+  });
+  density.addEventListener("change", (event) => {
+    const value = event.detail?.value;
+    if (DENSITIES.includes(value)) savePreferences({ density: value }).catch(() => showToast("The appearance applies here, but the review app could not store it."));
+  });
+  sidebarChoice.addEventListener("change", (event) => setSidebarCollapsed(event.detail?.value === "hidden"));
+  document.getElementById("settings-sidebar-reset").addEventListener("click", () => setSidebarWidth(null, { remember: true }));
+  document.getElementById("settings-store-open").addEventListener("click", () => {
+    settingsDialog.close();
+    document.getElementById("store-status").click();
+  });
+  document.getElementById("about-catalog").addEventListener("click", () => {
+    settingsDialog.close();
+    openCatalog();
+  });
+}
+
+function openSettings() {
+  const store = document.getElementById("store-status");
+  document.getElementById("settings-store-name").textContent = store.hidden ? "No record store" : store.getAttribute("data-name") || "Record store";
+  document.getElementById("settings-store-state").textContent = store.hidden ? "This workspace keeps no records yet." : (store.getAttribute("tip") ?? "").split("\n")[0];
+  document.getElementById("settings-store-open").hidden = store.hidden;
+  settingsDialog.show();
 }
 
 function openCatalog() {
   window.open(new URL("./kit/catalog", location.href).href, "_blank", "noopener");
-}
-
-// About Prism, from the small status bar button before Appearance: the version of the running review app and the way to the component catalog.
-function startAbout() {
-  const dialog = document.getElementById("about-dialog");
-  document.getElementById("about-button")?.addEventListener("click", () => dialog?.show());
-  document.getElementById("about-catalog")?.addEventListener("click", () => {
-    dialog?.close();
-    openCatalog();
-  });
 }
 
 function showAboutVersion(version) {
@@ -1738,7 +1761,7 @@ showPlaceHead();
  */
 function choosePlace(name, { fromRail = false, keep = false } = {}) {
   if (!placeNamed(name)) return;
-  if (wideWindow.matches && shell.classList.contains("sidebar-collapsed")) setSidebarCollapsed(false);
+  if (wideWindow.matches && shell.classList.contains("sidebar-collapsed")) setSidebarFlyout(true);
   if (name === currentPlace) return;
   currentPlace = name;
   storePlace(name);
@@ -1801,8 +1824,9 @@ function attentionNavigation() {
     if (rest.length) {
       const total = rest.reduce((sum, entry) => sum + entry.count, 0);
       const tip = `${attentionMoreOpen ? "Hide" : "Show"} ${rest.length} more ${rest.length === 1 ? "initiative" : "initiatives"}`;
-      rows.push(treeItem(ATTENTION_MORE, `${rest.length} more`, { start: [navIcon("more")], end: count(total), tip, href: null }));
-      if (attentionMoreOpen) rows.push(...rest.map(workRow));
+      // The toggle follows the rows it shows: collapsed it names how many more there are, and expanded it moves after the last one as Show fewer.
+      if (attentionMoreOpen) rows.push(...rest.map(workRow), treeItem(ATTENTION_MORE, "Show fewer", { start: [navIcon("more")], tip, href: null }));
+      else rows.push(treeItem(ATTENTION_MORE, `${rest.length} more`, { start: [navIcon("more")], end: count(total), tip, href: null }));
     }
     parts.push(section("By work"), tree("By work", rows));
   }
@@ -2800,8 +2824,7 @@ function renderStoreSync(data) {
   recordStoreStatus?.update(data.recordStore, data.storeSync, data.sync);
 }
 
-startAppearanceMenu();
-startAbout();
+startSettings();
 watchDiagramTheme();
 
 // The drawer holds a rail of its own beside the sidebar, which moves into the drawer while the drawer is open, so one set of trees serves both.
@@ -2830,16 +2853,61 @@ function readSidebarCollapsed() {
 
 function setSidebarCollapsed(collapsed, { remember = true } = {}) {
   shell.classList.toggle("sidebar-collapsed", collapsed);
-  const action = collapsed ? "Expand the sidebar" : "Collapse the sidebar";
-  sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
-  sidebarToggle.setAttribute("label", action);
-  sidebarToggle.setAttribute("tip", `${action} ([)`);
+  setSidebarFlyout(false);
   if (remember) void setPreference("sidebar.collapsed", collapsed).catch(() => showToast("The sidebar changed here, but the review app could not store the choice."));
 }
+
+/**
+ * While the sidebar is hidden, a place chosen on the rail opens its sidebar over the page, as the narrow layout's drawer does, without moving the page;
+ * choosing a page in it, Escape, or a click outside it hides it again, and the button in its head keeps it open.
+ */
+function setSidebarFlyout(open) {
+  const flyout = open && shell.classList.contains("sidebar-collapsed") && wideWindow.matches;
+  shell.classList.toggle("sidebar-flyout", flyout);
+  const collapsed = shell.classList.contains("sidebar-collapsed");
+  const action = collapsed ? "Keep the sidebar open" : "Hide the sidebar";
+  sidebarToggle.setAttribute("aria-expanded", String(!collapsed || flyout));
+  sidebarToggle.setAttribute("label", action);
+  sidebarToggle.setAttribute("tip", `${action} ([)`);
+  // The drawer of a narrow window shows the sidebar whatever the choice, so its head offers no button to hide it.
+  sidebarToggle.hidden = !wideWindow.matches;
+  // A hidden sidebar has no edge to drag, also while it opens over the page.
+  const resizer = document.getElementById("sidebar-resizer");
+  if (resizer) resizer.hidden = collapsed;
+}
+
+const sidebarFlyoutOpen = () => shell.classList.contains("sidebar-flyout");
+// A window crossing 1100px closes the flyout and shows or hides the head's button.
+wideWindow.addEventListener("change", () => setSidebarFlyout(false));
+
+// A click outside the open flyout, other than on the rail that switches its place, hides it.
+document.addEventListener("pointerdown", (event) => {
+  if (!sidebarFlyoutOpen()) return;
+  const path = event.composedPath();
+  if (path.includes(sidebar) || path.includes(railDock) || path.some((node) => node?.tagName === "PRISM-TOOLTIP")) return;
+  setSidebarFlyout(false);
+}, true);
+
+// The sidebar's width is the person's preference, from the edge they drag; without one it takes the density's default width.
+const sidebarResizer = document.getElementById("sidebar-resizer");
+
+function setSidebarWidth(width, { remember = false } = {}) {
+  if (Number.isFinite(width)) shell.style.setProperty("--sidebar-width", `${width}px`);
+  else shell.style.removeProperty("--sidebar-width");
+  // The width is the sidebar's column, the sidebar and the gap after it, as the person sees the edge move.
+  const shown = sidebar.getBoundingClientRect().width;
+  const column = shown ? shown + parseFloat(getComputedStyle(sidebar).marginInlineEnd || "0") : width;
+  sidebarResizer.setAttribute("value", String(Math.round(column || 0) || ""));
+  if (remember) void setPreference("sidebar.width", Number.isFinite(width) ? width : null).catch(() => showToast("The sidebar's width changed here, but the review app could not store it."));
+}
+sidebarResizer.addEventListener("prism-resize", (event) => setSidebarWidth(event.detail.width, { remember: event.detail.done }));
+sidebarResizer.addEventListener("prism-resize-reset", () => setSidebarWidth(null, { remember: true }));
+
 // The sidebar shows as this browser last left it as soon as the page runs, and the review app's stored choice applies once the workspace loads.
 setSidebarCollapsed(readSidebarCollapsed(), { remember: false });
-// The rail's sidebar button works from the first moment too, so a click while the workspace loads is not lost.
-sidebarToggle.addEventListener("prism-select", () => setSidebarCollapsed(!shell.classList.contains("sidebar-collapsed")));
+setSidebarWidth(preference("sidebar.width"));
+// The sidebar's button works from the first moment too, so a click while the workspace loads is not lost; in the flyout it keeps the sidebar open.
+sidebarToggle.addEventListener("click", () => setSidebarCollapsed(!shell.classList.contains("sidebar-collapsed")));
 
 // The drawer places its children in its body a microtask after they arrive, so focus moves once the sidebar sits inside the open drawer.
 // How long the drawer keeps showing a place whose choice also opened a page, so the switch is seen before the drawer closes.
@@ -3137,6 +3205,7 @@ async function initialize() {
   setSidebarCollapsed(readSidebarCollapsed(), { remember: false });
   onPreferencesChange((keys, preferences) => {
     if (keys.includes("sidebar.collapsed") && preferences["sidebar.collapsed"] !== shell.classList.contains("sidebar-collapsed")) setSidebarCollapsed(preferences["sidebar.collapsed"], { remember: false });
+    if (keys.includes("sidebar.width")) setSidebarWidth(preferences["sidebar.width"]);
   });
   navDrawer.addEventListener("prism-close", closeDrawer);
   watchDrawerWidth();
@@ -3189,11 +3258,10 @@ async function initialize() {
       if (palette.isOpen()) palette.hide();
       else palette.show();
     } else if (event.key === "," && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
-      // Ctrl+, or Meta+, opens the Appearance menu on its first choice, as its title row shows.
+      // Ctrl+, or Meta+, opens Settings, as the gear's tooltip says, and closes it again.
       event.preventDefault();
-      const menu = document.getElementById("appearance-menu");
-      if (menu.isOpen) menu.close({ focus: true });
-      else menu.show({ focus: "first" });
+      if (settingsDialog.isOpen) settingsDialog.close();
+      else openSettings();
     } else if (event.key === "[" && !typing && !overlayOpen() && wideWindow.matches && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
       setSidebarCollapsed(!shell.classList.contains("sidebar-collapsed"));
@@ -3207,6 +3275,10 @@ async function initialize() {
       else goForward();
     } else if (event.key === "Escape" && overlayOpen()) {
       // An open dialog, popover, or menu closes on its own Escape.
+    } else if (event.key === "Escape" && sidebarFlyoutOpen()) {
+      // The sidebar over the page closes, and focus returns to the rail's current place.
+      setSidebarFlyout(false);
+      shellRail.querySelector('prism-rail-item[pressed="true"] button')?.focus();
     } else if (event.key === "Escape" && document.getElementById("evidence-drawer").isOpen) {
       // The evidence drawer leaves the page usable, so Escape from the page closes it as well as Escape inside it.
       closeEvidence();

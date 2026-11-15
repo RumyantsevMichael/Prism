@@ -64,6 +64,8 @@
   --prism-subtab-height: 34px;
   --prism-status-height: 24px;
   --prism-sidebar-width: 248px;
+  /* The rail's column: one place button with an even gutter on both sides, which the brand mark and the Settings gear share. */
+  --prism-rail-width: calc(var(--prism-control-height) + var(--prism-space-2) + 2 * var(--prism-space-3));
   --prism-drawer-width: 300px;
   --prism-list-width: 316px;
   --prism-panel-width: 400px;

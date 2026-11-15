@@ -158,7 +158,11 @@ button:disabled[aria-pressed="true"],
   color: var(--prism-color-accent-text);
 }
 
-/* status: an item of the status bar: small quiet text whose fill, on hover or while its menu is open, stays inside the bar while the button keeps the control height. */
+/* status: an item of the status bar, as tall as the bar in both densities: small quiet text whose fill, on hover or while its menu is open, stays inside the bar with the same room above and below. */
+:host([variant="status"]) {
+  height: var(--prism-status-height);
+}
+
 :host([variant="status"]) button {
   position: relative;
   padding: 0 var(--prism-space-3);
@@ -181,6 +185,10 @@ button:disabled[aria-pressed="true"],
 
 :host([variant="status"]) .content {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 100%;
+  line-height: 1;
 }
 
 :host([variant="status"]) button:hover {
@@ -279,6 +287,20 @@ button:disabled[aria-pressed="true"],
 
 :host([variant="search"]) ::slotted(prism-kbd) {
   flex: none;
+}
+
+/* shape square: an icon-only button as wide as it is tall, its icon centered, as the status bar's Settings gear is. */
+:host([shape="square"]) {
+  aspect-ratio: 1;
+  flex: none;
+}
+
+:host([shape="square"]) button {
+  padding: 0;
+}
+
+:host([shape="square"]) ::slotted(prism-icon) {
+  margin-inline-end: 0;
 }
 
 /* shape round: a pill, as Who's working and a filter of a list are; an unpressed filter stays quiet. */

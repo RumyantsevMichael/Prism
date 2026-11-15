@@ -36,7 +36,7 @@ const SCENES = {
 };
 
 // Where each side keeps the containers the outline measures; everything inside them is read by role, name, and attribute.
-// The rail is the `nav` named Places, the place head is the sidebar's level 2 heading followed by its subtitle, and groups start at the sidebar's level 3 headings.
+// The rail is the `nav` named Places, the place head is the sidebar's level 2 heading, whose tooltip names the place and what it holds, and groups start at the sidebar's level 3 headings.
 const MOCKUP_SIDE = { marksFixed: true, topbar: ".topbar", sidebar: "nav.sidebar", row: ".tree-item", rowLabel: ".label", tabs: ".doctabs", pagebar: ".pagebar", trail: "nav.crumbs", main: ".island.main" };
 const APP_SIDE = { root: "html", marksFixed: false, topbar: "#topbar", sidebar: "#sidebar", row: "prism-tree-item", rowLabel: ".prism-tree-label", tabs: "#open-tabs", pagebar: "#page-bar", trail: "prism-breadcrumbs", main: "#main" };
 
@@ -107,7 +107,7 @@ export function outline(side) {
   const controls = "a, button, prism-button, [role=button]";
   const isCurrent = (element) => element.getAttribute("aria-current") === "page" || element.getAttribute("aria-pressed") === "true" || element.hasAttribute("pressed") || Boolean(element.shadowRoot && deep(element.shadowRoot).some((node) => node.getAttribute("aria-pressed") === "true"));
   const hasCount = (element) => deepAll(element, ".rail-badge, .badge, .count, .prism-group-count, prism-badge").some((badge) => visible(badge) && text(badge) !== "");
-  const sidebarButtons = [...root.querySelectorAll(controls)].filter((element) => /^(Collapse|Expand) the sidebar/.test(nameOf(element)));
+  const sidebarButtons = [...root.querySelectorAll(controls)].filter((element) => /^(Hide the sidebar|Keep the sidebar open)/.test(nameOf(element)));
   const sidebarButton = sidebarButtons.find(visible) ?? null;
 
   // The rail: the visible `nav` named Places, its place entries in order, the current one, and the Attention entry's count.
@@ -120,7 +120,9 @@ export function outline(side) {
   // The sidebar: the visible one, its head, and its groups, each from a level 3 heading to the next.
   const sidebar = [...document.querySelectorAll(side.sidebar)].filter((element) => root.contains(element)).find(visible) ?? null;
   const title = sidebar ? firstVisible(sidebar, 'h2, [role=heading][aria-level="2"]') : null;
-  const subtitle = title?.nextElementSibling ?? null;
+  // The title's tooltip says "title: what the place holds"; the app keeps it in `tip`, the mockup in `title`.
+  const tooltip = title ? (title.getAttribute("tip") || title.getAttribute("title") || "").trim() : "";
+  const subtitle = title && tooltip.startsWith(`${text(title)}: `) ? tooltip.slice(text(title).length + 2) : null;
   const rowLabel = (row) => text(row.querySelector(side.rowLabel)) || row.getAttribute("label") || text(row);
   const kindOf = (element) => {
     const names = element.classList;
@@ -178,12 +180,11 @@ export function outline(side) {
   const trail = pagebar ? deepAll(pagebar, side.trail).find(visible) ?? null : null;
   const crumb = trail ? firstVisible(trail, "a") : null;
   const main = [...root.querySelectorAll(side.main)].find(visible) ?? null;
-  const separator = rail ? firstVisible(rail, '[role="separator"]') : null;
   const icon = current ? firstVisible(current, "svg, prism-icon") : null;
 
   return {
     rail: { visible: visible(rail), entries: entries.map(placeName), current: current ? placeName(current) : null, count: attention ? hasCount(attention) : false },
-    head: { title: title ? text(title) : null, subtitle: subtitle ? text(subtitle) : null },
+    head: { title: title ? text(title) : null, subtitle },
     sidebar: { groups: groups.map(({ heading, count, optional, fixed, first }) => ({ heading, count, ...(optional ? { optional } : {}), fixed, first })) },
     topbar: { navigation: Boolean(navigation), bell: Boolean(bell), bellCount: bell ? hasCount(bell) : false, sidebarButton: Boolean(sidebarButton) },
     trail: crumb ? text(crumb) : null,
@@ -191,12 +192,10 @@ export function outline(side) {
       railWidth: width(rail),
       railButtonWidth: width(entries.find(visible)),
       railButtonHeight: height(entries.find(visible)),
-      railHeadBottom: bottom(separator),
       pagebarBottom: bottom(pagebar),
       sidebarButtonCenter: middle(sidebarButton),
       placeTitleCenter: middle(title),
       selectedTabCenter: middle(selectedTab),
-      placeSubtitleCenter: middle(subtitle),
       trailCenter: middle(trail),
       sidebarLeft: left(sidebar),
       sidebarWidth: width(sidebar),
@@ -375,8 +374,8 @@ async function readApp(browser, project, { scene, width, theme }) {
   }
   const shape = await page.evaluate(outline, APP_SIDE);
   const buffer = await page.screenshot({ animations: "disabled" });
-  // The app stores a hidden sidebar, so the scene shows it again for the scenes after it.
-  if (collapsed) await page.locator("#sidebar-toggle").click().catch(() => {});
+  // The app stores a hidden sidebar, so the scene shows it again for the scenes after it, with the key that toggles it, since the hidden sidebar's button is hidden too.
+  if (collapsed) await page.keyboard.press("[").catch(() => {});
   await page.waitForTimeout(200);
   await context.close();
   return { buffer, outline: shape, note: notes.join("; ") };

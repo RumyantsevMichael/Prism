@@ -19,12 +19,12 @@ const DIAGRAM = "docs/plans/retry-hardening/timeout-retries/timeout-retries.puml
 // Each scene names its frame in the mockup, the page the app opens, and how the app reaches the mockup's state from there.
 const SCENES = {
   attention: {
-    caption: "Attention with an open design gate, Appearance menu open",
+    caption: "Attention with an open design gate, Settings open",
     ref: "attention",
     async open(page) {
       // The mockup shows the design gate; the app lists every gate in one column, so the design gate is scrolled into view.
       await page.locator("#artifact .gate-visual-review").first().evaluate((element) => element.scrollIntoView({ block: "start" })).catch(() => {});
-      await page.click("#appearance-button");
+      await page.click("#settings-button");
     }
   },
   roadmap: {

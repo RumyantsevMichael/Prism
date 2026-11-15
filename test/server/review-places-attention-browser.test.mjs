@@ -26,6 +26,11 @@ test("clauses 36, 38: the Attention sidebar lists Everything, each kind with its
   assert.ok(expanded.includes("Gamma gateway 2") && expanded.includes("Export activity reports 1"), "choosing the row shows the other initiatives");
   assert.ok(expanded.indexOf("Gamma gateway 2") < expanded.indexOf("Export activity reports 1"), "in the same order");
   assert.ok(expanded.indexOf("Gamma gateway 2") > expanded.indexOf("Beta billing 2"), "below the first three");
+  assert.equal(expanded.includes("2 more 3"), false, "the toggle no longer stands above the rows it showed");
+  assert.equal(expanded.indexOf("Show fewer"), expanded.indexOf("Export activity reports 1") + 1, "it follows the last initiative as Show fewer");
+  await item(scope, "Show fewer").click();
+  await page.waitForTimeout(300);
+  assert.deepEqual((await itemNames(scope)).slice(7, 11), ["Harden request retries 4", "Alpha search 2", "Beta billing 2", "2 more 3"], "Show fewer gathers them again");
   assert.deepEqual(page.errors, []);
 });
 

@@ -19,6 +19,18 @@
   height: var(--prism-icon-size-xs);
 }
 
+:host([tone="ok"]) {
+  color: var(--prism-color-success);
+}
+
+:host([tone="warn"]) {
+  color: var(--prism-color-warning);
+}
+
+:host([tone="danger"]) {
+  color: var(--prism-color-danger);
+}
+
 svg {
   display: block;
   width: 100%;
