@@ -113,15 +113,15 @@ test("clauses 66, 67: the roadmap, the slice page, the gate, and Attention show 
   assert.ok(await card.locator("prism-avatar").count() >= 2, "the card shows the holders' avatars");
   const slice = await openPage(browser, reviewUrl(base, "slice:retry-hardening/timeout-retries"));
   await waitForView(slice);
-  const strip = slice.locator('#artifact prism-claim[variant="strip"]');
-  assert.equal(await strip.count(), 1, "the slice page shows a claim strip");
-  assert.match(await strip.innerText(), /Claude on build-2[\s\S]*Agent[\s\S]*implementation[\s\S]*since[\s\S]*min left/);
-  const below = await slice.evaluate(() => {
-    const stepper = document.querySelector("#artifact prism-stepper").getBoundingClientRect();
-    const claim = document.querySelector('#artifact prism-claim[variant="strip"]').getBoundingClientRect();
-    return claim.top >= stepper.bottom - 1;
+  const inline = slice.locator('#artifact .slice-head-tags prism-claim[variant="inline"]');
+  assert.equal(await inline.count(), 1, "the slice page shows the claim on its tag line");
+  assert.match(`${await inline.innerText()} · ${await inline.getAttribute("tip")}`, /Claude on build-2[\s\S]*implementation[\s\S]*min left[\s\S]*Claimed[\s\S]*expires/, "the claim names its holder, activity, and time left, with the exact times as its tooltip");
+  const ends = await slice.evaluate(() => {
+    const tags = document.querySelector("#artifact .slice-head-tags").getBoundingClientRect();
+    const claim = document.querySelector('#artifact .slice-head-tags prism-claim').getBoundingClientRect();
+    return Math.abs(claim.right - tags.right) <= 1 && claim.bottom <= document.querySelector("#artifact prism-stepper").getBoundingClientRect().top + 1;
   });
-  assert.equal(below, true, "the claim strip sits under the stepper");
+  assert.equal(ends, true, "the claim ends the tag line above the stepper");
   const attention = await openPage(browser, reviewUrl(base, "attention"));
   await waitForView(attention);
   const view = attention.locator("#artifact");
@@ -150,8 +150,8 @@ test("clauses 77, 79: the slice page shows its lifecycle, claim, and sub-tabs, a
   assert.equal(await stepper.locator('[aria-current="step"]').count(), 1, "one phase is current");
   assert.match(steps[0], /done/i, "requirements are done");
   const tabs = view.getByRole("tablist", { name: "Slice" });
-  // A tab may end with its count, such as the review ledger's open findings or the slice folder's files.
-  assert.deepEqual((await tabs.getByRole("tab").allInnerTexts()).map((text) => text.trim().replace(/\s+\d+$/, "")), ["Design", "Diagram", "Verification", "Review ledger", "Change map", "Files"]);
+  // A tab may end with its count, such as the review ledger's open findings or the slice folder's files, and the change map's tab says it is deprecated.
+  assert.deepEqual((await tabs.getByRole("tab").allInnerTexts()).map((text) => text.trim().replace(/\s+(\d+|Deprecated)$/, "")), ["Design", "Diagram", "Verification", "Review", "Files", "Change map"]);
   const bar = page.locator("#page-bar");
   assert.equal(await bar.getByRole("button", { name: "Copy link", exact: true }).count(), 1);
   const side = bar.getByRole("button", { name: "Side panel", exact: true });
@@ -173,7 +173,7 @@ test("clauses 77, 79: the slice page shows its lifecycle, claim, and sub-tabs, a
   const blankSteps = blank.locator("#artifact").getByRole("list", { name: "Lifecycle" });
   assert.match(await blankSteps.locator('[aria-current="step"]').innerText(), /Design/, "a slice without an accepted design is in its design phase");
   const blankTabs = blank.locator("#artifact").getByRole("tablist", { name: "Slice" });
-  await blankTabs.getByRole("tab", { name: "Review ledger" }).click();
+  await blankTabs.getByRole("tab", { name: "Review", exact: true }).click();
   assert.ok(await blank.locator("#artifact prism-empty-state").count() >= 1, "a tab whose record is absent shows an empty state");
 });
 

@@ -330,10 +330,18 @@ A slice that records a [component](workflow.md#components) carries a small label
 Beside the view choice, a line lists the unstarted leaves that can be designed next, leaving out those in design review, and those that can start once their prerequisites finish.
 A slice page shows the slice's diagrams, its design from `slice.md`, the verification run, the review ledger, its [verified files](#a-slices-files-after-verification), and every file in the slice folder.
 It is the page to read at a design gate.
-Under its title a tag names the slice's phase with its gate or status, such as `Design · design gate open`, beside its requirements, and below the lifecycle a strip shows who holds the slice, since when, when the holder last renewed the claim, and the time left, with the exact times on hover or focus.
-The Review ledger tab counts the open findings and the Files tab the slice folder's files.
-The review ledger's findings board has a `DEFERRED` column after `VERIFIED` for findings that you accepted with a follow-up at the review loop decision, and a deferred finding's details name its decision gate, its follow-up, and the wave that deferred it.
-The review summary counts deferred findings apart from unresolved ones, and the slice's review card lists each deferred finding with its severity, title, decision gate, and follow-up.
+Under its title a tag line names the slice's phase with its gate or status, such as `Design · design gate open`, beside its requirements, and ends with who holds the slice, the activity, and the time left, with the exact times on hover or focus.
+The tabs are Design, Diagram, Verification, Review, Files, and Change map.
+The Review tab counts the open findings and the Files tab the slice folder's files.
+The Change map tab is last and marked Deprecated, because the Files tab and the verified result replace it; it stays until existing slices no longer need it.
+The Review tab holds the slice's review ledger, which the review record's own page shows too.
+Its summary line names the current wave and whether it is open or accepted, counts the unresolved findings, those that block shipping until verified, the deferred ones, and open conflicts, and shows each reviewer with the result of their lane.
+The wave's run totals end the line, and choosing them shows the full table.
+Below, filters show the findings of one reviewer, of the severities you keep pressed, or raised in one wave.
+The findings are grouped by status in the order work moves, `OPEN`, `IN PROGRESS`, `REOPENED`, `FIXED`, `VERIFIED`, and `DEFERRED`, each most severe first with its severity's bars, and a line names the statuses that have no findings.
+Choosing a finding shows it beside the list, or under it in a narrow window, with where it was raised, its contract clause, its evidence, what closes it, the implementer's evidence, and its history; the ledger opens on the most severe unresolved finding.
+A deferred finding is one you accepted with a follow-up at the review loop decision, and its row and details name its decision gate, its follow-up, and the wave that deferred it.
+Folds below hold the waves, with their reviewers, what each compared, its findings, its run totals, and a button that filters the list to the findings it raised, then the assessments, any conflicts, the operation history, and the record's details.
 On Attention, the review loop decision shows its summary with the findings of each wave as a table.
 **Details and settings** at the end of the page bar shows the slice's outcome, slug, parent, children, dependencies, and active work, and the initiative's settings.
 

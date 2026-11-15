@@ -19,7 +19,7 @@ export class PrismClaim extends Base {
       { name: "claimed-at", values: ["time"], default: "", description: "When the claim started; a strip shows it as since <time>." },
       { name: "renewed-at", values: ["time"], default: "", description: "When the claim was last renewed; the strip's lease meter runs from it to expires-at." },
       { name: "expires-at", values: ["time"], default: "", description: "When the claim lapses; the time left shows in words and updates every minute." },
-      { name: "variant", values: VARIANTS, default: "inline", description: "avatar shows only the avatar with the text as its tooltip, inline adds the holder, activity, and time left, and strip is a full-width band that adds since, the last renewal, how long ago it was claimed, and the lease meter, with the exact times as its tooltip." }
+      { name: "variant", values: VARIANTS, default: "inline", description: "avatar shows only the avatar with the text as its tooltip, inline adds the holder, activity, and time left with the exact times as its tooltip, and strip is a full-width band that adds since, the last renewal, how long ago it was claimed, and the lease meter, with the exact times as its tooltip too." }
     ],
     states: ["avatar", "inline", "strip", "expired", "expired-strip"],
     keyboard: ["A claim takes no keys; an avatar claim's text is its accessible description, and a shortened inline claim joins the Tab order to show its full text."]
@@ -133,12 +133,12 @@ export class PrismClaim extends Base {
       const text = this.tooltipText;
       setAttribute(this, "tip", text);
       setAttribute(avatar, "aria-description", text);
-    } else if (this.variant === "strip") {
+    } else {
       const times = [["Claimed", "claimed-at"], ["renewed", "renewed-at"], [left.expired ? "expired" : "expires", "expires-at"]].map(([word, name]) => exactTime(this.getAttribute(name)) && `${word} ${exactTime(this.getAttribute(name))}`).filter(Boolean);
       setAttribute(this, "tip", times.length ? times.join(", ") : null);
-      // The exact times are the strip's tooltip, so keyboard focus reaches them too.
+      // The exact times are the inline claim's and the strip's tooltip, so keyboard focus reaches them too.
       setAttribute(this, "tabindex", times.length ? "0" : null);
-    } else setAttribute(this, "tip", null);
+    }
     if (parts.since) parts.since.textContent = sinceText(this.getAttribute("claimed-at"), now);
     if (parts.renewed) {
       const renewed = agoText(this.getAttribute("renewed-at"), now);
