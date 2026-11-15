@@ -2,7 +2,7 @@ import { activeDetails } from "./coordination-state.js";
 import { applyWidths, progressBar } from "./entities.js";
 import { stateBadge } from "./roadmap.js";
 import { enablePanZoom, graphCard, renderGraph } from "./graph.js";
-import { artifactChip, badge, bindLinks, card, emptyNote, escapeHtml, keyValues, pageSub, plural, requirementLinks, setPageSub, shortDate, summaryPanel } from "./util.js";
+import { artifactChip, badge, bindLinks, card, emptyNote, escapeHtml, keyValues, pageSub, plural, requirementLinks, setPageSub, shortDate, status, summaryPanel } from "./util.js";
 import { runTotalsHtml } from "./run-totals.js";
 import { codeChip } from "./code-location.js";
 import { claimChip, claimOf } from "./claims.js";
@@ -16,10 +16,9 @@ const MODES = [["board", "Board"], ["list", "List"], ["graph", "Graph"]];
 const STATUS_COLUMNS = [["not-started", "Not started"], ["design-review", "Design review"], ["in-progress", "In progress"], ["blocked", "Blocked"], ["deferred", "Deferred"], ["done", "Done"]];
 const FIXED_COLUMNS = new Set(["not-started", "in-progress", "blocked", "done"]);
 
-const STATUS_TONES = { "not-started": "neutral", "design-review": "accent", "in-progress": "info", blocked: "danger", deferred: "warning", done: "success", split: "neutral" };
-
-export function statusBadge(status) {
-  return badge(status === "design-review" ? "design review" : status, STATUS_TONES[status] ?? "neutral");
+/** A slice's status as a kit prism-status. */
+export function statusBadge(value) {
+  return status(value);
 }
 
 // A slice's title is a link to its page.
@@ -90,7 +89,7 @@ function board(data, ctx) {
   const columns = [...STATUS_COLUMNS, ...extra].filter(([status]) => FIXED_COLUMNS.has(status) || unique.some((slug) => statusOf(data, slug) === status));
   return `<div class="slice-columns">${columns.map(([status, label]) => {
     const members = unique.filter((slug) => statusOf(data, slug) === status);
-    return `<section class="slice-column" aria-label="${escapeHtml(label)}"><h3 class="slice-column-head">${badge(label, STATUS_TONES[status] ?? "neutral")}<prism-badge>${members.length}</prism-badge></h3><ul class="slice-column-list">${members.map((slug) => boardCard(data, slug, ctx)).join("") || '<li class="column-none muted">—</li>'}</ul></section>`;
+    return `<section class="slice-column" aria-label="${escapeHtml(label)}"><h3 class="slice-column-head">${statusBadge(status)}<prism-badge>${members.length}</prism-badge></h3><ul class="slice-column-list">${members.map((slug) => boardCard(data, slug, ctx)).join("") || '<li class="column-none muted">—</li>'}</ul></section>`;
   }).join("")}</div>`;
 }
 
@@ -119,7 +118,7 @@ function supersededNote(data) {
   const by = data.supersededBy;
   const ref = by ? `initiative:${by.id}` : null;
   const link = by ? ` by <a href="./review?artifact=${encodeURIComponent(ref)}" data-artifact="${escapeHtml(ref)}">${escapeHtml(by.title)}</a>` : "";
-  const line = pageSub(`Superseded${date ? ` ${escapeHtml(date)}` : ""}${link}`, { glyph: '<prism-state state="superseded"></prism-state>' });
+  const line = pageSub(`Superseded${date ? ` ${escapeHtml(date)}` : ""}${link}`, { glyph: status("superseded", { glyphOnly: true }) });
   return `<div class="prism-page-subs">${line}${decision.reason ? pageSub(escapeHtml(decision.reason), { detail: true }) : ""}</div>`;
 }
 

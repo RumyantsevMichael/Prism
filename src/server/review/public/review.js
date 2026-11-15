@@ -1561,7 +1561,7 @@ function sliceRow(id, node, nodes) {
   if (node.hasChildren) {
     const state = branchState(id, nodes, node.slug);
     stateWord = `Split · ${STATE_WORDS[state]}`;
-    start.push(kitElement("prism-state", { state, label: stateWord }));
+    start.push(kitElement("prism-status", { value: state, label: stateWord, "glyph-only": true }));
   } else {
     stateWord = [phase ? phase[1] : null, status].filter(Boolean).join(" · ");
     start.push(kitElement("prism-phase", { phase: phase?.[0] ?? null, label: stateWord }));
@@ -1589,7 +1589,7 @@ function workInitiativeItem(item, nodes, scope, query) {
   const inScope = scope.kind === "initiative" && scope.id === item.id;
   const leaves = nodes.filter((node) => node.depth > 0 && !node.hasChildren);
   const counts = leafCounts(nodes);
-  const state = item.state === "unlisted" ? "planned" : item.state;
+  const state = item.state;
   const stateWord = STATE_WORDS[item.state] ?? item.state;
   const end = counts.total ? [meta(`${counts.done}/${counts.total}`)] : [];
   const tip = [item.title, stateWord, counts.total ? `${counts.done} of ${counts.total} shipped` : null].filter(Boolean).join(" · ");
@@ -1619,7 +1619,7 @@ function workInitiativeItem(item, nodes, scope, query) {
     const hasWorking = nodes.some((node) => node.depth > 0 && isWorkingSlice(node, sliceRef(node)));
     expanded = children.length > 0 && (treeToggles.get(ref) ?? (inScope || hasWorking));
   }
-  return treeItem(ref, item.title, { selected: selectedPath === ref, expanded, start: [kitElement("prism-state", { state, label: stateWord })], end, children, tip });
+  return treeItem(ref, item.title, { selected: selectedPath === ref, expanded, start: [kitElement("prism-status", { value: state, label: stateWord, "glyph-only": true })], end, children, tip });
 }
 
 // The store tree lists every scope's artifacts together, each scope with its label and count, behind the scope filter; a scope lists its first artifacts and the palette finds the rest.
@@ -2069,7 +2069,7 @@ function historyNavigation() {
     const by = superseded && entry.by ? ` by ${titles.get(entry.by) ?? entry.by}` : "";
     const tip = `${entry.title} · ${superseded ? "Superseded" : "Shipped"}${date ? ` ${date}` : ""}${by}`;
     // The glyph names the state only for shipped work, since the Superseded mark already says it.
-    const glyph = kitElement("prism-state", { state: superseded ? "superseded" : "shipped", label: superseded ? null : "Shipped", "aria-hidden": superseded ? "true" : null });
+    const glyph = kitElement("prism-status", { value: superseded ? "superseded" : "shipped", "glyph-only": true, "aria-hidden": superseded ? "true" : null });
     return treeItem(ref, entry.title, { selected: selectedPath === ref, start: [glyph], end, tip });
   }))];
 }

@@ -101,8 +101,8 @@ test("clauses 26, 29: the findings board shows deferred findings in their own co
   const view = page.locator("#artifact");
   const heads = await view.locator(".board-column-head").allInnerTexts();
   const columns = heads.map((text) => text.replace(/\s*\d+\s*$/, "").trim());
-  assert.deepEqual(columns.slice(-2), ["VERIFIED", "DEFERRED"], "the DEFERRED column follows VERIFIED");
-  const deferredColumn = view.locator(".board-column").filter({ has: page.locator(".board-column-head", { hasText: "DEFERRED" }) });
+  assert.deepEqual(columns.slice(-2), ["Verified", "Deferred"], "the Deferred column follows Verified");
+  const deferredColumn = view.locator(".board-column").filter({ has: page.locator(".board-column-head", { hasText: "Deferred" }) });
   for (const finding of LOWS) assert.equal(await deferredColumn.getByText(finding.title).count(), 1, finding.title);
   assert.equal(await view.locator('prism-stat[label="unresolved findings"]').getAttribute("value"), "0", "deferred findings are not unresolved");
   const deferredStat = view.locator('prism-stat[label*="deferred"]');

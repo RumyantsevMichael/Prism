@@ -1,10 +1,7 @@
-import { artifactChip, artifactLink, badge, bindLinks, card, emptyState, escapeHtml, pageSub, plural, setPageSub, stat, summaryPanel } from "./util.js";
-
-const STATUS_TONES = { approved: "success", accepted: "success", draft: "warning", proposed: "info", superseded: "neutral", deprecated: "neutral", rejected: "danger" };
+import { artifactChip, artifactLink, bindLinks, card, emptyState, escapeHtml, pageSub, plural, recordStatus, setPageSub, stat, summaryPanel } from "./util.js";
 
 function statusBadge(status) {
-  const value = String(status ?? "").toLowerCase().split(/\s/)[0];
-  return badge(status ?? "no status", STATUS_TONES[value] ?? "neutral");
+  return recordStatus(status);
 }
 
 // The scope label of a store artifact in a workspace, which tells two scopes' files of one name apart, or nothing for a checkout's own file.

@@ -1,4 +1,4 @@
-import { badge, escapeHtml } from "./util.js";
+import { escapeHtml, status } from "./util.js";
 
 export const ENTITY_LABELS = Object.freeze({
   attention: "Attention",
@@ -121,11 +121,9 @@ export async function renderEntity(container, entity, ctx) {
   }
 }
 
-const STATE_TONES = { envisioned: "neutral", planned: "info", "in-progress": "accent", shipped: "success", superseded: "neutral", unlisted: "warning" };
-
-/** A roadmap state as a kit status badge, toned by the state. */
+/** A roadmap state as a kit prism-status. */
 export function stateBadge(state) {
-  return badge(state, STATE_TONES[state] ?? "neutral");
+  return status(state);
 }
 
 export function progressBar(progress) {

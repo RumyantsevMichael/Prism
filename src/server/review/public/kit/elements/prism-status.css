@@ -1,0 +1,142 @@
+/* prism-status: a status's glyph and word in its class's color, the same for every record kind. */
+
+:host {
+  --tone: var(--prism-color-ink-muted);
+  --soft: var(--prism-color-sunken);
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+:host(:is([data-class="ready"], [data-class="active"])) {
+  --tone: var(--prism-color-info);
+  --soft: var(--prism-color-info-soft);
+}
+
+:host([data-class="waiting"]) {
+  --tone: var(--prism-color-warning);
+  --soft: var(--prism-color-warning-soft);
+}
+
+:host([data-class="problem"]) {
+  --tone: var(--prism-color-danger);
+  --soft: var(--prism-color-danger-soft);
+}
+
+:host([data-class="done"]) {
+  --tone: var(--prism-color-success);
+  --soft: var(--prism-color-success-soft);
+}
+
+:host([data-class="retired"]) {
+  --tone: var(--prism-color-ink-muted);
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  max-width: 100%;
+  color: var(--tone);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-semibold);
+  line-height: var(--prism-line-height-tight);
+  white-space: nowrap;
+}
+
+:host([variant="pill"]) .status {
+  padding: var(--prism-space-1) var(--prism-space-4) var(--prism-space-1) var(--prism-space-3);
+  border-radius: var(--prism-radius-round);
+  background: var(--soft);
+}
+
+.glyph {
+  position: relative;
+  flex: none;
+  width: var(--prism-glyph-size);
+  height: var(--prism-glyph-size);
+}
+
+.glyph::before,
+.glyph::after {
+  content: "";
+  position: absolute;
+  box-sizing: border-box;
+}
+
+/* The ring every class starts from; idle dots it, ready dashes it. */
+.glyph::before {
+  inset: var(--prism-stroke);
+  border: var(--prism-stroke-strong) solid var(--tone);
+  border-radius: var(--prism-radius-round);
+}
+
+:host([data-class="idle"]) .glyph::before {
+  border-style: dotted;
+}
+
+:host([data-class="ready"]) .glyph::before {
+  border-style: dashed;
+}
+
+/* Active fills half the ring. */
+:host([data-class="active"]) .glyph::before {
+  background: conic-gradient(var(--tone) 0 50%, transparent 50% 100%);
+}
+
+/* Waiting puts a dot in the ring's center. */
+:host([data-class="waiting"]) .glyph::after {
+  inset: 35%;
+  border-radius: var(--prism-radius-round);
+  background: var(--tone);
+}
+
+/* Problem and done fill the ring, problem with a bar across it and done with a check. */
+:host(:is([data-class="problem"], [data-class="done"])) .glyph::before {
+  background: var(--tone);
+}
+
+:host([data-class="problem"]) .glyph::after {
+  left: 28%;
+  right: 28%;
+  top: calc(50% - var(--prism-stroke));
+  height: var(--prism-stroke-strong);
+  background: var(--prism-color-surface);
+}
+
+:host([data-class="done"]) .glyph::after {
+  left: 36%;
+  top: 22%;
+  width: 28%;
+  height: 45%;
+  border: solid var(--prism-color-surface);
+  border-width: 0 var(--prism-stroke-strong) var(--prism-stroke-strong) 0;
+  transform: rotate(45deg);
+}
+
+/* Retired strikes the ring and its word through; it shares idle's muted ink, since faint ink is too light for text. */
+:host([data-class="retired"]) .glyph::after {
+  left: calc(50% - var(--prism-stroke));
+  top: 0;
+  bottom: 0;
+  width: var(--prism-stroke-strong);
+  background: var(--tone);
+  transform: rotate(45deg);
+}
+
+:host([data-class="retired"]) .text {
+  text-decoration: line-through;
+}
+
+.text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:host([glyph-only]) .text {
+  display: none;
+}
