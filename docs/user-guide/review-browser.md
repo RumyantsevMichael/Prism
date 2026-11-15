@@ -426,7 +426,11 @@ A maximized document keeps its Restore button in view while it scrolls, in its c
 In a project whose `.prism/workflow.md` names a record store, a requirement, ADR, plan file, glossary, or roadmap view opens with a Review card above its content.
 The card names the file's scope, `workspace`, the repository, or `<repository>/<component>`, and says whether a person accepted the file and whether it changed since.
 A file is accepted when a person approves it, when the design of the slices whose folder holds it is accepted, when its initiative ships, or when it moves in from the checkout with a status that a person already moved on, such as `Approved`.
-Below that, the card shows the lines that changed since the accepted version, with the line numbers of both versions, or the whole file as added when no version was accepted yet.
+When the file changed since the accepted version, or no version was accepted yet, a line above the file's text says so, and **Show changes** names how many blocks changed.
+It marks the changes on the rendered text: an added block has a green bar and fill, a removed block comes back where it stood with a red bar and struck text, and a changed block has an amber bar with the words it gained marked green and the words it lost struck in red.
+A file that no version was accepted for shows every block as added.
+While the changes show, **Source lines** shows the lines that changed instead, with the line numbers of both versions, and **Rendered** goes back to the rendered text; **Hide changes** shows the file as it is.
+The changes stay shown, in the way you chose, while comments arrive and the file changes.
 It then lists the comments on the file, oldest first, each with its author's Git name, the host it came from, the line it names, and its time, and marks a comment made on an earlier version of the file.
 Comments that a record store sync brings from other machines appear the next time the page checks the file, and comments from this machine's tabs appear at once.
 The page checks again 1.5 seconds after its last check ended, never while one still runs, and the review app reads only the comment files that the page lists and those that changed since its last read, so a file with many comments keeps the page responsive.
