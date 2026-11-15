@@ -273,3 +273,81 @@ test("clause 50: the page opens a link resolved from the clone as a tab with its
   assert.match(await page.locator("body").innerText(), /export const total/);
   assert.ok((await page.locator("[data-branch-label]").allTextContents()).some((label) => label.includes("main")), "the tab shows the default branch's label");
 });
+
+test("clause 46: the compare answer lists how every other branch differs from the compared branch, read from trees alone", async (context) => {
+  const { prism, id, clone } = await codeWorkspace(context);
+  assert.equal((await enable(prism, id, "api")).status, 200);
+  const fromDefault = await prism.get(`/w/${id}/api/code/compare?repository=api`);
+  assert.equal(fromDefault.status, 200, fromDefault.body);
+  assert.deepEqual(fromDefault.json, { repository: "api", base: "main", branches: [{ branch: "feature-x", changes: [
+    { path: ".prism/workflow.md", change: "modified" },
+    { path: "packages/web/page.js", change: "added" }
+  ] }] }, "without a base, the branch the remote's HEAD names is compared with");
+  const fromFeature = (await prism.get(`/w/${id}/api/code/compare?repository=api&base=feature-x`)).json;
+  assert.deepEqual(fromFeature.branches, [{ branch: "main", changes: [
+    { path: ".prism/workflow.md", change: "modified" },
+    { path: "packages/web/page.js", change: "deleted" }
+  ] }]);
+  assert.equal(present(clone, blobOf("export const page = 1;\n")), false, "comparing fetches no file's contents");
+  const unknown = await prism.get(`/w/${id}/api/code/compare?repository=api&base=gone`);
+  assert.equal(unknown.status, 404);
+  assert.equal(unknown.json.code, "branch_unknown");
+  assert.equal((await prism.get(`/w/${id}/api/code/compare?repository=web`)).status, 404, "a repository without a clone compares nothing");
+});
+
+test("clauses 25 and 46: the Code page lists every branch's files, marks where they differ from Compare with, and Branch picks the version shown", { skip, timeout: 120000 }, async (context) => {
+  const { prism, id } = await codeWorkspace(context);
+  assert.equal((await enable(prism, id, "api")).status, 200);
+  const browser = await launch(context);
+  const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+  await page.goto(`${prism.viewer}/w/${id}/review?artifact=code`);
+  await settle(page);
+  const tree = page.locator("[data-code-tree]");
+  await tree.waitFor();
+  const item = (value) => tree.locator(`prism-tree-item[value="${value}"]`);
+  const flagOf = (value) => item(value).locator(":scope > .prism-tree-row .prism-tree-flag").textContent();
+  assert.equal(await flagOf("packages"), "1 branch", "a folder whose files another branch changes says how many branches do");
+  assert.equal(await item("docs").locator(":scope > .prism-tree-row .prism-tree-flag").count(), 0, "a folder that is the same everywhere carries no mark");
+  await item("packages").locator(":scope > .prism-tree-row .prism-tree-twisty").click();
+  await item("packages/web").waitFor();
+  assert.equal(await flagOf("packages/web"), "1 branch", "a folder only feature-x holds is listed");
+  await item("packages/web").locator(":scope > .prism-tree-row .prism-tree-twisty").click();
+  await item("packages/web/page.js").waitFor();
+  assert.equal(await flagOf("packages/web/page.js"), "New on 1");
+  assert.match(await item("packages/web/page.js").getAttribute("tip"), /New on feature-x/);
+  await item("packages/web/page.js").locator(":scope > .prism-tree-row").click();
+  const view = page.locator("[data-code-view]");
+  await view.locator("prism-code").waitFor();
+  assert.match(await view.locator("prism-code").innerText(), /export const page = 1/);
+  assert.equal(await view.locator("[data-branch-label]").textContent(), "feature-x", "a file the chosen branch lacks shows from a branch that holds it");
+  assert.match(await view.locator("[data-code-elsewhere]").textContent(), /Not on main/);
+  assert.match(await view.locator("[data-code-standing]").textContent(), /New on this branch · 1 line/);
+  await tree.locator('prism-tree-item[value=".prism"] > .prism-tree-row .prism-tree-twisty').click();
+  await item(".prism/workflow.md").waitFor();
+  assert.equal(await flagOf(".prism/workflow.md"), "Differs on 1");
+  await item(".prism/workflow.md").locator(":scope > .prism-tree-row").click();
+  await view.getByText("Other branches differ: feature-x").waitFor();
+  assert.equal(await view.locator("[data-branch-label]").textContent(), "main");
+  assert.doesNotMatch(await view.locator("prism-code").innerText(), /web: packages\/web/);
+  await page.getByRole("button", { name: "Branch: main" }).click();
+  await page.locator("[data-code-branch-menu]").getByRole("menuitemradio", { name: "feature-x" }).click();
+  await view.getByText("Differs from main").waitFor();
+  assert.equal(await view.locator("[data-branch-label]").textContent(), "feature-x", "Branch picks the version the viewer shows");
+  assert.match(await view.locator("prism-code").innerText(), /web: packages\/web/);
+  await page.getByRole("button", { name: "Compare with: main" }).click();
+  await page.locator("[data-code-base-menu]").getByRole("menuitemradio", { name: "feature-x" }).click();
+  await page.getByRole("button", { name: "Compare with: feature-x" }).waitFor();
+  await item("packages/web/page.js").waitFor();
+  assert.equal(await flagOf("packages/web/page.js"), "Removed on 1", "compared with feature-x, main lacks the page");
+  assert.equal(await view.locator("[data-branch-label]").textContent(), "feature-x", "the open file stays open across a new comparison");
+  await page.getByRole("button", { name: "Repository: api" }).click();
+  await page.locator("[data-code-repository-menu]").getByRole("menuitemradio", { name: /web/ }).click();
+  await page.getByText("Code content is off").waitFor();
+  await page.locator("[data-code-repositories]").click();
+  const dialog = page.locator("[data-code-dialog]");
+  await dialog.locator('[data-code-repository-row="api"]').waitFor({ state: "visible" });
+  assert.match(await dialog.locator('[data-code-repository-row="api"]').innerText(), /On[\s\S]*2 branches[\s\S]*Turn code content off/);
+  assert.match(await dialog.locator('[data-code-repository-row="web"]').innerText(), /Off[\s\S]*Turn code content on/);
+  assert.equal(await dialog.locator('[data-code-switch="web"]').getAttribute("disabled"), "", "without a session that may write, the switch is off limits");
+  await dialog.getByText("This tab can only read").waitFor();
+});

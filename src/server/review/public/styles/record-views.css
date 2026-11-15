@@ -1434,34 +1434,76 @@ a.code-link:hover {
 
 /* ---------- Code content from code clones ---------- */
 
-/* A repository's code state and its switch share one row that wraps on a narrow page. */
-.code-repository-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--prism-space-2);
-  margin-bottom: var(--prism-space-3);
-}
-
-/* Each folder entry names its file or folder and then the branches that hold it, wrapping long names and many branches. */
-.code-entries > li {
-  display: flex;
-  flex-wrap: wrap;
+/* The Code page: one repository's file tree beside the open file, which stack on a narrow page. */
+.code-repository-name {
+  display: inline-flex;
   align-items: center;
   gap: var(--prism-space-2);
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.code-file {
+.code-browser {
   display: grid;
-  gap: var(--prism-space-3);
-  margin-top: var(--prism-space-3);
+  grid-template-columns: minmax(200px, 1fr) minmax(0, 3fr);
+  gap: var(--prism-space-5);
+  align-items: start;
+  min-width: 0;
 }
 
-.code-branches {
-  margin-bottom: var(--prism-space-2);
+.code-tree-pane {
+  min-width: 0;
+  padding: var(--prism-space-3);
+  border: var(--prism-stroke) solid var(--prism-color-line);
+  border-radius: var(--prism-radius-lg);
+  background: var(--prism-color-surface);
+}
+
+.code-view {
+  min-width: 0;
+}
+
+/* The open file's path, its branch, and how it stands against the compared branch share a row that wraps. */
+.code-view-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2) var(--prism-space-3);
+  min-width: 0;
+  margin: 0 0 var(--prism-space-3);
+  overflow-wrap: anywhere;
+}
+
+.code-view-head > .muted,
+.code-view-note {
+  font-size: var(--prism-font-size-xs);
+}
+
+.code-view-note {
+  margin: 0 0 var(--prism-space-3);
+}
+
+/* A repository in the Repositories dialog: its name and state, then its switch, on one row that wraps. */
+.code-repository-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--prism-space-2) var(--prism-space-4);
+  min-width: 0;
+}
+
+.code-repository-about {
+  display: grid;
+  gap: var(--prism-space-1);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .code-browser {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* ---------- Knowledge's entry points and Diagrams: the pages lay out the kit's library table ---------- */

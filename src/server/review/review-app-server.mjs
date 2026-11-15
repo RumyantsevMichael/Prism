@@ -326,6 +326,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
           folder: codeFolder,
           state: (repository) => code.state(view.id, repository),
           tree: (repository, folder) => code.tree(view.id, repository, folder),
+          compare: (repository, base) => code.compare(view.id, repository, base),
           file: (repository, at) => code.file(view.id, repository, at),
           defaultFile: (repository, file) => code.defaultFile(view.id, repository, file),
           defaultFiles: (repository) => code.defaultFiles(view.id, repository),
