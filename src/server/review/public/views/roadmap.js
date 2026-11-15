@@ -2,7 +2,7 @@ import { applyWidths, progressBar, stateBadge } from "./entities.js";
 import { isExpired } from "./claim-index.js";
 import { claimAttributes } from "./claims.js";
 import { enablePanZoom, graphCard, renderGraph } from "./graph.js";
-import { badge, bindLinks, card, emptyNote, escapeHtml, plural } from "./util.js";
+import { badge, bindLinks, card, emptyNote, escapeHtml, plural, status } from "./util.js";
 import { currentPhase } from "./slice.js";
 import { preference, setPreference } from "../kit/preferences.js";
 
@@ -56,7 +56,6 @@ function visibleItems(data, archive) {
   return archive ? data.items : data.items.filter((item) => !ARCHIVED.has(item.state));
 }
 
-const STATE_NAMES = { envisioned: "Envisioned", planned: "Planned", "in-progress": "In progress", shipped: "Shipped", superseded: "Superseded" };
 const BAND_HINTS = { Now: "being built", Next: "designed next", Later: "envisioned", Parked: "not planned", Shipped: "done" };
 const PHASE_NAMES = ["requirements", "design", "frozen", "build", "review", "shipped"];
 
@@ -84,7 +83,7 @@ function cardFoot(item) {
 
 function boardCard(item, titles, rank) {
   return `<article class="initiative-item roadmap-item state-${escapeHtml(item.state)}" aria-labelledby="roadmap-item-${escapeHtml(item.id)}">
-    <header class="roadmap-item-top"><span class="item-rank"><span aria-hidden="true">#${rank}</span><span class="sr-only">Priority ${rank} in ${escapeHtml(item.band)}</span></span>${item.pillar ? `<span class="roadmap-item-area">${escapeHtml(item.pillar)}</span>` : ""}<prism-state state="${escapeHtml(item.state)}">${escapeHtml(STATE_NAMES[item.state] ?? item.state)}</prism-state></header>
+    <header class="roadmap-item-top"><span class="item-rank"><span aria-hidden="true">#${rank}</span><span class="sr-only">Priority ${rank} in ${escapeHtml(item.band)}</span></span>${item.pillar ? `<span class="roadmap-item-area">${escapeHtml(item.pillar)}</span>` : ""}${stateBadge(item.state)}</header>
     <h3 class="item-title" id="roadmap-item-${escapeHtml(item.id)}">${initiativeLink(item.id, item.title)}</h3>
     <p class="item-intent">${escapeHtml(item.intent)}</p>
     ${phaseBar(item)}
@@ -174,7 +173,7 @@ export async function render(container, entity, ctx) {
         ? `<p class="error">The roadmap record is invalid: ${escapeHtml(data.errors.join(" "))}</p>`
         : "";
   const counts = Object.fromEntries(["in-progress", "planned", "envisioned", "shipped"].map((state) => [state, data.items.filter((item) => item.state === state).length]));
-  const metric = (count, label, state = "") => `<span class="roadmap-metric">${state ? `<prism-state state="${state}" aria-hidden="true"></prism-state>` : ""}<strong>${count}</strong> <span>${label}</span></span>`;
+  const metric = (count, label, state = "") => `<span class="roadmap-metric">${state ? status(state, { glyphOnly: true, attributes: ' aria-hidden="true"' }) : ""}<strong>${count}</strong> <span>${label}</span></span>`;
   container.innerHTML = `
     ${missing ? `<prism-panel class="view-section summary-block">${missing}</prism-panel>` : ""}
     <div class="roadmap-metrics" aria-label="Initiatives by state">

@@ -290,6 +290,9 @@ function designAudited(review: ReviewRecord, wave: Pick<Wave, "deltaRevision" | 
   return Boolean(audit?.accepted && audit.deltaRevision === wave.deltaRevision && audit.baselineId === wave.baselineId && audit.accepted.evidenceDigest === waveDigest(review, audit));
 }
 const STATUSES = ["OPEN", "IN PROGRESS", "FIXED", "VERIFIED", "REOPENED", "DEFERRED"];
+/** Every status a review finding can hold, and every result a reviewer lane can submit. */
+export const FINDING_STATUSES = Object.freeze([...STATUSES]);
+export const LANE_RESULTS = Object.freeze(["CLEAN", "FINDINGS"]);
 const recordSchema = obj({
   schemaVersion: { const: 1 }, deltaPath: str, coordinator: str, delivery: str, deliveryWorkers: arr(str, 10000), baselineId: hashField,
   waves: arr(obj({ id: str, mode: { enum: ["design-audit", "implementation-review"] }, deltaRevision: hashField, baselineId: hashField, snapshotId: hashField, comparisonId: hashField, tree: str, base: str, startedAt: str, afterGate: str,

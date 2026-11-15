@@ -357,8 +357,8 @@ const SPECIMENS = {
     selected: `<prism-tree label="Selected"><prism-tree-item label="Attention" value="attention" selected><prism-badge slot="end">3</prism-badge></prism-tree-item></prism-tree>`,
     "long-text": `<prism-tree label="Long item"><prism-tree-item label="${LONG}" value="long"><prism-badge slot="end">7</prism-badge></prism-tree-item></prism-tree>`,
     "unbroken-name": `<prism-tree label="Unbroken item"><prism-tree-item label="${UNBROKEN}" value="unbroken"></prism-tree-item></prism-tree>`,
-    glyphs: `<prism-tree label="Glyphs"><prism-tree-item label="Attention" value="attention"><prism-icon slot="start" name="bell"></prism-icon><prism-badge slot="end" variant="count" solid>5</prism-badge></prism-tree-item><prism-tree-item label="Harden request retries" value="retries" expanded tip="Harden request retries · In progress · 0 of 5 shipped"><prism-state slot="start" state="in-progress" label="In progress"></prism-state><span slot="end">0/5</span><prism-tree-item label="Retry timed-out requests until a total deadline" value="timeout" tip="Retry timed-out requests until a total deadline · Design"><prism-phase slot="start" phase="design" label="Design"></prism-phase></prism-tree-item><prism-tree-item label="Retry dropped connections" value="dropped" tip="Retry dropped connections · Blocked"><prism-phase slot="start" phase="build" label="Build"></prism-phase><span slot="end" class="prism-tree-flag">Blocked</span></prism-tree-item></prism-tree-item></prism-tree>`,
-    flag: `<prism-tree label="Flags"><prism-tree-item label="Retry dropped connections" value="dropped" tip="Retry dropped connections · Build · Blocked"><prism-phase slot="start" phase="build" label="Build · Blocked"></prism-phase><span slot="end" class="prism-tree-flag">Blocked</span></prism-tree-item><prism-tree-item label="CSV-only exports" value="csv" tip="CSV-only exports · Superseded 3 Nov"><prism-state slot="start" state="superseded" aria-hidden="true"></prism-state><span slot="end" class="prism-tree-flag is-muted">Superseded</span><span slot="end">3 Nov</span></prism-tree-item><prism-tree-item label="${LONG}" value="flag-long"><prism-phase slot="start" phase="build" label="Build · Blocked"></prism-phase><span slot="end" class="prism-tree-flag">Blocked</span></prism-tree-item><prism-tree-item label="${UNBROKEN}" value="flag-unbroken"><prism-state slot="start" state="superseded" aria-hidden="true"></prism-state><span slot="end" class="prism-tree-flag is-muted">Superseded</span></prism-tree-item></prism-tree>`,
+    glyphs: `<prism-tree label="Glyphs"><prism-tree-item label="Attention" value="attention"><prism-icon slot="start" name="bell"></prism-icon><prism-badge slot="end" variant="count" solid>5</prism-badge></prism-tree-item><prism-tree-item label="Harden request retries" value="retries" expanded tip="Harden request retries · In progress · 0 of 5 shipped"><prism-status slot="start" value="in-progress" glyph-only></prism-status><span slot="end">0/5</span><prism-tree-item label="Retry timed-out requests until a total deadline" value="timeout" tip="Retry timed-out requests until a total deadline · Design"><prism-phase slot="start" phase="design" label="Design"></prism-phase></prism-tree-item><prism-tree-item label="Retry dropped connections" value="dropped" tip="Retry dropped connections · Blocked"><prism-phase slot="start" phase="build" label="Build"></prism-phase><span slot="end" class="prism-tree-flag">Blocked</span></prism-tree-item></prism-tree-item></prism-tree>`,
+    flag: `<prism-tree label="Flags"><prism-tree-item label="Retry dropped connections" value="dropped" tip="Retry dropped connections · Build · Blocked"><prism-phase slot="start" phase="build" label="Build · Blocked"></prism-phase><span slot="end" class="prism-tree-flag">Blocked</span></prism-tree-item><prism-tree-item label="CSV-only exports" value="csv" tip="CSV-only exports · Superseded 3 Nov"><prism-status slot="start" value="superseded" glyph-only aria-hidden="true"></prism-status><span slot="end" class="prism-tree-flag is-muted">Superseded</span><span slot="end">3 Nov</span></prism-tree-item><prism-tree-item label="${LONG}" value="flag-long"><prism-phase slot="start" phase="build" label="Build · Blocked"></prism-phase><span slot="end" class="prism-tree-flag">Blocked</span></prism-tree-item><prism-tree-item label="${UNBROKEN}" value="flag-unbroken"><prism-status slot="start" value="superseded" glyph-only aria-hidden="true"></prism-status><span slot="end" class="prism-tree-flag is-muted">Superseded</span></prism-tree-item></prism-tree>`,
     link: `<prism-tree label="Links"><prism-tree-item label="Roadmap" value="roadmap" href="#roadmap"><prism-icon slot="start" name="roadmap"></prism-icon></prism-tree-item><prism-tree-item label="Requirements" value="requirements" href="#requirements"><prism-icon slot="start" name="list"></prism-icon><span slot="end">4</span></prism-tree-item></prism-tree>`
   },
   "prism-rail": {
@@ -560,11 +560,11 @@ const third = 3;</code></pre></prism-code>`,
   "prism-page-sub": {
     default: `<prism-page-sub>Records changed in the last 7 days, from the repository's history, those not committed first.</prism-page-sub>`,
     "with-link": `<prism-page-sub>Review findings · 2 of 7 items<a slot="end" href="#entry-prism-page-sub">Show everything</a></prism-page-sub>`,
-    "with-glyph": `<prism-page-sub><prism-state slot="glyph" state="superseded"></prism-state>Superseded 3 Nov 2026 by <a href="#entry-prism-page-sub">Export activity reports</a></prism-page-sub>`,
+    "with-glyph": `<prism-page-sub><prism-status slot="glyph" value="superseded" glyph-only></prism-status>Superseded 3 Nov 2026 by <a href="#entry-prism-page-sub">Export activity reports</a></prism-page-sub>`,
     detail: `<prism-page-sub>Records behind the slice you have open: <b>Harden request retries</b>, slice <b>Retry timed-out requests until a total deadline</b></prism-page-sub><prism-page-sub detail>The decision's reason, in the quieter size.</prism-page-sub>`,
-    group: `<div class="prism-page-subs"><prism-page-sub><prism-state slot="glyph" state="superseded"></prism-state>Superseded 3 Nov 2026 by <a href="#entry-prism-page-sub">Export activity reports</a></prism-page-sub><prism-page-sub detail>CSV alone could not carry the report's charts, so the reports export as a document instead.</prism-page-sub></div>`,
+    group: `<div class="prism-page-subs"><prism-page-sub><prism-status slot="glyph" value="superseded" glyph-only></prism-status>Superseded 3 Nov 2026 by <a href="#entry-prism-page-sub">Export activity reports</a></prism-page-sub><prism-page-sub detail>CSV alone could not carry the report's charts, so the reports export as a document instead.</prism-page-sub></div>`,
     "long-text": `<prism-page-sub>${LONG} <b>${LONG}</b><a slot="end" href="#entry-prism-page-sub">${LONG}</a></prism-page-sub>`,
-    "unbroken-name": `<prism-page-sub><prism-state slot="glyph" state="superseded"></prism-state>Records behind <b>${UNBROKEN}</b><a slot="end" href="#entry-prism-page-sub">${UNBROKEN}</a></prism-page-sub>`
+    "unbroken-name": `<prism-page-sub><prism-status slot="glyph" value="superseded" glyph-only></prism-status>Records behind <b>${UNBROKEN}</b><a slot="end" href="#entry-prism-page-sub">${UNBROKEN}</a></prism-page-sub>`
   },
   "prism-lib-table": {
     default: libTable(["Title", "Kind", "Changed", "By"], libRows([["Retry requirements", "list", "Requirement", "2 h ago", "Ada Lovelace"], ["Bound retries by a total deadline", "scale", "Decision", "1 d ago", "Grace Hopper"]])),
@@ -590,14 +590,18 @@ const third = 3;</code></pre></prism-code>`,
     "long-text": `<prism-phase-bar phases="${PHASES.join(",")}" label="${LONG}"></prism-phase-bar>`,
     "unbroken-name": `<prism-phase-bar phases="design,build" label="${UNBROKEN}"></prism-phase-bar>`
   },
-  "prism-state": {
-    envisioned: `<prism-state state="envisioned">Envisioned</prism-state>`,
-    planned: `<prism-state state="planned">Planned</prism-state>`,
-    "in-progress": `<prism-state state="in-progress">In progress</prism-state>`,
-    shipped: `<prism-state state="shipped">Shipped</prism-state>`,
-    superseded: `<prism-state state="superseded">Superseded</prism-state>`,
-    "long-text": `<prism-state state="planned">${LONG}</prism-state>`,
-    "unbroken-name": `<prism-state state="in-progress">${UNBROKEN}</prism-state>`
+  "prism-status": {
+    idle: `<prism-status value="envisioned"></prism-status> <prism-status value="not-started"></prism-status> <prism-status value="open"></prism-status>`,
+    ready: `<prism-status value="planned"></prism-status>`,
+    active: `<prism-status value="in-progress"></prism-status>`,
+    waiting: `<prism-status value="design-review"></prism-status> <prism-status value="proposed"></prism-status> <prism-status value="fixed"></prism-status>`,
+    problem: `<prism-status value="blocked"></prism-status> <prism-status value="reopened"></prism-status> <prism-status value="rejected"></prism-status>`,
+    done: `<prism-status value="shipped"></prism-status> <prism-status value="accepted"></prism-status> <prism-status value="verified"></prism-status>`,
+    retired: `<prism-status value="superseded"></prism-status> <prism-status value="deferred"></prism-status> <prism-status value="deprecated"></prism-status>`,
+    pill: `<prism-status value="in-progress" variant="pill"></prism-status> <prism-status value="design-review" variant="pill"></prism-status> <prism-status value="shipped" variant="pill"></prism-status>`,
+    "glyph-only": `<prism-status value="envisioned" glyph-only></prism-status> <prism-status value="planned" glyph-only></prism-status> <prism-status value="in-progress" glyph-only></prism-status> <prism-status value="design-review" glyph-only></prism-status> <prism-status value="blocked" glyph-only></prism-status> <prism-status value="done" glyph-only></prism-status> <prism-status value="superseded" glyph-only></prism-status>`,
+    "long-text": `<prism-status value="planned">${LONG}</prism-status>`,
+    "unbroken-name": `<prism-status value="in-progress">${UNBROKEN}</prism-status>`
   }
 };
 

@@ -88,6 +88,18 @@ export function badge(text, tone = "neutral") {
   return `<prism-badge variant="status" tone="${escapeHtml(tone)}">${escapeHtml(text)}</prism-badge>`;
 }
 
+/** A record's status as a kit prism-status, in its class's color and glyph; `label` replaces the registry's word, and `glyphOnly` keeps it for the accessible name. */
+export function status(value, { label = "", variant = "", glyphOnly = false, attributes = "" } = {}) {
+  return `<prism-status value="${escapeHtml(value ?? "")}"${label ? ` label="${escapeHtml(label)}"` : ""}${variant ? ` variant="${escapeHtml(variant)}"` : ""}${glyphOnly ? " glyph-only" : ""}${attributes}></prism-status>`;
+}
+
+/** A status a record writes by hand, such as Accepted 3 Nov 2026: its first word picks the class, and the whole text shows when it says more. */
+export function recordStatus(text) {
+  const written = String(text ?? "").trim();
+  const [word = "", ...rest] = written.split(/\s+/);
+  return status(word, { label: rest.length ? written : "" });
+}
+
 /** A static kit chip, with optional quieter meta text. */
 export function chip(html, { tone = "", meta = "", tip = "", attributes = "" } = {}) {
   return `<prism-chip${tone ? ` tone="${escapeHtml(tone)}"` : ""}${tip ? ` tip="${escapeHtml(tip)}"` : ""}${attributes}>${html}${meta ? `<span slot="meta">${meta}</span>` : ""}</prism-chip>`;

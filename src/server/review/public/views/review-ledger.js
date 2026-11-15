@@ -1,20 +1,13 @@
 import { jsonTreeHtml } from "./json-tree.js";
-import { badge, bindLinks, card, chip, emptyState, escapeHtml, evidenceChip, formatSelector, formatTime, keyValues, pathText, plural, recordChip, shortId, stat, summaryPanel } from "./util.js";
+import { badge, bindLinks, card, chip, emptyState, escapeHtml, evidenceChip, formatSelector, formatTime, keyValues, pathText, plural, recordChip, shortId, stat, status, summaryPanel } from "./util.js";
 import { runTotalsHtml, waveRunTotals } from "./run-totals.js";
 
 const STATUSES = ["OPEN", "IN PROGRESS", "REOPENED", "FIXED", "VERIFIED", "DEFERRED"];
 const SEVERITIES = ["blocker", "high", "medium", "low"];
 
-function token(value) {
-  return String(value).toLowerCase().replace(/[^a-z0-9]+/g, "-");
-}
-
-const STATUS_TONES = { OPEN: "danger", "IN PROGRESS": "info", REOPENED: "warning", FIXED: "accent", VERIFIED: "success", DEFERRED: "neutral" };
 const SEVERITY_TONES = { blocker: "danger", high: "warning", medium: "info", low: "neutral" };
-const RESULT_TONES = { clean: "success", passed: "success", pass: "success", findings: "warning", failed: "danger", fail: "danger", pending: "neutral" };
-
-function statusBadge(status) {
-  return badge(status, STATUS_TONES[status] ?? "neutral");
+function statusBadge(value) {
+  return status(value);
 }
 
 function severityBadge(severity) {
@@ -47,7 +40,7 @@ function waveCard(wave, index, findings, current, startedAt) {
   const lanes = wave.lanes.map((lane) => `<li>
     <span class="lane-name">${escapeHtml(lane.id)}</span>
     <span class="muted">${escapeHtml(lane.reviewer)}</span>
-    ${lane.result ? badge(lane.result.status, RESULT_TONES[token(lane.result.status)] ?? "neutral") : badge("pending")}
+    ${status(lane.result?.status ?? "pending")}
   </li>`).join("");
   return `<li class="wave${wave.accepted ? " is-accepted" : ""}${current ? " is-current" : ""}">
     <span class="wave-marker" aria-hidden="true">${index + 1}</span>
