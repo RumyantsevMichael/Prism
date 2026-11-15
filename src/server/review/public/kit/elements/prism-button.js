@@ -19,9 +19,10 @@ export class PrismButton extends Base {
       { name: "pressed", values: ["boolean", "false"], default: "", description: "Makes it a toggle and exposes the state as aria-pressed." },
       { name: "label", values: ["text"], default: "", description: "The accessible name of a button that shows only an icon." },
       { name: "tip", values: ["text"], default: "", description: "A short description the kit tooltip shows on hover and keyboard focus." },
+      { name: "shrink", values: ["boolean"], default: "false", description: "Lays the content out in a row where icons, avatars, and badges keep their size and only the span of text shortens to an ellipsis, so a trailing icon stays inside a narrow button." },
       { name: "slot=\"badge\"", values: ["children"], default: "", description: "A prism-badge on the button's top end corner, such as a count on an icon button." }
     ],
-    states: ["default", "primary", "ghost", "danger", "chrome", "status", "search", "round", "square", "small", "disabled", "pressed", "icon-only", "badge", "menu"],
+    states: ["default", "primary", "ghost", "danger", "chrome", "status", "search", "round", "square", "small", "disabled", "pressed", "icon-only", "badge", "menu", "shrink"],
     keyboard: ["Enter and Space activate the button.", "A disabled button is skipped by Tab."]
   };
 

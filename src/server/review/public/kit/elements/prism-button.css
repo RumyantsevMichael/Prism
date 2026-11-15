@@ -294,6 +294,29 @@ button:disabled[aria-pressed="true"],
   flex: none;
 }
 
+/* shrink: the content is a row whose icons, avatars, and badges keep their size while the span of text shortens, so a trailing chevron never leaves a narrow button. */
+:host([shrink]) .content {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-4);
+}
+
+:host([shrink]) ::slotted(*) {
+  flex: none;
+}
+
+:host([shrink]) ::slotted(prism-icon) {
+  margin-inline: 0;
+}
+
+:host([shrink]) ::slotted(span) {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* shape square: an icon-only button as wide as it is tall, its icon centered, as the status bar's Settings gear is. */
 :host([shape="square"]) {
   aspect-ratio: 1;

@@ -76,10 +76,6 @@ body {
   max-width: 32%;
 }
 
-.project-tile {
-  margin-inline-end: var(--prism-space-3);
-}
-
 .project-label {
   min-width: 0;
 }
