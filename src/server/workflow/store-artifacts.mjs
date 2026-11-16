@@ -1701,3 +1701,47 @@ export async function acceptArtifactVersions(projectRoot, folders, { exclude = [
     });
   });
 }
+
+// Format migrations read and write store artifacts through the functions below, under the same checks, lock, and records as the artifact tools.
+
+/**
+ * The store artifact at a project-relative path, in the given scope input ({ scope, component } as get_artifact takes them) or in the one seen scope that holds it:
+ * { path, kind, scope, held }, where held is { bytes, version, status } with status the recorded status of a requirement or ADR, else null, or null when no seen scope holds it,
+ * and scope is then the given scope, else the scope that Prism would create it in.
+ * Two seen scopes that hold the path are refused with artifact_ambiguous, listing their labels.
+ */
+export async function storeArtifactCopy(projectRoot, file, input = {}) {
+  return refusing(async () => {
+    const { config, file: normalized, address } = await ownArtifact(projectRoot, file);
+    const given = scopeInput(config, input);
+    checkKindScope(address.kind, given);
+    const seen = await seenScopes(projectRoot);
+    const scopes = scopesFor(seen, address.kind, given);
+    const held = await holders(seen, address, scopes);
+    if (held.length > 1) throw ambiguous(normalized, held);
+    if (!held.length) return { path: normalized, kind: address.kind, scope: given ? scopeOf(seen, given) : await ownScope(seen, address, scopes), held: null };
+    const [{ scope, record }] = held;
+    const status = hasStatus(address.kind) ? (await statusRecordOf(seen, scope, address)).status : null;
+    return { path: normalized, kind: address.kind, scope, held: { bytes: contentOf(normalized, record), version: record.version, status } };
+  });
+}
+
+/**
+ * Apply a format migration's store changes in one checked update under the store's artifact lock: write the target, { path, scope, content, expectedVersion, status },
+ * where a new requirement or ADR is recorded with status, and remove the store source, { path, scope, expectedVersion }, when one is given.
+ * The update keeps identities, comments, status records, accepted versions, and sync as update_artifact does, and a version that changed is refused with version_conflict.
+ * Returns the update's entries: [{ path, scope, version } | { path, scope, removed, removedComments? }].
+ */
+export async function applyStoreMigration(projectRoot, { target, remove = null }) {
+  return refusing(async () => {
+    const { config, kinds } = await configuration(projectRoot);
+    const seen = await seenScopes(projectRoot);
+    const operations = [{ op: "write", path: target.path, content: target.content, expectedVersion: target.expectedVersion, ...scopeFieldsOf(target.scope), ...(target.expectedVersion === null && target.status ? { writtenStatus: target.status } : {}) }];
+    if (remove) operations.push({ op: "remove", path: remove.path, expectedVersion: remove.expectedVersion, ...scopeFieldsOf(remove.scope) });
+    const checked = operations.map((operation) => {
+      const { writtenStatus, ...plain } = operation;
+      return { ...checkOperation(config, kinds, plain), operation };
+    });
+    return withArtifactStoreLock(seen, async () => (await applyOperations(seen, checked, { noteWrites: true })).artifacts);
+  });
+}

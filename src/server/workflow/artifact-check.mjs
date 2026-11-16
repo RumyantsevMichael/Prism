@@ -228,9 +228,9 @@ async function storeRefusing(action) {
 /**
  * Checks the project's artifacts: { formats, artifacts }.
  * In a project with a record store, requirements, ADRs, and glossaries are read from every scope the checkout sees, and feature files from the checkout.
- * `legacyOf(path, type, scope)` returns the legacy mark that covers an artifact, and `appliedMigration(id)` whether a migration was applied; both default to none.
+ * `legacyOf(path, type, scope)` returns the legacy mark that covers an artifact, none by default, and `appliedMigration(id)` whether a format migration was applied, by default as the project's migration records say.
  */
-export async function checkArtifacts({ projectRoot, paths, type, legacyOf = () => null, appliedMigration = () => false }) {
+export async function checkArtifacts({ projectRoot, paths, type, legacyOf = () => null, appliedMigration }) {
   if (type !== undefined && !ARTIFACT_TYPES.includes(type)) throw fail("invalid_input", `type must be one of ${ARTIFACT_TYPES.join(", ")}.`);
   if (paths !== undefined && (!Array.isArray(paths) || paths.length > MAX_CHECK_PATHS)) throw fail("invalid_input", `paths must be a list of at most ${MAX_CHECK_PATHS} project-relative files or { path, scope, component } entries.`);
   const root = await realpath(projectRoot);
@@ -238,6 +238,12 @@ export async function checkArtifacts({ projectRoot, paths, type, legacyOf = () =
   const locations = artifactLocations(config);
   const entries = paths === undefined ? null : paths.map(pathEntry);
   const store = (config.workspace?.store ?? null) !== null ? await storeRefusing(() => seenArtifactTexts(root)) : null;
+  // A migration <id> source is decided once that format migration was applied, whichever checkout applied it, as the project's migration records say.
+  if (appliedMigration === undefined) {
+    const { appliedMigrationIds } = await import("./format-migrations.mjs");
+    const applied = await storeRefusing(() => appliedMigrationIds(root));
+    appliedMigration = (id) => applied.has(id);
+  }
   const storeType = (file) => {
     const kind = store === null ? null : storeKindOf(config, file);
     return kind === null ? null : STORE_TYPES.get(kind) ?? null;

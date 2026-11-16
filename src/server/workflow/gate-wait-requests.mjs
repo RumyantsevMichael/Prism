@@ -31,17 +31,17 @@ async function removeExpired(directory, now) {
 }
 
 // One request per session: a later wait in the same turn replaces an earlier one, since the agent lists every gate it still waits on.
-// A wait names an initiative, or the artifact, with its scope when one was given, whose approval gates it waits on.
+// A wait names an initiative, the artifact, with its scope when one was given, whose approval gates it waits on, or the format migration whose answer it waits on.
 // knownEntries are the history entry ids when the wait was asked, so a change the person makes before the hook starts still ends it,
 // coordinates keeps whether the asking agent coordinated the initiative, since only such a wait ends on the person's changes,
 // and waitId names the wait whose gates the session's notice record holds for the hook; the result names the wait of the request it replaced.
-export async function recordWaitRequest({ sessionId, projectRoot, initiative, artifact, scope, gateIds, maxWaitMinutes, knownEntries, coordinates = false, waitId, directory = gateWaitDirectory(), now = Date.now() }) {
+export async function recordWaitRequest({ sessionId, projectRoot, initiative, artifact, scope, migration, gateIds, maxWaitMinutes, knownEntries, coordinates = false, waitId, directory = gateWaitDirectory(), now = Date.now() }) {
   await mkdir(directory, { recursive: true });
   await removeExpired(directory, now);
   const file = requestFile(directory, sessionId);
   const replaced = await readFile(file, "utf8").then((text) => parseStoreJson(text), () => null).catch(() => null);
   const temporary = `${file}.${randomBytes(6).toString("hex")}.tmp`;
-  const source = artifact ? { artifact, ...(scope === undefined ? {} : { scope }) } : { initiative, ...(Array.isArray(knownEntries) ? { knownEntries } : {}), coordinates: coordinates === true, ...(typeof waitId === "string" ? { waitId } : {}) };
+  const source = migration ? { migration } : artifact ? { artifact, ...(scope === undefined ? {} : { scope }) } : { initiative, ...(Array.isArray(knownEntries) ? { knownEntries } : {}), coordinates: coordinates === true, ...(typeof waitId === "string" ? { waitId } : {}) };
   await writeFile(temporary, `${JSON.stringify({ sessionId, projectRoot, ...source, gateIds, maxWaitMinutes, requestedAt: new Date(now).toISOString() })}\n`);
   await rename(temporary, file);
   return { replaced: typeof replaced?.waitId === "string" && typeof replaced.initiative === "string" && typeof replaced.projectRoot === "string" ? { waitId: replaced.waitId, initiative: replaced.initiative, projectRoot: replaced.projectRoot } : null };
@@ -59,7 +59,7 @@ export async function takeWaitRequest({ sessionId, directory = gateWaitDirectory
   try {
     const request = parseStoreJson(await readFile(taken, "utf8"));
     if (request.sessionId !== sessionId || now - Date.parse(request.requestedAt) > WAIT_REQUEST_TTL_MS) return null;
-    const named = typeof request.initiative === "string" || typeof request.artifact === "string";
+    const named = typeof request.initiative === "string" || typeof request.artifact === "string" || typeof request.migration === "string";
     if (!Array.isArray(request.gateIds) || !request.gateIds.length || !named || typeof request.projectRoot !== "string") return null;
     return request;
   } catch {

@@ -54,7 +54,8 @@ export function cancelRecordSyncs() {
 const GENERATED_VIEW = Buffer.from("This file is a generated view of ");
 // A repository registration syncs as a record, so a registration made on two machines keeps the upstream one instead of failing the merge.
 const isRegistrationFile = (relative) => /^repositories\/[^/]+\.json$/.test(relative);
-const isRecordFile = (relative) => relative === "roadmap.json" || relative.startsWith("initiatives/") || isRegistrationFile(relative);
+// A format migration is a workspace record, shared and merged as the other records are.
+const isRecordFile = (relative) => relative === "roadmap.json" || relative.startsWith("initiatives/") || relative.startsWith("format-migrations/") || isRegistrationFile(relative);
 const isClaimFile = (relative) => /^initiatives\/[^/]+\/claims\/[^/]+\.json$/.test(relative);
 // A claim or a registration that lost a race is its holder's news, reported through the refusal or acceptance it causes, so no conflict list shows it.
 const isQuietConflict = (relative) => isClaimFile(relative) || isRegistrationFile(relative);

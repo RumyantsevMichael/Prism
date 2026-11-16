@@ -630,6 +630,7 @@ const ACTION_STATUS = {
   approval_ambiguous: 409,
   author_unknown: 409,
   comment_limit: 409,
+  already_answered: 409,
   invalid_input: 400,
   // The refusals of a launch, a stop, and a resume, and of the confirmation outside the page that comes before a start.
   confirmation_pending: 409,
