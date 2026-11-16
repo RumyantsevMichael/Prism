@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { escapes, shownTooltip, skip, stateFileNames } from "./fixtures/kit-browser.mjs";
+import { escapes, shownTooltip, skip, stateFileNames, waitForView } from "./fixtures/kit-browser.mjs";
 import { pause, settled } from "./fixtures/wait.mjs";
 import { buttonNames, choosePlace, comparePlaces, drawer, item, open, placeButton, PLACES, placesDemo, placeTitle, rail, reviewUrl, row as rowOf, settledOn, shownPlace, shownRef, sidebar, SLICE, tabs } from "./fixtures/places-browser.mjs";
 
@@ -234,7 +234,8 @@ test("clauses 14, 15, 16: [ and the head's button hide the sidebar and keep the 
   assert.ok(await settled(mainLeft, (left) => left > hiddenLeft) > hiddenLeft, "keeping it open gives the sidebar its column back");
   assert.equal(await sidebar(page).getByRole("button", { name: "Hide the sidebar", expanded: true }).count(), 1, "and the button hides it again");
   await page.reload();
-  assert.equal(await settled(() => sidebar(page).isVisible(), true), true, "the shown sidebar is stored");
+  await waitForView(page);
+  assert.equal(await sidebar(page).isVisible(), true, "the shown sidebar is stored");
   await sidebarButton(sidebar(page)).click();
   assert.equal(await settled(() => sidebar(page).isVisible(), false), false, "the head's button hides it");
   await page.keyboard.press("[");

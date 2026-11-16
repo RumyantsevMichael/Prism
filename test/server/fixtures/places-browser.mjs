@@ -23,7 +23,7 @@ export async function placesDemo(context, { seed = "seed.mjs", prepare = null } 
 
 export async function open(browser, base, ref, { width = 1440, height = 900, colorScheme = "light", query = "" } = {}) {
   const page = await openPage(browser, `${reviewUrl(base, ref)}${query}`, { viewport: { width, height }, colorScheme });
-  await waitForView(page).catch(() => {});
+  await waitForView(page);
   return page;
 }
 
@@ -65,6 +65,8 @@ export async function eventually(read, expected, { timeout = 10000 } = {}) {
  * so this waits for the place head's title instead of reading the page after a fixed pause.
  */
 export async function shownPlace(page) {
+  // The page takes keys and rail clicks once its first view has rendered, which on a slow runner comes well after the place head shows.
+  await waitForView(page);
   // It reads the title's text rather than the heading's role, which a hidden sidebar leaves out of the accessibility tree.
   const title = await page.waitForFunction(() => document.querySelector("#place-head .prism-place-head-title")?.textContent.trim() || null, null, { timeout: 15000 });
   return title.jsonValue();
@@ -93,8 +95,10 @@ export async function settledOn(page, ref) {
 
 /** Chooses a place on the rail of `scope`, a page or the drawer, and waits until the rail marks it current. */
 export async function choosePlace(scope, name) {
+  // A drawer that is still sliding in moves its rail under the click, so the click waits for the page's animations to end.
+  await repainted(typeof scope.page === "function" ? scope.page() : scope);
   await placeButton(scope, name).click();
-  await rail(scope).getByRole("button", { name: new RegExp(`^${name}\\b`), pressed: true }).waitFor({ timeout: 10000 });
+  await rail(scope).getByRole("button", { name: new RegExp(`^${name}\\b`), pressed: true }).waitFor({ timeout: WAIT_MS });
 }
 
 /** The tabs of the strip as their refs, with * on the selected tab and (p) on the preview tab. */
