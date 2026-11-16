@@ -16,6 +16,7 @@ import { appliedArtifactActions, pendingApprovalGates, storeArtifactStatuses } f
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
 import { recordChanges } from "./record-changes.mjs";
+import { relativeLinkTargets } from "./artifact-links.mjs";
 import { shippedActionReason, shippedDecision, shippedHistory, shippedHistoryLabel } from "../workflow/shipped-history.mjs";
 
 // A workspace read through its store's clone alone has no checkout and so no configuration of its own: its defaults are no setting to warn about.
@@ -354,6 +355,10 @@ async function computeInitiativeView(projectRoot, id) {
     recordPath: await recordFile(projectRoot, { kind: "initiative", initiative: id }),
     statePath: await recordFile(projectRoot, { kind: "state", initiative: id }),
     roadmapItem: roadmap.items.find((item) => item.id === id) ?? null,
+    // The initiative's priority within its band among the band's open initiatives, as the roadmap board numbers its cards.
+    bandRank: bandRank(roadmap, id),
+    // The titles of the initiatives it needs and unblocks, so its page names them rather than their ids.
+    relatedTitles: relatedTitles(roadmap, id),
     // A superseded initiative's page names the initiative that superseded it by its title.
     supersededBy: supersedingItem(roadmap, id),
     exists: loaded.exists,
@@ -465,22 +470,49 @@ export async function slicePresence(projectRoot, id, slug, { reachable = async (
   return presence;
 }
 
+// What the initiatives say about the library: the leaf slices that cite each requirements file, and the initiatives whose slice designs link each decision.
 async function initiativeReferences(projectRoot, config) {
   const references = new Map();
+  const decisions = new Map();
+  const roadmap = await loadRoadmapView(projectRoot).catch(() => null);
   for (const id of await initiativeFolders(projectRoot)) {
-    const { loaded } = await readInitiative(projectRoot, id).catch(() => ({ loaded: {} }));
+    const { resolved, loaded } = await readInitiative(projectRoot, id).catch(() => ({ loaded: {} }));
+    const slices = loaded.record?.slices ?? {};
+    const initiativeTitle = roadmap?.items.find((item) => item.id === id)?.title ?? slices[loaded.analysis?.root]?.title ?? id;
     // Split parents repeat their children's references, so only leaves count as assignments.
     const leaves = new Set(loaded.analysis?.leaves ?? []);
-    for (const [slug, slice] of Object.entries(loaded.record?.slices ?? {})) {
-      if (!leaves.has(slug)) continue;
-      for (const reference of slice.requirements ?? []) {
-        const file = reference.split("#")[0];
-        if (!references.has(file)) references.set(file, []);
-        references.get(file).push({ initiative: id, slug, title: slice.title, anchor: reference.split("#")[1] ?? null });
+    for (const [slug, slice] of Object.entries(slices)) {
+      if (leaves.has(slug)) {
+        for (const reference of slice.requirements ?? []) {
+          const file = reference.split("#")[0];
+          if (!references.has(file)) references.set(file, []);
+          references.get(file).push({ initiative: id, initiativeTitle, slug, title: slice.title, anchor: reference.split("#")[1] ?? null });
+        }
+      }
+      if (!config.paths.adrs || !resolved?.directory) continue;
+      const design = `${sliceFolder(resolved.directory, slices, slug)}/slice.md`;
+      for (const target of relativeLinkTargets(await readText(projectRoot, design), design)) {
+        if (!target.startsWith(`${config.paths.adrs}/`)) continue;
+        if (!decisions.has(target)) decisions.set(target, []);
+        if (!decisions.get(target).some((use) => use.initiative === id)) decisions.get(target).push({ initiative: id, title: initiativeTitle });
       }
     }
   }
-  return references;
+  return { references, decisions };
+}
+
+// The requirements files that a decision's Requirements section links, each with the sections it names, in the order the section names them.
+function decisionRequirements(source, file, directory) {
+  const section = /^## Requirements\s*$([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(source ?? "")?.[1] ?? "";
+  const byFile = new Map();
+  for (const match of section.matchAll(/\[[^\]]*\]\(\s*<?([^)\s>]+)>?\s*\)/g)) {
+    const [target] = relativeLinkTargets(`[x](${match[1]})`, file);
+    if (!target || !directory || !target.startsWith(`${directory}/`)) continue;
+    if (!byFile.has(target)) byFile.set(target, []);
+    const anchor = match[1].split("#")[1];
+    if (anchor && !byFile.get(target).includes(anchor)) byFile.get(target).push(anchor);
+  }
+  return [...byFile].map(([path, anchors]) => ({ path, anchors }));
 }
 
 export function loadLibrary(projectRoot, kind) {
@@ -493,23 +525,37 @@ async function computeLibrary(projectRoot, kind) {
   if (!directory) return { kind, directory: null, entries: [] };
   const files = [];
   await walk(projectRoot, directory, 4, (name) => name.endsWith(".md") && name.toLowerCase() !== "readme.md", files, LIBRARY_LIMIT);
-  const references = kind === "requirements" ? await initiativeReferences(projectRoot, config) : new Map();
+  const { references, decisions } = await initiativeReferences(projectRoot, config);
   const recorded = await recordedStatuses(projectRoot, directory);
   const entries = [];
   for (const file of files) {
     const source = await readText(projectRoot, file);
     const fields = headerFields(source ?? "");
     const relative = file.slice(directory.length + 1);
-    entries.push({
+    const entry = {
       path: file,
       title: fields.title ?? path.posix.basename(file, ".md"),
       // With a store, the status a gate recorded is the artifact's status, whatever its Status: line says.
       status: recorded?.has(file) ? recorded.get(file) : fields.status,
       created: fields.created,
       approved: fields.approved,
-      topic: relative.includes("/") ? relative.split("/")[0] : null,
-      ...(kind === "requirements" ? { assignedTo: references.get(file) ?? [] } : {})
-    });
+      topic: relative.includes("/") ? relative.split("/")[0] : null
+    };
+    if (kind === "requirements") {
+      // Each numbered section of a requirements file holds one requirement.
+      entry.requirements = (source ?? "").match(/^## \d+\b/gm)?.length ?? 0;
+      entry.assignedTo = references.get(file) ?? [];
+    } else {
+      const supersedes = /^Supersedes:\s*(.+)$/m.exec(source ?? "")?.[1] ?? "";
+      entry.supersedes = relativeLinkTargets(supersedes, file).filter((target) => target.startsWith(`${directory}/`));
+      entry.requirementLinks = decisionRequirements(source, file, config.paths.requirements);
+      entry.initiatives = decisions.get(file) ?? [];
+    }
+    entries.push(entry);
+  }
+  // A decision that another one supersedes names it, so the list can say what replaced it.
+  if (kind === "decisions") {
+    for (const entry of entries) entry.supersededBy = entries.filter((other) => other.supersedes.includes(entry.path)).map((other) => other.path);
   }
   return { kind, directory, entries };
 }
@@ -770,13 +816,16 @@ function attentionPlace(attention) {
   return { everything: items.length, questions: attention.gateCount, kinds, work: ordered, shown: ATTENTION_WORK_SHOWN, answered: attention.answeredThisWeek.length };
 }
 
-// A filtered page of Attention: the items of one kind or of one initiative, with the filter's name and the total it is part of.
+// A filtered page of Attention: the items of one kind, of one initiative, or the roadmap's open questions, with the filter's name and the total it is part of.
 async function attentionPage(projectRoot, page) {
   const attention = await loadAttention(projectRoot);
   if (page === "answered") return { answered: attention.answeredThisWeek };
   const items = attentionItems(attention);
   const work = /^work\/(.+)$/.exec(page);
-  const shown = work ? items.filter(({ item }) => item.initiative?.id === work[1]) : items.filter((entry) => entry.kind === page);
+  // The roadmap's open questions are problems of the roadmap, which the Roadmap page's header counts and leads here.
+  const shown = work
+    ? items.filter(({ item }) => item.initiative?.id === work[1])
+    : page === "roadmap-questions" ? items.filter(({ item }) => item.type === "open-question") : items.filter((entry) => entry.kind === page);
   let label = PLACE_PAGE_LABELS.attention[page];
   if (work) label = shown[0]?.item.initiative.title ?? (await loadRoadmapView(projectRoot).catch(() => ({ items: [] }))).items.find((item) => item.id === work[1])?.title ?? work[1];
   return { filter: { key: page, label, total: items.length, items: shown } };
@@ -841,6 +890,24 @@ function glossaryTerms(content) {
 
 const DIAGRAM_DEPTH = 6;
 
+// What a diagram draws, read from its source: Prism's code view of a slice, or the PlantUML kind that its opening line or its statements name.
+const DIAGRAM_OPENINGS = Object.freeze({ mindmap: "Mind map", wbs: "Work breakdown", gantt: "Gantt chart", salt: "Wireframe", json: "Data", yaml: "Data" });
+const DIAGRAM_STATEMENTS = Object.freeze([
+  ["C4", /^\s*(?:!include\S*\s+<?C4|(?:Person|System|Container|Component)(?:_Ext)?\s*\()/m],
+  ["Class", /^\s*(?:abstract\s+)?(?:class|interface|enum)\s/m],
+  ["State", /^\s*(?:\[\*\]|state\s)/m],
+  ["Activity", /^\s*(?:start|stop|:[^\n]*;|if\s*\(|fork\b|repeat\b)/m],
+  ["Component", /^\s*(?:component|node|package)\b|^\s*\[[^\]\n]+\]/m],
+  // A diagram of named participants and arrows between them, with no statement of another kind, is a sequence, as PlantUML reads it.
+  ["Sequence", /^\s*(?:participant|actor|boundary|control|entity|database|collections|queue)\b|^\s*[\w"]+\s*<?-+>>?\s*[\w"]+/m]
+]);
+function diagramKind(file, source) {
+  if (path.posix.basename(file) === "code.puml") return "Code view";
+  const opening = /^\s*@start(\w+)/m.exec(source ?? "")?.[1]?.toLowerCase();
+  if (opening && DIAGRAM_OPENINGS[opening]) return DIAGRAM_OPENINGS[opening];
+  return DIAGRAM_STATEMENTS.find(([, pattern]) => pattern.test(source ?? ""))?.[0] ?? "Diagram";
+}
+
 // A diagram's name: the name after @startuml, or else its file name without .puml.
 function diagramName(file, source) {
   const named = /^\s*@startuml[ \t]+([^\r\n]+?)\s*$/m.exec(source ?? "")?.[1]?.replace(/^"(.*)"$/, "$1").trim();
@@ -868,16 +935,17 @@ async function computeDiagrams(projectRoot) {
       const [id, segment] = file.slice(plans.length + 1).split("/");
       const folder = path.posix.dirname(file);
       if (folder === plans) {
-        diagrams.push({ file, owner: { kind: "initiative", title: plans } });
+        diagrams.push({ file, owner: { kind: "initiative", title: plans }, ownerRef: null });
         continue;
       }
       if (!owners.has(id)) {
         const known = SLUG_PATTERN.test(id) && await knownInitiative(projectRoot, id).catch(() => false);
-        owners.set(id, known ? await initiativeTree(projectRoot, id).then(({ scope, view }) => ({ title: scope.title, slices: view.record?.slices ?? {} })).catch(() => ({ title: id, slices: {} })) : { title: id, slices: {} });
+        owners.set(id, known ? await initiativeTree(projectRoot, id).then(({ scope, view }) => ({ title: scope.title, slices: view.record?.slices ?? {}, known: true })).catch(() => ({ title: id, slices: {} })) : { title: id, slices: {} });
       }
       const owner = owners.get(id);
       const slice = file.split("/").length > plans.split("/").length + 2 && owner.slices[segment] && owner.slices[segment].parent !== null ? owner.slices[segment] : null;
-      diagrams.push({ file, owner: slice ? { kind: "slice", title: `${owner.title} · ${slice.title}` } : { kind: "initiative", title: owner.title } });
+      const known = owner.known === true;
+      diagrams.push({ file, owner: slice ? { kind: "slice", title: `${owner.title} · ${slice.title}` } : { kind: "initiative", title: owner.title }, ownerRef: known ? (slice ? `slice:${id}/${segment}` : `initiative:${id}`) : null });
     }
   }
   const adrs = config.paths.adrs;
@@ -886,13 +954,14 @@ async function computeDiagrams(projectRoot) {
     await walk(projectRoot, adrs, 4, isDiagram, files, LIBRARY_LIMIT);
     const decisions = new Map((await loadLibrary(projectRoot, "decisions")).entries.map((entry) => [entry.path, entry.title]));
     for (const file of files) {
-      const title = decisions.get(file.replace(/\.puml$/i, ".md")) ?? path.posix.dirname(file);
-      diagrams.push({ file, owner: { kind: "decision", title } });
+      const decision = file.replace(/\.puml$/i, ".md");
+      const title = decisions.get(decision) ?? path.posix.dirname(file);
+      diagrams.push({ file, owner: { kind: "decision", title }, ownerRef: decisions.has(decision) ? decision : null });
     }
   }
-  const named = await Promise.all(diagrams.map(async ({ file, owner }) => {
+  const named = await Promise.all(diagrams.map(async ({ file, owner, ownerRef }) => {
     const source = await readText(projectRoot, file);
-    return { path: file, name: diagramName(file, source), owner, text: source ?? "" };
+    return { path: file, name: diagramName(file, source), owner, ownerRef, kind: diagramKind(file, source), text: source ?? "" };
   }));
   named.sort((left, right) => left.owner.title.localeCompare(right.owner.title) || left.name.localeCompare(right.name) || left.path.localeCompare(right.path));
   return named;
@@ -1137,7 +1206,7 @@ async function libraryScope(projectRoot, section) {
 const PLACE_LABELS = Object.freeze({ attention: "Attention", work: "Work", roadmap: "Roadmap", knowledge: "Knowledge", history: "History" });
 // The pages of Attention's and Knowledge's own addresses, by the part after their place's prefix.
 const PLACE_PAGE_LABELS = Object.freeze({
-  attention: { questions: "Questions", findings: "Review findings", failed: "Failed verifications", blocked: "Blocked work", ready: "Ready to ship", problems: "Problems", answered: "Answered in the last 7 days" },
+  attention: { questions: "Questions", findings: "Review findings", failed: "Failed verifications", blocked: "Blocked work", ready: "Ready to ship", problems: "Problems", answered: "Answered in the last 7 days", "roadmap-questions": "Roadmap questions" },
   knowledge: { touched: "Touched by my work", changed: "Changed this week", diagrams: "Diagrams" }
 });
 
@@ -1236,11 +1305,24 @@ async function fileContext(projectRoot, config, ref) {
   return { trail: [{ ref: null, label: "Files" }, { ref, label: ref }], scope: { kind: "global" }, place: null };
 }
 
+function relatedTitles(roadmap, id) {
+  const item = roadmap.items.find((entry) => entry.id === id);
+  const related = new Set([...(item?.requires ?? []), ...(item?.requiredBy ?? [])]);
+  return Object.fromEntries(roadmap.items.filter((entry) => related.has(entry.id)).map((entry) => [entry.id, entry.title]));
+}
+
+function bandRank(roadmap, id) {
+  const item = roadmap.items.find((entry) => entry.id === id);
+  if (!item || item.state === "shipped" || item.state === "superseded") return null;
+  const rank = roadmap.items.filter((entry) => entry.band === item.band && entry.state !== "shipped" && entry.state !== "superseded").findIndex((entry) => entry.id === id);
+  return rank < 0 ? null : rank + 1;
+}
+
 // Entity tabs name Prism concepts rather than files, so they never collide with artifact paths, which always carry an extension.
 export function parseEntityRef(ref) {
   if (SECTION_REFS.includes(ref)) return { kind: ref };
-  // Attention's filtered pages: one kind, one initiative's items, or the questions answered this week.
-  let match = /^attention:(questions|findings|failed|blocked|ready|problems|answered|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
+  // Attention's filtered pages: one kind, one initiative's items, the roadmap's open questions, or the questions answered this week.
+  let match = /^attention:(questions|findings|failed|blocked|ready|problems|answered|roadmap-questions|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "attention", page: match[1] };
   // Knowledge's own pages: the diagrams, the records behind the open slice, and this week's record changes.
   match = /^knowledge:(diagrams|touched|changed)$/.exec(ref ?? "");
@@ -1294,7 +1376,12 @@ export async function loadEntity(projectRoot, ref, options = {}) {
   if (parsed.kind === "code") return { ref, kind: "code", data: { repositories: [] } };
   // The place reads its sessions from api/launches itself; the page carries only the initiatives' titles, so a running time never redraws it.
   if (parsed.kind === "launches") return { ref, kind: "launches", data: { titles: await initiativeTitles(projectRoot) } };
-  if (parsed.kind === "knowledge" && parsed.page === "diagrams") return { ref, kind: "diagrams", data: { diagrams: (await loadDiagrams(projectRoot)).map(({ path: file, name, owner }) => ({ path: file, name, owner })) } };
+  if (parsed.kind === "knowledge" && parsed.page === "diagrams") {
+    const diagrams = await loadDiagrams(projectRoot);
+    // Each diagram's kind and the page of what it belongs to, by path, beside the list that clause 51 of the places contract fixes.
+    const about = Object.fromEntries(diagrams.map(({ path: file, kind, ownerRef }) => [file, { kind, owner: ownerRef }]));
+    return { ref, kind: "diagrams", data: { diagrams: diagrams.map(({ path: file, name, owner }) => ({ path: file, name, owner })), about } };
+  }
   if (parsed.kind === "knowledge" && parsed.page === "touched") return { ref, kind: "touched", data: { inProgress: await slicesInProgress(projectRoot) } };
   if (parsed.kind === "knowledge") return { ref, kind: "changed", data: await loadRecordChanges(projectRoot) };
   if (parsed.kind === "initiative") {

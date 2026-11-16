@@ -1,5 +1,5 @@
-// prism-place-head: the head of a place's sidebar in light DOM: the place's title as a level 2 heading over its subtitle.
-// The title stands on the line of a strip of document tabs and the subtitle on the line of a page bar, so the head lines up with the main island beside the sidebar.
+// prism-place-head: the head of a place's sidebar in light DOM: one line on the tab strip's line with the place's title as a level 2 heading and, at its end, children with slot="end", such as the button that hides the sidebar.
+// The subtitle says what the place holds in the title's tooltip, since the rows below already show it.
 import { Base, make } from "./base.js";
 import { remeasure, unwatchShortening, watchShortening } from "../shorten.js";
 
@@ -7,25 +7,24 @@ export class PrismPlaceHead extends Base {
   static tag = "prism-place-head";
   static observedAttributes = ["heading", "subtitle"];
   static catalog = {
-    purpose: "The head of a place's sidebar: the place's title as a level 2 heading, with a subtitle that says what the place holds, lined up with the tab strip and the page bar beside it.",
+    purpose: "The head of a place's sidebar: one line on the tab strip's line with the place's title as a level 2 heading and room at its end for a control, such as the button that hides the sidebar.",
     options: [
-      { name: "heading", values: ["text"], default: "", description: "The place's title, a level 2 heading on the tab strip's line; it ends with an ellipsis when it does not fit, and the tooltip shows it whole." },
-      { name: "subtitle", values: ["text"], default: "", description: "What the place holds, in muted small text on the page bar's line; it ends with an ellipsis when it does not fit." }
+      { name: "heading", values: ["text"], default: "", description: "The place's title, a level 2 heading; it ends with an ellipsis when it does not fit, and the tooltip shows it whole." },
+      { name: "subtitle", values: ["text"], default: "", description: "What the place holds, shown in the title's tooltip after the title." },
+      { name: "slot=\"end\"", values: ["children"], default: "", description: "Controls at the head's end, such as the button that hides the sidebar." }
     ],
-    states: ["default", "no-subtitle", "long-text", "unbroken-name"],
-    keyboard: ["The head is not a control; a shortened title or subtitle joins the Tab order so its full text can be read."]
+    states: ["default", "no-subtitle", "end", "long-text", "unbroken-name"],
+    keyboard: ["The head is not a control; a shortened title joins the Tab order so its full text can be read.", "Controls in the end slot keep their own keys."]
   };
 
   connectedCallback() {
     if (!this.title$) this.build();
     this.sync();
     watchShortening(this.title$, this.title$);
-    watchShortening(this.subtitle$, this.subtitle$);
   }
 
   disconnectedCallback() {
     unwatchShortening(this.title$);
-    unwatchShortening(this.subtitle$);
   }
 
   attributeChangedCallback() {
@@ -34,8 +33,19 @@ export class PrismPlaceHead extends Base {
 
   build() {
     this.title$ = make(this, "h2", "prism-place-head-title");
-    this.subtitle$ = make(this, "span", "prism-place-head-subtitle");
-    this.replaceChildren(this.title$, this.subtitle$);
+    this.end$ = make(this, "span", "prism-place-head-end");
+    const place = () => {
+      for (const node of [...this.childNodes]) {
+        if (node === this.title$ || node === this.end$) continue;
+        if (node.nodeType === 1 && node.getAttribute("slot") === "end") this.end$.append(node);
+        else node.remove();
+      }
+      this.end$.hidden = !this.end$.childElementCount;
+    };
+    place();
+    this.prepend(this.title$, this.end$);
+    this.children$ = new MutationObserver(place);
+    this.children$.observe(this, { childList: true });
   }
 
   sync() {
@@ -45,10 +55,8 @@ export class PrismPlaceHead extends Base {
       this.title$.textContent = heading;
       remeasure(this.title$);
     }
-    if (this.subtitle$.textContent !== subtitle) {
-      this.subtitle$.textContent = subtitle;
-      remeasure(this.subtitle$);
-    }
-    this.subtitle$.hidden = !subtitle;
+    const tip = subtitle ? `${heading}: ${subtitle}` : heading;
+    // The head names the place and what it holds on hover over its title, and the title says the same when it is shortened.
+    for (const node of [this, this.title$]) if (node.getAttribute("tip") !== tip) node.setAttribute("tip", tip);
   }
 }

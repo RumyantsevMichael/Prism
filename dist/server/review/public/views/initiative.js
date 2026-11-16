@@ -1,13 +1,13 @@
 import { activeDetails } from "./coordination-state.js";
-import { applyWidths, progressBar } from "./entities.js";
+import { applyWidths } from "./entities.js";
 import { stateBadge } from "./roadmap.js";
 import { enablePanZoom, graphCard, renderGraph } from "./graph.js";
-import { artifactChip, badge, bindLinks, card, emptyNote, escapeHtml, keyValues, pageSub, plural, requirementLinks, setPageSub, shortDate, summaryPanel } from "./util.js";
-import { runTotalsHtml } from "./run-totals.js";
+import { artifactChip, badge, bindLinks, card, emptyNote, escapeHtml, keyValues, pageSub, plural, requirementGroups, setPageHead, setPageSub, shortDate, status } from "./util.js";
+import { runTotalsHtml, runTotalsSummary, runTotalsTableHtml } from "./run-totals.js";
 import { codeChip } from "./code-location.js";
 import { claimChip, claimOf } from "./claims.js";
 import { componentChip } from "./components.js";
-import { mountInitiativeSettings } from "./actions.js";
+import { createActionList } from "./actions.js";
 import { shippedHistoryHtml } from "./shipped-history.js";
 import { preference, setPreference } from "../kit/preferences.js";
 
@@ -16,10 +16,9 @@ const MODES = [["board", "Board"], ["list", "List"], ["graph", "Graph"]];
 const STATUS_COLUMNS = [["not-started", "Not started"], ["design-review", "Design review"], ["in-progress", "In progress"], ["blocked", "Blocked"], ["deferred", "Deferred"], ["done", "Done"]];
 const FIXED_COLUMNS = new Set(["not-started", "in-progress", "blocked", "done"]);
 
-const STATUS_TONES = { "not-started": "neutral", "design-review": "accent", "in-progress": "info", blocked: "danger", deferred: "warning", done: "success", split: "neutral" };
-
-export function statusBadge(status) {
-  return badge(status === "design-review" ? "design review" : status, STATUS_TONES[status] ?? "neutral");
+/** A slice's status as a kit prism-status. */
+export function statusBadge(value) {
+  return status(value);
 }
 
 // A slice's title is a link to its page.
@@ -90,7 +89,7 @@ function board(data, ctx) {
   const columns = [...STATUS_COLUMNS, ...extra].filter(([status]) => FIXED_COLUMNS.has(status) || unique.some((slug) => statusOf(data, slug) === status));
   return `<div class="slice-columns">${columns.map(([status, label]) => {
     const members = unique.filter((slug) => statusOf(data, slug) === status);
-    return `<section class="slice-column" aria-label="${escapeHtml(label)}"><h3 class="slice-column-head">${badge(label, STATUS_TONES[status] ?? "neutral")}<prism-badge>${members.length}</prism-badge></h3><ul class="slice-column-list">${members.map((slug) => boardCard(data, slug, ctx)).join("") || '<li class="column-none muted">—</li>'}</ul></section>`;
+    return `<section class="slice-column" aria-label="${escapeHtml(label)}"><h3 class="slice-column-head">${statusBadge(status)}<prism-badge>${members.length}</prism-badge></h3><ul class="slice-column-list">${members.map((slug) => boardCard(data, slug, ctx)).join("") || '<li class="column-none muted">—</li>'}</ul></section>`;
   }).join("")}</div>`;
 }
 
@@ -112,15 +111,139 @@ async function graph(container, data, ctx) {
 }
 
 // Below the title, a superseded initiative's page says when it was superseded and by which initiative, linked, and the decision's reason.
-function supersededNote(data) {
+function supersededLines(data) {
   const decision = data.roadmapItem?.decision;
   if (decision?.kind !== "superseded") return "";
   const date = shortDate(decision.at, { year: true });
   const by = data.supersededBy;
   const ref = by ? `initiative:${by.id}` : null;
   const link = by ? ` by <a href="./review?artifact=${encodeURIComponent(ref)}" data-artifact="${escapeHtml(ref)}">${escapeHtml(by.title)}</a>` : "";
-  const line = pageSub(`Superseded${date ? ` ${escapeHtml(date)}` : ""}${link}`, { glyph: '<prism-state state="superseded"></prism-state>' });
-  return `<div class="prism-page-subs">${line}${decision.reason ? pageSub(escapeHtml(decision.reason), { detail: true }) : ""}</div>`;
+  const line = pageSub(`Superseded${date ? ` ${escapeHtml(date)}` : ""}${link}`, { glyph: status("superseded", { glyphOnly: true }) });
+  return `${line}${decision.reason ? pageSub(escapeHtml(decision.reason), { detail: true }) : ""}`;
+}
+
+// The page's lines under its title: the initiative's state with its intent, and for a superseded initiative what superseded it.
+function headLines(data) {
+  const item = data.roadmapItem;
+  const intent = item ? escapeHtml(item.intent) : data.exists ? "This initiative has a record but no roadmap entry." : "";
+  return `<div class="prism-page-subs">${pageSub(`${stateBadge(item?.state ?? "unlisted")}${intent ? ` <span>${intent}</span>` : ""}`)}${supersededLines(data)}</div>`;
+}
+
+// One segment per leaf slice in its status's color, labeled with the done count and the other statuses that hold slices.
+function sliceProgress(data) {
+  const leaves = data.derived?.leaves ?? [];
+  if (!leaves.length) return "";
+  const statuses = leaves.map((slug) => statusOf(data, slug));
+  const count = (value) => statuses.filter((entry) => entry === value).length;
+  const parts = [`${count("done")} of ${leaves.length} done`, ...["design-review", "in-progress", "blocked", "deferred"].filter((value) => count(value)).map((value) => `${count(value)} ${value.replace(/-/g, " ")}`)];
+  return `<prism-slice-bar class="initiative-progress" statuses="${escapeHtml(statuses.join(","))}" label="${escapeHtml(parts.join(" · "))}"></prism-slice-bar>`;
+}
+
+// Another initiative as a chip with the icon of how it relates to this one, named by its title.
+function relatedChips(ids, data, ctx, icon) {
+  return ids.map((id) => {
+    const ref = `initiative:${id}`;
+    const title = escapeHtml(data.relatedTitles?.[id] ?? id);
+    return `<prism-chip interactive tone="accent" data-artifact="${escapeHtml(ref)}"><prism-icon slot="start" name="${icon}" size="xs"></prism-icon>${title}</prism-chip>`;
+  }).join("");
+}
+
+function facts(data, ctx) {
+  const item = data.roadmapItem;
+  const rows = keyValues([
+    ["Rationale", item?.rationale ? escapeHtml(item.rationale) : null],
+    ["Needs", item?.requires.length ? `<span class="chip-row">${relatedChips(item.requires, data, ctx, "needs")}</span>` : null],
+    ["Unblocks", item?.requiredBy.length ? `<span class="chip-row">${relatedChips(item.requiredBy, data, ctx, "unblocks")}</span>` : null],
+    ["Requirements", item?.requirements.length ? `<span class="chip-row">${requirementGroups(item.requirements, ctx)}</span>` : null],
+    ["Records", `<span class="chip-row">${[artifactChip(data.recordPath, ctx, "Initiative record"), ctx.hasArtifact(data.statePath) ? artifactChip(data.statePath, ctx, "Coordination state") : ""].join("")}</span>`]
+  ]);
+  const open = ctx.state.factsOpen ?? true;
+  return `<prism-disclosure class="initiative-facts" summary="Rationale, dependencies, requirements, and records"${open ? " open" : ""}>${rows}</prism-disclosure>`;
+}
+
+// The unstarted leaves that can be designed next, as one line beside the view switch.
+function frontier(data, ctx) {
+  const candidates = data.derived.designCandidates;
+  if (!candidates.length) return "";
+  const ready = candidates.filter((slug) => data.derived.dependenciesComplete.includes(slug));
+  const waiting = candidates.filter((slug) => !ready.includes(slug));
+  const links = (slugs) => slugs.map((slug) => {
+    const ref = `slice:${data.id}/${slug}`;
+    return `<a href="./review?artifact=${encodeURIComponent(ref)}" data-artifact="${escapeHtml(ref)}">${escapeHtml(data.record.slices[slug].title)}</a>`;
+  }).join(", ");
+  const lines = [
+    ready.length ? `${plural(ready.length, "slice")} can be designed next: ${links(ready)}` : "",
+    waiting.length ? `${plural(waiting.length, "slice")} can start once ${waiting.length === 1 ? "its" : "their"} prerequisites finish: ${links(waiting)}` : ""
+  ].filter(Boolean);
+  return `<p class="initiative-frontier"><span class="initiative-frontier-glyph">${status("not-started", { glyphOnly: true, attributes: ' aria-hidden="true"' })}</span><span>${lines.join(" · ")}</span></p>`;
+}
+
+let headSequence = 0;
+
+// The page head's controls: the run totals that open their table, the launch of an orchestration, and the initiative's settings.
+function headControls(data, ctx, ids) {
+  const summary = runTotalsSummary(data.runTotals?.initiative ?? null);
+  const totals = summary ? `<prism-button id="${ids.totals}" size="sm" variant="ghost" class="initiative-totals" tip="Run totals of this initiative"><prism-icon name="clock" size="xs"></prism-icon><span>${summary}</span><prism-icon name="chevron-down" size="xs"></prism-icon></prism-button>` : "";
+  if (!ctx.actionApi) return totals;
+  return `${totals}<prism-button id="${ids.launch}" size="sm" class="initiative-launch"><prism-icon name="play" size="xs"></prism-icon><span>Launch</span><prism-icon name="chevron-down" size="xs"></prism-icon></prism-button><prism-button size="sm" class="initiative-settings" data-initiative-settings-open><prism-icon name="settings" size="xs"></prism-icon><span>Settings</span></prism-button>`;
+}
+
+// The overlays the head's controls open: the run totals, the launch actions, and the settings dialog, which applies its changes together.
+// Without a head the page shows its run totals in place and keeps only the dialog, which the jump palette opens.
+function overlays(data, ctx, ids, head) {
+  const totals = head && data.runTotals?.initiative ? `<prism-popover class="initiative-totals-popover" for="${ids.totals}" heading="Run totals">${runTotalsTableHtml([{ totals: data.runTotals.initiative, scope: "initiative" }])}</prism-popover>` : "";
+  if (!ctx.actionApi) return totals;
+  const title = data.roadmapItem?.title ?? data.id;
+  return `${totals}
+    ${head ? `<prism-popover class="initiative-launch-popover" for="${ids.launch}" heading="Launch an orchestration"><div data-launch-actions></div></prism-popover>` : ""}
+    <prism-dialog class="initiative-settings-dialog" heading="Settings of ${escapeHtml(title)}" size="lg" data-initiative-settings-dialog>
+      <p class="initiative-settings-lead">How agents run this initiative's slices. Changes apply when you press Apply.</p>
+      <div data-initiative-settings></div>
+      <prism-button slot="footer" data-settings-cancel>Cancel</prism-button>
+      <prism-button slot="footer" variant="primary" data-settings-apply disabled>Apply</prism-button>
+    </prism-dialog>`;
+}
+
+function mountOverlays(container, data, ctx, endRoot) {
+  if (!ctx.actionApi || typeof document === "undefined") return;
+  const target = `initiative:${data.id}`;
+  const drafts = (ctx.state.actionDrafts ??= {});
+  const launchRoot = container.querySelector("[data-launch-actions]");
+  if (launchRoot) createActionList({ root: launchRoot, targets: [target], api: ctx.actionApi, drafts, groups: ["Launched session"], compact: true, submitLabel: () => "Launch", emptyText: "Nothing can be launched here.", notice: false });
+  const dialog = container.querySelector("[data-initiative-settings-dialog]");
+  const apply = dialog?.querySelector("[data-settings-apply]");
+  if (!dialog || !apply) return;
+  let list = null;
+  const showCount = () => {
+    if (!list) return;
+    const changes = list.changes();
+    apply.textContent = changes ? `Apply ${plural(changes, "change")}` : "Apply";
+    apply.toggleAttribute("disabled", !changes);
+  };
+  list = createActionList({ root: dialog.querySelector("[data-initiative-settings]"), targets: [target], api: ctx.actionApi, drafts, groups: ["Initiative settings"], renderMarkdown: ctx.renderMarkdown ?? null, palette: true, batch: true, emptyText: "This initiative has no settings to change.", onRender: () => showCount() });
+  showCount();
+  // A setting chosen from the jump palette opens the dialog at that setting.
+  const focusAction = list.focusAction.bind(list);
+  list.focusAction = (id, chosen) => {
+    if (!dialog.hasAttribute("open")) dialog.show?.();
+    return focusAction(id, chosen);
+  };
+  endRoot?.querySelector("[data-initiative-settings-open]")?.addEventListener("click", () => dialog.show?.());
+  // Cancel, Escape, and the close button all leave the settings as they were, so a reopened dialog never holds changes nobody applied.
+  dialog.querySelector("[data-settings-cancel]").addEventListener("click", () => dialog.close?.());
+  dialog.addEventListener("prism-close", () => {
+    list.discard();
+    showCount();
+  });
+  apply.addEventListener("click", async () => {
+    apply.toggleAttribute("disabled", true);
+    if (await list.applyAll()) dialog.close?.();
+    showCount();
+  });
+  // A link in the dialog opens its page, so the dialog closes first.
+  dialog.addEventListener("click", (event) => {
+    if (event.target.closest?.("prism-chip[data-artifact], a[data-artifact]")) dialog.close?.();
+  });
 }
 
 export async function render(container, entity, ctx) {
@@ -128,58 +251,44 @@ export async function render(container, entity, ctx) {
   const item = data.roadmapItem;
   // The view is the person's preference, so every initiative opens in the view they last chose.
   const mode = preference("initiative.view");
-  const modes = data.exists && data.valid ? `<div class="segmented" role="group" aria-label="Initiative view">${MODES.map(([shown, label]) => `<prism-button size="sm" variant="ghost" data-initiative-mode="${shown}" pressed="${mode === shown}">${label}</prism-button>`).join("")}</div>` : "";
-  const head = `${shippedHistoryHtml(data.shippedHistory)}${summaryPanel(`
-      <div class="summary-row">
-        <div class="chip-row">${item ? stateBadge(item.state) : stateBadge("unlisted")}${item ? badge(item.band) : ""}${item?.readyToShip && item.state !== "shipped" ? badge("ready to ship", "success") : ""}</div>
-        <div class="view-controls">${artifactChip("roadmap", ctx, "Roadmap")}${modes}</div>
-      </div>
-      ${item ? `<p class="item-intent is-large">${escapeHtml(item.intent)}</p>` : '<p class="muted">This initiative has a record but no roadmap entry.</p>'}
-      ${item?.progress ? progressBar(item.progress) : ""}
-      ${keyValues([
-        ["Rationale", item?.rationale ? escapeHtml(item.rationale) : null],
-        ["Needs", item?.requires.length ? `<span class="chip-row">${item.requires.map((id) => artifactChip(`initiative:${id}`, ctx, id)).join("")}</span>` : null],
-        ["Unblocks", item?.requiredBy.length ? `<span class="chip-row">${item.requiredBy.map((id) => artifactChip(`initiative:${id}`, ctx, id)).join("")}</span>` : null],
-        ["Requirements", item?.requirements.length ? `<span class="chip-row">${requirementLinks(item.requirements, ctx)}</span>` : null],
-        ["Records", `<span class="chip-row">${[artifactChip(data.recordPath, ctx, "Initiative record"), ctx.hasArtifact(data.statePath) ? artifactChip(data.statePath, ctx, "Coordination state") : ""].join("")}</span>`]
-      ])}
-      ${data.runTotals ? runTotalsHtml(data.runTotals.initiative, "initiative") : ""}`)}`;
-  // The superseded note stands in the page head, right below the title, or at the top of the page when the page has no head.
-  const note = supersededNote(data);
-  const lead = setPageSub(container, note, ctx) ? "" : note;
-  // The settings belong to the initiative whatever state its record is in, so every branch that has an action target shows them.
-  const settings = '<div data-initiative-settings></div>';
-  const mountSettings = () => mountInitiativeSettings(container.querySelector("[data-initiative-settings]"), { target: `initiative:${data.id}`, eyebrow: "Orchestration of every slice", ctx });
-  if (!data.exists) {
-    container.innerHTML = `${lead}${head}${card("No slices yet", `<p>No initiative record exists yet.</p><p class="muted">Orchestration creates it when the initiative starts.</p>`, { eyebrow: "Envisioned" })}${settings}`;
-    mountSettings();
+  const ids = { totals: `initiative-totals-${++headSequence}`, launch: `initiative-launch-${headSequence}` };
+  const eyebrow = ["Initiative", item?.band ?? null, data.bandRank ? `#${data.bandRank}` : null].filter(Boolean).join(" · ");
+  const endRoot = setPageHead(container, { eyebrow, end: headControls(data, ctx, ids) }, ctx);
+  // The state, the intent, and the superseded note stand in the page head below the title, or at the top of the page when the page has no head.
+  const lines = headLines(data);
+  const lead = setPageSub(container, lines, ctx) ? "" : lines;
+  // Without a page head the run totals show in the page itself.
+  const totalsInPage = !endRoot && data.runTotals ? runTotalsHtml(data.runTotals.initiative, "initiative") : "";
+  const top = `${lead}${shippedHistoryHtml(data.shippedHistory)}${item?.readyToShip && item.state !== "shipped" ? `<p class="chip-row">${badge("ready to ship", "success")}</p>` : ""}`;
+  const finish = () => {
+    container.querySelector(".initiative-facts")?.addEventListener("toggle", (event) => { ctx.state.factsOpen = Boolean(event.detail?.open); });
+    mountOverlays(container, data, ctx, endRoot);
+    applyWidths(container);
     bindLinks(container, ctx);
+  };
+  if (!data.exists) {
+    container.innerHTML = `${top}${facts(data, ctx)}${totalsInPage}${card("No slices yet", `<p>No initiative record exists yet.</p><p class="muted">Orchestration creates it when the initiative starts.</p>`, { eyebrow: "Envisioned" })}${overlays(data, ctx, ids, Boolean(endRoot))}`;
+    finish();
     return;
   }
   if (!data.valid) {
     // An unreadable record that the roadmap does not list is no action target, so its page has no settings to show.
-    container.innerHTML = `${lead}${head}${card("Invalid initiative record", `<ul class="diagnostic-list">${data.errors.map((error) => `<li class="is-blocking">${escapeHtml(error)}</li>`).join("")}</ul>`, { eyebrow: "Initiative record" })}${item ? settings : ""}`;
-    if (item) mountSettings();
-    bindLinks(container, ctx);
+    container.innerHTML = `${top}${facts(data, ctx)}${totalsInPage}${card("Invalid initiative record", `<ul class="diagnostic-list">${data.errors.map((error) => `<li class="is-blocking">${escapeHtml(error)}</li>`).join("")}</ul>`, { eyebrow: "Initiative record" })}${item ? overlays(data, ctx, ids, Boolean(endRoot)) : ""}`;
+    finish();
     return;
   }
   const counts = data.derived.counts;
   const summary = `${plural(data.derived.leaves.length, "leaf slice")} · ${counts.done} done · ${counts["in-progress"]} in progress · ${counts.blocked} blocked`;
-  container.innerHTML = `${lead}${head}
-    <div data-initiative-body></div>
-    ${data.derived.designCandidates.length ? card("Design frontier", `<ul class="row-list">${data.derived.designCandidates.map((slug) => `<li>${artifactChip(`slice:${data.id}/${slug}`, ctx, data.record.slices[slug].title)}${data.derived.dependenciesComplete.includes(slug) ? "" : ' <span class="muted">dependencies incomplete</span>'}</li>`).join("")}</ul>`, { eyebrow: "Unstarted leaves" }) : ""}
-    ${settings}`;
-  mountSettings();
+  const toolbar = `<div class="initiative-toolbar"><prism-segmented label="View" value="${escapeHtml(mode)}" data-initiative-mode>${MODES.map(([value, label]) => `<span value="${value}">${label}</span>`).join("")}</prism-segmented>${frontier(data, ctx)}</div>`;
+  container.innerHTML = `${top}${sliceProgress(data)}${facts(data, ctx)}${totalsInPage}${toolbar}<div data-initiative-body></div>${overlays(data, ctx, ids, Boolean(endRoot))}`;
   const body = container.querySelector("[data-initiative-body]");
   if (mode === "graph") await graph(body, data, ctx);
   else if (mode === "list") body.innerHTML = card("Slice tree", `<ul class="slice-outline root">${tree(data, data.derived.root, 0, ctx)}</ul>`, { eyebrow: summary });
-  else body.innerHTML = card("Slice board", board(data, ctx), { eyebrow: `${summary}${data.active.length ? ` · ${plural(data.active.length, "active slice")}` : ""}` });
-  for (const button of container.querySelectorAll("[data-initiative-mode]")) {
-    button.addEventListener("click", () => {
-      void setPreference("initiative.view", button.dataset.initiativeMode).catch(() => {});
-      ctx.rerender();
-    });
-  }
-  applyWidths(container);
-  bindLinks(container, ctx);
+  else body.innerHTML = board(data, ctx);
+  container.querySelector("[data-initiative-mode]")?.addEventListener("change", (event) => {
+    if (!MODES.some(([value]) => value === event.detail?.value)) return;
+    void setPreference("initiative.view", event.detail.value).catch(() => {});
+    ctx.rerender();
+  });
+  finish();
 }

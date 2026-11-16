@@ -334,7 +334,7 @@ prism-menu-group[layout="segmented"] prism-menu-item {
   flex: 1 1 0;
 }
 
-/* ---------- prism-segmented: a few views or modes as one switch; the chosen segment stands on the surface ---------- */
+/* ---------- prism-segmented: a few views or modes as one switch; the chosen segment stands on the surface inside the control line, so the choice reaches 3:1 ---------- */
 prism-segmented {
   display: inline-flex;
   align-self: flex-start;
@@ -354,7 +354,7 @@ prism-segmented {
   min-width: 0;
   height: calc(var(--prism-control-height) - 2 * var(--prism-space-1) - 2 * var(--prism-stroke));
   padding: 0 var(--prism-space-4);
-  border: 0;
+  border: var(--prism-stroke) solid transparent;
   border-radius: var(--prism-radius-xs);
   background: none;
   color: var(--prism-color-ink-muted);
@@ -376,6 +376,7 @@ prism-segmented {
 }
 
 .prism-segment[aria-checked="true"] {
+  border-color: var(--prism-color-line-control);
   background: var(--prism-color-surface);
   color: var(--prism-color-ink);
   box-shadow: var(--prism-shadow-lift);
@@ -947,6 +948,12 @@ prism-tree-item[selected] > .prism-tree-row > .prism-tree-start,
   font-weight: var(--prism-font-weight-medium);
 }
 
+/* A warning flag names a difference to look at, such as a file that another branch changes, in the warning tone. */
+.prism-tree-flag.is-warning {
+  color: var(--prism-color-warning);
+  font-weight: var(--prism-font-weight-medium);
+}
+
 /* ---------- Kit classes around a tree: a group heading with its count, and a closing note ---------- */
 
 /* A group's heading is a level 3 heading that reads as a quiet caption above its rows, in the tree's own size and weight, with its count at the end.
@@ -967,6 +974,15 @@ prism-tree-item[selected] > .prism-tree-row > .prism-tree-start,
   letter-spacing: calc(var(--prism-tracking-caps) * 0.72);
   line-height: calc(var(--prism-font-size-md) * var(--prism-line-height));
   text-transform: none;
+}
+
+/* A heading after other rows has room above it and little below, so it reads as part of the rows it names; one that opens its panel, or follows a filter field, starts close. */
+.prism-group-heading:not(:first-child) {
+  margin-top: var(--prism-space-5);
+}
+
+prism-field + .prism-group-heading {
+  margin-top: var(--prism-space-2);
 }
 
 .prism-group-heading > span {
@@ -1039,12 +1055,12 @@ prism-tree[rail] .prism-tree-end > :not(prism-badge) {
 
 /* ---------- prism-rail: the icon rail of places at the window's start edge ---------- */
 
-/* The rail is as wide as a place button and the room for its accent bar; it draws no border and no fill of its own, so the canvas shows through. */
+/* The rail is one place button with an even gutter on both sides; it draws no border and no fill of its own, so the canvas shows through. */
 prism-rail {
   display: flex;
   flex-direction: column;
   flex: none;
-  width: calc(var(--prism-control-height) + var(--prism-space-5));
+  width: var(--prism-rail-width);
   height: 100%;
   min-height: 0;
 }
@@ -1177,19 +1193,67 @@ prism-rail-item[size="sm"] .prism-rail-badge {
   right: calc(-1 * var(--prism-space-2));
 }
 
-/* ---------- prism-place-head: a place's title on the tab strip's line and its subtitle on the page bar's line ---------- */
+/* ---------- prism-resizer: the handle on a panel's edge that sets its width ---------- */
+
+/* The handle stands on its panel's edge across the panel's height, and a thin line shows it on hover, focus, and while it drags; the panel positions it. */
+prism-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: calc(var(--prism-space-2) / -2);
+  z-index: var(--prism-layer-raised);
+  display: block;
+  width: var(--prism-space-2);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+prism-resizer[hidden] {
+  display: none;
+}
+
+prism-resizer[edge="start"] {
+  right: auto;
+  left: calc(var(--prism-space-2) / -2);
+}
+
+prism-resizer::after {
+  content: "";
+  position: absolute;
+  top: var(--prism-space-6);
+  bottom: var(--prism-space-6);
+  left: calc(50% - var(--prism-stroke));
+  width: var(--prism-stroke-strong);
+  border-radius: var(--prism-radius-round);
+  background: transparent;
+  transition: background-color var(--prism-duration-fast) var(--prism-easing-standard);
+}
+
+prism-resizer:hover::after,
+prism-resizer:focus-visible::after,
+prism-resizer[dragging]::after {
+  background: var(--prism-color-accent);
+}
+
+prism-resizer:focus-visible {
+  outline: none;
+}
+
+/* ---------- prism-place-head: a place's title and the controls at its end, on one line level with the tab strip ---------- */
 
 prism-place-head {
-  display: grid;
-  grid-template-rows: calc(var(--prism-stroke) + var(--prism-subtab-height)) var(--prism-pagebar-height);
-  grid-template-columns: minmax(0, 1fr);
+  display: flex;
   align-items: center;
-  flex: 0 1 auto;
+  gap: var(--prism-space-3);
+  flex: none;
   min-width: 0;
-  padding: 0 var(--prism-space-3);
+  max-width: 100%;
+  height: calc(var(--prism-stroke) + var(--prism-subtab-height));
+  padding: 0 0 0 var(--prism-space-3);
 }
 
 .prism-place-head-title {
+  flex: 1 1 auto;
   min-width: 0;
   margin: 0;
   overflow: hidden;
@@ -1200,16 +1264,14 @@ prism-place-head {
   white-space: nowrap;
 }
 
-.prism-place-head-subtitle {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.prism-place-head-end {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--prism-space-2);
+  flex: none;
 }
 
-.prism-place-head-subtitle[hidden] {
+.prism-place-head-end[hidden] {
   display: none;
 }
 
@@ -2540,6 +2602,47 @@ prism-doc img {
   border-radius: var(--prism-radius-md);
 }
 
+/* A block marked by data-diff shows a change against an earlier version: added in the added color, removed in the removed color with its text struck, and changed in the warning color with the words it gained and lost marked inside. */
+prism-doc > [data-diff] {
+  padding-inline-start: var(--prism-space-4);
+  border-inline-start: var(--prism-stroke-strong) solid var(--diff-edge);
+  border-radius: 0 var(--prism-radius-xs) var(--prism-radius-xs) 0;
+  background: var(--diff-fill);
+}
+
+prism-doc > [data-diff="added"] {
+  --diff-edge: var(--prism-color-diff-added);
+  --diff-fill: var(--prism-color-diff-added-soft);
+}
+
+prism-doc > [data-diff="removed"] {
+  --diff-edge: var(--prism-color-diff-removed);
+  --diff-fill: var(--prism-color-diff-removed-soft);
+  text-decoration: line-through;
+}
+
+prism-doc > [data-diff="changed"] {
+  --diff-edge: var(--prism-color-warning);
+  --diff-fill: transparent;
+}
+
+prism-doc > :is(table, pre)[data-diff] {
+  padding-inline-start: 0;
+  border-inline-start-width: var(--prism-stroke-strong);
+}
+
+prism-doc ins.prism-doc-ins {
+  background: var(--prism-color-diff-added-soft);
+  color: var(--prism-color-diff-added);
+  text-decoration: none;
+}
+
+prism-doc del.prism-doc-del {
+  background: var(--prism-color-diff-removed-soft);
+  color: var(--prism-color-diff-removed);
+  text-decoration: line-through;
+}
+
 /* ---------- prism-maximize: the icon button that maximizes a region and restores it ---------- */
 
 prism-maximize {
@@ -2829,6 +2932,24 @@ prism-lib-table {
 .prism-lib-kind {
   flex: none;
   color: var(--prism-color-ink-muted);
+}
+
+/* A title with a detail line under it, such as a record's path or how many requirements it holds; the detail keeps the quiet weight of a cell. */
+.prism-lib-title > .prism-lib-title-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--prism-space-1);
+  font-weight: var(--prism-font-weight-regular);
+}
+
+.prism-lib-title-text > a {
+  font-weight: var(--prism-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.prism-lib-title-text > .prism-lib-cell {
+  max-width: 100%;
 }
 
 .prism-lib-cell {

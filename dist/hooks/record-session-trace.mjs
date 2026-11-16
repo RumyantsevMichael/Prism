@@ -912,7 +912,8 @@ export async function recordSessionTrace({
   normalizer = createSessionTraceNormalizer(),
   storeEvent = appendSessionTraceEvent,
   recordLoss = recordSessionTraceLoss,
-  readCollection = readRunStatisticsSwitch
+  readCollection = readRunStatisticsSwitch,
+  finalizationBudgetMs = FINALIZATION_BUDGET_MS
 } = {}) {
   const startedAt = performance.now();
   try {
@@ -977,7 +978,7 @@ export async function recordSessionTrace({
         eventInput: runInputs[0],
         latestStored,
         ownSession: openedRun || RUN_ENDING_EVENTS.has(runInputs[0].provenance?.hostEvent),
-        deadline: startedAt + FINALIZATION_BUDGET_MS
+        deadline: startedAt + finalizationBudgetMs
       });
     }
     return { status: "processed", results };

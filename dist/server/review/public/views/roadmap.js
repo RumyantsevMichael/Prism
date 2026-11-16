@@ -1,13 +1,14 @@
-import { applyWidths, progressBar, stateBadge } from "./entities.js";
+import { applyWidths, stateBadge } from "./entities.js";
 import { isExpired } from "./claim-index.js";
 import { claimAttributes } from "./claims.js";
 import { enablePanZoom, graphCard, renderGraph } from "./graph.js";
-import { badge, bindLinks, card, emptyNote, escapeHtml, plural } from "./util.js";
-import { currentPhase } from "./slice.js";
+import { badge, bindLinks, card, emptyNote, escapeHtml, plural, status } from "./util.js";
 import { preference, setPreference } from "../kit/preferences.js";
 
-/** The Roadmap page's views, which the Roadmap place's sidebar switches; the page draws no switch of its own. */
+/** The Roadmap page's views, which the toolbar above them switches. */
 export const ROADMAP_VIEWS = Object.freeze([["board", "Board"], ["list", "List"], ["graph", "Graph"]]);
+/** How the board and the list group the initiatives. */
+export const ROADMAP_GROUPINGS = Object.freeze([["band", "Band"], ["status", "Status"]]);
 /** The lanes a lane link names in its address, each with its band. */
 export const LANES = Object.freeze([["now", "Now"], ["next", "Next"], ["later", "Later"], ["parked", "Parked"]]);
 
@@ -23,11 +24,24 @@ export function initiativeLink(id, title) {
   return `<a class="title-link" href="./review?artifact=${encodeURIComponent(`initiative:${id}`)}" data-artifact="initiative:${escapeHtml(id)}">${escapeHtml(title)}</a>`;
 }
 
-function relationChips(item, titles) {
-  const chips = [];
-  for (const id of item.requires) chips.push(`<prism-chip interactive data-artifact="initiative:${escapeHtml(id)}" tip="Requires ${escapeHtml(titles.get(id) ?? id)}">needs ${escapeHtml(titles.get(id) ?? id)}</prism-chip>`);
-  for (const id of item.requiredBy) chips.push(`<prism-chip interactive tone="info" data-artifact="initiative:${escapeHtml(id)}" tip="Unblocks ${escapeHtml(titles.get(id) ?? id)}">unblocks ${escapeHtml(titles.get(id) ?? id)}</prism-chip>`);
-  return chips.length ? `<div class="chip-row relations">${chips.join("")}</div>` : "";
+const names = (ids, titles) => ids.map((id) => titles.get(id) ?? id).join(", ");
+
+// Needs and Unblocks as two icons with their counts; hovering or focusing one marks the initiatives it names on the board, and pressing it keeps them marked.
+function dependencyIcons(item, titles) {
+  const icon = (kind, ids, word) => ids.length
+    ? `<prism-chip interactive class="roadmap-dep" data-related="${escapeHtml(ids.join(" "))}" label="${word} ${escapeHtml(names(ids, titles))}" tip="${word} ${escapeHtml(names(ids, titles))}"><prism-icon slot="start" name="${kind}" size="xs"></prism-icon>${ids.length}</prism-chip>`
+    : "";
+  const icons = icon("needs", item.requires, "Needs") + icon("unblocks", item.requiredBy, "Unblocks");
+  return icons ? `<span class="roadmap-deps">${icons}</span>` : "";
+}
+
+// In the list, Needs and Unblocks sit under the title as links, where they wrap instead of squeezing into a column.
+function dependencyLinks(item, titles) {
+  const line = (kind, ids, word) => ids.length
+    ? `<span class="roadmap-rel"><prism-icon name="${kind}" size="xs"></prism-icon><span class="roadmap-rel-word">${word}</span> ${ids.map((id) => `<a href="./review?artifact=${encodeURIComponent(`initiative:${id}`)}" data-artifact="initiative:${escapeHtml(id)}">${escapeHtml(titles.get(id) ?? id)}</a>`).join(", ")}</span>`
+    : "";
+  const lines = line("needs", item.requires, "needs") + line("unblocks", item.requiredBy, "unblocks");
+  return lines ? `<span class="roadmap-rels">${lines}</span>` : "";
 }
 
 function signals(item) {
@@ -37,7 +51,7 @@ function signals(item) {
   else if (item.findings?.unresolved) parts.push(badge(plural(item.findings.unresolved, "open finding"), "warning"));
   if (item.active?.length) parts.push(badge(plural(item.active.length, "active slice"), "info"));
   if (item.diagnostics?.length) parts.push(`<prism-chip tone="danger" tip="${escapeHtml(item.diagnostics.map((entry) => entry.message).join(" "))}">record problem</prism-chip>`);
-  return parts.length ? `<div class="chip-row signals">${parts.join("")}</div>` : "";
+  return parts.join("");
 }
 
 // Who works on an initiative's slices: a stack of the holders' avatars, the live count, and the expired count; read-only.
@@ -56,80 +70,95 @@ function visibleItems(data, archive) {
   return archive ? data.items : data.items.filter((item) => !ARCHIVED.has(item.state));
 }
 
-const STATE_NAMES = { envisioned: "Envisioned", planned: "Planned", "in-progress": "In progress", shipped: "Shipped", superseded: "Superseded" };
 const BAND_HINTS = { Now: "being built", Next: "designed next", Later: "envisioned", Parked: "not planned", Shipped: "done" };
-const PHASE_NAMES = ["requirements", "design", "frozen", "build", "review", "shipped"];
+// The status groups in the order work moves through them; shipped and superseded only show with the archive.
+const STATUS_GROUPS = [["in-progress", "In progress"], ["planned", "Planned"], ["envisioned", "Envisioned"], ["shipped", "Shipped"], ["superseded", "Superseded"]];
 
-// One segment per leaf slice in the color of its phase; a slice that has not started and has no design draws the empty line.
-function phaseBar(item) {
+// One segment per leaf slice in its status's color, the same palette as every status, with the count of done slices beside it.
+export function sliceBar(item) {
   const slices = item.slices ?? [];
   if (!slices.length || item.state === "envisioned") return "";
-  const phases = slices.map((slice) => {
-    if (slice.status === "not-started" && !slice.designed) return "";
-    const index = currentPhase({ status: slice.status, design: slice.designed ? { review: slice.review } : null });
-    return PHASE_NAMES[Math.min(index, PHASE_NAMES.length - 1)];
-  });
-  const shipped = slices.filter((slice) => slice.status === "done").length;
-  const started = phases.filter(Boolean).length;
-  const label = started || shipped ? `${shipped} of ${slices.length} shipped` : `0 of ${slices.length} started`;
-  return `<prism-phase-bar phases="${phases.join(",")}" label="${label}"></prism-phase-bar>`;
+  const done = slices.filter((slice) => slice.status === "done").length;
+  const started = slices.filter((slice) => slice.status !== "not-started").length;
+  const label = done || started ? `${done} of ${slices.length} done` : `0 of ${slices.length} started`;
+  const counts = new Map();
+  for (const slice of slices) counts.set(slice.status, (counts.get(slice.status) ?? 0) + 1);
+  const tip = [...counts].map(([value, count]) => `${count} ${value.replace(/-/g, " ")}`).join(" · ");
+  return `<prism-slice-bar statuses="${escapeHtml(slices.map((slice) => slice.status).join(","))}" label="${label}" tip="${escapeHtml(tip)}"></prism-slice-bar>`;
 }
 
-// The card's footer: who holds its slices, or that nobody does yet once it has slices to hold.
-function cardFoot(item) {
-  if (item.claims?.length) return `<footer class="roadmap-item-foot">${claimStack(item.claims)}</footer>`;
-  if (item.slices?.length && (item.state === "planned" || item.state === "in-progress")) return '<footer class="roadmap-item-foot"><span>Nobody holds a slice yet</span></footer>';
-  return "";
+// The card's footer: its signals and who holds its slices, or that nobody does yet once it has slices to hold, with the dependency icons at its end.
+function cardFoot(item, titles) {
+  const holders = item.claims?.length
+    ? claimStack(item.claims)
+    : item.slices?.length && (item.state === "planned" || item.state === "in-progress") ? "<span>Nobody holds a slice yet</span>" : "";
+  const start = signals(item) + holders;
+  const end = dependencyIcons(item, titles);
+  return start || end ? `<footer class="roadmap-item-foot"><span class="roadmap-item-foot-start">${start}</span>${end}</footer>` : "";
 }
 
-function boardCard(item, titles, rank) {
-  return `<article class="initiative-item roadmap-item state-${escapeHtml(item.state)}" aria-labelledby="roadmap-item-${escapeHtml(item.id)}">
-    <header class="roadmap-item-top"><span class="item-rank"><span aria-hidden="true">#${rank}</span><span class="sr-only">Priority ${rank} in ${escapeHtml(item.band)}</span></span>${item.pillar ? `<span class="roadmap-item-area">${escapeHtml(item.pillar)}</span>` : ""}<prism-state state="${escapeHtml(item.state)}">${escapeHtml(STATE_NAMES[item.state] ?? item.state)}</prism-state></header>
+// A card leads with its rank in its band, or with its band when the board groups by status.
+function boardCard(item, titles, rank, grouping) {
+  const lead = grouping === "status"
+    ? `<prism-chip>${escapeHtml(item.band)}</prism-chip>`
+    : `<span class="item-rank"><span aria-hidden="true">#${rank}</span><span class="sr-only">Priority ${rank} in ${escapeHtml(item.band)}</span></span>`;
+  return `<article class="initiative-item roadmap-item state-${escapeHtml(item.state)}" data-initiative="${escapeHtml(item.id)}" aria-labelledby="roadmap-item-${escapeHtml(item.id)}">
+    <header class="roadmap-item-top">${lead}${item.pillar ? `<span class="roadmap-item-area">${escapeHtml(item.pillar)}</span>` : ""}${stateBadge(item.state)}</header>
     <h3 class="item-title" id="roadmap-item-${escapeHtml(item.id)}">${initiativeLink(item.id, item.title)}</h3>
     <p class="item-intent">${escapeHtml(item.intent)}</p>
-    ${phaseBar(item)}
-    ${signals(item)}
-    ${relationChips(item, titles)}
-    ${cardFoot(item)}
+    ${sliceBar(item)}
+    ${cardFoot(item, titles)}
   </article>`;
 }
 
-// Bands are full-width lanes stacked in priority order, each with its count and what it holds above its cards; a card keeps its priority rank within its band, and its state shows on the card.
-// An empty band takes one line, so the bands that hold work stay close together.
-function board(data, titles, archive, collapsed) {
-  const items = visibleItems(data, archive).filter((item) => item.state !== "superseded");
-  const superseded = archive ? data.items.filter((item) => item.state === "superseded") : [];
+// The groups the board and the list show, in order: the bands by priority, or the statuses in the order work moves through them.
+// Within a band an initiative keeps its priority; grouped by status, initiatives keep the order of their bands and then their priority.
+function groups(data, archive, grouping) {
+  const items = visibleItems(data, archive);
+  if (grouping === "status") {
+    return STATUS_GROUPS.filter(([value]) => archive || !ARCHIVED.has(value)).map(([value, name]) => ({
+      key: value, name, hint: "by band, then priority", glyph: status(value, { glyphOnly: true, attributes: ' aria-hidden="true"' }), members: items.filter((item) => item.state === value)
+    }));
+  }
   const bands = archive ? data.bands : data.bands.filter((band) => band !== "Shipped");
-  const lanes = bands.map((band) => {
-    const members = items.filter((item) => item.band === band);
-    const open = !collapsed.has(band);
-    const id = `roadmap-band-${band.toLowerCase()}`;
-    const hint = BAND_HINTS[band] ? `<span class="roadmap-band-hint">${BAND_HINTS[band]}</span>` : "";
-    const toggle = `<prism-button class="roadmap-band-toggle" variant="ghost" size="sm" data-lane="${escapeHtml(band)}" label="${open ? "Collapse" : "Expand"} ${escapeHtml(band)}" aria-expanded="${open}"><prism-icon name="${open ? "chevron-down" : "chevron-right"}" size="xs"></prism-icon></prism-button>`;
-    const classes = `roadmap-band band-${band.toLowerCase()}${band === "Parked" ? " is-parked" : ""}${members.length ? "" : " has-none"}`;
-    if (!members.length) {
+  return bands.map((band) => ({ key: band.toLowerCase(), name: band, hint: BAND_HINTS[band] ?? "", glyph: "", members: items.filter((item) => item.band === band && item.state !== "superseded"), parked: band === "Parked" }));
+}
+
+// Lanes are full-width and stacked in order, each with its count and what it holds above its cards.
+// An empty lane takes one line, so the lanes that hold work stay close together.
+function board(data, titles, archive, collapsed, grouping) {
+  const superseded = archive && grouping === "band" ? data.items.filter((item) => item.state === "superseded") : [];
+  const lanes = groups(data, archive, grouping).map((group) => {
+    const open = !collapsed.has(group.name);
+    const id = `roadmap-band-${group.key}`;
+    const hint = group.hint ? `<span class="roadmap-band-hint">${escapeHtml(group.hint)}</span>` : "";
+    const toggle = `<prism-button class="roadmap-band-toggle" variant="ghost" size="sm" data-lane="${escapeHtml(group.name)}" label="${open ? "Collapse" : "Expand"} ${escapeHtml(group.name)}" aria-expanded="${open}"><prism-icon name="${open ? "chevron-down" : "chevron-right"}" size="xs"></prism-icon></prism-button>`;
+    const classes = `roadmap-band band-${group.key}${group.parked ? " is-parked" : ""}${group.members.length ? "" : " has-none"}`;
+    const head = `${group.glyph}<h2 class="roadmap-band-name" id="${id}">${escapeHtml(group.name)}</h2><prism-badge tone="neutral">${group.members.length}</prism-badge>${hint}`;
+    if (!group.members.length) {
       return `<section class="${classes}" aria-labelledby="${id}">
-      <header class="roadmap-band-head"><h2 class="roadmap-band-name" id="${id}">${escapeHtml(band)}</h2><prism-badge tone="neutral">0</prism-badge>${hint}<span class="roadmap-band-none muted">No initiatives</span></header>
+      <header class="roadmap-band-head">${head}<span class="roadmap-band-none muted">No initiatives</span></header>
     </section>`;
     }
     return `<section class="${classes}" aria-labelledby="${id}">
-      <header class="roadmap-band-head"><h2 class="roadmap-band-name" id="${id}">${escapeHtml(band)}</h2><prism-badge tone="neutral">${members.length}</prism-badge>${hint}${toggle}</header>
-      <div class="roadmap-band-items"${open ? "" : " hidden"}>${members.map((item, index) => boardCard(item, titles, index + 1)).join("")}</div>
+      <header class="roadmap-band-head">${head}${toggle}</header>
+      <div class="roadmap-band-items"${open ? "" : " hidden"}>${group.members.map((item, index) => boardCard(item, titles, index + 1, grouping)).join("")}</div>
     </section>`;
   }).join("");
   return `<div class="roadmap-board">${lanes}</div>
   ${superseded.length ? card("Superseded", `<prism-disclosure summary="${escapeHtml(plural(superseded.length, "initiative"))}"><ul class="row-list">${superseded.map((item) => `<li>${initiativeLink(item.id, item.title)} → ${initiativeLink(item.decision.by, titles.get(item.decision.by) ?? item.decision.by)}: ${escapeHtml(item.decision.reason ?? "")}</li>`).join("")}</ul></prism-disclosure>`) : ""}`;
 }
 
-function list(data, titles, archive) {
-  return card(archive ? "All initiatives" : "Open initiatives", `<div class="table-wrap"><table class="data-table"><thead><tr><th>Initiative</th><th>Band</th><th>State</th><th>Progress</th><th>Needs</th><th>Signals</th></tr></thead><tbody>${visibleItems(data, archive).map((item) => `<tr>
-    <td>${initiativeLink(item.id, item.title)}<br><span class="muted">${escapeHtml(item.intent)}</span>${claimStack(item.claims)}</td>
-    <td>${escapeHtml(item.band)}</td>
-    <td>${stateBadge(item.state)}</td>
-    <td>${progressBar(item.progress) || '<span class="muted">no slices</span>'}</td>
-    <td>${item.requires.map((id) => initiativeLink(id, titles.get(id) ?? id)).join("<br>") || "—"}</td>
-    <td>${signals(item) || "—"}</td>
-  </tr>`).join("")}</tbody></table></div>`, { eyebrow: "Ordered by band, then priority" });
+// The list keeps one row per initiative under the heads of its groups, so neither the band nor the status needs a column of its own.
+function list(data, titles, archive, grouping) {
+  const head = `<div class="prism-lib-row is-head" aria-hidden="true"><span>Initiative</span><span>${grouping === "status" ? "Band" : "Status"}</span><span>Progress</span><span>Signals</span></div>`;
+  const rows = groups(data, archive, grouping).filter((group) => group.members.length).map((group) => `<div class="prism-lib-group"><h3 class="prism-lib-group-name">${escapeHtml(group.name)} <prism-badge tone="neutral">${group.members.length}</prism-badge></h3>${group.hint ? `<span class="prism-lib-group-source">${escapeHtml(group.hint)}</span>` : ""}</div>${group.members.map((item, index) => `<div class="prism-lib-row" data-initiative="${escapeHtml(item.id)}">
+    <span class="prism-lib-title roadmap-list-title">${grouping === "band" ? `<span class="item-rank muted">#${index + 1}</span>` : ""}<span class="roadmap-list-text">${initiativeLink(item.id, item.title)}<span class="prism-lib-cell is-detail">${escapeHtml(item.intent)}</span>${dependencyLinks(item, titles)}</span></span>
+    <span class="prism-lib-cell">${grouping === "status" ? escapeHtml(item.band) : stateBadge(item.state)}</span>
+    <span class="prism-lib-cell">${sliceBar(item) || '<span class="muted">no slices</span>'}</span>
+    <span class="prism-lib-cell roadmap-list-signals">${signals(item)}${claimStack(item.claims)}</span>
+  </div>`).join("")}`).join("");
+  return `<prism-lib-table class="roadmap-list">${head}${rows || '<p class="prism-lib-nothing">The roadmap has no open initiatives.</p>'}</prism-lib-table>`;
 }
 
 async function graph(container, data, ctx, titles, archive) {
@@ -155,14 +184,66 @@ async function graph(container, data, ctx, titles, archive) {
   enablePanZoom(section, ctx.state.graph ??= {});
 }
 
-// The view comes from the Roadmap place's sidebar; a lane link always shows the board, with that lane open so its heading can scroll into view.
+// Hovering, focusing, or pressing a dependency icon marks the cards it names and dims the others; a pressed icon keeps them marked until it is pressed again.
+function bindDependencies(root) {
+  const boardRoot = root.querySelector(".roadmap-board");
+  if (!boardRoot) return;
+  let pinned = null;
+  const mark = (chip) => {
+    const related = new Set((chip?.dataset.related ?? "").split(" ").filter(Boolean));
+    const from = chip?.closest("[data-initiative]")?.dataset.initiative ?? null;
+    boardRoot.classList.toggle("is-tracing", Boolean(chip));
+    for (const item of boardRoot.querySelectorAll("[data-initiative]")) {
+      const id = item.dataset.initiative;
+      item.classList.toggle("is-related", Boolean(chip) && related.has(id));
+      item.classList.toggle("is-source", Boolean(chip) && id === from);
+    }
+  };
+  for (const chip of boardRoot.querySelectorAll(".roadmap-dep")) {
+    const show = () => mark(chip);
+    const hide = () => mark(pinned);
+    chip.addEventListener("pointerenter", show);
+    chip.addEventListener("focusin", show);
+    chip.addEventListener("pointerleave", hide);
+    chip.addEventListener("focusout", hide);
+    chip.setAttribute("pressed", "false");
+    chip.addEventListener("click", () => {
+      if (pinned && pinned !== chip) pinned.setAttribute("pressed", "false");
+      pinned = pinned === chip ? null : chip;
+      chip.setAttribute("pressed", String(pinned === chip));
+      mark(pinned ?? chip);
+    });
+  }
+}
+
+// The toolbar above the views: the view, how the board and the list group, and whether shipped and superseded work shows; each is the person's preference.
+function toolbar(view, archived) {
+  const segmented = (label, value, options) => `<prism-segmented label="${label}" value="${value}" data-roadmap-${label === "View" ? "view" : "group"}>${options.map(([name, text]) => `<span value="${name}">${text}</span>`).join("")}</prism-segmented>`;
+  const grouping = view.mode === "graph" ? "" : `<span class="roadmap-toolbar-group"><span class="roadmap-toolbar-label" aria-hidden="true">Group by</span>${segmented("Group by", view.grouping, ROADMAP_GROUPINGS)}</span>`;
+  return `<div class="roadmap-toolbar" role="toolbar" aria-label="Roadmap view">
+    ${segmented("View", view.mode, ROADMAP_VIEWS)}
+    ${grouping}
+    <prism-button size="sm" variant="ghost" class="roadmap-toolbar-archive" data-roadmap-archive pressed="${view.archive}"${archived ? "" : " disabled"}>${view.archive ? "Hide" : "Show"} shipped and superseded <prism-badge tone="neutral">${archived}</prism-badge></prism-button>
+  </div>`;
+}
+
+// The header's count of open roadmap questions leads to Attention, where they are answered, so the page lists none of its own.
+function questionsChip(count) {
+  if (!count) return '<prism-chip class="roadmap-questions-count" tip="The roadmap has no open questions"><prism-icon slot="start" name="question" size="xs"></prism-icon>No open questions</prism-chip>';
+  return `<prism-chip interactive tone="accent" class="roadmap-questions-count" data-artifact="attention:roadmap-questions" tip="Open the roadmap questions in Attention"><prism-icon slot="start" name="question" size="xs"></prism-icon>${plural(count, "open question")} in Attention</prism-chip>`;
+}
+
+// A lane link always shows the board grouped by band, with that lane open so its heading can scroll into view.
 export async function render(container, entity, ctx) {
   const data = entity.data;
-  // The view, the archive toggle, and the collapsed lanes are the person's preferences, so every roadmap opens the way they last left one;
-  // the Roadmap place's sidebar switches the view, and a lane link always shows the board with that lane open.
+  // The view, the grouping, the archive toggle, and the collapsed lanes are the person's preferences, so every roadmap opens the way they last left one.
   const lane = LANES.find(([name]) => name === ctx.lane)?.[1] ?? null;
-  const chosen = ROADMAP_VIEWS.some(([name]) => name === ctx.roadmapView) ? ctx.roadmapView : preference("roadmap.view");
-  const view = { mode: lane ? "board" : chosen, archive: preference("roadmap.showArchived"), collapsedLanes: preference("roadmap.collapsedLanes") };
+  const view = {
+    mode: lane ? "board" : preference("roadmap.view"),
+    grouping: lane ? "band" : preference("roadmap.groupBy"),
+    archive: preference("roadmap.showArchived"),
+    collapsedLanes: preference("roadmap.collapsedLanes")
+  };
   if (lane) view.collapsedLanes = view.collapsedLanes.filter((band) => band !== lane);
   const archived = data.items.filter((item) => ARCHIVED.has(item.state)).length;
   const titles = new Map(data.items.map((item) => [item.id, item.title]));
@@ -174,33 +255,27 @@ export async function render(container, entity, ctx) {
         ? `<p class="error">The roadmap record is invalid: ${escapeHtml(data.errors.join(" "))}</p>`
         : "";
   const counts = Object.fromEntries(["in-progress", "planned", "envisioned", "shipped"].map((state) => [state, data.items.filter((item) => item.state === state).length]));
-  const metric = (count, label, state = "") => `<span class="roadmap-metric">${state ? `<prism-state state="${state}" aria-hidden="true"></prism-state>` : ""}<strong>${count}</strong> <span>${label}</span></span>`;
+  const metric = (count, label, state = "") => `<span class="roadmap-metric">${state ? status(state, { glyphOnly: true, attributes: ' aria-hidden="true"' }) : ""}<strong>${count}</strong> <span>${label}</span></span>`;
   container.innerHTML = `
     ${missing ? `<prism-panel class="view-section summary-block">${missing}</prism-panel>` : ""}
-    <div class="roadmap-metrics" aria-label="Initiatives by state">
-      ${metric(data.items.length, data.items.length === 1 ? "initiative" : "initiatives")}
-      ${metric(counts["in-progress"], "in progress", "in-progress")}
-      ${metric(counts.planned, "planned", "planned")}
-      ${metric(counts.envisioned, "envisioned", "envisioned")}
-      ${metric(counts.shipped, "shipped", "shipped")}
+    <div class="roadmap-meta">
+      <div class="roadmap-metrics" aria-label="Initiatives by state">
+        ${metric(data.items.length, data.items.length === 1 ? "initiative" : "initiatives")}
+        ${metric(counts["in-progress"], "in progress", "in-progress")}
+        ${metric(counts.planned, "planned", "planned")}
+        ${metric(counts.envisioned, "envisioned", "envisioned")}
+        ${metric(counts.shipped, "shipped", "shipped")}
+      </div>
+      ${questionsChip(data.openQuestions?.length ?? 0)}
     </div>
+    ${toolbar(view, archived)}
     <div data-roadmap-body></div>
-    ${data.openQuestions?.length ? `<section class="roadmap-questions" aria-labelledby="roadmap-questions"><h2 id="roadmap-questions"><prism-icon name="question" size="sm"></prism-icon><span>Open questions</span><prism-badge tone="neutral">${data.openQuestions.length}</prism-badge></h2><ul>${data.openQuestions.map((question) => `<li><prism-icon name="chevron-right" size="xs"></prism-icon><span>${escapeHtml(question)}</span></li>`).join("")}</ul></section>` : ""}
     ${data.unlisted?.length ? card("Initiatives not on the roadmap", `<p class="muted">These plans folders have an initiative record but no roadmap entry.</p><ul class="row-list">${data.unlisted.map((id) => `<li>${initiativeLink(id, id)}</li>`).join("")}</ul>`, { eyebrow: "Needs prioritization" }) : ""}`;
-  // The page head carries the archive toggle beside the title; the board, list, and graph switch is the Roadmap place's, in the sidebar.
-  const head = container.parentElement?.querySelector(".artifact-header");
-  const controls = `<div class="view-controls roadmap-controls">
-      <prism-button size="sm" variant="ghost" data-roadmap-archive pressed="${view.archive}"${archived ? "" : " disabled"}>${view.archive ? "Hide" : "Show"} shipped and superseded <prism-badge tone="neutral">${archived}</prism-badge></prism-button>
-    </div>`;
-  head?.querySelector(".roadmap-controls")?.remove();
-  if (head) head.insertAdjacentHTML("beforeend", controls);
-  else container.insertAdjacentHTML("afterbegin", controls);
-  const controlRoot = head ?? container;
   const body = container.querySelector("[data-roadmap-body]");
   if (view.mode === "graph") {
     await graph(body, data, ctx, titles, view.archive);
   } else {
-    body.innerHTML = view.mode === "list" ? list(data, titles, view.archive) : board(data, titles, view.archive, new Set(view.collapsedLanes));
+    body.innerHTML = view.mode === "list" ? list(data, titles, view.archive, view.grouping) : board(data, titles, view.archive, new Set(view.collapsedLanes), view.grouping);
   }
   for (const toggle of container.querySelectorAll("[data-lane]")) {
     toggle.addEventListener("click", () => {
@@ -217,10 +292,18 @@ export async function render(container, entity, ctx) {
       toggle.querySelector("prism-icon").setAttribute("name", open ? "chevron-down" : "chevron-right");
     });
   }
-  controlRoot.querySelector("[data-roadmap-archive]").addEventListener("click", () => {
-    void setPreference("roadmap.showArchived", !view.archive).catch(() => {});
+  const choose = (key, value) => {
+    void setPreference(key, value).catch(() => ctx.showToast?.("The view changed here, but the review app could not store the choice."));
     ctx.rerender();
+  };
+  container.querySelector("[data-roadmap-view]").addEventListener("change", (event) => {
+    if (ROADMAP_VIEWS.some(([name]) => name === event.detail?.value)) choose("roadmap.view", event.detail.value);
   });
+  container.querySelector("[data-roadmap-group]")?.addEventListener("change", (event) => {
+    if (ROADMAP_GROUPINGS.some(([name]) => name === event.detail?.value)) choose("roadmap.groupBy", event.detail.value);
+  });
+  container.querySelector("[data-roadmap-archive]").addEventListener("click", () => choose("roadmap.showArchived", !view.archive));
+  bindDependencies(container);
   applyWidths(container);
   bindLinks(container, ctx);
 }

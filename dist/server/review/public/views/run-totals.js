@@ -67,6 +67,11 @@ function noRuns(totals) {
   return totals.runs?.value === 0 && totals.runs.coverage === "exact";
 }
 
+/** Whether `totals` holds at least one run, or may: totals that are known to have none hold no run. */
+export function hasRuns(totals) {
+  return Boolean(totals) && !noRuns(totals);
+}
+
 /**
  * Renders the run totals of one or more scopes (wave, slice, descendants, or initiative) as one compact table, a row per scope,
  * or one line when no scope has a recorded run; "" without totals.
@@ -80,6 +85,26 @@ export function runTotalsTableHtml(scopes, { caption = false } = {}) {
     <prism-table><table aria-label="Run totals">${headHtml()}<tbody>${shown.map(rowHtml).join("")}</tbody></table></prism-table>
     <p class="run-totals-note">≈ approximate · ≥ partial, some records could not be read · — unavailable; unmarked values are exact. Active time excludes idle gaps over ${formatDuration(idle)}.</p>
   </div>`;
+}
+
+/**
+ * One line that sums up a scope's runs for a page head, such as "3 h 55 min active · 19.4M tokens", marking a value that is not exact,
+ * or "No runs yet" when none was recorded; "" without totals.
+ */
+export function runTotalsSummary(totals) {
+  if (!totals) return "";
+  if (noRuns(totals)) return "No runs yet";
+  const marked = (coverage, text) => `${MARKS[coverage] ? `${MARKS[coverage]} ` : ""}${text}`;
+  const parts = [];
+  const active = totals.elapsedActiveTimeMs;
+  if (typeof active?.value === "number" && active.coverage !== "unavailable") parts.push(marked(active.coverage, `${formatDuration(active.value)} active`));
+  const tokens = ["inputTokens", "cacheWriteTokens", "cacheReadTokens", "outputTokens"].map((key) => totals[key]).filter((measure) => typeof measure?.value === "number" && measure.coverage !== "unavailable");
+  if (tokens.length) {
+    const exact = tokens.length === 4 && tokens.every((measure) => measure.coverage === "exact");
+    parts.push(marked(exact ? "exact" : tokens.some((measure) => measure.coverage === "approximate") && tokens.length === 4 ? "approximate" : "partial", `${compact.format(tokens.reduce((sum, measure) => sum + measure.value, 0))} tokens`));
+  }
+  const runs = totals.runs;
+  return parts.join(" · ") || (typeof runs?.value === "number" ? `${runs.value} ${runs.value === 1 ? "run" : "runs"}` : "Run totals");
 }
 
 /** Renders one totals object for a scope (wave, slice, descendants, or initiative) under its caption, or "" without totals. */

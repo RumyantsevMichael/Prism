@@ -1,4 +1,4 @@
-import { artifactLink, bindLinks, emptyState, escapeHtml, pageSub, setPageSub } from "./util.js";
+import { artifactLink, bindLinks, emptyState, escapeHtml, pageSub, recordStatus, setPageSub } from "./util.js";
 
 // Knowledge's two entry points: Touched by my work, the records behind the open slice, and Changed this week, the records changed in the last 7 days.
 
@@ -10,8 +10,6 @@ const KINDS = Object.freeze({
   diagram: ["Diagram", "diagram"]
 });
 
-const STATUS_TONES = { approved: "success", accepted: "success", defined: "neutral", draft: "warning", proposed: "info", superseded: "neutral", deprecated: "neutral", rejected: "danger" };
-
 const GROUPS = Object.freeze({
   cites: ["The contract cites", "from the slice's design"],
   changes: ["This work changes", "planned by the design or changed by the verified result"]
@@ -20,9 +18,7 @@ const GROUPS = Object.freeze({
 export const NO_SLICE = "This page lists the records behind the slice you have open. Open a slice to see them.";
 
 function statusChip(status) {
-  if (!status) return "";
-  const tone = STATUS_TONES[String(status).toLowerCase().split(/\s/)[0]] ?? "neutral";
-  return `<prism-chip tone="${tone}">${escapeHtml(status)}</prism-chip>`;
+  return status ? recordStatus(status) : "";
 }
 
 // A record's title links to its page; its kind's icon leads the row and its kind is also said in words.

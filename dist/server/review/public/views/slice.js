@@ -1,5 +1,5 @@
 import { chipState, currentIndexStatus } from "./indexing.js";
-import { artifactChip, badge, bindLinks, card, chip, emptyNote, emptyState, escapeHtml, formatTime, keyValues, plural, requirementLinks, stat } from "./util.js";
+import { artifactChip, badge, bindLinks, card, chip, emptyNote, emptyState, escapeHtml, formatTime, keyValues, plural, requirementLinks } from "./util.js";
 import { recordKind } from "./entities.js";
 import { statusBadge } from "./initiative.js";
 import { sliceRunTotalsHtml } from "./run-totals.js";
@@ -8,6 +8,7 @@ import { claimChip } from "./claims.js";
 import { componentChip } from "./components.js";
 import { mountInitiativeSettings } from "./actions.js";
 import { mountSliceFiles, presenceChips } from "./slice-files.js";
+import { mountLedger } from "./review-ledger.js";
 import { shippedHistoryHtml } from "./shipped-history.js";
 
 function sliceChip(data, slug, ctx) {
@@ -15,30 +16,24 @@ function sliceChip(data, slug, ctx) {
 }
 
 
-// Each deferred finding stays on record with the decision gate that accepted it and its follow-up in the tracker.
-function deferredList(findings) {
-  return `<p class="label-caps">Deferred findings</p><ul class="deferred-list">${findings.map((finding) => `<li>
-    <span class="deferred-head">${badge(finding.severity)}<span class="deferred-title">${escapeHtml(finding.title)}</span></span>
-    <span class="deferred-meta muted">${finding.gate ? `gate <code>${escapeHtml(finding.gate)}</code>` : "no gate recorded"} · follow-up ${finding.followUp ? escapeHtml(finding.followUp) : "none recorded"}</span>
-  </li>`).join("")}</ul>`;
+// The Review tab holds the slice's review ledger, read after the page renders.
+function reviewPanel(review, ctx) {
+  if (!review) return emptyState("No review yet", "No review has started for this slice.");
+  if (review.invalid) return `<p class="error">The review ledger is not valid JSON.</p>${artifactChip(review.path, ctx, "Open raw")}`;
+  return '<div class="slice-review-ledger" data-review-ledger><prism-spinner label="Loading the review ledger"></prism-spinner></div>';
 }
 
-function reviewCard(review, ctx) {
-  // A card names a record by its kind, never by its file name.
-  if (!review) return emptyState("No review yet", "No review has started for this slice.");
-  if (review.invalid) return card("Review ledger", `<p class="error">The review ledger is not valid JSON.</p>${artifactChip(review.path, ctx, "Open raw")}`);
-  const statuses = Object.entries(review.byStatus).filter(([, count]) => count).map(([status, count]) => badge(`${status}: ${count}`)).join("");
-  return card("Review ledger", `
-    <div class="stat-grid">
-      ${stat(review.waves === 1 ? "wave" : "waves", String(review.waves))}
-      ${stat("unresolved", String(review.unresolved), { tone: review.unresolved ? "warning" : "success" })}
-      ${stat("blocker / high not verified", String(review.blocking), { tone: review.blocking ? "danger" : "" })}
-      ${review.deferred ? stat("deferred", String(review.deferred), { hint: "accepted with a follow-up" }) : ""}
-    </div>
-    ${review.currentWave ? `<p>Current wave <code>${escapeHtml(review.currentWave.id)}</code> (${escapeHtml(review.currentWave.mode)}) is ${review.currentWave.accepted ? "accepted" : "not accepted"}.</p>` : ""}
-    ${statuses ? `<p class="chip-row">${statuses}</p>` : ""}
-    ${review.deferredFindings?.length ? deferredList(review.deferredFindings) : ""}
-    <p>${artifactChip(review.path, ctx, "Open the findings board")}</p>`);
+async function mountReviewLedger(container, review, ctx) {
+  const target = container.querySelector("[data-review-ledger]");
+  if (!target) return;
+  try {
+    const artifact = await ctx.fetchArtifact(review.path);
+    if (!target.isConnected && target.isConnected !== undefined) return;
+    ctx.state.ledger ??= {};
+    mountLedger(target, artifact, ctx, ctx.state.ledger);
+  } catch (error) {
+    target.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
+  }
 }
 
 const REASONS = {
@@ -339,7 +334,9 @@ function stepper(slice, data) {
   return `<prism-stepper class="slice-lifecycle" label="Lifecycle">${PHASES.map(([phase, label], index) => `<prism-step phase="${phase}" state="${index < current ? "done" : index === current ? "current" : "upcoming"}">${label}</prism-step>`).join("")}</prism-stepper>`;
 }
 
-const TABS = [["design", "Design", "document"], ["diagram", "Diagram", "diagram"], ["verification", "Verification", "flask"], ["review", "Review ledger", "eye"], ["change-map", "Change map", "grid"], ["files", "Files", "file"]];
+const TABS = [["design", "Design", "document"], ["diagram", "Diagram", "diagram"], ["verification", "Verification", "flask"], ["review", "Review", "eye"], ["files", "Files", "file"], ["change-map", "Change map", "grid"]];
+// The Files tab and the verified result replace the change map, so its tab is last and says it is deprecated.
+const DEPRECATED = { "change-map": "Replaced by the Files tab and the verified result; kept until existing slices no longer need it." };
 
 // The count a sub-tab carries: the review ledger's open findings and the slice folder's files.
 function tabCount(value, artifacts) {
@@ -350,7 +347,9 @@ function tabCount(value, artifacts) {
 
 function tabHtml([value, label, icon], selected, artifacts) {
   const count = tabCount(value, artifacts);
-  return `<prism-tab value="${value}"${selected ? " selected" : ""}><prism-icon slot="start" name="${icon}" size="sm"></prism-icon>${label}${count ? ` <prism-badge slot="end" variant="count">${count}</prism-badge>` : ""}</prism-tab>`;
+  const deprecated = DEPRECATED[value];
+  const end = count ? ` <prism-badge slot="end" variant="count">${count}</prism-badge>` : deprecated ? ' <prism-badge slot="end" tone="neutral" variant="status">Deprecated</prism-badge>' : "";
+  return `<prism-tab value="${value}"${selected ? " selected" : ""}${deprecated ? ` tip="${escapeHtml(deprecated)}"` : ""}><prism-icon slot="start" name="${icon}" size="sm"></prism-icon>${label}${end}</prism-tab>`;
 }
 
 const STATUS_WORDS = { "not-started": "not started", "in-progress": "in progress", blocked: "blocked", split: "split", done: "done" };
@@ -436,15 +435,14 @@ export async function render(container, entity, ctx) {
       : `${emptyState("No design yet", "The slice has no design document yet.")}${unplannedCard(view, ctx)}`,
     diagram: diagramsCard(diagrams, ctx),
     verification: verificationCard(slice.design, data.verification, data.code) + sliceRunTotalsHtml(data.runTotals, data.children.length > 0) || emptyState("No verification yet", "The slice has no accepted design or verification run yet."),
-    review: reviewCard(artifacts.review, ctx),
+    review: reviewPanel(artifacts.review, ctx),
     "change-map": changeMapPanel(slice, artifacts, data, ctx),
     files: filesPanel(artifacts, ctx)
   };
   const designNote = data.designReview ? `<p class="muted">${data.designReview === "answered" ? "You answered the design question; the agent accepts or revises the design next." : "The design waits for your answer on the Attention page."}</p>` : "";
   container.innerHTML = `${shippedHistoryHtml(data.shippedHistory)}
-    <div class="slice-head-tags chip-row">${phaseTag(slice, data)}${requirementLinks(slice.requirements, ctx, { icon: "list" })}${componentChip(slice.component)}${data.complete && slice.status === "split" ? badge("all descendants done", "success") : ""}</div>
+    <div class="slice-head-tags"><span class="chip-row">${phaseTag(slice, data)}${requirementLinks(slice.requirements, ctx, { icon: "list" })}${componentChip(slice.component)}${data.complete && slice.status === "split" ? badge("all descendants done", "success") : ""}</span>${held ? `<span class="slice-head-claim">${claimChip(held, "inline")}</span>` : ""}</div>
     ${stepper(slice, data)}
-    ${held ? `<div class="slice-claim-strip">${claimChip(held, "strip")}</div>` : ""}
     <prism-tabs class="slice-tabs" label="Slice" data-slice-tabs>${TABS.map((entry) => tabHtml(entry, entry[0] === tab, artifacts)).join("")}</prism-tabs>
     ${TABS.map(([value, label]) => `<div class="slice-tab-pane" role="tabpanel" aria-label="${label}" data-tab-panel="${value}"${value === tab ? "" : " hidden"}>${panels[value]}</div>`).join("")}
     <prism-dialog class="slice-details" heading="Details and settings" size="lg" data-slice-details>
@@ -503,6 +501,7 @@ export async function render(container, entity, ctx) {
       narrativeTarget.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
     }
   }
+  if (artifacts.review && !artifacts.review.invalid) await mountReviewLedger(container, artifacts.review, ctx);
   if (tab === "diagram") await mountDiagrams(container, ctx);
   // While the cards wait for unit locations, the notice follows the index chip, and a finished build redraws the page with the lines.
   if (container.querySelector("[data-index-notice]")) {

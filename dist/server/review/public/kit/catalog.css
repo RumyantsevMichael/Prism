@@ -380,3 +380,19 @@
   fill: var(--prism-color-ink);
   font: var(--prism-font-weight-medium) var(--prism-font-size-xs) var(--prism-font-ui);
 }
+
+/* A stand-in panel for the resizer's specimens: the handle sits on its edge. */
+.catalog-resize-demo {
+  position: relative;
+  width: min(100%, calc(var(--prism-space-8) * 6));
+  height: calc(var(--prism-space-8) * 2);
+  border: var(--prism-stroke) dashed var(--prism-color-line-strong);
+  border-radius: var(--prism-radius-sm);
+}
+
+/* Status segments side by side, as prism-slice-bar lays them out. */
+.catalog-segments {
+  display: flex;
+  gap: var(--prism-space-1);
+  width: min(100%, calc(var(--prism-space-8) * 6));
+}

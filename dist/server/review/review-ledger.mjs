@@ -264,6 +264,8 @@ function designAudited(review, wave, designAccepted = false) {
   return Boolean(audit?.accepted && audit.deltaRevision === wave.deltaRevision && audit.baselineId === wave.baselineId && audit.accepted.evidenceDigest === waveDigest(review, audit));
 }
 const STATUSES = ["OPEN", "IN PROGRESS", "FIXED", "VERIFIED", "REOPENED", "DEFERRED"];
+const FINDING_STATUSES = Object.freeze([...STATUSES]);
+const LANE_RESULTS = Object.freeze(["CLEAN", "FINDINGS"]);
 const recordSchema = obj({
   schemaVersion: { const: 1 },
   deltaPath: str,
@@ -937,7 +939,9 @@ async function updateReview(input) {
 }
 export {
   CHECK_REVIEW_GATE_SCHEMA,
+  FINDING_STATUSES,
   GET_REVIEW_SCHEMA,
+  LANE_RESULTS,
   UPDATE_REVIEW_SCHEMA,
   checkReviewGate,
   currentGate,
