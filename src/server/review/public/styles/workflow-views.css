@@ -487,11 +487,6 @@
   margin: 0 0 var(--prism-space-4);
 }
 
-.legacy-dialog prism-choice {
-  max-height: 50vh;
-  overflow: auto;
-}
-
 .attention-list-foot {
   display: grid;
   gap: var(--prism-space-3);
