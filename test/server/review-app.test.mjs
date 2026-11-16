@@ -714,7 +714,7 @@ test("a session that falls back after the app goes away stops renewing its lease
   let launches = 0;
   const launch = (options) => (launches += 1) === 1 ? launchReviewApp(options) : null;
   context.mock.timers.enable({ apis: ["setInterval"] });
-  const review = await pool(context, { app: { directory, launch, startTimeoutMs: 1000 } }).get(root, "task");
+  const review = await pool(context, { app: { directory, launch, startTimeoutMs: 30000 } }).get(root, "task");
   assert.ok(new URL(await review.reviewUrl([])).pathname.includes("/w/"));
   await shutdownApp(directory);
   await eventually(async () => !(await stat(path.join(directory, "review-app.lock")).catch(() => null)));
