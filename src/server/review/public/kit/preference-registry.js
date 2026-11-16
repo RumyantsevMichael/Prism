@@ -20,7 +20,10 @@ export const PREFERENCES = Object.freeze({
   "roadmap.collapsedLanes": Object.freeze({ kind: "set", default: Object.freeze([]) }),
   "initiative.view": Object.freeze({ kind: "enum", values: Object.freeze(["board", "list", "graph"]), default: "board" }),
   "changeMap.view": Object.freeze({ kind: "enum", values: Object.freeze(["list", "graph"]), default: "list" }),
-  "changeMap.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["action", "file"]), default: "action" })
+  "changeMap.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["action", "file"]), default: "action" }),
+  "library.requirements.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["status", "area", "initiative", "none"]), default: "status" }),
+  "library.decisions.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["area", "status", "initiative", "none"]), default: "area" }),
+  "library.diagrams.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["owner", "kind", "none"]), default: "owner" })
 });
 
 export const DEFAULT_PREFERENCES = Object.freeze(Object.fromEntries(Object.entries(PREFERENCES).map(([key, entry]) => [key, entry.default])));

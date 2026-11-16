@@ -2928,6 +2928,24 @@ prism-lib-table {
   color: var(--prism-color-ink-muted);
 }
 
+/* A title with a detail line under it, such as a record's path or how many requirements it holds; the detail keeps the quiet weight of a cell. */
+.prism-lib-title > .prism-lib-title-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--prism-space-1);
+  font-weight: var(--prism-font-weight-regular);
+}
+
+.prism-lib-title-text > a {
+  font-weight: var(--prism-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.prism-lib-title-text > .prism-lib-cell {
+  max-width: 100%;
+}
+
 .prism-lib-cell {
   min-width: 0;
   color: var(--prism-color-ink-muted);
