@@ -8,6 +8,7 @@ import readline from "node:readline";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { browserRequest, checkout, cloneOf, commitFiles, eventually, git, exists, isolateGit, notes, ok, refused, remoteFile, requirementFile, reviewBrowser, server, syncedWorkspace, text, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
 // Contract clauses 26-29 and the moved-file case of clause 31 of the workspace-artifacts design: existing tracked artifacts move into the store once, only in a tool call of the checkout whose result reports the move, leave the checkout only right before a result that reports them is written, and are reported as moved earlier by each later session while their deletion is uncommitted, against the store as pulled when it syncs, a checkout's roadmap view leaves only when the store's roadmap record generates the same view, files that are untracked, ignored, too large, not text, or with malformed or colliding names stay in the checkout, only an ordinary merged index entry moves, so an entry that Git keeps out of the work tree with its skip-worktree bit is passed over and never reported, an assume-unchanged entry or an unmerged path stays with its reason and remedy, and the move waits while a merge, rebase, am, cherry-pick, or revert is in progress, a configured folder that would take the source tree is refused, and the report stays bounded and one line per entry.
@@ -610,7 +611,7 @@ test("clause 26: a tool call that the host cancels removes no checkout file, and
   // The host cancels the call right after sending it, as a person who interrupts the agent does, so the cancel arrives before any result.
   child.stdin.write(message({ id: 2, method: "tools/call", params: { name: "get_artifact", arguments: { projectRoot: api } } }) + message({ method: "notifications/cancelled", params: { requestId: 2, reason: "user interrupt" } }));
   await eventually(async () => (await ledgerFiles(place.store)).length > 0, 30000, "the cancelled call's ledger");
-  await new Promise((resolve) => setTimeout(resolve, 1500));
+  await pause(1500, "a cancelled call must get no response, and a response that does not come leaves nothing to wait for");
   assert.equal(responses.filter((response) => response.id === 2).length, 0, "a cancelled call gets no response");
   await writtenButKept(place, api);
   child.stdin.end();

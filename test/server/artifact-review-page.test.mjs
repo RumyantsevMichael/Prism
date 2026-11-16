@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { browserRequest, checkout, closeServers, git, isolateGit, ok, requirementFile, reviewBrowser, server, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 import { launch, settle, skip as noBrowser } from "./fixtures/kit-browser.mjs";
+import { repainted, pause, settled } from "./fixtures/wait.mjs";
 import { defer } from "./fixtures/teardown.mjs";
 
 // The Review card of a store artifact keeps the person's place while the page redraws it: the numbered lines' own scroll and an unsent comment, also when the file moves to another scope.
@@ -68,7 +69,7 @@ for (const width of [390, 1440]) {
 
     ok(await prism.call("update_artifact", { operations: [{ op: "move_scope", path: FILE, expectedVersion: written.version, scope: "repository" }] }));
     await scopeShown(page, "api");
-    await page.waitForTimeout(1500);
+    await pause(1500, "a redraw that must not drop the draft leaves nothing to wait for, so the test gives the moved page time to redraw");
     assert.deepEqual(await form(), typed, "the unsent comment stays in the form with its focus and cursor");
     if (process.env.PRISM_SHOTS) await page.screenshot({ path: `${process.env.PRISM_SHOTS}/draft-moved-${width}.png`, fullPage: true });
 
@@ -94,20 +95,19 @@ for (const width of [390, 1440]) {
       return [...box.querySelectorAll(".artifact-line")].find((line) => line.getBoundingClientRect().bottom > top + 1)?.id ?? null;
     });
     await page.evaluate(() => { const box = document.querySelector(".artifact-lines-scroll"); box.scrollTop += document.getElementById("L250").getBoundingClientRect().top - box.getBoundingClientRect().top; });
-    await page.waitForTimeout(300);
-    const before = await topLine();
+    const before = await settled(topLine, "L250");
     assert.equal(before, "L250");
 
     const commented = await browserRequest(review, "/api/actions/apply", { method: "POST", body: { action: "artifact.comment", target: `artifact:workspace:${FILE}`, input: { line: "250", text: "Round this total?" }, revision: current.version } });
     assert.equal(commented.status, 200, JSON.stringify(commented.body));
     await page.waitForFunction(() => document.body.textContent.includes("Round this total?"), null, { timeout: 15000 });
-    await page.waitForTimeout(300);
+    await repainted(page);
     assert.equal(await topLine(), before, "an arriving comment leaves the same line at the top of the list");
 
     current = ok(await prism.call("get_artifact", { path: FILE }));
     ok(await prism.call("update_artifact", { operations: [{ op: "edit", path: FILE, expectedVersion: current.version, edits: [{ oldText: "Sentence 300 of the billing rules.", newText: "Sentence 300 of the billing rules, in euros." }] }] }));
     await page.waitForFunction(() => document.querySelector(".artifact-lines")?.textContent.includes("in euros."), null, { timeout: 15000 });
-    await page.waitForTimeout(300);
+    await repainted(page);
     assert.equal(await topLine(), before, "an edit of the file leaves the same line at the top of the list");
     if (process.env.PRISM_SHOTS) await page.screenshot({ path: `${process.env.PRISM_SHOTS}/lines-${width}.png` });
     assert.deepEqual(page.errors, []);
@@ -139,7 +139,7 @@ for (const width of [390, 1440]) {
 
     await comment("Comment 42.");
     await until(() => document.querySelector("#artifact-comments-heading")?.textContent === "42 comments", "an arriving comment is counted");
-    await page.waitForTimeout(500);
+    await repainted(page);
     assert.equal((await card()).focus, "More", "a redraw for an arriving comment keeps focus on More comments");
 
     await page.keyboard.press("Enter");
@@ -173,7 +173,7 @@ for (const width of [390, 1440]) {
     await page.locator('[data-comment-id]').filter({ hasText: "Comment 41." }).focus();
     await comment("Comment 43.");
     await until(() => document.querySelector("#artifact-comments-heading")?.textContent === "43 comments", "another arriving comment is counted");
-    await page.waitForTimeout(500);
+    await repainted(page);
     assert.equal((await card()).focus, "Comment 41.", "a redraw keeps focus on the comment it was on");
     await page.keyboard.type("j");
     assert.equal(await page.evaluate(() => document.querySelector("[data-comment-form] input")?.value), "", "a typed key never reaches the comment form");
@@ -192,7 +192,7 @@ for (const width of [390, 1440]) {
     page.on("requestfailed", done);
     // Each poll's first request answers only after 4 s, far longer than the 1.5 s between polls.
     await page.route((url) => url.pathname.endsWith("/api/index"), async (route) => { await new Promise((resolve) => setTimeout(resolve, 4000)); await route.continue().catch(() => {}); });
-    await page.waitForTimeout(13000);
+    await pause(13000, "the polling rhythm over time is what this checks");
     assert.ok(counts.index.started >= 2, `the page went on polling: ${JSON.stringify(counts)}`);
     assert.equal(counts.index.most, 1, `polls never overlap: ${JSON.stringify(counts)}`);
     assert.ok(counts.artifact.most <= 1, `reads of the open file never overlap: ${JSON.stringify(counts)}`);
@@ -223,9 +223,9 @@ for (const width of [390, 1440]) {
     });
     await page.keyboard.press("Enter");
     await page.waitForFunction(() => document.querySelectorAll(".artifact-comments > li").length === 25 && !document.querySelector("[data-more-comments]"), null, { timeout: 15000 });
-    await page.waitForTimeout(5000);
+    await settled(() => delayed, (count) => count >= 2);
     assert.ok(delayed >= 2, `a poll read the next page while the press's read waited: ${delayed}`);
-    assert.equal(await focus(), "Comment 21.", "focus is on the first added comment");
+    assert.equal(await settled(focus, "Comment 21."), "Comment 21.", "focus is on the first added comment");
     await page.unrouteAll({ behavior: "ignoreErrors" });
     assert.deepEqual(page.errors, []);
   });

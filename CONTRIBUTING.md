@@ -149,6 +149,18 @@ PRISM_REQUIRE_BROWSER=1 node scripts/test-shard.mjs --record
 PRISM_REQUIRE_BROWSER=1 node scripts/test-shard.mjs --record -- --test-concurrency=2
 ```
 
+### Waiting in tests
+
+A test waits for the event or state it checks, never for a fixed time, because a CI runner, a Windows one above all, can be several times slower than a developer machine and uneven from one run to the next.
+`test/server/fixtures/wait.mjs` holds the helpers:
+
+- `settled(read, expected)` reads until the value is the expected one, or a predicate accepts it, and returns the last reading after a generous ceiling, so the test's own assertion reports a real failure.
+- `repainted(page)` waits for the page's fonts, its finite animations, and two drawn frames, after the test mounts or changes markup.
+- `pause(ms, reason)` is the only fixed pause, for a check that something does not happen or a time the test itself is about, and its reason says why nothing can be awaited.
+
+Prefer an event the code already gives, such as a locator's `waitFor`, a response, or a pushed event, and add one to the code where that is cheap.
+`npm run check:test-waits` fails on `waitForTimeout` and on a fixed sleep directly followed by an assertion, and the `checks` job runs it.
+
 ### Review app design values
 
 Every design value of the review app, such as a color, size, radius, shadow, blur, layer, font, or motion duration, lives in `src/server/review/public/kit/tokens.css`.

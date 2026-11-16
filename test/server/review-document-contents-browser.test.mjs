@@ -4,6 +4,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { demoProject, launch, openPage, reviewUrl, serveProject, skip, useAppDirectory, waitForView } from "./fixtures/kit-browser.mjs";
+import { repainted } from "./fixtures/wait.mjs";
 
 // A long document's contents fit the visible part of the page beside the text, their rule meets the sheet's edges, and their header has no fold arrow there.
 // The Maximize control is the kit's icon button, and a maximized document keeps its Restore control in view while it scrolls.
@@ -68,7 +69,7 @@ async function scrollTo(page, fraction) {
     const scroller = sheet.closest(".is-maximized") ?? document.getElementById("workspace");
     scroller.scrollTop = (scroller.scrollHeight - scroller.clientHeight) * share;
   }, fraction);
-  await page.waitForTimeout(300);
+  await repainted(page);
 }
 
 for (const height of [600, 900]) {

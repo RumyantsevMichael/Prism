@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { demoProject, launch, openPage, serveProject, settle, skip, useAppDirectory } from "./fixtures/kit-browser.mjs";
+import { repainted } from "./fixtures/wait.mjs";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §3, §4, §5, §7.
 // Contract: docs/plans/review-app-ui-kit/slice.md clause 26; the status bar's Settings button that replaced the Appearance menu of clause 25 is tested in review-places-settings-browser.test.mjs.
@@ -57,7 +58,7 @@ test("clause 26: choosing System again follows the operating system, and Comfort
   const theme = settings(page).getByRole("radiogroup", { name: "Theme" });
   await theme.getByRole("radio", { name: "Light", exact: true }).click();
   await page.emulateMedia({ colorScheme: "dark" });
-  await page.waitForTimeout(300);
+  await repainted(page);
   assert.equal((await appearance(page)).theme, "light", "a chosen theme ignores the operating system");
   await theme.getByRole("radio", { name: "System", exact: true }).click();
   await page.waitForFunction(() => document.documentElement.dataset.theme === "dark", null, { timeout: 3000 });

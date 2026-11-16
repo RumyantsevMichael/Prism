@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { launch as launchBrowser, openPage, reviewUrl, serveProject, skip, waitForView } from "./fixtures/kit-browser.mjs";
+import { settled } from "./fixtures/wait.mjs";
 import { CODEX_THREAD, INITIATIVE, launchFixture, waitFor } from "./fixtures/launched-sessions.mjs";
 
 // The Launched sessions place of the real review page: one row per session on this computer with its initiative, host, start,
@@ -49,8 +50,7 @@ test("the place lists each launched session with its state, reason, and terminal
   assert.match(runningText, /Running/);
   assert.equal(await row(page, running).locator("code", { hasText: "codex resume" }).count(), 0, "no terminal command while the session runs");
   const before = await row(page, running).locator("[data-running-time]").innerText();
-  await page.waitForTimeout(2200);
-  assert.notEqual(await row(page, running).locator("[data-running-time]").innerText(), before, "the running time counts while the session runs");
+  assert.notEqual(await settled(() => row(page, running).locator("[data-running-time]").innerText(), (shown) => shown !== before), before, "the running time counts while the session runs");
   assert.deepEqual(page.errors, []);
 });
 

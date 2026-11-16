@@ -7,6 +7,7 @@ import readline from "node:readline";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
+import { pause, settled } from "./fixtures/wait.mjs";
 import { INITIATIVE, actionProject } from "./fixtures/review-actions.mjs";
 import { defer } from "./fixtures/teardown.mjs";
 
@@ -175,7 +176,7 @@ test("answers a wait finds count as shown in the step that finds them, so a conc
   const wait = waitForUserGates({ projectRoot: root, initiative: INITIATIVE, gateIds: [gateIds.review, gateIds.decision], maxWaitMinutes: 0.1, pollMs: 50, settleMs: 600, notices: { session: "s1", directory }, watchChanges: true });
   await new Promise((resolve) => setTimeout(resolve, 150));
   await answerGate(root, gateIds.review, "approve");
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  await pause(200, "the answer must not be shown by the concurrent call, and a change that must not happen leaves nothing to wait for");
   assert.deepEqual(await take(), [], "the answer the wait found is not shown by a concurrent call");
   const restore = await breakState(root);
   const result = await wait;
@@ -271,8 +272,7 @@ test("a wait that names an answered and resolved gate does not hold its answer f
   const { revision } = await readCoordinationState({ projectRoot: root, initiative: INITIATIVE });
   await updateCoordinationState({ projectRoot: root, initiative: INITIATIVE, expectedRevision: revision, changes: { gateOperations: [{ op: "resolve", id: gateIds.review }] } });
   const wait = waitForUserGates({ projectRoot: root, initiative: INITIATIVE, gateIds: [gateIds.decision, gateIds.review], maxWaitMinutes: 0.02, pollMs: 50, settleMs: 0, notices: { session: "s1", directory } });
-  await new Promise((resolve) => setTimeout(resolve, 300));
-  assert.deepEqual((await take()).map((entry) => entry.action), ["gate.answer"], "the resolved gate's answer reaches the coordinator during the wait");
+  assert.deepEqual((await settled(take, (taken) => taken.length > 0)).map((entry) => entry.action), ["gate.answer"], "the resolved gate's answer reaches the coordinator during the wait");
   assert.equal((await wait).status, "timeout");
 });
 

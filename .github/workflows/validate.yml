@@ -125,6 +125,9 @@ jobs:
       - name: Check dependency licenses
         run: npm run check:licenses
 
+      - name: Check that no test sleeps a fixed time before a check
+        run: npm run check:test-waits
+
       - name: Test the native build and release automation
         run: |
           node --test scripts/native-build/*.test.mjs scripts/*.test.mjs

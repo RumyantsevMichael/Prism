@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { skip } from "./fixtures/kit-browser.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { choosePlace, comparePlaces, eventually, groupHeadings, item, itemNames, open, placesDemo, settledOn, sidebar } from "./fixtures/places-browser.mjs";
 
 // The Knowledge place over the demo, which holds four requirements files, three decisions, three glossary terms, and one diagram, eleven records in all.
@@ -44,7 +45,7 @@ test("clause 52: typing in the search shows matching records grouped by kind, a 
   await choosePlace(page, "Knowledge");
   const side = sidebar(page);
   await field(side).fill("d");
-  await page.waitForTimeout(400);
+  await pause(400, "one character must change nothing, and a change that does not happen leaves nothing to wait for");
   assert.deepEqual(await groupHeadings(side), ["Start from", "Browse by kind"], "one character changes nothing");
   await field(side).fill("Deadline");
   assert.deepEqual(await eventually(() => groupHeadings(side), ["Requirements", "Decisions", "Glossary"]), ["Requirements", "Decisions", "Glossary"], "the empty Diagrams group is left out");
@@ -59,13 +60,11 @@ test("clause 52: typing in the search shows matching records grouped by kind, a 
   await field(side).fill("no such words");
   assert.equal(await eventually(() => side.getByText('No record matches "no such words".', { exact: true }).isVisible(), true), true);
   await field(side).press("Escape");
-  await page.waitForTimeout(400);
-  assert.deepEqual(await groupHeadings(side), ["Start from", "Browse by kind"], "Escape restores the groups");
+  assert.deepEqual(await eventually(() => groupHeadings(side), ["Start from", "Browse by kind"]), ["Start from", "Browse by kind"], "Escape restores the groups");
   await field(side).fill("deadline");
   await eventually(() => groupHeadings(side), ["Requirements", "Decisions", "Glossary"]);
   await field(side).fill("");
-  await page.waitForTimeout(400);
-  assert.deepEqual(await groupHeadings(side), ["Start from", "Browse by kind"], "clearing the field restores the groups");
+  assert.deepEqual(await eventually(() => groupHeadings(side), ["Start from", "Browse by kind"]), ["Start from", "Browse by kind"], "clearing the field restores the groups");
   assert.deepEqual(page.errors, []);
 });
 

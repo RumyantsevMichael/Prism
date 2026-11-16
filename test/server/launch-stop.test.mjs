@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { CODEX_THREAD, INITIATIVE, alive, launchFixture, waitFor } from "./fixtures/launched-sessions.mjs";
+import { pause } from "./fixtures/wait.mjs";
 
 // Stopping a launched session the way the hosts' own Stop buttons do: Prism sends the host's interrupt, closes the host's
 // input once the host answered it so the host exits by itself, and forcibly ends only the host process when it has not exited
@@ -105,7 +106,7 @@ test("a stop while a Claude Code background task runs between turns interrupts t
   const { startLaunch, stopLaunch } = await module();
   const { launch } = await startLaunch({ projectRoot: fixture.root, initiative: INITIATIVE, host: "claude-code", env: fixture.env });
   const run = await firstRun(fixture, "claude");
-  await new Promise((resolve) => setTimeout(resolve, 900));
+  await pause(900, "the input must stay open, and a change that must not happen leaves nothing to wait for");
   assert.equal(fixture.closed(run.pid), null);
   const started = Date.now();
   const stopped = await stopLaunch({ id: launch.id, env: fixture.env });

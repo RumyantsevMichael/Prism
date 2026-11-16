@@ -3,6 +3,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { skip, stateFileNames } from "./fixtures/kit-browser.mjs";
+import { repainted } from "./fixtures/wait.mjs";
 import { choosePlace, drawer, open, PLACES, placesDemo, sidebar } from "./fixtures/places-browser.mjs";
 import { messageHtml } from "../../src/server/review/public/views/util.js";
 
@@ -22,7 +23,7 @@ test("without a workflow file the sidebars still name the setting warnings and s
   const warnings = sidebar(wide).locator("prism-disclosure.nav-diagnostics");
   assert.match(await warnings.getAttribute("summary"), /^\d+ workflow setting warnings?$/, "the sidebar says that warnings exist");
   await warnings.evaluate((node) => { node.open = true; });
-  await wide.waitForTimeout(200);
+  await repainted(wide);
   assert.deepEqual(await sidebar(wide).locator("li code[data-code-subject]").allInnerTexts(), [".prism/workflow.md"], "the missing file is named as code");
   for (const name of PLACES) {
     await choosePlace(wide, name);
@@ -32,7 +33,7 @@ test("without a workflow file the sidebars still name the setting warnings and s
   await narrow.locator("header").getByRole("button", { name: "Navigation" }).click();
   await drawer(narrow).waitFor();
   await drawer(narrow).locator("prism-disclosure.nav-diagnostics").evaluate((node) => { node.open = true; });
-  await narrow.waitForTimeout(200);
+  await repainted(narrow);
   assert.deepEqual(await stateFileNames(narrow, "[role='dialog'][aria-label='Navigation']"), [], "the drawer at 820 names no Prism file outside code");
   assert.deepEqual(wide.errors ?? [], []);
   assert.deepEqual(narrow.errors ?? [], []);

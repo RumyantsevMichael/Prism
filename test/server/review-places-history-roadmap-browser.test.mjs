@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { shownTooltip, skip } from "./fixtures/kit-browser.mjs";
+import { settled } from "./fixtures/wait.mjs";
 import { choosePlace, comparePlaces, editJson, eventually, item, itemNames, open, placesDemo, settledOn, sidebar } from "./fixtures/places-browser.mjs";
 
 // History and the Roadmap place over the demo, whose decisions get fixed dates before the server starts:
@@ -55,8 +56,8 @@ test("clauses 47, 48: History lists shipped and superseded work newest first, wi
   ]);
   assert.match(names[2], /14 Jun 2025$/, "an earlier year carries the year");
   await item(sidebar(page), "CSV-only exports").locator(":scope > a").hover();
-  await page.waitForTimeout(700);
-  assert.equal(await shownTooltip(page), `CSV-only exports · Superseded ${shown(oneDay)} by Export activity reports`);
+  const tip = `CSV-only exports · Superseded ${shown(oneDay)} by Export activity reports`;
+  assert.equal(await settled(() => shownTooltip(page), tip), tip);
   const mark = await sidebar(page).getByText("Superseded", { exact: true }).first().evaluate((node) => getComputedStyle(node).color);
   for (const tone of ["--prism-color-danger", "--prism-color-warning"]) assert.notEqual(mark, await tokenColor(page, tone), `Superseded is not drawn in ${tone}`);
   await item(sidebar(page), "CSV-only exports").click();

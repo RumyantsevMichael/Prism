@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { demoProject, launch, skip, useAppDirectory } from "./fixtures/kit-browser.mjs";
+import { pause } from "./fixtures/wait.mjs";
 
 // A browser opens at most six HTTP/1.1 connections to one host, and the review app serves every project from one host.
 // These tests open many review tabs of two projects in one browser and check that they share one event stream, that its events still reach every tab,
@@ -105,7 +106,7 @@ test("a tab that holds a write session counts as a connected tab although anothe
   assert.equal(await reader.evaluate(() => sessionStorage.getItem("prism-write-session")), null, "the write session stays in the tab that took it");
   assert.notEqual(await writer.evaluate(() => sessionStorage.getItem("prism-write-session")), null);
   // A browser opens at most once per open lease, so the check waits for the lease of the first open to pass.
-  await new Promise((resolve) => setTimeout(resolve, 10500));
+  await pause(10500, "a browser opens at most once per open lease, and that lease's time is what this waits out");
   assert.equal((await client.present(portal, { tabs: [], open: true })).open, false, "the writable tab is connected, so no new window opens");
   await writer.close();
   assert.ok(await eventually(async () => (await client.present(portal, { tabs: [], open: true })).open === true), "once the writable tab closed, a presentation opens a window again");

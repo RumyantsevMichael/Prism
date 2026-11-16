@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { boundaryFailures, contrastFailures, escapes, focusRing, launch, movingElements, openPage, ROOT, serveProject, shownTooltip, skip, useAppDirectory } from "./fixtures/kit-browser.mjs";
+import { repainted, pause, settled } from "./fixtures/wait.mjs";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §2, §7, §8, §9, §10.
 // Contract: docs/plans/review-app-ui-kit/slice.md clauses 21, 22, 41 to 51, and 54 to 57.
@@ -39,7 +40,7 @@ async function mount(page, html, { width = "600px" } = {}) {
     document.body.prepend(region);
     window.scrollTo(0, 0);
   }, [html, width]);
-  await page.waitForTimeout(150);
+  await repainted(page);
 }
 
 // The focused element through shadow roots: an item's value, or else the id of its nearest kit host.
@@ -200,8 +201,7 @@ test("clauses 38, 42: a tree with long, unbroken, and many labels stays inside a
   const item = page.locator('prism-tree-item[value="v1"]');
   assert.equal(await item.evaluate((element) => element.hasAttribute("shortened")), true);
   await item.hover();
-  await page.waitForTimeout(700);
-  assert.equal(await shownTooltip(page), LONG);
+  assert.equal(await settled(() => shownTooltip(page), LONG), LONG);
 });
 
 test("clause 44: a listbox driven from a field keeps focus in the field and moves its active option", { skip }, async (context) => {
@@ -272,7 +272,7 @@ test("a leaf with a glyph beside a parent keeps the twisty's room, so sibling la
         <prism-tree-item label="Second slice" value="second"><prism-icon slot="start" name="clock"></prism-icon></prism-tree-item>
       </prism-tree-item>
     </prism-tree>`);
-  await page.waitForTimeout(50);
+  await repainted(page);
   const left = (value, part) => page.evaluate(([value, part]) => document.querySelector(`#initiatives prism-tree-item[value="${value}"] > .prism-tree-row > ${part}`).getBoundingClientRect().left, [value, part]);
   assert.equal(await left("single", ".prism-tree-label"), await left("multi", ".prism-tree-label"), "a single-slice initiative's label lines up with a multi-slice initiative's");
   assert.equal(await left("single", ".prism-tree-start"), await left("multi", ".prism-tree-start"), "and so does its glyph");
@@ -282,12 +282,12 @@ test("a leaf with a glyph beside a parent keeps the twisty's room, so sibling la
   // A branching tree, one group of a longer list, keeps the room for its top leaves although it holds no parent itself.
   await mount(page, `<prism-tree id="one" label="In progress" branching><prism-tree-item label="One slice" value="alone"><prism-icon slot="start" name="clock"></prism-icon></prism-tree-item></prism-tree>
     <prism-tree id="initiatives" label="Initiatives"><prism-tree-item label="Single-slice initiative" value="single"><prism-icon slot="start" name="clock"></prism-icon></prism-tree-item><prism-tree-item label="Multi-slice initiative" value="multi" expanded><prism-icon slot="start" name="clock"></prism-icon><prism-tree-item label="First slice" value="first"><prism-icon slot="start" name="clock"></prism-icon></prism-tree-item></prism-tree-item></prism-tree>`);
-  await page.waitForTimeout(50);
+  await repainted(page);
   const alone = await page.evaluate(() => document.querySelector('#one prism-tree-item[value="alone"] > .prism-tree-row > .prism-tree-label').getBoundingClientRect().left);
   assert.equal(alone, await left("multi", ".prism-tree-label"), "a branching group's leaf lines up with another group's parent");
   // When the only parent loses its children, its siblings start with their glyphs again.
   await page.evaluate(() => document.querySelectorAll('#initiatives prism-tree-item[value="multi"] prism-tree-item').forEach((item) => item.remove()));
-  await page.waitForTimeout(50);
+  await repainted(page);
   assert.equal(await page.evaluate(() => document.querySelector('#initiatives prism-tree-item[value="single"] > .prism-tree-row > .prism-tree-twisty').classList.contains("is-gone")), true);
 });
 
@@ -479,7 +479,7 @@ test("clause 56: menus, popovers, tooltips, dialogs, and the toast are frosted g
   assert.equal(field, expected.control, "a field on glass draws its boundary in --prism-color-glass-control");
   await page.keyboard.press("Escape");
   await page.locator("#fixture prism-chip").hover();
-  await page.waitForTimeout(700);
+  await settled(() => shownTooltip(page));
   check(await surface("tooltip"), "the tooltip");
   await page.evaluate(() => document.getElementById("d").show());
   check(await surface("dialog", "Dialog"), "the dialog");
@@ -529,12 +529,12 @@ test("clauses 48, 49: empty states, banners, and toasts carry their roles and me
   const text = await page.locator("prism-toast").innerText();
   assert.match(text, /Second message/);
   assert.doesNotMatch(text, /Answer sent/, "a new message replaces the shown one");
-  await page.waitForTimeout(3500);
+  await pause(3500, "the toast's own display time is what this checks");
   assert.match(await page.locator("prism-toast").innerText(), /Second message/, "the toast still shows after three and a half seconds");
   await page.waitForFunction(() => !document.querySelector("prism-toast").innerText.includes("Second message"), null, { timeout: 15000 });
   const still = await openPage(page.context().browser(), page.url(), { reducedMotion: "reduce" });
   await still.evaluate(() => document.querySelector("prism-toast").show("Calm message"));
-  await still.waitForTimeout(3500);
+  await pause(3500, "the toast's own display time is what this checks");
   assert.match(await still.locator("prism-toast").innerText(), /Calm message/, "under reduced motion the toast stays as long");
 });
 

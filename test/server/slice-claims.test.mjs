@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { splitEvidence } from "./fixtures/split-evidence.mjs";
+import { pause } from "./fixtures/wait.mjs";
 
 // Git runs with a private home and configuration, a fixed identity, and only local repositories.
 const environment = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-claims-env-")));
@@ -566,7 +567,7 @@ test("waits for a claim record's own lock before it removes an ended claim", asy
   const release = await holdLock(file);
   const ending = write(value.a, [{ op: "set_status", slug: "s1", status: "blocked" }]);
   await until(async () => (await readFile(path.join(value.parent, "store", "initiatives/reports/initiative.json"), "utf8")).includes("\"blocked\""));
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  await pause(100, "the removal must wait while the lock is held, and a change that must not happen leaves nothing to wait for");
   assert.equal(await exists(file), true, "the removal waits while the sync's lock on the record is held");
   await release();
   await ending;

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 import { demoProject, launch, openPage, reviewUrl, ROOT, serveProject, skip, useAppDirectory, waitForView } from "./fixtures/kit-browser.mjs";
+import { repainted } from "./fixtures/wait.mjs";
 import { AUTHORED, REFERENCE } from "./fixtures/plantuml-reference.mjs";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §1, §3, §8.
@@ -137,7 +138,7 @@ test("clause 65: a diagram the review page shows sits on the paper and follows a
   assert.equal(light.sheet, light.paper, "the diagram sits on a sheet painted --prism-color-diagram-paper");
   await page.emulateMedia({ colorScheme: "dark" });
   await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
-  await page.waitForTimeout(500);
+  await repainted(page);
   const dark = await read();
   assert.deepEqual(dark.leftover, [], "no mapped default color remains in the dark theme");
   assert.equal(dark.sheet, dark.paper, "the sheet follows the dark paper");

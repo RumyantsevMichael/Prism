@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { shownTooltip, skip } from "./fixtures/kit-browser.mjs";
+import { repainted, settled } from "./fixtures/wait.mjs";
 import { choosePlace, eventually, groupHeadings, item, itemNames, open, placesDemo, settledOn, shownRef, sidebar } from "./fixtures/places-browser.mjs";
 
 // Requirements: docs/requirements/review-app-places.md §41, §42, §43, §44, and §47.
@@ -97,19 +98,18 @@ test("§43: hovering or focusing a dependency icon marks the initiatives it name
   assert.ok(Math.abs(foot.x + foot.width - (icon.x + icon.width)) <= 1, "the icons sit at the end of the card");
   const marks = () => page.locator("#artifact article.roadmap-item").evaluateAll((cards) => cards.map((element) => `${element.querySelector("h3").textContent.trim()}:${element.classList.contains("is-related") ? "marked" : element.classList.contains("is-source") ? "source" : Number(getComputedStyle(element).opacity) < 1 ? "dimmed" : "plain"}`));
   await needs.hover();
-  await page.waitForTimeout(700);
-  assert.equal(await shownTooltip(page), "Needs Harden request retries");
-  await page.waitForTimeout(200);
-  assert.deepEqual(await marks(), ["Harden request retries:marked", "Export activity reports:source", "Index activity for search:dimmed", "Retire the legacy exporter:dimmed"]);
+  assert.equal(await settled(() => shownTooltip(page), "Needs Harden request retries"), "Needs Harden request retries");
+  const hovered = ["Harden request retries:marked", "Export activity reports:source", "Index activity for search:dimmed", "Retire the legacy exporter:dimmed"];
+  assert.deepEqual(await settled(marks, hovered), hovered);
   await page.mouse.move(0, 0);
-  await page.waitForTimeout(200);
-  assert.deepEqual(await marks(), ["Harden request retries:plain", "Export activity reports:plain", "Index activity for search:plain", "Retire the legacy exporter:plain"], "leaving the icon clears the marks");
+  const plain = ["Harden request retries:plain", "Export activity reports:plain", "Index activity for search:plain", "Retire the legacy exporter:plain"];
+  assert.deepEqual(await settled(marks, plain), plain, "leaving the icon clears the marks");
   await unblocks.focus();
-  await page.waitForTimeout(200);
-  assert.deepEqual(await marks(), ["Harden request retries:dimmed", "Export activity reports:source", "Index activity for search:marked", "Retire the legacy exporter:dimmed"], "focus marks them too");
+  const focused = ["Harden request retries:dimmed", "Export activity reports:source", "Index activity for search:marked", "Retire the legacy exporter:dimmed"];
+  assert.deepEqual(await settled(marks, focused), focused, "focus marks them too");
   await page.keyboard.press("Enter");
   await page.locator("#artifact").getByRole("heading", { name: "Roadmap", exact: true }).first().click();
-  await page.waitForTimeout(200);
+  await repainted(page);
   assert.equal((await marks())[2], "Index activity for search:marked", "a pressed icon keeps its marks");
   assert.deepEqual(page.errors, []);
 });

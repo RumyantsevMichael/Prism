@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { demoProject, launch, openPage, reviewUrl, serveProject, skip, useAppDirectory, waitForView, writeClaim } from "./fixtures/kit-browser.mjs";
+import { pause } from "./fixtures/wait.mjs";
 
 // A link preview stays open while the pointer crosses a neighboring link on its way to the preview, so its button can be reached.
 // A Markdown heading's fold toggle stays inside the box that holds the document, at every width.
@@ -37,7 +38,7 @@ test("a link preview survives the pointer crossing the next link on its way to t
   const steps = 12;
   for (let step = 1; step <= steps; step += 1) {
     await page.mouse.move(pair.x + ((target.x + target.width / 2 - pair.x) * step) / steps, pair.y + ((target.y + target.height / 2 - pair.y) * step) / steps);
-    await page.waitForTimeout(40);
+    await pause(40, "the pointer travels at a person's pace, which the preview's hover intent reads");
   }
   assert.equal(await preview.isVisible(), true, "the preview is still open when the pointer reaches it");
   await button.click();
