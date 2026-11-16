@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.26.0](https://github.com/RumyantsevMichael/Prism/compare/v0.25.0...v0.26.0) (2026-11-16)
+
+
+### Added
+
+* **review:** browse every branch's code in one tree on the Code page ([#296](https://github.com/RumyantsevMichael/Prism/issues/296)) ([b39b82e](https://github.com/RumyantsevMichael/Prism/commit/b39b82ec625da6cc635be130aeaabf62592b17ed))
+* **review:** draw every status with one palette ([#287](https://github.com/RumyantsevMichael/Prism/issues/287)) ([151b83a](https://github.com/RumyantsevMichael/Prism/commit/151b83ac9d77b2f4c6d85e91a4451253f0328137))
+* **review:** head the initiative page with its lane, controls, and slice bar ([#291](https://github.com/RumyantsevMichael/Prism/issues/291)) ([5a2fa87](https://github.com/RumyantsevMichael/Prism/commit/5a2fa874b49864af5a2f6e35106f1fb1d7051965))
+* **review:** list requirements, decisions, and diagrams in one table each ([#295](https://github.com/RumyantsevMichael/Prism/issues/295)) ([e36cbab](https://github.com/RumyantsevMichael/Prism/commit/e36cbabd05cb72f2d6b2f5b40094e7ff88e81664))
+* **review:** make the review ledger the slice's Review tab ([#292](https://github.com/RumyantsevMichael/Prism/issues/292)) ([996894d](https://github.com/RumyantsevMichael/Prism/commit/996894d9c13518379ab2c7993572c5d9d7c40363))
+* **review:** put the roadmap's views in one toolbar and trace dependencies on the board ([#290](https://github.com/RumyantsevMichael/Prism/issues/290)) ([1588c53](https://github.com/RumyantsevMichael/Prism/commit/1588c53b03df1968967b6f9c7e25970414e4a4d2))
+* **review:** rework the shell with Settings, a sidebar head toggle, and a resizable sidebar ([#289](https://github.com/RumyantsevMichael/Prism/issues/289)) ([a16a6fa](https://github.com/RumyantsevMichael/Prism/commit/a16a6fac55663d6ad222677f5df7f4063ee1f762))
+* **review:** show a Markdown file's changes on its rendered text ([#293](https://github.com/RumyantsevMichael/Prism/issues/293)) ([7010556](https://github.com/RumyantsevMichael/Prism/commit/7010556a32714ec137abeea76a44d91cd75e2f34))
+
 ## [0.25.0](https://github.com/RumyantsevMichael/Prism/compare/v0.24.0...v0.25.0) (2026-11-14)
 
 
