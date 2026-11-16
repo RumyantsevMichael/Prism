@@ -6,6 +6,7 @@ import { prepareAttention } from "./fixtures/places-attention.mjs";
 // Attention's counts by kind and by initiative, its failed verifications, and its answered questions, read from the review server over the changed demo.
 // Questions: the decision on Harden request retries and the one on Export activity reports, since the review gate was answered.
 // Blocked work: Retry dropped connections and the blocked part of each of three initiatives off the roadmap, which are also problems with the roadmap's two open questions.
+// Format findings: the demo's old note, which keeps no Prism format.
 
 async function server(context) {
   await useAppDirectory(context);
@@ -18,8 +19,8 @@ async function server(context) {
 test("clauses 36, 37, 42: the navigation counts every kind, everything as their sum, and the questions that wait for an answer", { timeout: 60000 }, async (context) => {
   const { get } = await server(context);
   const attention = (await get("/api/index")).navigation.places.attention;
-  assert.deepEqual(attention.kinds, { questions: 2, findings: 1, failed: 1, blocked: 4, ready: 0, problems: 5 });
-  assert.equal(attention.everything, 13);
+  assert.deepEqual(attention.kinds, { questions: 2, findings: 1, failed: 1, blocked: 4, ready: 0, problems: 5, formats: 1 });
+  assert.equal(attention.everything, 14);
   assert.equal(attention.questions, 2, "the rail's count is the questions that wait for an answer");
   assert.equal(attention.answered, 3, "three questions were answered or closed in the last 7 days");
 });

@@ -8,7 +8,8 @@ export const STALE_MESSAGE = "Someone changed this since you opened it; it now s
 
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 // Text counts as a value only when it holds more than whitespace, as the server reads it.
-const normalized = (value) => typeof value === "string" ? (value.trim() ? value.trim() : null) : value ?? null;
+// A choice of several options counts as a value only when it holds at least one.
+const normalized = (value) => typeof value === "string" ? (value.trim() ? value.trim() : null) : Array.isArray(value) ? (value.length ? value : null) : value ?? null;
 const filled = (value) => normalized(value) !== null;
 
 /** Each field's current value: a one-field action holds its value, and an object value fills the fields it names. */
@@ -47,7 +48,8 @@ export function actionFormState(action, draft = {}) {
   const missing = fields.find((field) => isRequired(field, input) && !filled(input[field.name]));
   // An action without a value, such as an answer or a rebuild, is never unchanged; a setting is unchanged while every field holds its current value.
   const unchanged = action.value !== null && action.value !== undefined && fields.every((field) => normalized(input[field.name]) === normalized(current[field.name]));
-  const confirm = action.confirm && action.confirm.values.includes(normalized(input[action.confirm.field])) ? action.confirm.message : null;
+  // A confirmation that names no field is asked for every change.
+  const confirm = action.confirm && (action.confirm.field === null || action.confirm.values.includes(normalized(input[action.confirm.field]))) ? action.confirm.message : null;
   const hint = !action.available ? action.reason ?? "" : missing ? `Fill in ${missing.label}.` : "";
   return { input, ready: Boolean(action.available) && !unchanged && !missing, confirm, hint };
 }
@@ -107,7 +109,7 @@ function shownFields(action, input) {
 }
 
 // A one-choice setting applies when an option is picked; an action with text or several fields applies with its own button.
-const appliesOnPick = (action) => !action.context && action.fields.length === 1 && action.fields[0].kind !== "text";
+const appliesOnPick = (action) => !action.context && action.fields.length === 1 && !["text", "choices"].includes(action.fields[0].kind);
 
 function fieldHtml(action, field, input, { disabled, key }) {
   if (field.kind === "text") {
@@ -116,9 +118,11 @@ function fieldHtml(action, field, input, { disabled, key }) {
     return `<prism-field class="action-field" type="${field.multiline ? "textarea" : "text"}" label="${escapeHtml(field.label)}" hint="${required ? "Required" : "Optional"}" value="${escapeHtml(input[field.name] ?? "")}" data-field="${escapeHtml(field.name)}" data-focus-key="${escapeHtml(`${key}|${field.name}`)}"${field.maxLength ? ` data-max-length="${field.maxLength}"` : ""}${required ? " required" : ""}${disabled ? " disabled" : ""}></prism-field>`;
   }
   const picked = normalized(input[field.name]);
-  const chosen = field.options.find((option) => option.value === picked);
+  const many = field.kind === "choices";
+  const isPicked = (value) => many ? (picked ?? []).includes(value) : value === picked;
+  const chosen = many ? null : field.options.find((option) => option.value === picked);
   const group = `<div class="action-options" role="group" aria-label="${escapeHtml(field.label)}">${field.options.map((option) =>
-    `<prism-button size="sm" pressed="${option.value === picked}" data-option data-field="${escapeHtml(field.name)}" data-value="${escapeHtml(option.value)}" data-focus-key="${escapeHtml(`${key}|${field.name}|${option.value}`)}"${option.consequence ? ` tip="${escapeHtml(option.consequence)}"` : ""}${disabled ? " disabled" : ""}>${escapeHtml(option.label ?? option.value)}</prism-button>`).join("")}</div>`;
+    `<prism-button size="sm" pressed="${isPicked(option.value)}" data-option${many ? " data-many" : ""} data-field="${escapeHtml(field.name)}" data-value="${escapeHtml(option.value)}" data-focus-key="${escapeHtml(`${key}|${field.name}|${option.value}`)}"${option.consequence ? ` tip="${escapeHtml(option.consequence)}"` : ""}${disabled ? " disabled" : ""}>${escapeHtml(option.label ?? option.value)}</prism-button>`).join("")}</div>`;
   const consequence = !action.context && chosen?.consequence ? `<p class="gate-consequence action-consequence">${escapeHtml(chosen.consequence)}</p>` : "";
   return `<div class="action-choice">${group}${consequence}</div>`;
 }
@@ -334,7 +338,16 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     if (!item) return;
     const values = { ...(item.entry.draft?.values ?? {}) };
     if (button.hasAttribute("data-option")) {
-      values[button.dataset.field] = button.dataset.value;
+      // An option of a choice of several joins or leaves the chosen list, kept in option order.
+      if (button.hasAttribute("data-many")) {
+        const field = item.action.fields.find((candidate) => candidate.name === button.dataset.field);
+        const current = new Set(normalized(values[button.dataset.field] ?? currentInput(item.action)[button.dataset.field]) ?? []);
+        if (current.has(button.dataset.value)) current.delete(button.dataset.value);
+        else current.add(button.dataset.value);
+        values[button.dataset.field] = field.options.map((option) => option.value).filter((value) => current.has(value));
+      } else {
+        values[button.dataset.field] = button.dataset.value;
+      }
       item.entry.error = null;
       if (appliesOnPick(item.action)) {
         if (actionFormState(item.action, { values }).ready) void send(item, values);

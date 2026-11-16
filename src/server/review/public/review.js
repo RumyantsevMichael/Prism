@@ -102,7 +102,8 @@ const ATTENTION_KINDS = [
   ["failed", "Failed verifications", "flask"],
   ["blocked", "Blocked work", "warning"],
   ["ready", "Ready to ship", "check-circle"],
-  ["problems", "Problems", "warning"]
+  ["problems", "Problems", "warning"],
+  ["formats", "Format findings", "document"]
 ];
 // The row of By work that shows the initiatives past the first few; choosing it shows or hides them below it.
 const ATTENTION_MORE = "attention:more";

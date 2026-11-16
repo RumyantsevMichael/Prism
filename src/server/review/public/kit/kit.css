@@ -618,6 +618,22 @@ prism-choice-option:has(.prism-choice-input:focus-visible) {
   visibility: visible;
 }
 
+/* A choice of several options draws each indicator as a box with a check mark. */
+prism-choice[multiple] .prism-choice-indicator {
+  border-radius: var(--prism-radius-xs);
+}
+
+prism-choice[multiple] .prism-choice-indicator::after {
+  width: calc(var(--prism-icon-size) / 4);
+  height: calc(var(--prism-icon-size) / 2);
+  margin-top: calc(var(--prism-stroke) * -1);
+  border: solid var(--prism-color-on-accent);
+  border-width: 0 var(--prism-stroke-strong) var(--prism-stroke-strong) 0;
+  border-radius: 0;
+  background: transparent;
+  transform: rotate(45deg);
+}
+
 prism-choice-option[tone="danger"] .prism-choice-box:has(.prism-choice-input:checked) {
   border-color: var(--prism-color-danger);
   box-shadow: 0 0 0 var(--prism-stroke) var(--prism-color-danger);

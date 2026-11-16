@@ -269,6 +269,7 @@ const SPECIMENS = {
     unchosen: choiceOf(answers),
     chosen: choiceOf(answers, { value: "accept" }),
     "with-detail": choiceOf(`<prism-choice-option value="now">Start now<span slot="detail">The first slice starts at once and the others wait for it.</span></prism-choice-option><prism-choice-option value="later">Later<span slot="detail">Nothing starts until you come back.</span></prism-choice-option>`, { label: "When to start" }),
+    multiple: `<prism-choice label="Pick several" name="${id("catalog-choice")}" multiple><prism-choice-option value="a">Old notes<span slot="detail">Breaks two rules.</span></prism-choice-option><prism-choice-option value="b">${UNBROKEN}<span slot="detail">Breaks one rule.</span></prism-choice-option><prism-choice-option value="c" disabled>Plain decision</prism-choice-option></prism-choice>`,
     "many-items": choiceOf(repeat(12, (index) => `<prism-choice-option value="v${index}">${index % 3 ? `Option ${index + 1}` : `${UNBROKEN}-${index + 1}`}</prism-choice-option>`), { label: "Pick one of many" }),
     "long-text": choiceOf(`<prism-choice-option value="long">${LONG}<span slot="detail">${LONG}</span></prism-choice-option>`, { label: LONG }),
     "unbroken-name": choiceOf(`<prism-choice-option value="u">${UNBROKEN}<span slot="detail">${UNBROKEN}</span></prism-choice-option>`, { label: UNBROKEN })

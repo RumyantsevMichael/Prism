@@ -432,6 +432,66 @@
   padding: var(--prism-space-4);
 }
 
+/* The format findings page: one panel per format, its files by kind of break, each finding's rule and message, and its legacy marks. */
+.format-panels {
+  display: grid;
+  gap: var(--prism-space-6);
+  min-width: 0;
+}
+
+.format-group {
+  display: grid;
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+.format-group + .format-group {
+  margin-top: var(--prism-space-5);
+}
+
+.format-group-label {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-2);
+  margin: 0;
+}
+
+.format-group-note {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.format-findings {
+  display: grid;
+  gap: var(--prism-space-2);
+  margin: var(--prism-space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.format-finding {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+.format-finding-message {
+  flex: 1 1 16rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.legacy-dialog-effect {
+  margin: 0 0 var(--prism-space-4);
+}
+
+.legacy-dialog prism-choice {
+  max-height: 50vh;
+  overflow: auto;
+}
+
 .attention-list-foot {
   display: grid;
   gap: var(--prism-space-3);

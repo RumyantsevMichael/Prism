@@ -31,7 +31,7 @@ export const KNOWLEDGE_PAGES = Object.freeze({ diagrams: "Diagrams", touched: "T
 export function parseEntityRef(ref) {
   if (SECTIONS.includes(ref)) return { kind: ref };
   // Attention's filtered pages: one kind, one initiative's items, or the questions answered this week.
-  let match = /^attention:(questions|findings|failed|blocked|ready|problems|answered|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
+  let match = /^attention:(questions|findings|failed|blocked|ready|problems|formats|answered|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "attention", page: match[1] };
   // Knowledge's own pages: the diagrams, the records behind the open slice, and this week's record changes.
   match = /^knowledge:(diagrams|touched|changed)$/.exec(ref ?? "");
