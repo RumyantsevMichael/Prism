@@ -11,11 +11,11 @@ const BROKEN = "# Old notes\n\nThe client retries.\n";
 
 async function served(context) {
   const { place, root, call } = await storeProject(context, { ...CONFORMING, [OLD]: BROKEN });
+  // api's first tool call moves its checkout artifacts into scope api before the workspace holds the same path, which would keep them in the checkout.
+  await storeRead(call, PATHS.requirements);
   // The workspace scope holds another nonconforming copy at the same path, written from a checkout that does not see api's scope.
   const web = await otherCheckout(context, place);
   await storeWrite(web.call, OLD, `${BROKEN}\nThe server logs.\n`, { scope: "workspace" });
-  // A read of api moves its checkout artifacts into the store before the review browser starts.
-  await storeRead(call, PATHS.requirements);
   const review = await reviewBrowser(context, root);
   const attention = async () => (await browserRequest(review, "/api/entity?ref=attention")).body.data;
   const listing = (target) => browserRequest(review, `/api/actions?target=${encodeURIComponent(target)}`);
