@@ -75,6 +75,29 @@ A glossary source counts by the status Prism recorded for the requirement or ADR
 Each glossary resolves its sources in its own scope first, then in its repository's scope for a component, then in the workspace, so a glossary has the same findings in every checkout that sees it, and a source that only another scope holds is reported as outside the glossary's scope.
 Each scope's glossary is checked on its own, so one term id in two glossaries is no finding.
 
+### Format migrations
+
+A format migration converts one artifact that breaks its format, or a file that holds such content, into its format, and applies only after a person accepts it.
+It is not the move of a checkout's files into a record store.
+An agent proposes it with `propose_migration`, passing the type, the source and the target, the whole migrated content, a summary of what changes and why, and leftovers: each statement of the source that the content does not keep, with a proposed home such as the project instructions.
+The target lies under the type's configured path, and equals the source for a format migration in place.
+Prism splits the source into statements, each sentence of a paragraph, list item, blockquote line, or table cell and each fenced code block, and refuses a proposal with `migration_unaccounted` when a statement appears in neither the content, a leftover, nor a conflict.
+It refuses with `migration_invented` a statement of the content that neither the source nor the target states, while the format's structure, its default values, `unknown`, links, and dates from the source's Git history count as no statements.
+A value that neither the source nor its Git history gives is written as `unknown`, and the migration lists each one.
+Content that breaks its format is refused with `artifact_nonconforming`.
+When the source or the target is Approved or Accepted, content that changes its status, its Created or Approved date, or drops an identity, such as a requirement section number or a glossary term id, is refused with `migration_changes_decision`.
+A target that already exists keeps each of its entries, a requirement section, a glossary term, or a feature Rule, unchanged: the source's differing version of an entry goes under `conflicts`, and content that changes a target entry is refused with `migration_conflict`.
+A second proposal for a target whose format migration is still waiting is refused with `migration_pending`.
+
+The person answers the format migration in the review browser, where they accept or decline it, choose the target's or the source's version of each conflicting entry, and for a separate source choose whether to remove it, which is off by default.
+The agent waits with `wait_for_user_gate` and `migration`, reads the format migration with `get_migration`, and applies an accepted one with `apply_migration`.
+Applying writes the content with each chosen entry, writes the migration's id after each glossary `Source: migration`, so the term's source is the applied format migration, and removes a separate source only when the person accepted its removal.
+It refuses a format migration that was not accepted with `migration_not_accepted`, one whose source or target changed since the proposal with `migration_stale`, and one already applied with `migration_applied`.
+
+In a project whose `.prism/workflow.md` names a record store, a requirement, ADR, or glossary target is a store artifact, and a source under a store artifact path is one too, while feature files and every other file stay in the checkout.
+A store target's `Status:` line must equal the status Prism recorded for it, or for a new one the recorded status of a store source of the same type, else `Draft` for a requirement and `Proposed` for an ADR, and applying writes and removes store artifacts through the store's own checks, so their comments, recorded statuses, and accepted versions stay as `update_artifact` keeps them.
+Prism keeps each format migration as a record under `format-migrations/`, in the store when one is configured and under `.prism/` otherwise.
+
 ## Verification
 
 A slice whose design is accepted lists its frozen acceptance tests and says whether its implementation needs independent review.
