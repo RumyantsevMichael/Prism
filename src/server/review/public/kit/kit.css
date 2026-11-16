@@ -948,6 +948,12 @@ prism-tree-item[selected] > .prism-tree-row > .prism-tree-start,
   font-weight: var(--prism-font-weight-medium);
 }
 
+/* A warning flag names a difference to look at, such as a file that another branch changes, in the warning tone. */
+.prism-tree-flag.is-warning {
+  color: var(--prism-color-warning);
+  font-weight: var(--prism-font-weight-medium);
+}
+
 /* ---------- Kit classes around a tree: a group heading with its count, and a closing note ---------- */
 
 /* A group's heading is a level 3 heading that reads as a quiet caption above its rows, in the tree's own size and weight, with its count at the end.

@@ -1095,6 +1095,10 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const entries = await workspace.code.tree(repository, folder);
       if (entries === null) off();
       else sendJson(response, 200, { repository, folder, entries });
+    } else if (route === "/api/code/compare") {
+      const compared = await workspace.code.compare(repository, url.searchParams.get("base") || null);
+      if (compared === null) sendJson(response, 404, { code: "branch_unknown", message: "The clone of that repository holds no such branch, or its code content is off." });
+      else sendJson(response, 200, { repository, ...compared });
     } else if (route === "/api/code/file") {
       const read = await workspace.code.file(repository, { branch: url.searchParams.get("branch"), commit: url.searchParams.get("commit"), path: url.searchParams.get("path") });
       if (read?.withheld) sendJson(response, 404, withheldAnswer(read));
@@ -1469,7 +1473,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const named = workspace ? { workspace: await workspace.describe(), checkout, storeRefs: await storeArtifactRefs(projectRoot), sync: await workspace.sync?.() ?? null, repositories: await codeRepositories() } : { workspace: checkout };
       const scoped = storeIndex ? { artifactScopes: storeIndex.artifactScopes, scopes: storeIndex.scopes, ...(storeIndex.scopeFilter ? { scopeFilter: storeIndex.scopeFilter, unknownScopes: storeIndex.unknownScopes } : {}), notes: storeIndex.notes } : { artifactScopes: await listArtifactScopes(projectRoot) };
       send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, ...scoped, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, version: appVersion ?? pluginVersion(), ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
-    } else if (["/api/code/tree", "/api/code/file", "/api/code/components"].includes(route) && request.method === "GET") {
+    } else if (["/api/code/tree", "/api/code/compare", "/api/code/file", "/api/code/components"].includes(route) && request.method === "GET") {
       await serveCode(response, route, url);
     } else if (route === "/api/slice-files" && request.method === "GET") {
       const ref = `slice:${url.searchParams.get("initiative") ?? ""}/${url.searchParams.get("slice") ?? ""}`;
@@ -1547,7 +1551,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         return;
       }
       if (ref === "code" && workspace) {
-        sendJson(response, 200, { ref, kind: "code", data: { repositories: await codeRepositories() } });
+        // The page leaves out when each clone was last fetched, so a fetch that brings nothing new does not redraw the page the person is reading.
+        const repositories = (await codeRepositories()).map(({ name, code: { fetchedAt, ...code } }) => ({ name, code }));
+        sendJson(response, 200, { ref, kind: "code", data: { repositories } });
         return;
       }
       const entity = await loadEntity(projectRoot, ref, { intelligenceDirectories: intelligenceDirectories() });

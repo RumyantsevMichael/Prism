@@ -527,8 +527,9 @@ A store that holds no artifacts yet, because no Prism session moved a checkout's
 
 ### Code content
 
-The **Code** page in the sidebar's **Library** lists each repository of the workspace with its code content state: **Off**, **On**, or **Unreachable**.
-Choose **Turn code content on** for a repository to have Prism keep a clone of its code on this machine, also when this machine has no checkout of it.
+The **Code** page under **Knowledge** shows one repository of the workspace at a time, which the repository menu at the start of its toolbar picks.
+Its **Repositories** button opens a dialog that lists each repository with its code content state: **Off**, **On**, or **Unreachable**.
+Choose **Turn code content on** there for a repository to have Prism keep a clone of its code on this machine, also when this machine has no checkout of it.
 Prism clones the first remote that the store's registration of the repository lists, with the machine's Git configuration and credential helpers and without asking for a password on a terminal, into `code/` of its state directory, one clone per remote.
 The clone is bare and blobless: it holds every branch of the remote with its commits and folders, and it fetches a file's contents only when someone opens the file, so it uses little disk.
 A repository whose registration lists no remote cannot take code content.
@@ -536,8 +537,12 @@ Only a tab that can make changes turns code content on or off; see [Which tabs c
 Which repositories have code content on survives a restart of the app.
 
 While a page of the workspace is open, each fetch of the workspace also fetches every repository with code content on, bringing new branches and dropping branches that left the remote.
-When a repository's remote cannot be reached, the Code page shows it as **Unreachable** with Git's reason, and the clone keeps what it fetched last; when the first clone fails, Prism keeps no folder and tries the clone again at the next fetch.
-For a repository with code content on, the Code page lists the files and folders of every branch, each with the labels of the branches that hold it, and opens a file to show each version of it with the labels of the branches that hold that version, so it never asks you to choose a branch.
+When a repository's remote cannot be reached, the Repositories dialog shows it as **Unreachable** with Git's reason, and the clone keeps what it fetched last; when the first clone fails, Prism keeps no folder and tries the clone again at the next fetch.
+For a repository with code content on, the Code page shows a tree of the files and folders of every branch together, beside the file you open.
+**Compare with** names one branch, at first the remote's default branch, and the tree marks each file that another branch adds, changes, or removes against it, such as **New on 1** or **Differs on 2**, and each folder with the number of branches that change something in it; hover a mark to see the branches.
+A file or folder that every branch holds the same way carries no mark, and a file only another branch holds still shows in the tree.
+**Branch** picks which version of the open file the viewer shows, with line numbers, the branch it is read from, and how it stands against Compare with, such as **New on this branch** or **Differs from main**.
+When the branch in Branch lacks the open file, the viewer shows the version of a branch that holds it and says so.
 It shows no secret, binary file, or file over 512 KiB, and it never names the Git host's address.
 Choose **Turn code content off** to delete the repository's clone from this machine.
 Removing an added workspace that leaves the switcher also turns code content off for each of its repositories and deletes each clone that no other workspace on this machine still uses.
