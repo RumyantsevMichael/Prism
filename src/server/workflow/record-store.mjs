@@ -23,6 +23,9 @@ const RECORD_FILES = Object.freeze({ initiative: "initiative.json", state: "stat
 const SLICE_KINDS = new Set(["review", "change-map", "design-view", "frozen-tests", "runs"]);
 const LEGACY_CHANGE_MAP = "concept-delta.json";
 const CLAIMS = "claims";
+// Legacy marks are workspace records of their own, one file per set, beside the initiatives rather than inside any of them.
+export const LEGACY_MARKS = "legacy-marks";
+const LEGACY_MARK_ID = /^legacy-[0-9a-f]{8,32}$/;
 const HOUSEKEEPING = Object.freeze({
   ".gitattributes": "# Prism writes these records through its MCP tools; hosts collapse them in pull request diffs.\n/roadmap.json linguist-generated=true gitlab-generated\n/initiatives/** linguist-generated=true gitlab-generated\n",
   ".gitignore": "# Transient lock and write files of Prism records, and the store's sync state.\n*.lock\n.*.tmp\n/.prism-sync/\n"
@@ -54,9 +57,13 @@ function requireSlug(value, label) {
   return value;
 }
 
-/** The project-relative location of a record key: { kind: "roadmap" | "initiative" | "state" | "claim" | "review" | "change-map" | "design-view" | "frozen-tests" | "runs", initiative?, slice? }. */
+/** The project-relative location of a record key: { kind: "roadmap" | "legacy-mark" | "initiative" | "state" | "claim" | "review" | "change-map" | "design-view" | "frozen-tests" | "runs", id?, initiative?, slice? }. */
 export function recordPath(key) {
   if (key?.kind === "roadmap") return ROADMAP_RECORD;
+  if (key?.kind === "legacy-mark") {
+    if (typeof key.id !== "string" || !LEGACY_MARK_ID.test(key.id)) throw fail("invalid_path", "A legacy mark identifier is legacy- and hexadecimal digits.");
+    return `${RECORD_DIRECTORY}/${LEGACY_MARKS}/${key.id}.json`;
+  }
   const initiative = requireSlug(key?.initiative, "initiative");
   if (key.kind === "initiative" || key.kind === "state") return `${INITIATIVES}/${initiative}/${RECORD_FILES[key.kind]}`;
   // Each slice's claim is a record of its own, so a claim's changes never touch the initiative record.
@@ -70,6 +77,7 @@ export function recordPath(key) {
 export function parseRecordPath(relative) {
   if (relative === ROADMAP_RECORD) return { kind: "roadmap" };
   const parts = typeof relative === "string" ? relative.split("/") : [];
+  if (parts.length === 3 && parts[0] === RECORD_DIRECTORY && parts[1] === LEGACY_MARKS && parts[2].endsWith(".json") && LEGACY_MARK_ID.test(parts[2].slice(0, -5))) return { kind: "legacy-mark", id: parts[2].slice(0, -5) };
   if (parts[0] !== RECORD_DIRECTORY || parts[1] !== "initiatives" || !SLUG_PATTERN.test(parts[2] ?? "")) return null;
   if (parts.length === 4 && parts[3] === RECORD_FILES.initiative) return { kind: "initiative", initiative: parts[2] };
   if (parts.length === 4 && parts[3] === RECORD_FILES.state) return { kind: "state", initiative: parts[2] };
@@ -86,7 +94,7 @@ export function parseRecordPath(relative) {
 
 /** Whether Prism alone writes this project-relative file, so source snapshots never count it. */
 export function isManagedRecordFile(relative) {
-  if (relative === ROADMAP_RECORD || relative.startsWith(`${INITIATIVES}/`)) return true;
+  if (relative === ROADMAP_RECORD || relative.startsWith(`${INITIATIVES}/`) || relative.startsWith(`${RECORD_DIRECTORY}/${LEGACY_MARKS}/`)) return true;
   return relative.startsWith(`${RECORD_DIRECTORY}/`) && Object.hasOwn(HOUSEKEEPING, relative.slice(RECORD_DIRECTORY.length + 1));
 }
 
@@ -118,6 +126,8 @@ export function isStoreFile(relative) {
   if (names[0] === "migrations") return names.length === 2 && MIGRATION_FILE.test(names[1]);
   if (names[0] === ARTIFACT_MIGRATIONS) return names.length === 2 && ARTIFACT_LEDGER_FILE.test(names[1]);
   if (names[0] === REPOSITORIES) return names.length === 2 && names[1].endsWith(".json") && portableRepositoryName(names[1].slice(0, -".json".length));
+  // A legacy set is one file of its own below legacy-marks/, named by its id.
+  if (names[0] === LEGACY_MARKS) return parseRecordPath(`${RECORD_DIRECTORY}/${relative}`)?.kind === "legacy-mark";
   if (names[0] !== "initiatives") return false;
   const key = parseRecordPath(`${RECORD_DIRECTORY}/${relative}`);
   if (key?.kind !== "runs") return key !== null && key.kind !== "roadmap";
@@ -133,7 +143,7 @@ const KiB = 1024, MiB = 1024 * KiB;
  */
 export const STORE_FILE_BOUNDS = Object.freeze({
   artifact: 16 * MiB, accepted: 16 * MiB, status: 16 * MiB, identity: 256, comment: 64 * KiB, ledger: 16 * MiB, migration: 16 * MiB, registration: 64 * KiB,
-  roadmap: MiB, initiative: MiB, state: MiB, "change-map": MiB, review: 4 * MiB, "design-view": 4 * MiB, "frozen-tests": 4 * MiB, claim: 64 * KiB, runs: 4 * MiB,
+  roadmap: MiB, "legacy-mark": 4 * MiB, initiative: MiB, state: MiB, "change-map": MiB, review: 4 * MiB, "design-view": 4 * MiB, "frozen-tests": 4 * MiB, claim: 64 * KiB, runs: 4 * MiB,
   "root-text": MiB, "root-git": 64 * KiB
 });
 /** The most comment files that one artifact's comment folder holds. */
@@ -159,7 +169,7 @@ export function storeFileBound(relative) {
   if (typeof relative === "string" && Object.hasOwn(HOUSEKEEPING, relative)) return STORE_FILE_BOUNDS["root-git"];
   if (typeof relative !== "string" || !isStoreFile(relative)) return null;
   const top = relative.split("/")[0];
-  const kind = { [ARTIFACTS]: "artifact", [ARTIFACT_ACCEPTED]: "accepted", [ARTIFACT_STATUS]: "status", [ARTIFACT_IDENTITY]: "identity", [ARTIFACT_COMMENTS]: "comment", [ARTIFACT_MIGRATIONS]: "ledger", migrations: "migration", [REPOSITORIES]: "registration" }[top]
+  const kind = { [ARTIFACTS]: "artifact", [ARTIFACT_ACCEPTED]: "accepted", [ARTIFACT_STATUS]: "status", [ARTIFACT_IDENTITY]: "identity", [ARTIFACT_COMMENTS]: "comment", [ARTIFACT_MIGRATIONS]: "ledger", migrations: "migration", [REPOSITORIES]: "registration", [LEGACY_MARKS]: "legacy-mark" }[top]
     ?? parseRecordPath(`${RECORD_DIRECTORY}/${relative}`)?.kind;
   return STORE_FILE_BOUNDS[kind] ?? null;
 }
@@ -171,7 +181,7 @@ export function storeFileBound(relative) {
 export function isStoreFolder(relative) {
   if (typeof relative !== "string") return false;
   const names = relative.split("/");
-  if (names.length === 1) return ["initiatives", ARTIFACTS, ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, "migrations", REPOSITORIES].includes(names[0]);
+  if (names.length === 1) return ["initiatives", ARTIFACTS, ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, "migrations", REPOSITORIES, LEGACY_MARKS].includes(names[0]);
   if (names[0] === ARTIFACTS || names[0] === ARTIFACT_STATUS || names[0] === ARTIFACT_COMMENTS || names[0] === ARTIFACT_IDENTITY) return names.slice(1).every(wellFormedName);
   if (names[0] !== "initiatives" || !SLUG_PATTERN.test(names[1])) return false;
   if (names.length === 2) return true;

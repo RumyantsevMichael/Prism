@@ -1,6 +1,8 @@
+import { createHash } from "node:crypto";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { ARTIFACT_FORMATS, ARTIFACT_TYPES, adrStatusOf, glossarySources, inspectArtifact, requirementOutline } from "./artifact-formats.mjs";
+import { legacyLookup, readLegacySets } from "./artifact-marks.mjs";
 import { artifactAddress } from "./artifact-paths.mjs";
 import { readComponents } from "./components.mjs";
 import { artifactText, seenArtifactTexts } from "./store-artifacts.mjs";
@@ -228,9 +230,9 @@ async function storeRefusing(action) {
 /**
  * Checks the project's artifacts: { formats, artifacts }.
  * In a project with a record store, requirements, ADRs, and glossaries are read from every scope the checkout sees, and feature files from the checkout.
- * `legacyOf(path, type, scope)` returns the legacy mark that covers an artifact, and `appliedMigration(id)` whether a migration was applied; both default to none.
+ * `legacyOf(path, type, scope)` returns the legacy mark that covers an artifact, by default from the project's legacy sets, and `appliedMigration(id)` whether a migration was applied, by default none.
  */
-export async function checkArtifacts({ projectRoot, paths, type, legacyOf = () => null, appliedMigration = () => false }) {
+export async function checkArtifacts({ projectRoot, paths, type, legacyOf, appliedMigration = () => false }) {
   if (type !== undefined && !ARTIFACT_TYPES.includes(type)) throw fail("invalid_input", `type must be one of ${ARTIFACT_TYPES.join(", ")}.`);
   if (paths !== undefined && (!Array.isArray(paths) || paths.length > MAX_CHECK_PATHS)) throw fail("invalid_input", `paths must be a list of at most ${MAX_CHECK_PATHS} project-relative files or { path, scope, component } entries.`);
   const root = await realpath(projectRoot);
@@ -238,6 +240,7 @@ export async function checkArtifacts({ projectRoot, paths, type, legacyOf = () =
   const locations = artifactLocations(config);
   const entries = paths === undefined ? null : paths.map(pathEntry);
   const store = (config.workspace?.store ?? null) !== null ? await storeRefusing(() => seenArtifactTexts(root)) : null;
+  legacyOf ??= legacyLookup(await storeRefusing(() => readLegacySets(root)));
   const storeType = (file) => {
     const kind = store === null ? null : storeKindOf(config, file);
     return kind === null ? null : STORE_TYPES.get(kind) ?? null;
@@ -302,13 +305,35 @@ export async function checkArtifacts({ projectRoot, paths, type, legacyOf = () =
   const artifacts = [];
   for (const target of targets) {
     const bytes = target.stored ? target.stored.bytes ?? oversized(target.stored.size) : await readFile(path.join(root, target.path));
-    const lookup = target.stored ? storeLookup(target.scope, store.copiesOf) : checkoutLookup(root);
-    const context = target.type === "glossary" ? await storeRefusing(() => glossaryContext(target.path, bytes, lookup, appliedMigration)) : {};
-    const result = inspectArtifact(target.type, bytes, { context });
+    let result;
+    if (target.type === "glossary") {
+      // A glossary's findings depend on the files its sources name, so it is checked afresh each time.
+      const lookup = target.stored ? storeLookup(target.scope, store.copiesOf) : checkoutLookup(root);
+      const context = await storeRefusing(() => glossaryContext(target.path, bytes, lookup, appliedMigration));
+      result = inspectArtifact(target.type, bytes, { context });
+    } else {
+      result = inspected(target, bytes);
+    }
     const legacy = result.conforms ? null : legacyOf(target.path, target.type, target.scope) ?? null;
     artifacts.push({ path: target.path, scope: target.scope, type: target.type, version: result.version, conforms: result.conforms, findings: result.findings, unknowns: result.unknowns, earlierFormat: result.earlierFormat, legacy });
   }
   return { formats: ARTIFACT_FORMATS.map((entry) => ({ type: entry.type, version: entry.version, reference: entry.reference })), artifacts };
+}
+
+// The checks of artifacts whose findings depend on their bytes alone, by scope and path, each kept with the hash of the version it checked,
+// so a listing of many artifacts checks again only those that changed since the last listing.
+const CHECKED_MAX = 20000;
+const checked = new Map();
+
+function inspected(target, bytes) {
+  const key = `${target.type}\0${labelOf(target)}\0${target.path}`;
+  const version = createHash("sha256").update(bytes).digest("hex");
+  const hit = checked.get(key);
+  if (hit && hit.version === version) return hit.result;
+  const result = inspectArtifact(target.type, bytes, { context: {} });
+  if (checked.size >= CHECKED_MAX) checked.delete(checked.keys().next().value);
+  checked.set(key, { version, result });
+  return result;
 }
 
 // A store file above the bound a read takes is checked as bytes of its size, which breaks the text rule of every format.

@@ -15,6 +15,9 @@ import { contractClauses, loadDesignView } from "../workflow/design-view.mjs";
 import { appliedArtifactActions, pendingApprovalGates, storeArtifactStatuses } from "../workflow/store-artifacts.mjs";
 import { readPublishedUnits } from "../repository-intelligence/index-status.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
+import { checkArtifacts } from "../workflow/artifact-check.mjs";
+import { ARTIFACT_FORMATS } from "../workflow/artifact-formats.mjs";
+import { legacyLookup, readLegacySets } from "../workflow/artifact-marks.mjs";
 import { recordChanges } from "./record-changes.mjs";
 import { shippedActionReason, shippedDecision, shippedHistory, shippedHistoryLabel } from "../workflow/shipped-history.mjs";
 
@@ -538,8 +541,48 @@ function gateOrder(left, right) {
   return newestFirst(left.askedAt, right.askedAt);
 }
 
-export function loadAttention(projectRoot) {
-  return remember(`attention:${projectRoot}`, () => computeAttention(projectRoot));
+/**
+ * Attention: the records' items, shared for the cache window, and the format findings, read at each request,
+ * since the check of each artifact is kept until its content changes, so a changed file shows its new findings at once.
+ */
+export async function loadAttention(projectRoot) {
+  const [attention, formats] = await Promise.all([remember(`attention:${projectRoot}`, () => computeAttention(projectRoot)), loadFormats(projectRoot)]);
+  const items = formats.filter((entry) => entry.count > 0).map((entry) => ({ type: "format-findings", artifactType: entry.type, label: entry.label, count: entry.count, earlier: entry.earlier }));
+  return { ...attention, needsYou: [...attention.needsYou, ...items], formats };
+}
+
+// The format labels as Attention names each format.
+const FORMAT_LABELS = Object.freeze({ requirements: "Requirements", adr: "Decisions", glossary: "Glossary", feature: "Feature files" });
+
+/**
+ * Attention's format entries, one per format: the artifacts that break it and no legacy set covers, how many of them conform to an earlier format,
+ * and the legacy sets that cover artifacts that still break it, each with how many; a project whose artifacts cannot be checked shows no findings.
+ */
+async function loadFormats(projectRoot) {
+  let sets = [];
+  let artifacts = [];
+  try {
+    sets = await readLegacySets(projectRoot);
+    artifacts = (await checkArtifacts({ projectRoot, legacyOf: legacyLookup(sets) })).artifacts;
+  } catch {
+    artifacts = [];
+  }
+  return ARTIFACT_FORMATS.map((format) => {
+    const broken = artifacts.filter((artifact) => artifact.type === format.type && !artifact.conforms);
+    const unmarked = broken.filter((artifact) => artifact.legacy === null);
+    const marked = broken.filter((artifact) => artifact.legacy !== null);
+    const covered = sets.filter((set) => set.type === format.type).map((set) => ({ id: set.id, by: set.by, at: set.at, count: marked.filter((artifact) => artifact.legacy.set === set.id).length })).filter((set) => set.count > 0);
+    return {
+      type: format.type,
+      label: FORMAT_LABELS[format.type],
+      version: format.version,
+      reference: format.reference,
+      count: unmarked.length,
+      earlier: unmarked.filter((artifact) => artifact.earlierFormat !== null).length,
+      artifacts: unmarked.map((artifact) => ({ path: artifact.path, scope: artifact.scope, findings: artifact.findings, earlierFormat: artifact.earlierFormat })),
+      legacy: { count: marked.length, sets: covered }
+    };
+  });
 }
 
 /**
@@ -701,11 +744,12 @@ function recentlyAnswered(answered, closed) {
 }
 
 // Attention's kinds in the sidebar's order, each item of the page under one kind; a claim, an agent at work, and an answered question are none of them.
-export const ATTENTION_KINDS = Object.freeze(["questions", "findings", "failed", "blocked", "ready", "problems"]);
+export const ATTENTION_KINDS = Object.freeze(["questions", "findings", "failed", "blocked", "ready", "problems", "formats"]);
 const ATTENTION_KIND_OF = Object.freeze({
   gate: "questions", "pending-note": "questions",
   findings: "findings", "failed-verification": "failed", blocked: "blocked", "ready-to-ship": "ready",
-  "record-problem": "problems", "roadmap-problem": "problems", "roadmap-missing": "problems", unlisted: "problems", "open-question": "problems", config: "problems"
+  "record-problem": "problems", "roadmap-problem": "problems", "roadmap-missing": "problems", unlisted: "problems", "open-question": "problems", config: "problems",
+  "format-findings": "formats"
 });
 // Attention's work entries listed before the row that shows the rest.
 const ATTENTION_WORK_SHOWN = 3;
@@ -739,7 +783,8 @@ async function attentionPage(projectRoot, page) {
   const shown = work ? items.filter(({ item }) => item.initiative?.id === work[1]) : items.filter((entry) => entry.kind === page);
   let label = PLACE_PAGE_LABELS.attention[page];
   if (work) label = shown[0]?.item.initiative.title ?? (await loadRoadmapView(projectRoot).catch(() => ({ items: [] }))).items.find((item) => item.id === work[1])?.title ?? work[1];
-  return { filter: { key: page, label, total: items.length, items: shown } };
+  // The format findings page also carries every format's entry, with its artifacts and legacy sets.
+  return { filter: { key: page, label, total: items.length, items: shown }, ...(page === "formats" ? { formats: attention.formats } : {}) };
 }
 
 // What a gate's attached record is, so the page names it by title and kind with the counts that matter for the answer.
@@ -1097,7 +1142,7 @@ async function libraryScope(projectRoot, section) {
 const PLACE_LABELS = Object.freeze({ attention: "Attention", work: "Work", roadmap: "Roadmap", knowledge: "Knowledge", history: "History" });
 // The pages of Attention's and Knowledge's own addresses, by the part after their place's prefix.
 const PLACE_PAGE_LABELS = Object.freeze({
-  attention: { questions: "Questions", findings: "Review findings", failed: "Failed verifications", blocked: "Blocked work", ready: "Ready to ship", problems: "Problems", answered: "Answered in the last 7 days" },
+  attention: { questions: "Questions", findings: "Review findings", failed: "Failed verifications", blocked: "Blocked work", ready: "Ready to ship", problems: "Problems", formats: "Format findings", answered: "Answered in the last 7 days" },
   knowledge: { touched: "Touched by my work", changed: "Changed this week", diagrams: "Diagrams" }
 });
 
@@ -1198,7 +1243,7 @@ async function fileContext(projectRoot, config, ref) {
 export function parseEntityRef(ref) {
   if (SECTION_REFS.includes(ref)) return { kind: ref };
   // Attention's filtered pages: one kind, one initiative's items, or the questions answered this week.
-  let match = /^attention:(questions|findings|failed|blocked|ready|problems|answered|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
+  let match = /^attention:(questions|findings|failed|blocked|ready|problems|formats|answered|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "attention", page: match[1] };
   // Knowledge's own pages: the diagrams, the records behind the open slice, and this week's record changes.
   match = /^knowledge:(diagrams|touched|changed)$/.exec(ref ?? "");
