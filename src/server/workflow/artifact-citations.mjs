@@ -16,6 +16,7 @@ export class ArtifactCitationError extends Error {
   }
 }
 
+const storeOwn = (action) => action();
 const labelOf = (scope) => scope === null || scope === undefined ? null : scope.label;
 const named = (artifact) => labelOf(artifact.scope) === null ? artifact.path : `${artifact.path} in scope ${labelOf(artifact.scope)}`;
 
@@ -52,7 +53,8 @@ async function sliceDocument(root, file) {
 export async function citedArtifacts(projectRoot, { references = [], documents = [], files = [] } = {}) {
   if (!references.length && !documents.length && !files.length) return [];
   const root = await realpath(projectRoot);
-  const { locations, store, storeType } = await artifactSources(root);
+  // The store's own refusals, such as store_unavailable or repository_name_missing, refuse the operation as they are.
+  const { locations, store, storeType } = await artifactSources(root, { refusing: storeOwn });
   const targets = new Map();
   const add = (target) => {
     const key = `${labelOf(target.scope) ?? ""}\0${target.path}`;
@@ -78,7 +80,7 @@ export async function citedArtifacts(projectRoot, { references = [], documents =
     if (document === null) continue;
     for (const linked of linkedPaths(document.text, file) ?? []) await cite(linked, document.scope ?? null);
   }
-  return checkTargets(root, store, [...targets.values()]);
+  return checkTargets(root, store, [...targets.values()], { refusing: storeOwn });
 }
 
 /** The artifact_nonconforming refusal of the cited artifacts that break their formats, legacy or not, or null when every one conforms. */

@@ -300,12 +300,12 @@ export async function checkArtifacts({ projectRoot, paths, type, legacyOf, appli
 
 /**
  * The project's artifact store reads that a check of named artifacts needs: { config, locations, store, storeType },
- * where store is what seenArtifactTexts gives in a project with a record store, else null, and storeType(path) the format type of a path that the store holds, else null.
+ * refusing as checkTargets takes it, where store is what seenArtifactTexts gives in a project with a record store, else null, and storeType(path) the format type of a path that the store holds, else null.
  */
-export async function artifactSources(root) {
+export async function artifactSources(root, { refusing = storeRefusing } = {}) {
   const config = await readWorkflowConfig(root);
   const locations = artifactLocations(config);
-  const store = (config.workspace?.store ?? null) !== null ? await storeRefusing(() => seenArtifactTexts(root)) : null;
+  const store = (config.workspace?.store ?? null) !== null ? await refusing(() => seenArtifactTexts(root)) : null;
   const storeType = (file) => {
     const kind = store === null ? null : storeKindOf(config, file);
     return kind === null ? null : STORE_TYPES.get(kind) ?? null;
@@ -315,10 +315,11 @@ export async function artifactSources(root) {
 
 /**
  * Checks resolved artifacts, each { path, type, scope, stored }, with stored the store's entry of a store artifact, in clause order of type, then path, then scope label:
- * the artifacts as check_artifacts lists them. `legacyOf` defaults to the project's legacy sets.
+ * the artifacts as check_artifacts lists them. `legacyOf` defaults to the project's legacy sets,
+ * and `refusing` turns the store's refusals into check refusals by default, while a caller that passes the store's own refusals on gives `(action) => action()`.
  */
-export async function checkTargets(root, store, targets, { legacyOf, appliedMigration = () => false } = {}) {
-  legacyOf ??= legacyLookup(await storeRefusing(() => readLegacySets(root)));
+export async function checkTargets(root, store, targets, { legacyOf, appliedMigration = () => false, refusing = storeRefusing } = {}) {
+  legacyOf ??= legacyLookup(await refusing(() => readLegacySets(root)));
   const order = (entry) => ARTIFACT_TYPES.indexOf(entry.type);
   targets = [...targets].sort((a, b) => order(a) - order(b) || compare(a.path, b.path) || compare(labelOf(a), labelOf(b)));
   const artifacts = [];
@@ -328,7 +329,7 @@ export async function checkTargets(root, store, targets, { legacyOf, appliedMigr
     if (target.type === "glossary") {
       // A glossary's findings depend on the files its sources name, so it is checked afresh each time.
       const lookup = target.stored ? storeLookup(target.scope, store.copiesOf) : checkoutLookup(root);
-      const context = await storeRefusing(() => glossaryContext(target.path, bytes, lookup, appliedMigration));
+      const context = await refusing(() => glossaryContext(target.path, bytes, lookup, appliedMigration));
       result = inspectArtifact(target.type, bytes, { context });
     } else {
       result = inspected(target, bytes);
