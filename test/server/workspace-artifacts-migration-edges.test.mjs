@@ -203,10 +203,13 @@ test("with store sync on, after a deferred move a pull that another sync complet
 
 test("with store sync on, a file whose location is too long stays in the checkout even where the store, not yet pulled, still holds that location", async (context) => {
   const place = await syncedWorkspace(context);
-  const rest = `reports/${"abcdefghij/".repeat(11)}x.md`;
+  // A location of 464 bytes, above the 455 a location may hold, while its artifact and identity paths stay within the 512 bytes a store shares.
+  const rest = `reports/${"abcdefghij/".repeat(39)}x.md`;
   const file = `docs/plans/${rest}`;
   const location = `artifacts/repositories/api/plans/${rest}`;
   const api = await checkout(place.a, "api");
+  // Git for Windows reaches these paths only with core.longpaths, as Prism turns it on for every store command.
+  for (const folder of [api, place.storeA, place.storeB]) git(folder, "config", "core.longpaths", "true");
   const registering = await server(context, place.a, api);
   ok(await registering.call("get_artifact", {}));
   await registering.close();

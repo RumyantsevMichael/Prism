@@ -81,7 +81,7 @@ test("clause 22: with a store, a slug that would name a malformed plan folder is
   assert.equal(await exists(path.join(api, "docs", "plans")), false);
 });
 
-test("clause 22: with a store, a slug whose plan folder collides in letter case or whose plan files' locations would be too long is refused and changes no record", async (context) => {
+test("clause 22: with a store, a slug whose plan folder collides in letter case is refused and changes no record, and the longest identifier and slug fit", async (context) => {
   const place = await workspace(context);
   const api = await checkout(place, "api");
   const prism = await server(context, place, api);
@@ -89,11 +89,6 @@ test("clause 22: with a store, a slug whose plan folder collides in letter case 
     const error = refused(response, "artifact_name_conflict");
     if (Array.isArray(expected)) assert.ok(expected.includes(error.data.path), `data.path ${error.data.path} is one of ${expected.join(", ")}`);
     else assert.equal(error.data.path, expected);
-    return error;
-  };
-  const tooLong = (response, location) => {
-    const error = refused(response, "artifact_path_too_long");
-    assert.equal(error.data.location, location);
     return error;
   };
   ok(await createInitiative(prism, "reports"));
@@ -104,13 +99,10 @@ test("clause 22: with a store, a slug whose plan folder collides in letter case 
   await writeArtifact(prism, "docs/plans/Billing/notes.md", "# Notes\n", { scope: "repository" });
   conflict(await createInitiative(prism, "billing"), "docs/plans/Billing/notes.md");
   assert.equal(ok(await prism.call("get_initiative", { initiative: "billing" })).exists, false);
-  // "plans/" and "/initiative.md" take 20 characters of the location, so a 100-character id fits and a 101-character one does not.
-  const fitting = `r${"e".repeat(99)}`;
+  // An identifier holds at most 120 characters, so the longest one names a plan folder whose files fit the store.
+  const fitting = `r${"e".repeat(119)}`;
   ok(await createInitiative(prism, fitting));
   assert.match(await text(path.join(place.store, "artifacts", "plans", fitting, "initiative.md")) ?? "", /Reports/);
-  const longer = `r${"e".repeat(100)}`;
-  tooLong(await createInitiative(prism, longer), `plans/${longer}/initiative.md`);
-  assert.equal(ok(await prism.call("get_initiative", { initiative: longer })).exists, false);
 
   // Slice slugs name folders inside their initiative's plan folder.
   await writeArtifact(prism, "docs/plans/reports/slice.md", "# Reports\n\n## Assumptions\n- Unprobed: the audit store keeps download order; listings sort by time.\n");
@@ -119,13 +111,24 @@ test("clause 22: with a store, a slug whose plan folder collides in letter case 
   const split = (children) => prism.call("update_initiative", { initiative: "reports", expectedRevision: before.revision, operations: [{ op: "split", parent: "reports", children: children.map((slug) => ({ slug, title: `Part ${slug}`, requirements: ["r.md#1"] })), evidence: { kind: "unfrozen", assumption: "the audit store keeps download order", settledBy: children[0] } }] });
   conflict(await split(["download", "Download"]), ["docs/plans/reports/download", "docs/plans/reports/Download"]);
   conflict(await split(["download", "audit"]), "docs/plans/reports/Audit/notes.md");
-  // "plans/reports/" and "/initiative.md" take 28 characters, so a 93-character slice slug is too long.
-  const longSlice = `d${"o".repeat(92)}`;
-  tooLong(await split(["download", longSlice]), `plans/reports/${longSlice}/initiative.md`);
   const after = ok(await prism.call("get_initiative", { initiative: "reports" }));
   assert.equal(after.revision, before.revision, "no refused split changed the record");
   assert.deepEqual(Object.keys(after.record.slices), ["reports"]);
-  ok(await split(["download", "export"]));
+  // The longest slice slug, 120 characters, names a plan folder whose files fit the store too.
+  const longSlice = `d${"o".repeat(119)}`;
+  ok(await split(["download", longSlice]));
+  assert.ok(longSlice in ok(await prism.call("get_initiative", { initiative: "reports" })).record.slices);
+});
+
+test("clause 22: the longest plan folder an identifier and a slug can name, in the scope with the longest folder, fits a store, and a location past the store's limits is refused as too long", async () => {
+  const { locationExcess, locationLimits } = await import("../../dist/server/workflow/artifact-paths.mjs");
+  // Repository and component names hold at most 64 characters, and identifiers and slugs at most 120.
+  const name = (letter, length) => letter.repeat(length);
+  const longest = `repositories/${name("r", 64)}/components/${name("c", 64)}/plans/${name("i", 120)}/${name("s", 120)}/initiative.md`;
+  assert.equal(locationExcess(longest), null);
+  assert.match(locationExcess(`plans/${"a".repeat(99)}/`.repeat(5)), /holds 530 bytes, above the 455/);
+  assert.match(locationExcess(`plans/${"a".repeat(201)}/initiative.md`), /a name of 201 bytes, above the 200/);
+  assert.deepEqual(locationLimits("plans/x"), { location: "plans/x", limit: 455, nameLimit: 200 });
 });
 
 test("clause 19: a frozen test cannot be an artifact path", async (context) => {
