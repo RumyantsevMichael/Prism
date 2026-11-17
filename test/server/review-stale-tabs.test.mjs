@@ -4,6 +4,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { requirementFile } from "./fixtures/shipped-work.mjs";
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-stale-tabs-data-")));
 process.env.PLUGIN_DATA = privateData;
@@ -27,7 +28,7 @@ async function fixture(context) {
     await writeFile(path.join(root, relative), content);
   };
   await write(".prism/workflow.md", "## Paths\n- Requirements: docs/requirements/\n- Plans (scratch): docs/plans/\n");
-  await write("docs/requirements/reports.md", "# Activity reports\n\nStatus: Approved\n");
+  await write("docs/requirements/reports.md", requirementFile("Activity reports", ["Download signed reports"]));
   await write(NARRATIVE, "# Export reports\n");
   // An older Prism kept the review ledger beside the slice narrative.
   await write(LEGACY_REVIEW, JSON.stringify({ waves: [{ id: "audit", mode: "design-audit" }], findings: [] }));

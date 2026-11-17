@@ -75,6 +75,24 @@ A glossary source counts by the status Prism recorded for the requirement or ADR
 Each glossary resolves its sources in its own scope first, then in its repository's scope for a component, then in the workspace, so a glossary has the same findings in every checkout that sees it, and a source that only another scope holds is reported as outside the glossary's scope.
 Each scope's glossary is checked on its own, so one term id in two glossaries is no finding.
 
+### Work that cites a nonconforming artifact
+
+Prism refuses new work that builds on an artifact that breaks its format, because a contract or plan that cites it would rest on rules nobody can check.
+The refusal is `artifact_nonconforming`, and it applies to these requests:
+
+- Creating or splitting an initiative, reporting a defect, or adding a fix with `update_initiative`, for each requirement file the request references.
+- Proposing or accepting a design, for each requirement file, ADR, glossary, or feature file that a Markdown link in the scope's or a planned slice's `slice.md` points to, and for each frozen test that is a `.feature` file.
+- Adding or updating a roadmap entry with `update_roadmap`, for each requirement file the entry references.
+
+Prism checks what a request cites before anything else except its arguments, and a refused request changes nothing.
+The refusal lists each artifact with its path, its scope, its type, its findings, and whether a legacy mark covers it, and its message names each artifact with its broken rule ids and ends with `Ask for a migration of <path> in a session of its own.`
+A legacy mark keeps an artifact off the format counts on Attention, but it does not let new work cite the artifact.
+A cited file that does not exist, and a value written as `unknown`, refuse nothing, and records that already cite a nonconforming artifact still load.
+
+To go on, ask an agent for a format migration of that artifact in a session of its own, and send the refused request again once the migration is applied.
+With a record store, a requirement reference cites every copy that a scope the checkout sees holds at its path, and a link in a `slice.md` cites the copy in that `slice.md`'s scope, else the only copy a seen scope holds, else every copy.
+The message then names a store artifact as `<path> in scope <label>` and ends with `Ask for a migration of <path> in scope <label> in a session of its own.`, so ask for the migration of the copy in that scope.
+
 ## Verification
 
 A slice whose design is accepted lists its frozen acceptance tests and says whether its implementation needs independent review.
@@ -339,7 +357,7 @@ An initiative with no slice document in the checkout records nothing until a rea
 `changedAfterShip` lists `{ path, change }` for each recorded document whose content differs, ignoring the mark, as `changed`, for each one that no longer exists as `removed`, and for a slice document in a folder that had none recorded as `added`.
 A copy of a document without the mark, as on a branch from before the ship commit, is not a change.
 
-A shipped initiative's records stay, and every request to change its state is refused with `initiative_shipped` before every check except argument validation, naming the initiative and its ship time in `shippedAt`.
+A shipped initiative's records stay, and every request to change its state is refused with `initiative_shipped` before every check except argument validation and the check of what the request cites, naming the initiative and its ship time in `shippedAt`.
 The refusal covers every `update_initiative` operation, `remove_records` included, as well as `update_coordination_state`, `checkpoint_pause`, `update_review`, `verify_slice` with `contractDefects` or `dependents` too, `update_design_view`, and `update_change_map`, and it changes no record and no project file.
 Start new work on a shipped initiative as a new initiative that references it.
 `remove_records` still removes the records of a superseded initiative.

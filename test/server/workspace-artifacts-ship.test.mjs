@@ -24,7 +24,7 @@ async function finished(context) {
   const prism = await server(context, place, api);
   const review = await reviewBrowser(context, api);
   for (const file of [CITED, REJECTED, UNCITED]) await writeArtifact(prism, file, adrFile(file));
-  const rejecting = ok(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: REJECTED, status: "Rejected", context: "Retries were dropped." }] }));
+  const rejecting = ok(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: REJECTED, status: "Declined", context: "Retries were dropped." }] }));
   assert.equal((await answer(review, { artifact: REJECTED, scope: "workspace", id: rejecting.artifacts[0].gate, choice: "approve", note: null })).status, 200);
 
   ok(await createInitiative(prism, "reports"));
@@ -74,7 +74,7 @@ test("clause 44: shipping accepts each cited Proposed ADR with its gate and the 
   assert.equal(cited.acceptance.gate, gate);
   assert.deepEqual(cited.acceptance.verifiedBy, verifiedBy);
   assert.equal(cited.acceptedVersion, cited.version);
-  assert.equal(ok(await prism.call("get_artifact", { path: REJECTED })).status, "Rejected", "a cited ADR with another status stays as it is");
+  assert.equal(ok(await prism.call("get_artifact", { path: REJECTED })).status, "Declined", "a cited ADR with another status stays as it is");
   const uncited = ok(await prism.call("get_artifact", { path: UNCITED }));
   assert.equal(uncited.status, "Proposed", "an ADR that no slice.md links stays Proposed");
   assert.match(uncited.content, /^Status: Proposed$/m);

@@ -145,9 +145,9 @@ export function requirementFile(title, status = "Draft", approved = "n/a") {
   return `# ${title}\n\nStatus: ${status}\nCreated: 2026-11-07\nApproved: ${approved}\n\n## Problem\n\nSomething is missing.\n\n<a id="1"></a>\n## 1. Do the thing\n\nRequirement: The system shall do the thing.\n`;
 }
 
-/** An ADR file in the format write-adr defines. */
+/** An ADR file in the format write-adr defines, which conforms, since work whose slice.md links a nonconforming ADR is refused. */
 export function adrFile(title, status = "Proposed") {
-  return `# ${title}\n\nStatus: ${status}\nCreated: 2026-11-07\n\n## Decision\n\nThe system MUST do the thing.\n`;
+  return `# ${title}\n\nStatus: ${status}\nCreated: 2026-11-07\n\n## Requirements\n\nn/a\n\n## Problem\n\nSomething is missing.\n\n## Decision\n\nThe system MUST do the thing.\n\n## Rationale\n\nThe thing is needed.\n\n## Alternatives\n\nNone was considered.\n\n## Consequences\n\nThe thing gets done.\n\n## Mechanism\n\nThe system does the thing.\n\n## Decision Log\n`;
 }
 
 /** Start the review browser of a checkout in this process and stop it after the test. */
