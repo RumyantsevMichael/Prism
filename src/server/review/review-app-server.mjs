@@ -508,8 +508,15 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
   }
 
   // Turning a repository's code content on clones its first registered remote, and turning it off deletes the clone; both change only the app's own state on this machine.
-  async function setCode(request, response, view, repository) {
+  // The repository's name is decoded only after the origin and write-session checks, so a malformed escape never answers a request those checks refuse.
+  async function setCode(request, response, view, encodedRepository) {
     if (refuseChange(request, response)) return;
+    let repository;
+    try { repository = decodeURIComponent(encodedRepository); } catch {
+      await readBody(request);
+      sendJson(response, 400, { code: "invalid_request", message: "The repository name in the address is not a valid percent-encoded name." });
+      return;
+    }
     let body;
     try { body = await readJson(request); } catch (error) { sendJson(response, 400, { code: "invalid_request", message: error.message }); return; }
     if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.enabled !== "boolean") {
@@ -837,13 +844,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
         }
         const codeSwitch = /^\/api\/code\/([^/]+)$/.exec(inWorkspace[2]);
         if (codeSwitch && request.method === "PUT") {
-          let repository;
-          try { repository = decodeURIComponent(codeSwitch[1]); }
-          catch {
-            sendJson(response, 400, { code: "invalid_request", message: "The repository name in the address is not a valid percent-encoded name." });
-            return;
-          }
-          await setCode(request, response, view, repository);
+          await setCode(request, response, view, codeSwitch[1]);
           return;
         }
         if (inWorkspace[2] === "/api/projects" && request.method === "GET") {

@@ -49,6 +49,17 @@ test("clause 41: turning code content on keeps a bare blobless clone with every 
   assert.equal((await enable(prism, id, "mobile")).status, 404);
 });
 
+test("clause 41: a malformed escape in the repository name is refused by the origin and write-session checks first, then answers a plain 400", async (context) => {
+  const { prism, id } = await codeWorkspace(context);
+  const route = `/w/${id}/api/code/%E0%A4%A`;
+  const foreign = await prism.put(route, { enabled: true }, { Origin: "http://evil.example" });
+  assert.deepEqual([foreign.status, foreign.json?.code], [403, "origin_refused"], foreign.body);
+  const anonymous = await prism.put(route, { enabled: true }, { "X-Prism-Write": "" });
+  assert.deepEqual([anonymous.status, anonymous.json?.code], [403, "write_forbidden"], anonymous.body);
+  const malformed = await prism.put(route, { enabled: true });
+  assert.deepEqual([malformed.status, malformed.json?.code], [400, "invalid_request"], malformed.body);
+});
+
 test("clause 41: a repository whose registration lists no remote cannot take code content", async (context) => {
   const where = await place(context);
   const store = await networkStore(where);
