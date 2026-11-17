@@ -413,107 +413,113 @@ export async function proposeMigration(input) {
   const existing = separateSource && target.text !== null ? target : null;
   const content = given.content;
 
-  // A pending or accepted migration of the same target that is not applied yet holds it.
-  const holding = (await storeRefusing(() => allMigrations(root))).find((record) => record.target?.path === target.path && sameScope(record.target?.scope, target.scope) && ["pending", "accepted"].includes(statusOf(record)));
-  if (holding) throw fail("migration_pending", `The format migration ${holding.id} of ${label(target)} is still ${statusOf(holding)}, so another one cannot be proposed until it is answered${statusOf(holding) === "accepted" ? " and applied" : ""}.`, { id: holding.id });
+  // The check for a migration that holds the target and the write of the new record run under one lock of the target, so two concurrent proposals of it record one pending migration.
+  return storeRefusing(() => withRecordLock(root, targetLockKey(target), async () => {
+    // A pending or accepted migration of the same target that is not applied yet holds it.
+    const holding = (await allMigrations(root)).find((record) => record.target?.path === target.path && sameScope(record.target?.scope, target.scope) && ["pending", "accepted"].includes(statusOf(record)));
+    if (holding) throw fail("migration_pending", `The format migration ${holding.id} of ${label(target)} is still ${statusOf(holding)}, so another one cannot be proposed until it is answered${statusOf(holding) === "accepted" ? " and applied" : ""}.`, { id: holding.id });
 
-  // The content conforms to its format, unknown values aside.
-  const checked = findingsOf(type, content);
-  if (checked.findings.length) {
-    const rules = [...new Set(checked.findings.map((finding) => finding.rule))].join(", ");
-    throw fail("artifact_nonconforming", `The content breaks the ${type} format of ${label(target)} (${rules}), so it cannot be proposed: ${checked.findings.map((finding) => finding.message).join(" ")}`, { artifacts: [{ ...named(target), type, findings: checked.findings, legacy: null }] });
-  }
-
-  // A decided source or target keeps its status, dates, and identities.
-  const changed = [];
-  const note = (change) => { if (!changed.some((item) => item.field === change.field && item.before === change.before)) changed.push(change); };
-  const decidedStatus = (artifact) => artifact.store ? artifact.status : headerValue(artifact.text, "Status");
-  for (const before of [source, existing].filter(Boolean)) {
-    if (!["requirements", "adr", "glossary", "feature"].includes(type)) continue;
-    const status = decidedStatus(before);
-    if (status !== "Approved" && status !== "Accepted") continue;
-    for (const field of ["Status", "Created", "Approved"]) {
-      const was = field === "Status" ? status : headerValue(before.text, field);
-      if (was === null) continue;
-      const now = headerValue(content, field);
-      if (now !== was) note({ field, before: was, after: now });
+    // The content conforms to its format, unknown values aside.
+    const checked = findingsOf(type, content);
+    if (checked.findings.length) {
+      const rules = [...new Set(checked.findings.map((finding) => finding.rule))].join(", ");
+      throw fail("artifact_nonconforming", `The content breaks the ${type} format of ${label(target)} (${rules}), so it cannot be proposed: ${checked.findings.map((finding) => finding.message).join(" ")}`, { artifacts: [{ ...named(target), type, findings: checked.findings, legacy: null }] });
     }
-    const kept = identities(type, content);
-    for (const id of identities(type, before.text)) if (!kept.has(id)) note({ field: "identity", before: id, after: null });
-  }
-  // A store target's Status: line is its recorded status, which only a person's answer at a gate changes.
-  if (targetInStore && (type === "requirements" || type === "adr")) {
-    const expected = target.text !== null ? target.status : source.store && source.text !== null && source.status !== null && storeKindOfPath(config, source.path) === STORE_KINDS[type] ? source.status : newStatus(STORE_KINDS[type]);
-    const written = headerValue(content, "Status");
-    if (expected !== null && written !== expected) note({ field: "Status", before: expected, after: written });
-  }
-  if (changed.length) {
-    throw fail("migration_changes_decision", `The content changes what a person decided for ${label(source)}${existing ? ` or ${label(existing)}` : ""}: ${changed.map((change) => `${change.field} ${JSON.stringify(change.before)} to ${JSON.stringify(change.after)}`).join(", ")}. Keep the status, the Created and Approved dates, and every identity as recorded; only a person's answer at a gate changes them.`, { changed });
-  }
 
-  // The entries of an existing target stay unchanged, and the source's differing version of one goes under conflicts.
-  const conflicts = [];
-  if (existing && entriesOf(type, existing.text).length) {
-    const targetEntries = entriesOf(type, existing.text);
-    const contentEntries = entriesOf(type, content);
-    const rewritten = targetEntries.filter((entry) => {
-      const kept = contentEntries.filter((item) => item.id === entry.id);
-      return kept.length !== 1 || !sameEntry(kept[0].text, entry.text);
-    }).map((entry) => entry.id);
-    const wrong = [];
-    for (const conflict of given.conflicts) {
-      const entry = targetEntries.find((item) => item.id === conflict.entry);
-      const own = entriesOf(type, conflict.content);
-      const substituted = entry ? replaceEntry(type, content, conflict.entry, conflict.content) : null;
-      if (!entry || own.length !== 1 || own[0].id !== conflict.entry || substituted === null || findingsOf(type, substituted).findings.length) wrong.push(conflict.entry);
-      else conflicts.push({ entry: conflict.entry, target: entry.text, source: conflict.content });
+    // A decided source or target keeps its status, dates, and identities.
+    const changed = [];
+    const note = (change) => { if (!changed.some((item) => item.field === change.field && item.before === change.before)) changed.push(change); };
+    const decidedStatus = (artifact) => artifact.store ? artifact.status : headerValue(artifact.text, "Status");
+    for (const before of [source, existing].filter(Boolean)) {
+      if (!["requirements", "adr", "glossary", "feature"].includes(type)) continue;
+      const status = decidedStatus(before);
+      if (status !== "Approved" && status !== "Accepted") continue;
+      for (const field of ["Status", "Created", "Approved"]) {
+        const was = field === "Status" ? status : headerValue(before.text, field);
+        if (was === null) continue;
+        const now = headerValue(content, field);
+        if (now !== was) note({ field, before: was, after: now });
+      }
+      const kept = identities(type, content);
+      for (const id of identities(type, before.text)) if (!kept.has(id)) note({ field: "identity", before: id, after: null });
     }
-    if (rewritten.length || wrong.length) {
-      const parts = [];
-      if (rewritten.length) parts.push(`the content changes or drops the target's ${rewritten.length === 1 ? "entry" : "entries"} ${rewritten.join(", ")}, which must stay as the target holds ${rewritten.length === 1 ? "it" : "them"}, with the source's version under conflicts`);
-      if (wrong.length) parts.push(`the ${wrong.length === 1 ? "conflict" : "conflicts"} ${wrong.join(", ")} ${wrong.length === 1 ? "names" : "name"} no entry of the target or ${wrong.length === 1 ? "does" : "do"} not hold one conforming entry of that identity`);
-      throw fail("migration_conflict", `The proposal for ${label(target)} conflicts with the target's entries: ${parts.join("; ")}.`, { entries: [...new Set([...rewritten, ...wrong])] });
+    // A store target's Status: line is its recorded status, which only a person's answer at a gate changes.
+    if (targetInStore && (type === "requirements" || type === "adr")) {
+      const expected = target.text !== null ? target.status : source.store && source.text !== null && source.status !== null && storeKindOfPath(config, source.path) === STORE_KINDS[type] ? source.status : newStatus(STORE_KINDS[type]);
+      const written = headerValue(content, "Status");
+      if (expected !== null && written !== expected) note({ field: "Status", before: expected, after: written });
     }
-  } else if (given.conflicts.length) {
-    throw fail("migration_conflict", `The target ${label(target)} holds no entries, so the conflicts ${given.conflicts.map((conflict) => conflict.entry).join(", ")} name no entry of it.`, { entries: given.conflicts.map((conflict) => conflict.entry) });
-  }
+    if (changed.length) {
+      throw fail("migration_changes_decision", `The content changes what a person decided for ${label(source)}${existing ? ` or ${label(existing)}` : ""}: ${changed.map((change) => `${change.field} ${JSON.stringify(change.before)} to ${JSON.stringify(change.after)}`).join(", ")}. Keep the status, the Created and Approved dates, and every identity as recorded; only a person's answer at a gate changes them.`, { changed });
+    }
 
-  // Every leftover is a statement of the source, verbatim.
-  const normalizedSource = normalizeStatement(source.text);
-  for (const [index, leftover] of given.leftovers.entries()) {
-    if (!normalizedSource.includes(normalizeStatement(leftover.statement))) throw fail("invalid_input", `leftovers[${index}].statement is not a statement of the source ${label(source)}: ${JSON.stringify(leftover.statement)}.`);
-  }
+    // The entries of an existing target stay unchanged, and the source's differing version of one goes under conflicts.
+    const conflicts = [];
+    if (existing && entriesOf(type, existing.text).length) {
+      const targetEntries = entriesOf(type, existing.text);
+      const contentEntries = entriesOf(type, content);
+      const rewritten = targetEntries.filter((entry) => {
+        const kept = contentEntries.filter((item) => item.id === entry.id);
+        return kept.length !== 1 || !sameEntry(kept[0].text, entry.text);
+      }).map((entry) => entry.id);
+      const wrong = [];
+      for (const conflict of given.conflicts) {
+        const entry = targetEntries.find((item) => item.id === conflict.entry);
+        const own = entriesOf(type, conflict.content);
+        const substituted = entry ? replaceEntry(type, content, conflict.entry, conflict.content) : null;
+        if (!entry || own.length !== 1 || own[0].id !== conflict.entry || substituted === null || findingsOf(type, substituted).findings.length) wrong.push(conflict.entry);
+        else conflicts.push({ entry: conflict.entry, target: entry.text, source: conflict.content });
+      }
+      if (rewritten.length || wrong.length) {
+        const parts = [];
+        if (rewritten.length) parts.push(`the content changes or drops the target's ${rewritten.length === 1 ? "entry" : "entries"} ${rewritten.join(", ")}, which must stay as the target holds ${rewritten.length === 1 ? "it" : "them"}, with the source's version under conflicts`);
+        if (wrong.length) parts.push(`the ${wrong.length === 1 ? "conflict" : "conflicts"} ${wrong.join(", ")} ${wrong.length === 1 ? "names" : "name"} no entry of the target or ${wrong.length === 1 ? "does" : "do"} not hold one conforming entry of that identity`);
+        throw fail("migration_conflict", `The proposal for ${label(target)} conflicts with the target's entries: ${parts.join("; ")}.`, { entries: [...new Set([...rewritten, ...wrong])] });
+      }
+    } else if (given.conflicts.length) {
+      throw fail("migration_conflict", `The target ${label(target)} holds no entries, so the conflicts ${given.conflicts.map((conflict) => conflict.entry).join(", ")} name no entry of it.`, { entries: given.conflicts.map((conflict) => conflict.entry) });
+    }
 
-  // Every source statement occurs in the content, a leftover, or a conflict.
-  const placed = [normalizeStatement(content), ...given.leftovers.map((leftover) => normalizeStatement(leftover.statement)), ...conflicts.map((conflict) => normalizeStatement(conflict.source))];
-  const unaccounted = sourceStatements(type, source.text).filter((statement) => !placed.some((text) => text.includes(normalizeStatement(statement.text))));
-  if (unaccounted.length) {
-    throw fail("migration_unaccounted", `${unaccounted.length === 1 ? "A statement" : `${unaccounted.length} statements`} of ${label(source)} ${unaccounted.length === 1 ? "occurs" : "occur"} in neither the content, a leftover, nor a conflict: ${unaccounted.map((statement) => `line ${statement.line}: ${JSON.stringify(statement.text)}`).join("; ")}. Place each one, or list it as a leftover with its proposed home.`, { statements: unaccounted.map(({ text, line }) => ({ text, line })) });
-  }
+    // Every leftover is a statement of the source, verbatim.
+    const normalizedSource = normalizeStatement(source.text);
+    for (const [index, leftover] of given.leftovers.entries()) {
+      if (!normalizedSource.includes(normalizeStatement(leftover.statement))) throw fail("invalid_input", `leftovers[${index}].statement is not a statement of the source ${label(source)}: ${JSON.stringify(leftover.statement)}.`);
+    }
 
-  // No statement of the content or a conflict is invented: each is a statement of the source or an existing target, compared statement to statement,
-  // and a field that records a decision passes only by the rules of needsNoSource.
-  const knownArtifacts = [source, ...(existing ? [existing] : [])];
-  const knownStatements = new Set(knownArtifacts.flatMap((artifact) => statementsOf(type, artifact.text)).map((statement) => normalizeStatement(statement.text)));
-  const dates = await historyDates(root, source.path);
-  const invented = [content, ...conflicts.map((conflict) => conflict.source)].flatMap((text) => statementsOf(type, text))
-    .filter((statement) => !needsNoSource(type, statement, { dates, known: knownArtifacts }) && (DECISION_FIELDS.has(statement.field) || !knownStatements.has(normalizeStatement(statement.text))));
-  if (invented.length) {
-    throw fail("migration_invented", `${invented.length === 1 ? "A statement" : `${invented.length} statements`} of the content ${invented.length === 1 ? "occurs" : "occur"} in neither ${label(source)} nor the target: ${invented.map((statement) => `line ${statement.line}: ${JSON.stringify(statement.text)}`).join("; ")}. Write only what the source says, and mark a value that neither the source nor its Git history gives as unknown.`, { statements: invented.map(({ text, line }) => ({ text, line })) });
-  }
+    // Every source statement occurs in the content, a leftover, or a conflict.
+    const placed = [normalizeStatement(content), ...given.leftovers.map((leftover) => normalizeStatement(leftover.statement)), ...conflicts.map((conflict) => normalizeStatement(conflict.source))];
+    const unaccounted = sourceStatements(type, source.text).filter((statement) => !placed.some((text) => text.includes(normalizeStatement(statement.text))));
+    if (unaccounted.length) {
+      throw fail("migration_unaccounted", `${unaccounted.length === 1 ? "A statement" : `${unaccounted.length} statements`} of ${label(source)} ${unaccounted.length === 1 ? "occurs" : "occur"} in neither the content, a leftover, nor a conflict: ${unaccounted.map((statement) => `line ${statement.line}: ${JSON.stringify(statement.text)}`).join("; ")}. Place each one, or list it as a leftover with its proposed home.`, { statements: unaccounted.map(({ text, line }) => ({ text, line })) });
+    }
 
-  const id = `migration-${randomBytes(8).toString("hex")}`;
-  const record = {
-    id, type, source: named(source), target: named(target), separateSource, summary: given.summary,
-    diff: unifiedDiff(source.text, content, { from: `a/${source.path}`, to: `b/${target.path}` }),
-    targetDiff: existing ? unifiedDiff(existing.text, content, { from: `a/${target.path}`, to: `b/${target.path}` }) : null,
-    leftovers: given.leftovers, unknowns: checked.unknowns, conflicts, proposedAt: new Date().toISOString(), answer: null, appliedAt: null,
-    content, versions: { source: source.version, target: target.version },
-    sourceInput: { store: source.store }, targetInput: { store: target.store }
-  };
-  await storeRefusing(() => writeRecord(root, recordKey(id), serialize(record)));
-  return { migration: shown(record, { full: false }) };
+    // No statement of the content or a conflict is invented: each is a statement of the source or an existing target, compared statement to statement,
+    // and a field that records a decision passes only by the rules of needsNoSource.
+    const knownArtifacts = [source, ...(existing ? [existing] : [])];
+    const knownStatements = new Set(knownArtifacts.flatMap((artifact) => statementsOf(type, artifact.text)).map((statement) => normalizeStatement(statement.text)));
+    const dates = await historyDates(root, source.path);
+    const invented = [content, ...conflicts.map((conflict) => conflict.source)].flatMap((text) => statementsOf(type, text))
+      .filter((statement) => !needsNoSource(type, statement, { dates, known: knownArtifacts }) && (DECISION_FIELDS.has(statement.field) || !knownStatements.has(normalizeStatement(statement.text))));
+    if (invented.length) {
+      throw fail("migration_invented", `${invented.length === 1 ? "A statement" : `${invented.length} statements`} of the content ${invented.length === 1 ? "occurs" : "occur"} in neither ${label(source)} nor the target: ${invented.map((statement) => `line ${statement.line}: ${JSON.stringify(statement.text)}`).join("; ")}. Write only what the source says, and mark a value that neither the source nor its Git history gives as unknown.`, { statements: invented.map(({ text, line }) => ({ text, line })) });
+    }
+
+    const id = `migration-${randomBytes(8).toString("hex")}`;
+    const record = {
+      id, type, source: named(source), target: named(target), separateSource, summary: given.summary,
+      diff: unifiedDiff(source.text, content, { from: `a/${source.path}`, to: `b/${target.path}` }),
+      targetDiff: existing ? unifiedDiff(existing.text, content, { from: `a/${target.path}`, to: `b/${target.path}` }) : null,
+      leftovers: given.leftovers, unknowns: checked.unknowns, conflicts, proposedAt: new Date().toISOString(), answer: null, appliedAt: null,
+      content, versions: { source: source.version, target: target.version },
+      sourceInput: { store: source.store }, targetInput: { store: target.store }
+    };
+    await writeRecord(root, recordKey(id), serialize(record));
+    return { migration: shown(record, { full: false }) };
+  }, fail));
 }
+
+// The lock that serializes the proposals of one target: a format-migration key of eight hexadecimal digits, which no generated migration id has.
+const targetLockKey = (target) => recordKey(`migration-${createHash("sha256").update(JSON.stringify([target.path, target.scope?.label ?? null])).digest("hex").slice(0, 8)}`);
 
 const storeKindOfPath = (config, file) => artifactAddress(artifactKinds(config), file)?.kind ?? null;
 

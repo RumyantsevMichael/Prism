@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -8,6 +8,7 @@ import { labelOf, otherCheckout, storeProject, storeRead, storeWrite } from "./f
 import { defer } from "./fixtures/teardown.mjs";
 
 // Format migrations stay inside the project, invent no decision or wording, keep a pending migration's wait open on a failed read, keep a named target scope, and complete a retried apply.
+// One target has one pending migration.
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-migration-review-data-")));
 process.env.PLUGIN_DATA = privateData;
@@ -168,3 +169,13 @@ test("an apply retried after an earlier one wrote the target and failed complete
   assert.equal(typeof got.value?.migration?.appliedAt, "string", got.text);
   assert.equal((await call("apply_migration", { id })).value?.code, "migration_applied");
 });
+
+test("two concurrent proposals of one target record one pending migration", async (context) => {
+  const { root, call } = await formatServer(context, { ...CONFORMING, "notes/audit.md": DRAFT_SOURCE });
+  const results = await Promise.all([1, 2, 3].map(() => call("propose_migration", proposal("notes/audit.md", AUDIT))));
+  assert.equal(results.filter((result) => result.value?.migration?.id).length, 1, results.map((result) => result.text).join("\n"));
+  assert.deepEqual(results.filter((result) => !result.value?.migration).map((result) => result.value?.code), ["migration_pending", "migration_pending"]);
+  const records = (await readdir(path.join(root, ".prism/format-migrations"))).filter((name) => name.endsWith(".json"));
+  assert.equal(records.length, 1, records.join(", "));
+});
+
