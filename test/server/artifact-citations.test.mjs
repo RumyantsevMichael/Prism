@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CONFORMING, formatServer, PATHS } from "./fixtures/artifact-formats.mjs";
+import { CONFORMING, formatServer, PATHS, write } from "./fixtures/artifact-formats.mjs";
 import { storeProject, storeRead } from "./fixtures/artifact-formats-store.mjs";
 import { seenArtifactTexts } from "../../src/server/workflow/store-artifacts.mjs";
 
@@ -56,3 +56,24 @@ test("the citation check reads only the store artifacts an update cites, not eve
   const created = await initiative(call, [{ op: "create", slug: "retries", title: "Retries", requirements: ["retries.md§1"] }]);
   assert.equal(created.value?.code ?? null, null, created.text);
 });
+
+test("a slice.md link cites only the files check_artifacts lists as artifacts, not a README, a diagram, or a file too deep below its folder", async (context) => {
+  const notes = "# Notes\n\nSome notes.\n";
+  const unlisted = ["docs/requirements/README.md", "docs/ADRs/retries/flow.puml", "docs/Features/README.md", "docs/requirements/a/b/c/d/e/deep.md"];
+  const { root, call } = await formatServer(context, { ...CONFORMING, [OLD]: BROKEN, ...Object.fromEntries(unlisted.map((file) => [file, notes])) });
+  assert.equal((await initiative(call, [{ op: "create", slug: "retries", title: "Retries", requirements: ["retries.md§1"] }])).value?.code ?? null, null);
+  assert.equal((await initiative(call, [{ op: "claim", slug: "retries" }])).value?.code ?? null, null);
+  await write(root, "test/retries.test.mjs", "import test from \"node:test\";\ntest(\"x\", () => {});\n");
+  const listed = (await call("check_artifacts", {})).value.artifacts.map((artifact) => artifact.path);
+  for (const file of unlisted) assert.ok(!listed.includes(file), `check_artifacts does not list ${file}`);
+  const propose = async (links) => {
+    await write(root, "docs/plans/retries/slice.md", `# Retries\n\n## Contract\n\n1. Retries stop, see ${links.map((file) => `[notes](../../${file.slice("docs/".length)})`).join(", ")}.\n\n## Changes\n\n- change \`src/retry.mjs\`: stop (§1)\n`);
+    return initiative(call, [{ op: "propose_design", slug: "retries", operations: [{ op: "accept_design", slug: "retries", frozenTests: ["test/retries.test.mjs"], review: "none" }] }]);
+  };
+  const refused = await propose([...unlisted, OLD]);
+  assert.equal(refused.value?.code, "artifact_nonconforming", refused.text);
+  assert.deepEqual(refused.value.artifacts.map((artifact) => artifact.path), [OLD]);
+  const accepted = await propose(unlisted);
+  assert.equal(accepted.value?.code ?? null, null, accepted.text);
+});
+

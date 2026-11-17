@@ -44,6 +44,13 @@ export function artifactTypeOf(locations, file) {
   return folders[0]?.type ?? null;
 }
 
+/** The artifact type of a path that a listing of the project's artifacts would hold, by its configured location and that listing's depth and name rules, or null. */
+export function listedArtifactType(locations, file) {
+  const type = artifactTypeOf(locations, file);
+  const location = type === null ? undefined : locations.find((entry) => entry.type === type);
+  return location !== undefined && listed(location, file) ? type : null;
+}
+
 async function walk(root, folder, extension, depth, found) {
   let entries;
   try {
@@ -207,7 +214,7 @@ function namedLabel(config, repository, { file, scope, component }) {
   return `${repository}/${component}`;
 }
 
-// The depth and name rules of a listing, applied to a store artifact's path below its configured folder.
+// The depth and name rules of a listing, applied to a path below its configured folder.
 function listed(location, file) {
   if (location.file !== undefined) return location.file === file;
   if (!file.endsWith(location.extension) || path.posix.basename(file) === "README.md") return false;
@@ -245,8 +252,7 @@ export async function checkArtifacts({ projectRoot, paths, type, legacyOf, appli
     if (store !== null) {
       for (const artifact of store.artifacts) {
         const artifactType = STORE_TYPES.get(artifact.kind);
-        const location = locations.find((entry) => entry.type === artifactType);
-        if (!location || (type && artifactType !== type) || artifactTypeOf(locations, artifact.path) !== artifactType || !listed(location, artifact.path)) continue;
+        if ((type && artifactType !== type) || listedArtifactType(locations, artifact.path) !== artifactType) continue;
         targets.push({ path: artifact.path, type: artifactType, scope: artifact.scope, stored: artifact });
       }
     }

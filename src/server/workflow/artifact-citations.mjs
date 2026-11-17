@@ -1,6 +1,6 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { artifactSources, artifactTypeOf, checkTargets } from "./artifact-check.mjs";
+import { artifactSources, checkTargets, listedArtifactType } from "./artifact-check.mjs";
 import { linkedPaths } from "./artifact-status.mjs";
 import { inArtifactStore } from "./record-store.mjs";
 import { readStoreArtifact } from "./store-artifacts.mjs";
@@ -47,7 +47,7 @@ async function sliceDocument(root, file) {
  * The existing artifacts that an operation cites, by path and scope, resolved among the scopes the checkout sees and checked against their formats:
  * `references` are project-relative requirement references such as docs/requirements/retries.md#1, each citing every seen copy at its path,
  * `documents` slice.md paths whose Markdown links cite the copy in the document's scope, else the only seen copy, else every copy,
- * and `files` paths cited as they are, such as frozen feature files. A path that no artifact type covers or that holds no file cites nothing.
+ * and `files` paths cited as they are, such as frozen feature files. A path that check_artifacts would not list as an artifact, such as a README.md, a diagram, or a file too deep below its folder, or that holds no file, cites nothing.
  * Only the cited paths are read from the store, so the check costs what the operation cites, not what the store holds.
  * Returns [{ path, scope, type, conforms, findings, legacy }] as check_artifacts lists them, legacy its mark or null.
  */
@@ -72,7 +72,7 @@ export async function citedArtifacts(projectRoot, { references = [], documents =
     if (!targets.has(key)) targets.set(key, target);
   };
   for (const { file, scope } of cited) {
-    const type = artifactTypeOf(locations, file);
+    const type = listedArtifactType(locations, file);
     if (type === null) continue;
     if (store !== null && storeType(file) === type) {
       const copies = store.artifacts.filter((artifact) => artifact.path === file);
