@@ -248,10 +248,10 @@ test("two concurrent proposals of one target record one pending migration", asyn
 
 const SCENARIOS = "docs/requirements/retry-scenarios.md";
 const FEATURE_TARGET = "docs/Features/F-retry-scenarios.feature";
-async function storeSourceAccepted(context) {
+async function storeSourceAccepted(context, target = FEATURE_TARGET) {
   const { root, call } = await storeProject(context, { ...CONFORMING, [SCENARIOS]: FEATURE });
   const source = await storeRead(call, SCENARIOS);
-  const proposed = await call("propose_migration", { type: "feature", source: SCENARIOS, target: FEATURE_TARGET, content: FEATURE, summary: "Moves the retry scenarios into a feature file.", leftovers: [] });
+  const proposed = await call("propose_migration", { type: "feature", source: SCENARIOS, target, content: FEATURE, summary: "Moves the retry scenarios into a feature file.", leftovers: [] });
   const id = proposed.value?.migration?.id;
   assert.ok(id, proposed.text);
   await answer(root, id, { decision: "accept", removeSource: "on" });
@@ -270,7 +270,7 @@ test("a store source of a checkout target that changed after acceptance refuses 
 
 test("an apply that removed a store source and stopped before writing its checkout target completes on a retry", async (context) => {
   const { root, call, id, source } = await storeSourceAccepted(context);
-  // The store source of a checkout target goes first, so an apply that stopped after it left the source removed and the target unwritten.
+  // The store source of a checkout target is removed before the target takes its name, so an apply that stopped between them left the source removed and the target unwritten.
   const removed = await call("update_artifact", { operations: [{ op: "remove", path: SCENARIOS, expectedVersion: source.version }] });
   assert.equal(removed.value?.code ?? null, null, removed.text);
   const applied = await call("apply_migration", { id });
@@ -278,4 +278,22 @@ test("an apply that removed a store source and stopped before writing its checko
   assert.deepEqual(applied.value.removed.map((entry) => [entry.path, labelOf(entry)]), [[SCENARIOS, "api"]]);
   assert.equal(await read(root, FEATURE_TARGET), FEATURE);
   assert.equal(typeof (await call("get_migration", { id })).value?.migration?.appliedAt, "string");
+});
+
+test("a checkout target that cannot be written keeps its store source, refuses with a migration error, and applies on a retry once it can", async (context) => {
+  const target = "docs/Features/sub/F-retry-scenarios.feature";
+  const { root, call, id, source } = await storeSourceAccepted(context, target);
+  // A regular file where the target's folder belongs, so the checkout write fails.
+  await writeFile(path.join(root, "docs/Features/sub"), "not a folder\n");
+  const failed = await call("apply_migration", { id });
+  assert.equal(failed.value?.code, "invalid_path", failed.text);
+  assert.doesNotMatch(failed.text, /EEXIST/);
+  assert.equal((await storeRead(call, SCENARIOS)).version, source.version, "the store source is kept");
+  assert.deepEqual((await readdir(path.join(root, "docs/Features"))).filter((name) => name.endsWith(".tmp")), [], "no temporary file is left");
+  assert.equal((await call("get_migration", { id })).value?.migration?.appliedAt ?? null, null);
+  await rm(path.join(root, "docs/Features/sub"));
+  const applied = await call("apply_migration", { id });
+  assert.deepEqual(applied.value?.written, [{ path: target, scope: null }], applied.text);
+  assert.deepEqual(applied.value.removed.map((entry) => [entry.path, labelOf(entry)]), [[SCENARIOS, "api"]]);
+  assert.equal(await read(root, target), FEATURE);
 });

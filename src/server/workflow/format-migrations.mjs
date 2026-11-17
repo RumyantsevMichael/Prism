@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { lstat, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { writeAtomically } from "./artifact-store.mjs";
+import { renameWhenFree, writeAtomically } from "./artifact-store.mjs";
 import { ARTIFACT_FORMATS, ARTIFACT_TYPES, inspectArtifact } from "./artifact-formats.mjs";
 import { artifactLocations, artifactTypeOf } from "./artifact-check.mjs";
 import { artifactAddress } from "./artifact-paths.mjs";
@@ -630,7 +630,7 @@ async function applyState(root, config, record) {
   content = withMigrationId(record.type, content, record.id);
   const removeSource = record.separateSource && record.answer?.removeSource === true;
   // An earlier apply that failed part way, after writing the target or removing the source, left them as this apply would: such a target and source are done, not stale, so a retry completes and records appliedAt.
-  // A store source of a checkout target is removed before the target is written, so its removal alone is done.
+  // A store source of a checkout target is removed before the target takes its name, so its removal alone is done.
   const targetDone = target.version === versionOf(Buffer.from(content, "utf8"));
   const sourceDone = removeSource && source.version === null && (targetDone || (source.store && !target.store));
   const stale = [];
@@ -685,15 +685,11 @@ export async function applyMigration({ projectRoot, id }) {
       written.push({ path: target.path, scope: entry?.scope ?? target.scope });
       for (const item of stored.filter((entry) => entry.removed)) removed.push({ path: item.path, scope: item.scope, ...(item.removedComments ? { removedComments: item.removedComments } : {}) });
     } else {
-      // A store source of a checkout target is removed first, through the store's checked update, so a store change refuses the apply before the checkout is written.
-      if (removeSource && source.store) removed.push(sourceDone ? named(source) : storeRemoved((await applyStoreRemove(root, source))[0]));
-      if (!targetDone) {
-        const file = path.join(root, target.path);
-        await checkoutFile(root, target.path);
-        await mkdir(path.dirname(file), { recursive: true });
-        await checkoutFile(root, target.path);
-        await writeAtomically(file, content);
-      }
+      // A store source of a checkout target is removed only once the target's content is written beside it, and before that content takes the target's name,
+      // so a failed checkout write keeps the store source and a store change refuses the apply before the checkout target appears.
+      const removeStore = async () => { if (removeSource && source.store) removed.push(sourceDone ? named(source) : storeRemoved((await applyStoreRemove(root, source))[0])); };
+      if (targetDone) await removeStore();
+      else await writeCheckoutTarget(root, id, target.path, content, removeStore);
       written.push({ path: target.path, scope: null });
     }
     if (removeSource && !source.store) {
@@ -704,6 +700,38 @@ export async function applyMigration({ projectRoot, id }) {
     await writeRecord(root, recordKey(id), serialize({ ...record, appliedAt, written, removed }));
     return { written, removed, acceptedBy: record.answer.by, acceptedAt: record.answer.at };
   }, fail));
+}
+
+/**
+ * Writes a checkout target through a temporary file beside it in its symlink-checked folder, and runs beforePlacing between that write and the rename that places it,
+ * so a refusal of beforePlacing or a failed write leaves the target as it was and removes the temporary file.
+ * A filesystem failure is refused with target_unwritable rather than reaching the caller as a raw error.
+ */
+async function writeCheckoutTarget(root, id, file, content, beforePlacing) {
+  const unwritable = (error) => error instanceof FormatMigrationError ? error
+    : typeof error?.code === "string" && error.syscall !== undefined
+      ? fail("target_unwritable", `${file} cannot be written in the checkout (${error.code}), so the format migration ${id} changed nothing; make its folder writable and apply it again.`, { path: file })
+      : error;
+  const parts = file.split("/").slice(0, -1);
+  try {
+    // A part of the target's folder that exists as no folder is refused before any folder is created.
+    for (let index = 1; index <= parts.length; index += 1) {
+      const info = await lstat(path.join(root, ...parts.slice(0, index))).catch((error) => { if (error.code === "ENOENT") return null; throw error; });
+      if (info === null) break;
+      if (info.isSymbolicLink()) throw fail("artifact_outside", `${file} passes through the symbolic link ${parts.slice(0, index).join("/")}, so a format migration does not read, write, or remove it.`, { path: file });
+      if (!info.isDirectory()) throw fail("invalid_path", `${parts.slice(0, index).join("/")} is no folder, so the format migration ${id} cannot write ${file} and changed nothing.`, { path: file });
+    }
+    await checkoutFile(root, file);
+    await mkdir(path.join(root, ...parts), { recursive: true });
+    await checkoutFile(root, file);
+    await writeAtomically(path.join(root, file), content, {
+      renameFile: async (from, to) => {
+        await beforePlacing();
+        await checkoutFile(root, file);
+        await renameWhenFree(from, to);
+      }
+    });
+  } catch (error) { throw unwritable(error); }
 }
 
 // A store source that a migration into the checkout removes goes through the store's own update, checked against the version the proposal read.
