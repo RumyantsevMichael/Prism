@@ -40,7 +40,9 @@ Without a path, or with a folder, `get_artifact` lists the files that the checko
 One update writes, edits, removes, or moves up to 50 files, each against the version that the agent last read, so a change that someone else made in the meantime refuses the whole update with `version_conflict` and changes nothing.
 A file holds at most 1 MiB of UTF-8 text, and a larger one is refused with `artifact_too_large`.
 A name below a configured folder begins with an ASCII letter or digit, holds only ASCII letters, digits, `.`, `_`, and `-`, does not end in `.` or `.lock`, and is no Windows device name such as `con`, `aux`, `nul`, `com1`, or `lpt1` before its first `.`, in any letter case, or Prism refuses it with `artifact_name_invalid`.
-A new file whose path differs from a file the checkout sees only in letter case is refused with `artifact_name_conflict`, and one whose place in the store would take more than 120 characters with `artifact_path_too_long`.
+A new file whose path differs from a file the checkout sees only in letter case is refused with `artifact_name_conflict`.
+A new file whose place in the store would take more than 455 bytes, or hold a name of more than 200 bytes, is refused with `artifact_path_too_long`, because the store keeps each artifact's comments in a folder named after that place and shares no path of more than 512 bytes.
+The first move of a checkout's files keeps such a file in the checkout and reports it as `path_too_long`.
 Prism's skills choose every file, folder, and identifier name within that form, with at most 100 characters in a path, in every project, so a repository checks out on Windows, macOS, and Linux alike.
 Both tools refuse a file outside these paths, such as a feature file or a test, with `not_an_artifact`, refuse in a project without a record store with `store_not_configured`, and while the store cannot be used refuse with its reason, such as `store_unavailable`, without reading or writing the checkout's copies.
 
@@ -117,6 +119,7 @@ It also shares a `README`, `README.md`, `README.txt`, `LICENSE`, `LICENSE.md`, `
 Prism uses Git in the store only to keep these files' bytes: the clone and every sync write each file as the remote's branch holds it, and every commit holds each file as it is on disk.
 So no `.gitignore` or `.gitattributes` line, in the store or in your Git configuration, and no line-ending setting such as `core.autocrlf`, changes what Prism commits, merges, or writes.
 Prism runs each Git command in the store with `core.autocrlf=false`, `core.eol=lf`, `core.safecrlf=false`, `core.longpaths=true`, and an empty `core.attributesFile` and `core.excludesFile` for that command only, without changing your Git configuration.
+On Windows, a store path can pass 260 characters, so a Git command that you run yourself in a store folder needs `git config core.longpaths true` in that folder, which a managed clone already has.
 Your Git configuration, the variables Prism's process inherits, and the store's own refs also never change what Prism checks or pushes:
 
 - Every Git command in the store reads the objects themselves, so a replace ref, a `.git/info/grafts` file, a commit-graph file, or a reachability bitmap never makes Prism check other objects than those the push sends.

@@ -107,6 +107,26 @@ export const STORE_PATH_BYTES_MAX = 512;
 /** Whether every machine Prism supports can write a store-relative path and the temporary file beside it: each name holds at most STORE_NAME_BYTES_MAX bytes and the path at most STORE_PATH_BYTES_MAX. */
 export const storePathFits = (file) => Buffer.byteLength(file) <= STORE_PATH_BYTES_MAX && file.split("/").every((name) => Buffer.byteLength(name) <= STORE_NAME_BYTES_MAX);
 
+// The longest store path that Prism derives from an artifact's location is a comment's, artifact-comments/<location>/<time>-<random suffix>.json, whose name holds 38 bytes,
+// so a location fits when that path does: its whole path holds at most ARTIFACT_LOCATION_BYTES_MAX bytes and each of its names at most STORE_NAME_BYTES_MAX.
+// Prism runs every Git command in a store with core.longpaths, so Windows' old 260-character limit bounds no store path.
+const COMMENT_NAME_BYTES = "2026-01-01T00-00-00-000Z-0123abcd.json".length;
+export const ARTIFACT_LOCATION_BYTES_MAX = STORE_PATH_BYTES_MAX - `${ARTIFACT_COMMENTS}/`.length - `/${"x".repeat(COMMENT_NAME_BYTES)}`.length;
+
+/** Whether a store shares every file Prism keeps for an artifact at a location below artifacts/: the artifact, its identity, its status record, and its comments. */
+export const locationFits = (location) => storePathFits(`${ARTIFACT_COMMENTS}/${location}/${"x".repeat(COMMENT_NAME_BYTES)}`);
+
+/** Why a location does not fit, as a phrase that follows the location, or null when it fits. */
+export function locationExcess(location) {
+  const long = location.split("/").find((name) => Buffer.byteLength(name) > STORE_NAME_BYTES_MAX);
+  if (long !== undefined) return `holds a name of ${Buffer.byteLength(long)} bytes, above the ${STORE_NAME_BYTES_MAX} that a name in the store may hold`;
+  const bytes = Buffer.byteLength(location);
+  return bytes > ARTIFACT_LOCATION_BYTES_MAX ? `holds ${bytes} bytes, above the ${ARTIFACT_LOCATION_BYTES_MAX} that a location may hold` : null;
+}
+
+/** The data of an artifact_path_too_long refusal of a location. */
+export const locationLimits = (location) => ({ location, limit: ARTIFACT_LOCATION_BYTES_MAX, nameLimit: STORE_NAME_BYTES_MAX });
+
 /** Whether one path component follows the artifact name form. */
 export const wellFormedName = (name) => NAME_FORM.test(name) && portableName(name) && !LOCK_ENDING.test(name);
 

@@ -249,25 +249,63 @@ test("clause 28: a checkout file whose path collides in letter case with a store
   assert.deepEqual(stored.filter((entry) => /notes\.md$|shared\.md$/i.test(entry)), ["requirements/Shared.md"], "no colliding path reached the store");
 });
 
-test("clause 28: a checkout file whose location in the repository's scope would hold more than 120 characters stays in the checkout and is reported as path_too_long", async (context) => {
+// A path below docs/plans/reports/ whose location in api's repository scope holds length bytes, in folders of 99 characters each.
+const reportsAt = (length, letter = "f") => {
+  let rest = length - "repositories/api/plans/reports/".length - ".md".length;
+  const names = [];
+  for (; rest > 100; rest -= 100) names.push(letter.repeat(99));
+  return `docs/plans/reports/${[...names, letter.repeat(rest)].join("/")}.md`;
+};
+
+// A checkout that holds these paths needs Git's core.longpaths on Windows, as any repository with them does, so the checkout turns it on before it commits them.
+async function longPathCheckout(place, files) {
+  const api = await checkout(place, "api");
+  git(api, "config", "core.longpaths", "true");
+  await commitFiles(api, files);
+  return api;
+}
+
+test("clause 28: a checkout file whose location in the repository's scope would hold more than 455 bytes, or a name of more than 200, stays in the checkout and is reported as path_too_long", async (context) => {
   const place = await workspace(context);
-  // "repositories/api/plans/reports/" takes 31 characters of the location, so an 89-character name makes it 120.
-  const fits = `docs/plans/reports/${"f".repeat(86)}.md`;
-  const long = `docs/plans/reports/${"l".repeat(87)}.md`;
-  const api = await checkout(place, "api", { files: { [fits]: "# Fits\n", [long]: "# Long\n" } });
+  // 455 bytes keep a comment's path, 57 bytes longer, within the 512 bytes a store shares.
+  const fits = reportsAt(455, "f");
+  const long = reportsAt(456, "l");
+  const wide = `docs/plans/reports/${"w".repeat(198)}.md`;
+  assert.equal(`repositories/api/${fits.replace(/^docs\//, "")}`.length, 455);
+  const api = await longPathCheckout(place, { [fits]: "# Fits\n", [long]: "# Long\n", [wide]: "# Wide\n" });
   const prism = await server(context, place, api);
   const access = await prism.call("get_artifact", {});
   assert.deepEqual(ok(access).artifacts.map((entry) => entry.path), [fits]);
-  assert.equal(await text(scoped(place.store, fits.replace(/^docs\//, ""))), "# Fits\n", "a file whose location holds 120 characters moves");
+  assert.equal(await text(scoped(place.store, fits.replace(/^docs\//, ""))), "# Fits\n", "a file whose location holds 455 bytes moves");
   assert.equal(await exists(path.join(api, fits)), false);
-  assert.equal(await text(path.join(api, long)), "# Long\n", "the longer file stays in the checkout with its bytes");
-  assert.equal(await exists(scoped(place.store, long.replace(/^docs\//, ""))), false);
+  for (const file of [long, wide]) {
+    assert.equal(await text(path.join(api, file)), file === long ? "# Long\n" : "# Wide\n", "the longer file stays in the checkout with its bytes");
+    assert.equal(await exists(scoped(place.store, file.replace(/^docs\//, ""))), false);
+  }
   const report = notes(access);
   assert.match(report, /path_too_long/);
   assert.ok(report.includes(long), "the report names the checkout path");
   assert.ok(report.includes(`repositories/api/${long.replace(/^docs\//, "")}`), "the report names the location it would take");
+  assert.match(report, /holds 456 bytes, above the 455/);
+  assert.match(report, /a name of 201 bytes, above the 200/);
   const [ledger] = await ledgerFiles(place.store);
   assert.ok(JSON.stringify(ledger).includes(long), "the ledger lists the file as kept");
+});
+
+test("a checkout file that an earlier move kept as path_too_long under a shorter limit moves on a later first access once its location fits", async (context) => {
+  const place = await workspace(context);
+  // A location of 200 bytes, which an earlier limit of 120 characters kept in the checkout.
+  const file = reportsAt(200, "e");
+  const api = await longPathCheckout(place, { [file]: "# Kept earlier\n" });
+  await mkdir(path.join(place.store, "artifact-migrations"), { recursive: true });
+  const kept = { schemaVersion: 1, repository: "api", migratedAt: "2026-11-16T10:00:00.000Z", moved: [], kept: [{ path: file, reason: "path_too_long", location: `repositories/api/${file.replace(/^docs\//, "")}` }] };
+  await writeFile(path.join(place.store, "artifact-migrations", "2026-11-16T10-00-00-000Z-0123abcd.json"), `${JSON.stringify(kept, null, 2)}\n`);
+  const prism = await server(context, place, api);
+  const access = await prism.call("get_artifact", {});
+  assert.deepEqual(ok(access).artifacts.map((entry) => entry.path), [file]);
+  assert.equal(await text(scoped(place.store, file.replace(/^docs\//, ""))), "# Kept earlier\n", "the store takes the file");
+  assert.equal(await exists(path.join(api, file)), false, "the checkout file is removed once the store holds it");
+  assert.doesNotMatch(notes(access), /path_too_long/);
 });
 
 const migrationNote = (report) => report.split("\n");
