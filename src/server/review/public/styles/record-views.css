@@ -1423,6 +1423,12 @@ a.code-link:hover {
   padding: 0 var(--prism-space-3);
 }
 
+/* A library page narrowed by the scope filter says so under its count, wrapping long scope lists within the page. */
+.library-narrowed {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 /* A link that names no store artifact keeps its text and says so beside it, wrapping within the line's width. */
 .doc-link-unresolved {
   display: inline-flex;
@@ -1560,4 +1566,9 @@ a.code-link:hover {
 
 .library-table.is-diagrams {
   --prism-lib-columns: minmax(0, 2fr) 140px minmax(0, 2fr);
+}
+
+/* A glossary row gives the meaning most of the width, since it is the longest text. */
+.library-table.is-glossary {
+  --prism-lib-columns: minmax(0, 1fr) minmax(0, 3fr) minmax(0, 1.2fr);
 }

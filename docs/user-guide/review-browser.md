@@ -59,10 +59,12 @@ The page and its count follow edits to the slice's design and new passing verifi
 A merge commit counts the files it changed against its first parent, so a branch merged this week counts at the merge's time and author even when its own commits are older.
 When the project is not a Git repository, has no commit yet, or Git cannot be run, the page says `Change history is unavailable:` with the reason, lists the records it could not date, and the sidebar shows no count for **Changed this week**.
 **Diagrams** lists every PlantUML file of the plans and decisions folders by the name after `@startuml`, or by its file name, with what it draws, such as `Sequence`, `Class`, or `Code view`, and what it belongs to as a link: the initiative and slice whose folder holds it, the initiative, or the decision beside it.
-**Requirements**, **Decisions**, and **Diagrams** each show one table with a filter and a **Group by** choice above it, and the review app keeps each page's grouping among your preferences.
+**Requirements**, **Decisions**, **Glossary**, and **Diagrams** each show one table with a filter and a **Group by** choice above it, and the review app keeps each page's grouping among your preferences.
+In a workspace whose store holds more than one scope, each of these pages also groups by **Scope**, which it does until you choose another grouping, and a row names its scope in a chip only while the page groups some other way.
 **Requirements** lists each requirements file with how many requirements it holds, its status, the date it was approved or created, and one link for each slice that builds it with the requirements that slice builds, such as `req 1, 2`, and groups by **Status**, **Area**, the subfolder that holds the file, **Initiative**, or **None**.
 **Decisions** lists each decision with what it supersedes or what superseded it, read from its `Supersedes:` line, its status, its date, and what it applies to: the requirements files its `Requirements` section links and the initiatives whose slice designs link it, and groups by **Area**, **Status**, **Initiative**, or **None**.
 **Diagrams** groups by **Belongs to**, **Kind**, or **None**.
+**Glossary** lists each term with its meaning, one glossary per scope in a workspace, and a term that another scope's glossary also defines shows that scope in a chip with `also defines it`; it groups by **Scope** or **None**.
 The filter keeps the rows whose title, status, or links hold every word you type, and Escape clears it.
 Typing two or more characters in the search replaces the groups with the matching requirements, decisions, glossary terms, and diagrams, grouped by kind and at most 20 of each, titles that hold the text first.
 A record matches when every word you type occurs in its title or its text, ignoring case, and a glossary term opens the Glossary.
@@ -71,7 +73,7 @@ Clearing the field or pressing Esc in it brings the groups back.
 It says `Nothing has shipped yet.` while there is none.
 Choosing any other place leaves the open page as it is, and the place stays while you change tabs, follow links, use the palette, or go back.
 The browser remembers the current place, so a reload or a new window shows it again, and an address with `place=work`, or another place's name, chooses that place.
-An address that opens a store artifact or a code file and names no place opens Knowledge, whose sidebar holds the store's scopes and the scope filter.
+An address that opens a store artifact or a code file and names no place opens Knowledge, whose sidebar holds the scope filter.
 The page bar's trail starts with the place of the open page, and choosing that crumb makes the place current without leaving the page.
 An initiative's row shows its state as a round glyph and its shipped leaf slices out of all, such as `0/4`.
 Expanded, it lists at most five of its unfinished slices, each with a triangle in the color of its phase, its holder, and `Blocked` when it is blocked: the slice you have open first, then those in progress or claimed, then blocked ones, then the rest.
@@ -503,13 +505,14 @@ When an agent presents a review for another project while a tab that can make ch
 ### Every scope in one view
 
 A workspace's page shows the artifacts of every scope its store holds together: the workspace, each repository, and each repository's components, also the repositories with no checkout on this machine.
-The **Store** section at the foot of the sidebar lists each scope by its label, `workspace`, the repository, or `<repository>/<component>`, with its count of artifacts, and each scope opens to list its artifacts by their place in it, such as `requirements/billing.md`.
-A scope lists its first 50 artifacts there, and the Jump palette finds every other one.
+Knowledge's **Scopes** section, below its search field, shows one chip for each scope by its label, `workspace`, the repository, or `<repository>/<component>`, with its count of artifacts, while the store holds more than one scope.
+**Browse by kind** counts and lists the artifacts of every scope, and the Jump palette finds each of them.
 Each store artifact's page names its scope in a label beside its heading and in its Review card, and shows its place in the store, such as `repositories/api/requirements/billing.md`.
 The page names a store artifact by that place, `store:<location>`, in its tabs, links, and address, never by a checkout's path, so one link opens the same file from every checkout and from a workspace with no checkout.
 A link or tab that still names a checkout's path opens the store artifact at that path.
 
-The scope chips above the list are the scope filter: select one or more scopes to show only their artifacts in the sidebar and the Jump palette, select a chosen chip again to drop it, and select **All scopes** to show every scope again.
+The scope chips are the scope filter: select one or more scopes to show only their artifacts in the counts of **Browse by kind**, Knowledge's search, the library pages, and the Jump palette, select a chosen chip again to drop it, and select **All scopes** to show every scope again.
+While the filter narrows, the section reads, for example, `Scopes · 2 of 4`, and a library page counts its rows as `2 of 5 requirements files` and says `Narrowed to api and web.` with a **Show all scopes** link that shows every scope again.
 The filter stays in the page's address as `scopes=<label>,<label>`, so it survives a reload and a shared link, and it never changes the workspace the page shows.
 
 A relative Markdown link in a store artifact opens the artifact it names, looked for first beside the artifact's place in the store, and then at the path the link names from the file's checkout path, as a checkout of its repository on this machine configures its folders, or as Prism's default folders do without one, in the file's own scope or else the workspace scope.
@@ -523,7 +526,7 @@ A link that names no artifact and no file keeps its text and shows **link not fo
 An image, a link inside a fenced code block of backticks or tildes, and a link inside inline code are not links.
 The Jump palette lists each store artifact once, names its scope in its row, and finds only the artifacts of the scopes the filter shows.
 
-A store that holds no artifacts yet, because no Prism session moved a checkout's files into it, shows a note in the **Store** section that names its repositories and says that each keeps its artifacts in its checkouts until a Prism session there moves them into the store.
+A store that holds no artifacts yet, because no Prism session moved a checkout's files into it, shows a note in Knowledge's sidebar that names its repositories and says that each keeps its artifacts in its checkouts until a Prism session there moves them into the store.
 
 ### Code content
 
