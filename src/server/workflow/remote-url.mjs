@@ -141,9 +141,17 @@ export function legacyStoresDirectory(env = process.env) {
   return data ? path.join(path.resolve(data), "stores") : null;
 }
 
-/** Text without the user information of any URL in it, so a Git message never carries a credential. */
+/** Text without the user information, query, or fragment of any URL in it, so a Git message never carries a credential. */
 export function withoutCredentials(text) {
-  return typeof text === "string" ? text.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^/\s@'"]*@/gi, "$1") : text;
+  if (typeof text !== "string") return text;
+  // A URL runs to whitespace or a quote, as Git quotes it; its user information runs to the last '@' before the path, since a password may hold an '@' or a '?'.
+  return text.replace(/\b([a-z][a-z0-9+.-]*:\/\/)([^\s'"`<>]*)/gi, (whole, scheme, rest) => {
+    const slash = rest.indexOf("/");
+    const authority = slash < 0 ? rest : rest.slice(0, slash);
+    const afterUser = rest.slice(authority.lastIndexOf("@") + 1);
+    // Everything from the first '?' or '#' to the end of the URL can carry a token, and Git needs neither to name the remote.
+    return `${scheme}${afterUser.replace(/[?#].*$/s, "")}`;
+  });
 }
 
 // The form storeIdentity routes a remote value by, checked in its order: a network URL by its scheme, then a file:// URL, then the scp form; null for a file:// URL or a folder.
