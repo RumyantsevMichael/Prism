@@ -20,6 +20,8 @@ const CONTRACT = "# Signed reports\n\n## Contract\n1. Downloads write the report
 const SOURCES = {
   sequence: "@startuml\nparticipant Client\nparticipant Server\nClient -> Server: download\nServer --> Client: bytes\n@enduml\n",
   actors: "@startuml\nactor Person\ndatabase Store\nPerson -> Store: read\n@enduml\n",
+  blocks: "@startuml\nparticipant Client\nparticipant Server\nalt known id\n  Client -> Server: download\nelse unknown id\n  Server --> Client: exit 2\nend\nloop each chunk\n  Server --> Client: bytes\nend\nopt audit\n  Server -> Server: record\nend\npar\n  Client -> Server: ping\nelse\n  Server -> Client: pong\nend\ngroup retry\n  Client -> Server: download\nend\ncritical\n  Server -> Server: sign\nend\nbreak timeout\n  Server --> Client: abort\nend\n@enduml\n",
+  edges: "@startuml\nparticipant Server\n[-> Server: download [id]\n[o-> Server: retry [id]\nServer ->] : bytes\n@enduml\n",
   activity: "@startuml\nstart\n:read the id;\nif (known?) then (yes)\n  :write bytes;\nelse (no)\n  :exit 2;\nendif\nstop\n@enduml\n",
   state: "@startuml\n[*] --> Requested\nRequested --> Written : found\nWritten --> [*]\n@enduml\n",
   component: "@startuml\ncomponent \"cli\" as cli\ninterface \"report API\" as api\ncli --> api\n@enduml\n",
@@ -28,6 +30,8 @@ const SOURCES = {
   deployment: "@startuml\nnode \"laptop\" {\n  artifact \"report cli\" as cli\n}\ncloud \"report store\" as store\ncli --> store\n@enduml\n",
   c4deployment: "@startuml\n!include <C4/C4_Deployment>\nDeployment_Node(laptop, \"laptop\") {\n  Container(cli, \"report cli\", \"node\")\n}\n@enduml\n",
   class: "@startuml\nclass ReportSource\nclass Client\nReportSource --> Client\n@enduml\n",
+  grouped: "@startuml\npackage reports {\n  class Report\n  class Download\n}\nReport --> Download\n@enduml\n",
+  relations: "@startuml\nentity Report\nentity Download\nReport ||--o{ Download\n@enduml\n",
   entity: "@startuml\nentity Report {\n  id : string\n}\nentity Download {\n  at : time\n}\nReport ||--o{ Download\n@enduml\n",
   mindmap: "@startmindmap\n* reports\n** download\n@endmindmap\n",
   api: `${JSON.stringify({ openapi: "3.1.0", info: { title: "Reports", version: "1" }, paths: {} })}\n`
@@ -60,10 +64,11 @@ async function proposeView(root, declared, source) {
 }
 
 const ACCEPTED = [
-  ["sequence", "sequence"], ["sequence", "actors"], ["activity", "activity"], ["state", "state"],
+  ["sequence", "sequence"], ["sequence", "actors"], ["sequence", "blocks"], ["sequence", "edges"], ["activity", "activity"], ["state", "state"],
   ["component", "component"], ["component", "bracketed"], ["component", "c4"], ["component", "deployment"],
   ["deployment", "deployment"], ["deployment", "c4deployment"],
-  ["code", "class"], ["code", "component"], ["code", "c4"], ["data-model", "entity"], ["data-model", "class"], ["api", "api"]
+  ["code", "class"], ["code", "component"], ["code", "c4"], ["data-model", "entity"], ["data-model", "class"],
+  ["data-model", "grouped"], ["code", "grouped"], ["data-model", "relations"], ["api", "api"]
 ];
 
 test("clause 7: a view whose source draws its declared kind is accepted with that kind", async (context) => {
@@ -80,8 +85,8 @@ test("clause 7: a view whose source draws its declared kind is accepted with tha
 });
 
 const REFUSED = [
-  ["activity", "sequence", "sequence"], ["sequence", "activity", "activity"], ["sequence", "state", "state"],
-  ["deployment", "component", "component"], ["component", "class", "class"], ["data-model", "component", "component"],
+  ["activity", "sequence", "sequence"], ["activity", "blocks", "sequence"], ["component", "edges", "sequence"], ["sequence", "activity", "activity"], ["sequence", "state", "state"],
+  ["deployment", "component", "component"], ["component", "class", "class"], ["data-model", "component", "component"], ["component", "grouped", "class"],
   ["wireframe", "sequence", "sequence"], ["component", "mindmap", "mindmap"], ["api", "sequence", "sequence"], ["sequence", "api", "api"]
 ];
 
