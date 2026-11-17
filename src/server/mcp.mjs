@@ -1444,7 +1444,7 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
   // A decided move, the call's own or one that a refused, cancelled, or background call left, removes the checkout's files only here, right before a result of a tool call of the checkout is written,
   // so the result that follows names every file it removed; a refused or cancelled call never gets here and removes nothing.
   await finishUnfinishedMoves(call.roots, { proceed, writes: call.writes }).catch(() => {});
-  const reports = takeMigrationReports(call.roots);
+  const reports = await takeMigrationReports(call.roots);
   if (!reports.length && !taken.length) return none;
   const lines = [];
   // Each move of a checkout's artifacts is a text item of its own, after the other notes, so its bound and its closing line are its own.
