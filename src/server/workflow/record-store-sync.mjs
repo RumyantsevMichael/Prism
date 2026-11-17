@@ -1033,6 +1033,8 @@ async function layoutId() {
 
 /** Record that the disk holds the shared files of commit, as this version of Prism writes them. */
 async function recordDiskCommit(base, commit) {
+  // A record that already names the commit is left as it is, so a sync that changes nothing writes nothing that a watcher of the store could take for a change.
+  if (await readDiskCommit(base) === commit) return;
   await mkdir(syncPath(base), { recursive: true });
   await writeAtomically(syncPath(base, DISK_RECORD), `${JSON.stringify({ commit, layout: await layoutId() })}\n`);
 }
