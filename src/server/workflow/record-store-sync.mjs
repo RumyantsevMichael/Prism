@@ -143,10 +143,50 @@ const syncPath = (base, ...parts) => path.join(base, SYNC_DIRECTORY, ...parts);
 // The pending notices of saved conflicts, one per conflict stamp, which tool results clear once they carry them.
 const NOTICES = "notices";
 
+// How each SSH variant that Git names is told never to ask, added after the person's own options, which an SSH client reads first.
+// Git already passes -batch to TortoisePlink, and a program whose variant Git only finds by probing it may take no options at all, so neither gets one.
+const NO_PROMPT_OPTION = { ssh: "-o BatchMode=yes", plink: "-batch", putty: "-batch" };
+
+// The variant Git gives an SSH program, from GIT_SSH_VARIANT or else from the program's name, as Git's connect.c decides it.
+function sshVariant(env, program) {
+  const named = env.GIT_SSH_VARIANT?.toLowerCase();
+  if (named) return named;
+  const name = program.split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, "");
+  return ["ssh", "plink", "tortoiseplink"].includes(name) ? name : "auto";
+}
+
+// The first word of a shell command line, with the quotes that Git's split_cmdline reads taken off.
+function firstWord(command) {
+  let word = "";
+  let quote = null;
+  for (let at = command.trimStart(), index = 0; index < at.length; index += 1) {
+    const char = at[index];
+    if (quote) {
+      if (char === quote) quote = null;
+      else if (char === "\\" && quote === '"' && index + 1 < at.length) word += at[++index];
+      else word += char;
+    } else if (char === "'" || char === '"') quote = char;
+    else if (/\s/.test(char)) break;
+    else if (char === "\\" && index + 1 < at.length) word += at[++index];
+    else word += char;
+  }
+  return word;
+}
+
+// An SSH password, passphrase, or host-key prompt would hang a sync that holds the store lock, or a background fetch nobody watches,
+// so the SSH command Git runs is the person's own GIT_SSH_COMMAND or GIT_SSH with its variant's batch option added, or plain SSH in batch mode.
+function sshEnvironment(env) {
+  const command = env.GIT_SSH_COMMAND;
+  // GIT_SSH names a program that Git runs without a shell, so it becomes a quoted command line that the option can follow.
+  const line = command || (env.GIT_SSH ? `'${env.GIT_SSH.replaceAll("'", "'\\''")}'` : "");
+  if (!line) return { GIT_SSH_COMMAND: `ssh ${NO_PROMPT_OPTION.ssh}` };
+  const option = NO_PROMPT_OPTION[sshVariant(env, command ? firstWord(command) : env.GIT_SSH)];
+  return option ? { GIT_SSH_COMMAND: `${line} ${option}` } : {};
+}
+
 function gitEnvironment(extra = {}) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !INHERITED_OUT.test(name)));
-  // An SSH password or host-key prompt would hang a sync that holds the store lock, so SSH never asks unless the user configured it.
-  const ssh = env.GIT_SSH_COMMAND || env.GIT_SSH ? {} : { GIT_SSH_COMMAND: "ssh -o BatchMode=yes" };
+  const ssh = sshEnvironment(env);
   // The system attributes file, like the person's own and the store's, never decides which bytes a store command hands over.
   // A replace ref, which pack-objects and push ignore, would make the checks read other objects than the push sends, and a grafts file other parents than every other machine reads,
   // so every store command reads the real objects and parents instead: /dev/null, which Git for Windows also opens, holds no graft,
