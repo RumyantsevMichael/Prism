@@ -104,6 +104,23 @@ test("a source folder replaced by a link after the proposal is refused at apply,
   assert.equal(await exists(path.join(root, AUDIT)), false, "the target is not written");
 });
 
+test("a Draft source cannot be proposed as Approved through a word or a date found elsewhere in the source", async (context) => {
+  const source = "# Audit log\n\nStatus: Draft\nCreated: 2026-08-01\nApproved: n/a\n\n## 1\n\nThe system shall record every administrative action.\n";
+  const { call } = await formatServer(context, { ...CONFORMING, [AUDIT]: source });
+  const result = await call("propose_migration", proposal(AUDIT, AUDIT, { content: content({ status: "Approved", approved: "2026-08-01" }) }));
+  assert.equal(result.value?.code, "migration_invented", result.text);
+  assert.deepEqual(result.value.statements.map((statement) => statement.text).sort(), ["2026-08-01", "Approved"]);
+});
+
+test("a content statement cut from a longer source sentence is invented, even with the whole sentence listed as a leftover", async (context) => {
+  const full = "The system shall record every administrative action only after a person confirms it.";
+  const { call } = await formatServer(context, { ...CONFORMING, [AUDIT]: `# Audit log\n\nStatus: Draft\nCreated: 2026-08-01\n\n## 1\n\n${full}\n` });
+  const cut = "The system shall record every administrative action";
+  const result = await call("propose_migration", proposal(AUDIT, AUDIT, { content: content({ requirement: cut }), leftovers: [{ statement: full, home: "Dropped" }] }));
+  assert.equal(result.value?.code, "migration_invented", result.text);
+  assert.deepEqual(result.value.statements.map((statement) => statement.text), [cut]);
+});
+
 test("a wait on a pending migration whose record cannot be read is refused rather than ended as unknown or resolved", async (context) => {
   const { root, call } = await formatServer(context, { ...CONFORMING, [AUDIT]: DRAFT_SOURCE });
   const proposed = await call("propose_migration", proposal(AUDIT, AUDIT));

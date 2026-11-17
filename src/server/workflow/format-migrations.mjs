@@ -262,14 +262,16 @@ function sourceStatements(type, text) {
 }
 
 // Whether a content statement needs no source: the format's structure, a default, unknown, a link, a glossary source, or a date that the source or its Git history gives.
-function needsNoSource(type, statement, { dates, sourceText }) {
+// A Status value needs no source when it is the type's new status or the status a source or target records or states; a date when the source's Git history gives it or a source or target states it in the same field.
+function needsNoSource(type, statement, { dates, known }) {
   const value = normalizeStatement(statement.text);
   const raw = statement.text.trim();
   if (!value || value === UNKNOWN || value === "n/a") return true;
   const defaults = formatOf(type).defaults;
   if (statement.field && defaults[statement.field] === value) return true;
-  if (statement.field === "Status") return value === (newStatus(STORE_KINDS[type]) ?? value) || sourceText.includes(`Status: ${value}`);
-  if (statement.field && DATE_FIELDS.has(statement.field) && DATE.test(value)) return dates.has(value) || sourceText.includes(value);
+  if (statement.field === "Status") return value === newStatus(STORE_KINDS[type]) || known.some((artifact) => artifact.status === value || headerValue(artifact.text, "Status") === value);
+  if (statement.field && DATE_FIELDS.has(statement.field)) return DATE.test(value) && (dates.has(value) || known.some((artifact) => headerValue(artifact.text, statement.field) === value));
+  if (statement.field && DECISION_FIELDS.has(statement.field)) return false;
   if (statement.field && LINK_LIST.test(raw)) return true;
   if (type === "glossary" && statement.field === "Source" && /^(?:migration(?:\s+migration-[0-9a-f]+)?|\[[^\]]*\]\([^)\s]+\))(\s*,\s*(?:migration(?:\s+migration-[0-9a-f]+)?|\[[^\]]*\]\([^)\s]+\)))*$/.test(raw)) return true;
   return false;
@@ -489,12 +491,13 @@ export async function proposeMigration(input) {
     throw fail("migration_unaccounted", `${unaccounted.length === 1 ? "A statement" : `${unaccounted.length} statements`} of ${label(source)} ${unaccounted.length === 1 ? "occurs" : "occur"} in neither the content, a leftover, nor a conflict: ${unaccounted.map((statement) => `line ${statement.line}: ${JSON.stringify(statement.text)}`).join("; ")}. Place each one, or list it as a leftover with its proposed home.`, { statements: unaccounted.map(({ text, line }) => ({ text, line })) });
   }
 
-  // No statement of the content or a conflict is invented: each occurs in the source or an existing target.
-  const known = [normalizedSource, ...(existing ? [normalizeStatement(existing.text)] : [])];
-  const dates = source.store ? new Set() : await historyDates(root, source.path);
-  if (source.store) for (const date of await historyDates(root, source.path)) dates.add(date);
+  // No statement of the content or a conflict is invented: each is a statement of the source or an existing target, compared statement to statement,
+  // and a field that records a decision passes only by the rules of needsNoSource.
+  const knownArtifacts = [source, ...(existing ? [existing] : [])];
+  const knownStatements = new Set(knownArtifacts.flatMap((artifact) => statementsOf(type, artifact.text)).map((statement) => normalizeStatement(statement.text)));
+  const dates = await historyDates(root, source.path);
   const invented = [content, ...conflicts.map((conflict) => conflict.source)].flatMap((text) => statementsOf(type, text))
-    .filter((statement) => !needsNoSource(type, statement, { dates, sourceText: known.join("\n") }) && !known.some((text) => text.includes(normalizeStatement(statement.text))));
+    .filter((statement) => !needsNoSource(type, statement, { dates, known: knownArtifacts }) && (DECISION_FIELDS.has(statement.field) || !knownStatements.has(normalizeStatement(statement.text))));
   if (invented.length) {
     throw fail("migration_invented", `${invented.length === 1 ? "A statement" : `${invented.length} statements`} of the content ${invented.length === 1 ? "occurs" : "occur"} in neither ${label(source)} nor the target: ${invented.map((statement) => `line ${statement.line}: ${JSON.stringify(statement.text)}`).join("; ")}. Write only what the source says, and mark a value that neither the source nor its Git history gives as unknown.`, { statements: invented.map(({ text, line }) => ({ text, line })) });
   }
