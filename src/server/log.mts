@@ -1,5 +1,5 @@
 import path from "node:path";
-import os from "node:os";
+import { reviewAppDirectory } from "./review/review-app-discovery.mjs";
 import { appendFile, mkdir, rename, stat } from "node:fs/promises";
 import { isMainThread, threadId } from "node:worker_threads";
 
@@ -19,11 +19,7 @@ export const STALL_MS = 1000;
 /** The Prism app folder, as the review app resolves it; PRISM_LOG_DIR moves only the log. */
 export function logDirectory(env: NodeJS.ProcessEnv = process.env) {
   if (env.PRISM_LOG_DIR) return path.resolve(env.PRISM_LOG_DIR);
-  const app = env.PRISM_REVIEW_APP_DIR ? path.resolve(env.PRISM_REVIEW_APP_DIR)
-    : process.platform === "darwin" ? path.join(os.homedir(), "Library", "Application Support", "Prism")
-      : process.platform === "win32" ? path.join(env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "Prism")
-        : path.join(env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"), "prism");
-  return path.join(app, "logs");
+  return path.join(reviewAppDirectory(env), "logs");
 }
 
 function threshold(env: NodeJS.ProcessEnv = process.env) {
