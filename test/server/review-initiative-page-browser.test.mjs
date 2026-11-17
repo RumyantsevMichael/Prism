@@ -81,6 +81,33 @@ test("the run totals and Launch open popovers, and Launch offers both hosts with
   assert.deepEqual(page.errors, []);
 });
 
+test("a long reason or error under a launch never squeezes the host's name in the narrow Launch popover", { skip, timeout: 60000 }, async (context) => {
+  const { base, browser } = await placesDemo(context);
+  const page = await open(browser, base, INITIATIVE);
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.locator("#artifact [data-page-end]").getByRole("button", { name: "Launch", exact: true }).click();
+  const launcher = page.getByRole("dialog", { name: "Launch an orchestration" });
+  await launcher.waitFor();
+  // Reasons and errors come from the machine, such as a refused confirmation or a session already running, and can be any length.
+  const long = "This computer cannot show a confirmation outside the browser: no graphical display (DISPLAY or WAYLAND_DISPLAY) is set for the review app.";
+  const widths = await launcher.evaluate((root, text) => [...root.querySelectorAll(".action-row")].map((row) => {
+    const note = row.querySelector(".action-reason") ?? row.querySelector(".action-error");
+    note.hidden = false;
+    note.textContent = text;
+    const label = row.querySelector(".action-label");
+    const probe = document.createElement("span");
+    probe.style.cssText = "position:absolute;visibility:hidden;white-space:nowrap";
+    probe.textContent = label.textContent.split(/\s+/).reduce((a, b) => (a.length >= b.length ? a : b));
+    label.append(probe);
+    const longestWord = probe.getBoundingClientRect().width;
+    probe.remove();
+    return { label: label.textContent, width: label.getBoundingClientRect().width, longestWord };
+  }), long);
+  assert.equal(widths.length, 2, "both hosts are listed");
+  for (const { label, width, longestWord } of widths) assert.ok(width >= longestWord, `"${label}" keeps whole words (${width}px for a ${longestWord}px word)`);
+  assert.deepEqual(page.errors, []);
+});
+
 test("review-app-actions §1, §5: Settings gathers the initiative's settings in one dialog that applies every change at once, and Cancel or Escape discards them", { skip, timeout: 90000 }, async (context) => {
   const page = await writablePage(context);
   const open = () => page.locator("#artifact [data-page-end]").getByRole("button", { name: "Settings", exact: true }).click();
