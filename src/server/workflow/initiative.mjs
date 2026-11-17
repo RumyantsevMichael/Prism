@@ -526,14 +526,22 @@ function markdown(record) {
 
 // Requirement files cite obligations as <file>.md§<n>, so that form is accepted and stored as <requirements dir>/<file>.md#<n>.
 // The roadmap validates its references the same way, so an initiative created from a roadmap item never refuses them.
+// The path of a reference is a normalized project-relative path, as a frozen test path is, so a reference names its file in exactly one way and every check of the file finds it.
 export function normalizeRequirementReference(requirementsDirectory, reference) {
   const cited = /^([^\s/#§]+\.md)§([^\s#§]+)$/.exec(reference);
   if (cited && requirementsDirectory) return { reference: `${requirementsDirectory}/${cited[1]}#${cited[2]}` };
   if (!/^[^\s#]+#[^\s#]+$/.test(reference)) {
     return { problem: `Invalid requirement reference ${JSON.stringify(reference)}: use <requirements path>.md#<number>, such as ${requirementsDirectory ?? "docs/requirements"}/capability.md#1, or <file>.md§<number>.` };
   }
+  const file = reference.split("#")[0];
+  if (!normalizedRelative(file)) {
+    return { problem: `Invalid requirement reference ${JSON.stringify(reference)}: its path must be a normalized project-relative path, such as ${requirementsDirectory ?? "docs/requirements"}/capability.md#1, without ./, .., or repeated slashes.` };
+  }
   return { reference };
 }
+
+const normalizedRelative = (file) => !file.includes("\\") && !path.posix.isAbsolute(file) && !/^[A-Za-z]:/.test(file)
+  && path.posix.normalize(file) === file && file !== ".." && !file.startsWith("../");
 
 function normalizeRequirements(resolved, references) {
   return references.map((reference) => {
