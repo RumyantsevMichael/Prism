@@ -403,8 +403,10 @@ export async function proposeMigration(input) {
   const sourceInStore = hasStore && storePath(config, given.source.path);
   const source = await readArtifact(root, config, given.source, { store: sourceInStore });
   if (source.text === null) throw fail("artifact_missing", `The source ${label(source)} does not exist.`, { path: source.path });
-  const inPlace = given.source.path === given.target.path && sourceInStore === targetInStore;
-  const target = inPlace ? source : await readArtifact(root, config, given.target, { store: targetInStore, kind: targetInStore ? STORE_KINDS[type] : undefined });
+  // Only a target named as the source is, by path, scope, and component, is the source itself; a target at the source's path in another named scope is read as a target of its own.
+  const inPlace = given.source.path === given.target.path && given.source.scope === given.target.scope && given.source.component === given.target.component && sourceInStore === targetInStore;
+  const read = inPlace ? source : await readArtifact(root, config, given.target, { store: targetInStore, kind: targetInStore ? STORE_KINDS[type] : undefined });
+  const target = read.store === source.store && read.path === source.path && sameScope(read.scope, source.scope) ? source : read;
   const separateSource = !(target.path === source.path && sameScope(target.scope, source.scope));
   const existing = separateSource && target.text !== null ? target : null;
   const content = given.content;

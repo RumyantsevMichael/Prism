@@ -120,3 +120,15 @@ test("a wait on a pending migration whose record cannot be read is refused rathe
   // The first read refuses.
   await assert.rejects(wait());
 });
+
+test("a target at the source's path in another named scope is read as its own target, not as the source", async (context) => {
+  const { place, call } = await storeProject(context, { ...CONFORMING, [AUDIT]: content({ status: "Approved", approved: "2026-08-02" }) });
+  const repository = await storeRead(call, AUDIT);
+  assert.equal(repository.status, "Approved", JSON.stringify(repository));
+  const web = await otherCheckout(context, place);
+  await storeWrite(web.call, AUDIT, DRAFT_SOURCE, { scope: "workspace" });
+  const result = await call("propose_migration", proposal({ path: AUDIT, scope: "workspace" }, { path: AUDIT, scope: "repository" }, { content: content({ status: "Approved", approved: "2026-08-02" }) }));
+  const migration = result.value?.migration;
+  assert.ok(migration, result.text);
+  assert.deepEqual([labelOf(migration.source), labelOf(migration.target), migration.separateSource], ["workspace", "api", true]);
+});
