@@ -265,7 +265,7 @@ body {
 
 /* The resize handles stand beside their panels, in the shell, each placed by both lines of its grid area, since an absolute item's missing line is the shell's edge, so a panel that scrolls or clips its contents never cuts one off or overflows because of it.
    Each spans its panel's row and shows only while its panel stands beside the main island. */
-.shell-body > prism-resizer {
+.shell-body > :is(.sidebar-resizer, .side-panel-resizer) {
   grid-row: 1 / 2;
 }
 
