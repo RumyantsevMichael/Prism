@@ -22,3 +22,10 @@ export async function writePlanFile(root, file, contents, { append = false } = {
   const content = append && current ? `${current.content}${contents}` : contents;
   await updateArtifact({ projectRoot: root, operations: [{ op: "write", path: file, content, expectedVersion: current?.version ?? null }] });
 }
+
+/** The text of a plan file from the record store in a project with a store, else from the checkout, or null when it does not exist. */
+export async function readPlanFile(root, file) {
+  if (!(await namesStore(root))) return readFile(path.join(root, file), "utf8").catch(() => null);
+  const { getArtifact } = await import("../../../dist/server/workflow/store-artifacts.mjs");
+  return (await getArtifact({ projectRoot: root, path: file }).catch(() => null))?.content ?? null;
+}

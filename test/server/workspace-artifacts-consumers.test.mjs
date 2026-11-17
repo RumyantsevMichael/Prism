@@ -9,7 +9,7 @@ import { browserRequest, checkout, commitFiles, exists, isolateGit, ok, refused,
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
 
-const CONTRACT = "# Reports\n\n## Contract\n1. `check.mjs` exits 0.\n\n## Changes\n- change `check.mjs`: exits 0 (§1).\n";
+const CONTRACT = "# Reports\n\n## Contract\n1. `check.mjs` exits 0.\n\n## Changes\n- change `check.mjs`: exits 0 (§1).\n\n## Views\n- `code.puml` code (§1): Which unit makes `check.mjs` exit 0?\n";
 const DIAGRAM = "@startuml\ncomponent Check\n@enduml\n";
 const TEST_FILE = "test/reports.test.mjs";
 const TEST_SOURCE = "import test from \"node:test\";\ntest(\"check exits 0\", () => {});\n";

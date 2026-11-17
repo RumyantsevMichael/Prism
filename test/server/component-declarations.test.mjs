@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promi
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { DECLARATION, INITIATIVE, THREE, command, componentProject, planAndAccept, plannedSlice, read, refusal, slicePlan, update, workflow } from "./fixtures/components.mjs";
+import { DECLARATION, INITIATIVE, THREE, command, componentProject, planAndAccept, plannedSlice, plannedSlices, read, refusal, slicePlan, update, workflow } from "./fixtures/components.mjs";
 import { prismServer } from "./fixtures/repository-checkouts.mjs";
 import { defer } from "./fixtures/teardown.mjs";
 
@@ -21,7 +21,7 @@ const components = (record) => Object.fromEntries(Object.entries(record.slices).
 
 // Propose a plan whose first slice is the given one and whose other slices are the usual shared and web slices.
 async function propose(root, first, others = rest) {
-  for (const slice of [first, ...others]) await plannedSlice(root, slice.slug, slice.changes);
+  await plannedSlices(root, [first, ...others]);
   return update(root, [{ op: "propose_design", slug: INITIATIVE, operations: slicePlan([first, ...others]) }]);
 }
 
@@ -222,7 +222,7 @@ test("clause 15: a scope spans components, and a proposal with one refused slice
   const current = await read(refused);
   assert.equal(current.record.proposals, undefined);
   assert.equal(current.record.slices["billing-totals"], undefined);
-  await plannedSlice(refused, "web-pages", rest[1].changes);
+  await plannedSlices(refused, THREE);
   await update(refused, [{ op: "propose_design", slug: INITIATIVE, operations: slicePlan(THREE) }]);
   await writeFile(path.join(refused, ".prism/workflow.md"), withComponents(["- billing: packages/billing", "- shared: packages/shared"]));
   const atAcceptance = await refusal(update(refused, [{ op: "accept_proposal", slug: INITIATIVE, reviewRequired: [] }]), "component_unknown");

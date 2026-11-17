@@ -6,6 +6,7 @@ import test from "node:test";
 const { getInitiative, initiativeAcknowledgement, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 const { answerUserGate, updateCoordinationState } = await import("../../dist/server/workflow/state.mjs");
 const { CONTRACT_TOKEN_BUDGET } = await import("../../dist/server/workflow/slice-design.mjs");
+const { writeOverview } = await import("./fixtures/overview.mjs");
 
 const INITIATIVE = "reports";
 const PLANS = `docs/plans/${INITIATIVE}`;
@@ -27,6 +28,7 @@ async function project(context) {
   await writeFile(path.join(root, PLANS, "slice.md"), "# Signed reports\n\n## Contract\n1. Downloads write the report.\n");
   await writeFile(path.join(root, "test", "download.test.mjs"), "// frozen download test\n");
   await writeFile(path.join(root, "test", "audit.test.mjs"), "// frozen audit test\n");
+  await writeOverview(root, PLANS, ["download", "audit"]);
   await updateInitiative({ projectRoot: root, initiative: INITIATIVE, expectedRevision: null, operations: [{ op: "create", slug: INITIATIVE, title: "Signed reports", requirements: ["req.md#R1", "req.md#R2"] }] });
   return root;
 }
@@ -97,6 +99,8 @@ test("a proposed split the person asked for is accepted only with the gate where
 test("a proposal whose slice.md has a Changes line Prism cannot read is refused with that line", async (context) => {
   const root = await project(context);
   const single = [{ op: "accept_design", slug: INITIATIVE, frozenTests: ["test/download.test.mjs"], review: "none" }];
+  // A one-slice design needs no overview, and this slice.md declares none.
+  await rm(path.join(root, PLANS, "overview.puml"));
   await writeFile(path.join(root, PLANS, "slice.md"), "# Signed reports\n\n## Contract\n1. Downloads write the report.\n\n## Changes\n- change `src/a.mjs` and `src/b.mjs`: both read the report.\n");
   await assert.rejects(update(root, [{ op: "propose_design", slug: INITIATIVE, operations: single }]), /src\/a\.mjs` and `src\/b\.mjs[\s\S]*comma-separated paths/);
   await writeFile(path.join(root, PLANS, "slice.md"), "# Signed reports\n\n## Contract\n1. Downloads write the report.\n\n## Changes\n- change `src/a.mjs`, `src/b.mjs`: both read the report.\n");
