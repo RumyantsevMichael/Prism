@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { arrangeGroups, GROUP_LIMIT, groupNameOf, joinGroup } from "./public/views/tab-groups.js";
 import { randomBytes } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { readFile, readdir, realpath, stat } from "node:fs/promises";
+import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,6 +59,11 @@ function isInside(root, target) {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+// A resolved file is served only inside its root and never from a Git folder there, so a tracked symlink cannot show what the checkout's .git holds.
+function servableFrom(root, resolved) {
+  return isInside(root, resolved) && !path.relative(root, resolved).split(path.sep).some((segment) => segment.toLowerCase() === ".git");
+}
+
 async function resolveProjectFile(projectRoot, requestedPath) {
   if (!requestedPath || path.isAbsolute(requestedPath)) {
     throw new Error("The artifact path must be relative to the project root.");
@@ -69,8 +74,8 @@ async function resolveProjectFile(projectRoot, requestedPath) {
     throw new Error("The artifact path leaves the project root.");
   }
   const resolved = await realpath(candidate);
-  if (!isInside(root, resolved)) {
-    throw new Error("The artifact resolves outside the project root.");
+  if (!servableFrom(root, resolved)) {
+    throw new Error("The artifact resolves outside the project root or into its Git folder.");
   }
   return resolved;
 }
@@ -144,12 +149,16 @@ export async function listSourceFiles(projectRoot) {
     return !SECRET_NAME.test(name) && !BINARY_EXTENSION.test(name);
   });
   const files = [];
+  const root = await realpath(projectRoot).catch(() => path.resolve(projectRoot));
   let next = 0;
   const check = async () => {
     while (next < candidates.length) {
       const file = candidates[next++];
       try {
-        const metadata = await stat(path.join(projectRoot, file));
+        const absolute = path.join(projectRoot, file);
+        // A symlink is listed only when it resolves to a file the review would serve, never into .git or out of the checkout.
+        if ((await lstat(absolute)).isSymbolicLink() && !servableFrom(root, await realpath(absolute))) continue;
+        const metadata = await stat(absolute);
         if (metadata.isFile() && metadata.size <= SOURCE_SIZE_LIMIT) files.push(file);
       } catch {
         // A file deleted after git listed it is skipped.
