@@ -819,15 +819,9 @@ function workspaceName(identity) {
   return identity.worktree;
 }
 
-// A checkout of a workspace leads with the workspace's name, because the records it shows belong to the whole workspace.
-function projectLabel(identity, workspace = null) {
-  const label = element("span", "project-label-text");
-  if (workspace) label.append(element("span", "project-workspace", workspace), element("span", "project-separator is-workspace", "·"));
-  label.append(element("span", "project-repository", identity.repository));
-  const name = workspaceName(identity);
-  if (name) label.append(element("span", "project-separator", "/"), element("span", "project-worktree", name));
-  return label;
-}
+// The switcher names what its menu has checked: the workspace, whose records the page shows whichever checkout serves it, or the project without one.
+// The checkout's repository, branch, and folder say nothing about those records, so only the tip names them.
+const projectName = (identity, projectRoot, workspace = null) => workspace ?? identity.repository ?? folderName(projectRoot);
 
 function projectTitle(identity, projectRoot) {
   return [projectRoot, identity.branch ? `${identity.detached ? "Detached at" : "Branch:"} ${identity.branch}` : "", identity.worktree ? `Worktree: ${identity.worktree}` : ""].filter(Boolean).join("\n");
@@ -993,10 +987,12 @@ function noWorkspaceItem() {
 
 // A checkout of a workspace leads with the workspace's name, because the records it shows belong to the whole workspace.
 function setProjectLabel(identity, projectRoot, workspace = null) {
-  project.replaceChildren(projectLabel(identity, workspace));
-  projectTile.setAttribute("name", workspace ?? identity.repository ?? folderName(projectRoot));
-  projectButton.setAttribute("tip", [workspace ? `Workspace: ${workspace}` : "", projectTitle(identity, projectRoot)].filter(Boolean).join("\n"));
-  signals.project = [workspace, [identity.repository ?? folderName(projectRoot), workspaceName(identity)].filter(Boolean).join("/")].filter(Boolean).join(" · ");
+  const name = projectName(identity, projectRoot, workspace);
+  project.replaceChildren(element("span", "project-label-text project-workspace", name));
+  projectTile.setAttribute("name", name);
+  const repository = workspace && identity.repository && identity.repository !== workspace ? `Repository: ${identity.repository}` : "";
+  projectButton.setAttribute("tip", [workspace ? `Workspace: ${workspace}` : "", repository, projectTitle(identity, projectRoot)].filter(Boolean).join("\n"));
+  signals.project = name;
   document.title = signalTitle(baseTitle(), signals.count ?? 0);
 }
 

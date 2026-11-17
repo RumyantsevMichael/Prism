@@ -64,8 +64,8 @@
           <prism-button slot="end" id="sidebar-toggle" variant="ghost" shape="square" size="sm" label="Hide the sidebar" tip="Hide the sidebar ([)" aria-controls="sidebar" aria-expanded="true" aria-keyshortcuts="["><prism-icon name="panel-left" size="sm"></prism-icon></prism-button>
         </prism-place-head>
         <div id="nav" class="nav"></div>
-        <prism-resizer id="sidebar-resizer" label="Resize the sidebar" min="200" max="480"></prism-resizer>
       </nav>
+      <prism-resizer id="sidebar-resizer" class="sidebar-resizer" for="sidebar" label="Resize the sidebar" min="200" max="480"></prism-resizer>
       <prism-panel id="main" class="main" variant="island" flush>
         <prism-doc-tabs id="open-tabs" class="open-documents" label="Open artifacts" empty></prism-doc-tabs>
         <div id="page-bar" class="page-bar"></div>
@@ -80,10 +80,10 @@
       <prism-panel id="side-panel" class="side" variant="island" flush hidden>
         <prism-button slot="tools" id="side-panel-open" variant="ghost" size="sm">Open as tab</prism-button>
         <prism-button slot="tools" id="side-panel-close" variant="ghost" size="sm" label="Close the side panel" tip="Close (Esc)"><prism-icon name="close"></prism-icon></prism-button>
-        <prism-resizer id="side-panel-resizer" edge="start" label="Resize the side panel" min="320"></prism-resizer>
         <p class="side-source" id="side-panel-source"></p>
         <div class="side-body" id="side-panel-body"></div>
       </prism-panel>
+      <prism-resizer id="side-panel-resizer" class="side-panel-resizer" for="side-panel" edge="start" label="Resize the side panel" min="320"></prism-resizer>
     </div>
     <footer class="statusbar" id="statusbar" aria-label="Status">
       <span class="statusbar-settings">
