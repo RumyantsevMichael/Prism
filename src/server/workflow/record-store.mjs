@@ -632,7 +632,7 @@ async function migrate(root) {
   const config = await readWorkflowConfig(root);
   if (store.external) {
     await migrateIntoStore(root, store, config, report);
-    if (report.moved.length || report.conflicts.length) unreportedMoves.push({ root, store: store.base, ...report });
+    await noteRecordMoves(root, store, report);
     return { report, store, config };
   }
   return { report: await migrateIntoProject(root, store, config, report), store, config };
@@ -649,8 +649,55 @@ async function migrateIntoProject(root, store, config, report) {
     for (const move of pending) await moveRecord(root, store, move, report);
   }, fail, { timeoutMs: 30000 }));
   pendingMoves.delete(root);
-  if (report.moved.length || report.conflicts.length) unreportedMoves.push({ root, ...report });
+  await noteRecordMoves(root, store, report);
   return report;
+}
+
+// A record move into a record store made outside a tool call, such as on a review browser request, has no result to carry its report, and the shared review app runs in a process of its own,
+// so its report waits in a file in the store's sync folder, which the store's .gitignore leaves out, until the next tool call of the checkout takes it.
+// A move into the project's own .prism keeps its report in this process, because a file there would change the checkout.
+const RECORD_MOVE_NOTES = path.join(".prism-sync", "record-moves");
+const RECORD_MOVE_NOTE = /^\d+-[0-9a-f]{8}\.json$/;
+
+async function noteRecordMoves(root, store, report) {
+  if (!report.moved.length && !report.conflicts.length) return;
+  const entry = { root, ...(store.external ? { store: store.base } : {}), moved: report.moved, conflicts: report.conflicts };
+  if (!store.external || toolCalls.getStore()?.open) { unreportedMoves.push(entry); return; }
+  try {
+    const directory = path.join(store.base, RECORD_MOVE_NOTES);
+    await mkdir(directory, { recursive: true });
+    const note = path.join(directory, `${Date.now()}-${randomBytes(4).toString("hex")}.json`);
+    await assertContained(store.contain, note, "the record store", null, { write: true });
+    await writeAtomically(note, `${JSON.stringify(entry)}\n`);
+  } catch {
+    // A note that cannot be written leaves the report to this process's next tool result, as before.
+    unreportedMoves.push(entry);
+  }
+}
+
+// The reports that record moves outside a tool call left for a checkout, oldest first, each removed as it is taken, so one result of one process carries it.
+async function takeRecordMoveNotes(root) {
+  let store, names;
+  try {
+    store = await recordStoreOf(root);
+    if (!store.external) return [];
+    names = (await readdir(path.join(store.base, RECORD_MOVE_NOTES))).filter((name) => RECORD_MOVE_NOTE.test(name)).sort();
+  } catch { return []; }
+  const directory = path.join(store.base, RECORD_MOVE_NOTES);
+  const taken = [];
+  for (const name of names) {
+    const note = path.join(directory, name);
+    let entry;
+    try { entry = parseStoreJson(await readFile(note, "utf8")); } catch { continue; }
+    if (entry?.root !== root || !Array.isArray(entry.moved) || !Array.isArray(entry.conflicts)) continue;
+    // Renaming the note claims it, so two processes serving the checkout never both report it.
+    const claimed = path.join(directory, `.${name}.${randomBytes(4).toString("hex")}.taken`);
+    try { await rename(note, claimed); } catch { continue; }
+    await rm(claimed, { force: true }).catch(() => {});
+    taken.push({ root, ...(typeof entry.store === "string" ? { store: entry.store } : {}), moved: entry.moved, conflicts: entry.conflicts });
+  }
+  await rmdir(directory).catch(() => {});
+  return taken;
 }
 
 /*
@@ -897,11 +944,16 @@ function legacyLocations(root, store) {
   return value;
 }
 
-/** The record moves that writes made since the last call, and the artifact moves of the given checkouts, for the tool result that reports them. */
-export function takeMigrationReports(roots) {
+/**
+ * The record moves that this process's tool calls made since the last call, the record moves that accesses outside a tool call, in any process, made in the given checkouts,
+ * and the artifact moves of the given checkouts, for the tool result that reports them.
+ */
+export async function takeMigrationReports(roots = new Set()) {
   const taken = unreportedMoves.filter((report) => !report.artifacts || roots.has(report.root));
   for (const report of taken) unreportedMoves.splice(unreportedMoves.indexOf(report), 1);
-  return taken;
+  const noted = [];
+  for (const root of roots) noted.push(...await takeRecordMoveNotes(root));
+  return [...noted, ...taken];
 }
 
 /** Give back record moves that takeMigrationReports returned for a tool result that was never written, so the next result reports them. */
