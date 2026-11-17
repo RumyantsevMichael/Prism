@@ -96,6 +96,7 @@ The agent waits with `wait_for_user_gate` and `migration`, reads the format migr
 Applying writes the content with each chosen entry, writes the migration's id after each glossary `Source: migration`, so the term's source is the applied format migration, and removes a separate source only when the person accepted its removal.
 It refuses a format migration that was not accepted with `migration_not_accepted`, one whose source or target changed since the proposal with `migration_stale`, and one already applied with `migration_applied`.
 A stale format migration no longer holds its target, so a new one can be proposed from the current files.
+Applying checks the format migration's record again as a proposal checks its input, and refuses with `invalid_input` a source or target path that leaves the project or a target outside the type's configured path, and with `record_invalid` a record whose content, paths, conflicts, or diffs changed after the person answered, so it writes and removes only what the person accepted.
 An apply that stopped part way, after writing the target, completes when it is run again: a target that already holds the migration's content and a removed source count as done, and the format migration is then recorded as applied.
 A store source of a checkout target is removed before the target is written, so a change to that source in the store refuses the apply before anything is written.
 

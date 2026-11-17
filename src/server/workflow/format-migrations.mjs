@@ -380,7 +380,7 @@ const statusOf = (record) => typeof record.appliedAt === "string" ? "applied" : 
 
 // A migration as a reader gets it, without the content and versions that only applying it needs.
 function shown(record, { full = true } = {}) {
-  const { content, versions, sourceInput, targetInput, ...rest } = record;
+  const { content, versions, sourceInput, targetInput, answerDigest, ...rest } = record;
   const value = { ...rest, status: statusOf(record) };
   if (!full) { delete value.answer; delete value.appliedAt; }
   return value;
@@ -561,7 +561,8 @@ export async function answerMigration(projectRoot, id, { decision, conflicts = {
       by,
       at: new Date().toISOString()
     };
-    const next = { ...record, answer };
+    // The answer is bound to what the person was shown and accepted, so apply refuses a record that changed after it.
+    const next = { ...record, answer, answerDigest: answeredDigest(record) };
     await writeRecord(root, recordKey(id), serialize(next));
     return { migration: shown(next) };
   }, fail));
@@ -584,12 +585,41 @@ export async function migrationGates(projectRoot, id) {
 // Each glossary source written as migration alone names the migration it came from.
 const withMigrationId = (type, text, id) => type !== "glossary" ? text : text.replace(/^(Source:.*)$/gm, (line) => line.replace(/(^Source:\s*|,\s*)migration(?![\w-]|\s+migration-)/g, `$1migration ${id}`));
 
+// What a person's answer accepted: the migration's type, artifacts, content, conflicts, leftovers, diffs, and the versions it was proposed from.
+const answeredDigest = (record) => versionOf(Buffer.from(JSON.stringify([record.type, record.source, record.target, record.separateSource, record.content, record.conflicts, record.leftovers, record.diff, record.targetDiff, record.versions]), "utf8"));
+
+const SCOPE_KINDS = new Set(["workspace", "repository", "component"]);
+
+/**
+ * The record's source and target as a proposal would place them now, since a record is untrusted when it applies: another checkout or a store's remote may have written it.
+ * Each path is checked as a proposal checks it, the target must lie under the type's configured path, and whether each is a store artifact comes from the configuration, never from the record.
+ * Returns { sourceStore, targetStore }; a record that fails is refused with invalid_input or record_invalid.
+ */
+function placedRecord(config, record) {
+  if (!ARTIFACT_TYPES.includes(record.type)) throw fail("record_invalid", `The format migration record ${record.id} names no artifact type.`, { id: record.id });
+  for (const [name, entry] of [["source", record.source], ["target", record.target]]) {
+    if (!isRecord(entry) || relativePath(entry.path, `The record's ${name}`) !== entry.path) throw fail("invalid_input", `The ${name} of the format migration record ${record.id} is no project-relative path inside the project.`, { id: record.id });
+    if (entry.scope !== null && !(isRecord(entry.scope) && SCOPE_KINDS.has(entry.scope.kind))) throw fail("record_invalid", `The ${name} of the format migration record ${record.id} names no scope.`, { id: record.id });
+  }
+  if (artifactTypeOf(artifactLocations(config), record.target.path) !== record.type) throw fail("invalid_input", `The target ${record.target.path} of the format migration ${record.id} lies under no configured path of the type ${record.type}.`, { path: record.target.path });
+  const hasStore = (config.workspace?.store ?? null) !== null;
+  const targetStore = hasStore && record.type !== "feature" && storePath(config, record.target.path);
+  const sourceStore = hasStore && storePath(config, record.source.path);
+  for (const [name, entry, store] of [["source", record.source, sourceStore], ["target", record.target, targetStore]]) {
+    if (store !== (entry.scope !== null)) throw fail("record_invalid", `The ${name} of the format migration record ${record.id} is placed where Prism does not keep ${entry.path}.`, { id: record.id });
+  }
+  const separate = !(record.source.path === record.target.path && sameScope(record.source.scope, record.target.scope) && sourceStore === targetStore);
+  if (record.separateSource !== separate) throw fail("record_invalid", `The format migration record ${record.id} does not say whether its source is separate as its paths do.`, { id: record.id });
+  return { sourceStore, targetStore };
+}
+
 /**
  * The state an accepted migration applies from: its checked source and target as they are now, the content to write, and which parts an earlier apply already did.
  * stale lists the source or target that changed since the proposal other than as this migration changes it.
  */
 async function applyState(root, config, record) {
-  const sourceStore = record.sourceInput?.store === true, targetStore = record.targetInput?.store === true;
+  const { sourceStore, targetStore } = placedRecord(config, record);
+  if (record.answer?.decision === "accept" && record.answerDigest !== answeredDigest(record)) throw fail("record_invalid", `The format migration record ${record.id} changed after a person answered it, so it does not apply; propose it again.`, { id: record.id });
   const read = (entry, store) => readArtifact(root, config, { path: entry.path, ...(store ? scopeInputOf(entry.scope) : {}) }, { store });
   const source = await read(record.source, sourceStore);
   const target = record.separateSource ? await read(record.target, targetStore) : source;
@@ -609,11 +639,11 @@ async function applyState(root, config, record) {
   return { source, target, content, removeSource, targetDone, sourceDone, stale };
 }
 
-// Whether an accepted migration can still apply, so it holds its target: a stale one never can.
+// Whether an accepted migration can still apply, so it holds its target: a record that changed or went stale never can.
 async function appliable(root, config, record) {
   try { return (await applyState(root, config, record)).stale.length === 0; }
   catch (error) {
-    if (error instanceof FormatMigrationError && ["artifact_outside", "invalid_path", "scope_invalid"].includes(error.code)) return false;
+    if (error instanceof FormatMigrationError && ["record_invalid", "invalid_input", "artifact_outside", "invalid_path", "scope_invalid"].includes(error.code)) return false;
     throw error;
   }
 }
@@ -621,6 +651,7 @@ async function appliable(root, config, record) {
 /**
  * Apply an accepted format migration: write the content with each conflict's chosen entry and the migration's id after each migration source that stands alone,
  * remove a separate source only when the answer accepted its removal, and record appliedAt.
+ * The record's paths are checked again and its answer must match what the person accepted, so nothing is written or removed outside the project or beyond that answer.
  * A store target or source changes only through Prism's store writes; returns { written, removed, acceptedBy, acceptedAt }.
  */
 export async function applyMigration({ projectRoot, id }) {
@@ -630,6 +661,7 @@ export async function applyMigration({ projectRoot, id }) {
     const { record } = await storedMigration(root, id);
     if (typeof record.appliedAt === "string") throw fail("migration_applied", `The format migration ${id} was applied at ${record.appliedAt}.`);
     if (record.answer?.decision !== "accept") throw fail("migration_not_accepted", record.answer ? `A person declined the format migration ${id}, so it does not apply.` : `The format migration ${id} has no answer yet: a person accepts it on its page in the review browser first.`);
+    if (record.id !== id) throw fail("record_invalid", `The format migration record ${id} names another migration.`, { id });
     const config = await readWorkflowConfig(root);
     const { source, target, content, removeSource, targetDone, sourceDone, stale } = await applyState(root, config, record);
     if (stale.length) throw fail("migration_stale", `${stale.map(label).join(" and ")} changed since the format migration ${id} was proposed, so it does not apply; propose it again from the current ${stale.length === 1 ? "file" : "files"}.`, { paths: stale.map(named) });

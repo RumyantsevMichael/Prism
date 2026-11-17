@@ -8,7 +8,7 @@ import { labelOf, otherCheckout, storeProject, storeRead, storeWrite } from "./f
 import { defer } from "./fixtures/teardown.mjs";
 
 // Format migrations stay inside the project, invent no decision or wording, keep a pending migration's wait open on a failed read, keep a named target scope, and complete a retried apply.
-// A stale migration releases its target, and one target has one pending migration.
+// An apply checks its record again and applies only what the person accepted, a stale migration releases its target, and one target has one pending migration.
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-migration-review-data-")));
 process.env.PLUGIN_DATA = privateData;
@@ -170,6 +170,12 @@ test("an apply retried after an earlier one wrote the target and failed complete
   assert.equal((await call("apply_migration", { id })).value?.code, "migration_applied");
 });
 
+const recordFile = (root, id) => path.join(root, ".prism/format-migrations", `${id}.json`);
+async function editRecord(root, id, edit) {
+  const record = JSON.parse(await readFile(recordFile(root, id), "utf8"));
+  edit(record);
+  await writeFile(recordFile(root, id), JSON.stringify(record, null, 2));
+}
 async function accepted(context, extra = {}) {
   const { root, call } = await formatServer(context, { ...CONFORMING, "notes/audit.md": DRAFT_SOURCE });
   const proposed = await call("propose_migration", proposal("notes/audit.md", AUDIT));
@@ -178,6 +184,43 @@ async function accepted(context, extra = {}) {
   await answer(root, id, { decision: "accept", removeSource: "on", ...extra });
   return { root, call, id };
 }
+
+test("a migration record whose target was changed to leave the project is refused at apply, and nothing is written outside it", async (context) => {
+  const { root, call, id } = await accepted(context);
+  const outside = await outsideFolder(context);
+  // A record as another checkout, or a store's remote, could hold it.
+  await editRecord(root, id, (record) => { record.target.path = path.relative(root, path.join(outside, "planted.sh")); });
+  const applied = await call("apply_migration", { id });
+  assert.equal(applied.value?.code, "invalid_input", applied.text);
+  assert.equal(await exists(path.join(outside, "planted.sh")), false);
+  assert.equal(await exists(path.join(root, "notes/audit.md")), true, "the source is kept");
+});
+
+test("a migration record whose source was changed to leave the project does not remove the outside file", async (context) => {
+  const { root, call, id } = await accepted(context);
+  const outside = await outsideFolder(context);
+  await writeFile(path.join(outside, "victim.md"), DRAFT_SOURCE);
+  await editRecord(root, id, (record) => { record.source.path = path.relative(root, path.join(outside, "victim.md")); });
+  const applied = await call("apply_migration", { id });
+  assert.equal(applied.value?.code, "invalid_input", applied.text);
+  assert.equal(await exists(path.join(outside, "victim.md")), true);
+  assert.equal(await exists(path.join(root, AUDIT)), false, "the target is not written");
+});
+
+test("a migration record whose content or target changed after the person accepted it does not apply", async (context) => {
+  for (const edit of [
+    (record) => { record.content = record.content.replace("every administrative action", "no action"); },
+    (record) => { record.target.path = "docs/requirements/other.md"; }
+  ]) {
+    const { root, call, id } = await accepted(context);
+    await editRecord(root, id, edit);
+    const applied = await call("apply_migration", { id });
+    assert.equal(applied.value?.code, "record_invalid", applied.text);
+    assert.equal(await exists(path.join(root, AUDIT)), false);
+    assert.equal(await exists(path.join(root, "docs/requirements/other.md")), false);
+    assert.equal(await exists(path.join(root, "notes/audit.md")), true);
+  }
+});
 
 test("an accepted migration whose source changed before apply is stale and no longer holds its target", async (context) => {
   const { root, call, id } = await accepted(context);
