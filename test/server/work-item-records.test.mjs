@@ -7,7 +7,7 @@ import { answerGate, browserRequest } from "./fixtures/workspace-artifacts.mjs";
 
 const ID = /^(input|question|finding|gap)-[0-9a-f]{8}$/;
 
-test("§1, §8: an identifier that names no roadmap entry is refused by both work item tools", async (context) => {
+test("§1: an identifier that names no roadmap entry is refused by both work item tools", async (context) => {
   const { call } = await itemProject(context, { browser: false });
   assert.equal((await call("get_work_item", { item: "nothing" })).value?.code, "item_unknown");
   assert.equal((await call("update_work_item", { item: "nothing", expectedRevision: null, operations: [{ op: "add_input", ...INPUT }] })).value?.code, "item_unknown");

@@ -200,7 +200,7 @@ test("§49: a declined ADR is Declined, and keep closes the proposal without cha
   assert.equal((await storeRead(call, DRAFT_REQUIREMENT)).status, "Draft");
 });
 
-test("§16, §50: a killed item leaves every band and stays in the roadmap's history with its reason", async (context) => {
+test("§50: a killed item leaves every band and stays in the roadmap's history with its reason", async (context) => {
   const { call, review } = await killable(context);
   await proposeKill(call, choices("keep", "keep"));
   const ids = await gates(call);

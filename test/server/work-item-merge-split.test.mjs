@@ -162,7 +162,7 @@ test("§43: keep-whole leaves the item as it was", async (context) => {
   assert.equal((await call("get_roadmap", {})).value.record.initiatives.some((entry) => entry.id === "x-one"), false);
 });
 
-test("§10: no merge or split happens without the person's answer, and an agent cannot answer the gate", async (context) => {
+test("§9: no merge or split happens without the person's answer, and an agent cannot answer the gate", async (context) => {
   const { call, review } = await shapedPair(context);
   const gate = (await proposeMerge(call)).value.openedGates[0].id;
   const written = await call("update_coordination_state", { initiative: "sync", expectedRevision: (await call("get_coordination_state", { initiative: "sync" })).value.revision, changes: { gateOperations: [{ op: "answer", id: gate, choice: "keep-this" }] } });
