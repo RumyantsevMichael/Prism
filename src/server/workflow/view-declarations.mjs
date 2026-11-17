@@ -91,10 +91,11 @@ export function drawnKind(file, source) {
   if (start === "salt") return "wireframe";
   if (start && start !== "uml") return start;
   if (/\[\*\]/.test(text) || /^\s*state\s+\S/m.test(text)) return "state";
-  if (/^\s*(?:start|stop|end)\s*$/m.test(text) || /^\s*:[^;]*;/m.test(text) || /^\s*(?:if|while)\s*\(/m.test(text) || /^\s*(?:repeat|fork|partition)\b/m.test(text) || /\(\*\)/.test(text)) return "activity";
+  if (/^\s*(?:start|stop)\s*$/m.test(text) || /^\s*:[^;]*;/m.test(text) || /^\s*(?:if|while)\s*\(/m.test(text) || /^\s*(?:repeat|fork|partition)\b/m.test(text) || /\(\*\)/.test(text)) return "activity";
   if (/^\s*(?:node|cloud)\b/m.test(text) || /^\s*Deployment_Node(?:_[LR])?\s*\(/m.test(text) || /^\s*!include\s+<C4\/C4_Deployment>/m.test(text)) return "deployment";
-  if (/^\s*(?:component|artifact|package|folder|frame|rectangle)\b/m.test(text) || /^\s*\[[^\]\n]+\]/m.test(text) || /^\s*!include\s+<C4\//m.test(text) || C4_ELEMENT.test(text)) return "component";
-  if (/^\s*(?:class|abstract|enum|annotation|interface)\b/m.test(text) || /^\s*entity\b[^\n]*\{/m.test(text)) return "class";
+  if (/^\s*(?:component|artifact)\b/m.test(text) || /^\s*\[(?![ox]?[-.=<])[^\]\n]+\]/m.test(text) || /^\s*!include\s+<C4\//m.test(text) || C4_ELEMENT.test(text)) return "component";
+  if (/^\s*(?:class|abstract|enum|annotation|interface)\b/m.test(text) || /^\s*entity\b[^\n]*\{/m.test(text) || /[|}][|o](?:-+|\.+)[|o][|{]/.test(text)) return "class";
+  if (/^\s*(?:package|folder|frame|rectangle)\b/m.test(text)) return "component";
   return "sequence";
 }
 
