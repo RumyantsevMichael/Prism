@@ -64,12 +64,14 @@ const render = (source) => new Promise((resolve) => {
 const unescape = (value) => value.replace(/&lt;/g, "<").replace(/&quot;/g, "\"").replace(/&amp;/g, "&");
 const texts = (svg, pattern) => [...svg.matchAll(pattern)].map((match) => unescape(match[1]).trim()).filter(Boolean);
 
-// PlantUML draws every failure as a diagram: a syntax or include error names its source line, and an unknown diagram type says so.
+const UNRECOGNIZED = "PlantUML does not recognize the diagram; it needs @startuml and a supported diagram type.";
+
+// PlantUML draws a syntax or include error as a diagram that names its source line, and an unknown diagram type as one that says so.
 function summarize(svg) {
   const located = /\[From [^\]]*\(line (\d+)\)/.exec(svg);
   if (located || /Diagram not supported/.test(svg)) {
     const errors = texts(svg, /<text[^>]*fill="#FF0000"[^>]*>([^<]*)/g);
-    const fallback = located ? "PlantUML reported an error." : "PlantUML does not recognize the diagram; it needs @startuml and a supported diagram type.";
+    const fallback = located ? "PlantUML reported an error." : UNRECOGNIZED;
     return { valid: false, line: Number(located?.[1]) || null, message: errors.join(" ") || fallback };
   }
   const entities = (svg.match(/<g class="(?:entity|cluster)"/g) ?? []).length;
@@ -79,9 +81,17 @@ function summarize(svg) {
   return { valid: true, elements: entities || participants || boxes, relations: (svg.match(/<g class="link"/g) ?? []).length };
 }
 
-const results = [];
-for (const item of workerData.sources) {
-  const outcome = await render(item.source);
-  results.push({ path: item.path, ...(outcome.error ? { checked: false, message: outcome.error.slice(0, 300) } : { checked: true, ...summarize(outcome.svg) }) });
+// The runtime draws a source without a start line as a diagram, and raises a Java exception for an unknown diagram type or a malformed Salt grid.
+// Both are sources that do not parse; any other failure, such as a timeout, leaves the source unchecked.
+function check(source, outcome) {
+  if (!/^\s*@start[a-z]+/im.test(source)) return { checked: true, valid: false, line: null, message: UNRECOGNIZED };
+  if (!outcome.error) return { checked: true, ...summarize(outcome.svg) };
+  if (/Unsupported diagram type/.test(outcome.error)) return { checked: true, valid: false, line: null, message: UNRECOGNIZED };
+  const thrown = /^java\.[\w.]*?(\w+(?:Exception|Error))(?::\s*(.*))?/.exec(outcome.error);
+  if (thrown) return { checked: true, valid: false, line: null, message: `PlantUML could not read it (${thrown[1]}${thrown[2] ? `: ${thrown[2]}` : ""}).`.slice(0, 300) };
+  return { checked: false, message: outcome.error.slice(0, 300) };
 }
+
+const results = [];
+for (const item of workerData.sources) results.push({ path: item.path, ...check(item.source, await render(item.source)) });
 parentPort.postMessage(results);
