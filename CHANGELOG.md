@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.0](https://github.com/RumyantsevMichael/Prism/compare/v0.26.0...v0.27.0) (2026-11-17)
+
+
+### Added
+
+* filter Knowledge by scope and group libraries by scope ([#297](https://github.com/RumyantsevMichael/Prism/issues/297)) ([2c08fa9](https://github.com/RumyantsevMichael/Prism/commit/2c08fa9ab02cbdb9e7e1a33b5b5024651c139416))
+
 ## [0.26.0](https://github.com/RumyantsevMichael/Prism/compare/v0.25.0...v0.26.0) (2026-11-16)
 
 
