@@ -36,7 +36,7 @@ export async function waitForGateAnswers({ input = process.stdin, directory, pol
   let result;
   try {
     // An artifact wait reads the artifact's approval gates and takes no notices, which an initiative records.
-    const source = typeof request.artifact === "string" ? { artifact: request.artifact, scope: request.scope, ...(directory ? { deliveredDirectory: directory } : {}) } : { initiative: request.initiative, notices, watchChanges: request.coordinates === true, ...(Array.isArray(request.knownEntries) ? { knownEntries: request.knownEntries } : {}) };
+    const source = typeof request.migration === "string" ? { migration: request.migration } : typeof request.artifact === "string" ? { artifact: request.artifact, scope: request.scope, ...(directory ? { deliveredDirectory: directory } : {}) } : { initiative: request.initiative, notices, watchChanges: request.coordinates === true, ...(Array.isArray(request.knownEntries) ? { knownEntries: request.knownEntries } : {}) };
     result = await waitForUserGates({ projectRoot: request.projectRoot, ...source, gateIds: request.gateIds, maxWaitMinutes, ...(pollMs ? { pollMs } : {}), ...(settleMs === undefined ? {} : { settleMs }) });
   } catch {
     return null;
@@ -54,7 +54,9 @@ export async function waitForGateAnswers({ input = process.stdin, directory, pol
     "The user answered while Prism's wait_for_user_gate call waited after your turn; this is its result.",
     ...result.answered.map(answerText),
     ...(result.waiting.length ? [`Still waiting on: ${result.waiting.join(", ")}.`] : []),
-    typeof request.artifact === "string"
+    typeof request.migration === "string"
+      ? "Act on the answer; a format migration needs no resolve, since Prism recorded the answer in the migration's record."
+      : typeof request.artifact === "string"
       ? "Act on each answer; an approval gate needs no resolve, since Prism recorded the answer in the artifact's status record."
       : "Act on each answer, then remove each answered gate with an update_coordination_state resolve operation for its id."
   ];

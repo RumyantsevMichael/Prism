@@ -237,9 +237,9 @@ async function storeRefusing(action) {
 /**
  * Checks the project's artifacts: { formats, artifacts }.
  * In a project with a record store, requirements, ADRs, and glossaries are read from every scope the checkout sees, and feature files from the checkout.
- * `legacyOf(path, type, scope)` returns the legacy mark that covers an artifact, by default from the project's legacy sets, and `appliedMigration(id)` whether a migration was applied, by default none.
+ * `legacyOf(path, type, scope)` returns the legacy mark that covers an artifact, by default from the project's legacy sets, and `appliedMigration(id)` whether a format migration was applied, by default as the project's migration records say.
  */
-export async function checkArtifacts({ projectRoot, paths, type, legacyOf, appliedMigration = () => false }) {
+export async function checkArtifacts({ projectRoot, paths, type, legacyOf, appliedMigration }) {
   if (type !== undefined && !ARTIFACT_TYPES.includes(type)) throw fail("invalid_input", `type must be one of ${ARTIFACT_TYPES.join(", ")}.`);
   if (paths !== undefined && (!Array.isArray(paths) || paths.length > MAX_CHECK_PATHS)) throw fail("invalid_input", `paths must be a list of at most ${MAX_CHECK_PATHS} project-relative files or { path, scope, component } entries.`);
   const root = await realpath(projectRoot);
@@ -321,11 +321,17 @@ export async function artifactSources(root, { refusing = storeRefusing, paths = 
 
 /**
  * Checks resolved artifacts, each { path, type, scope, stored }, with stored the store's entry of a store artifact, in clause order of type, then path, then scope label:
- * the artifacts as check_artifacts lists them. `legacyOf` defaults to the project's legacy sets,
+ * the artifacts as check_artifacts lists them. `legacyOf` defaults to the project's legacy sets, `appliedMigration` to the project's applied format migrations,
  * and `refusing` turns the store's refusals into check refusals by default, while a caller that passes the store's own refusals on gives `(action) => action()`.
  */
-export async function checkTargets(root, store, targets, { legacyOf, appliedMigration = () => false, refusing = storeRefusing } = {}) {
+export async function checkTargets(root, store, targets, { legacyOf, appliedMigration, refusing = storeRefusing } = {}) {
   legacyOf ??= legacyLookup(await refusing(() => readLegacySets(root)));
+  // A migration <id> source is decided once that format migration was applied, whichever checkout applied it, as the project's migration records say.
+  if (appliedMigration === undefined) {
+    const { appliedMigrationIds } = await import("./format-migrations.mjs");
+    const applied = await refusing(() => appliedMigrationIds(root));
+    appliedMigration = (id) => applied.has(id);
+  }
   const order = (entry) => ARTIFACT_TYPES.indexOf(entry.type);
   targets = [...targets].sort((a, b) => order(a) - order(b) || compare(a.path, b.path) || compare(labelOf(a), labelOf(b)));
   const artifacts = [];

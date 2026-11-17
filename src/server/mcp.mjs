@@ -51,6 +51,7 @@ import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs"
 import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
 import { ArtifactCheckError, MAX_CHECK_PATHS, checkArtifacts } from "./workflow/artifact-check.mjs";
 import { ArtifactCitationError } from "./workflow/artifact-citations.mjs";
+import { FormatMigrationError, applyMigration, getMigration, proposeMigration } from "./workflow/format-migrations.mjs";
 import { ARTIFACT_TYPES } from "./workflow/artifact-formats.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, waitForUserGates } from "./workflow/gate-wait.mjs";
 import { endGateWait, keptSettingsText, personChangesText, rememberAskedGates, startGateWait, takePersonChanges } from "./workflow/change-notices.mjs";
@@ -532,6 +533,54 @@ const tools = [
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
+    name: "propose_migration",
+    description: "Propose a format migration: the conversion of one requirement file, ADR, glossary, or feature file, or of a file that holds such content, into its Prism artifact format, behind a gate that a person answers in the review browser. This is not the move of a checkout's files into a record store. Pass type, source and target, each a project-relative path or { path, scope, component } with scope and component as get_artifact takes them, where target lies under the type's configured path and equals source for a format migration in place; content, the whole migrated artifact; summary, plain text of 1 to 2000 characters on what changes and why; leftovers, [{ statement, home }] for each source statement that the content does not keep, verbatim from the source with a proposed home of 1 to 500 characters; and conflicts, [{ entry, content }] for each entry of an existing target (a requirement section by number, a glossary term by id, a feature Rule by title) whose source version differs, holding the source's version as one conforming entry while the content keeps the target's. In a project whose .prism/workflow.md names a record store, a requirements, adr, or glossary target is a store artifact and a source under a store artifact path is one too; feature files and every target without a store are checkout files. Mark a value that neither the source nor its Git history gives as unknown, and write a glossary source that the format migration itself stands for as migration. Refusals: migration_unaccounted with statements [{ text, line }] for source statements placed nowhere; migration_invented with statements for content that neither the source nor the target states, where the format's structure, defaults, unknown, links, and dates from the source's Git history are no statements; artifact_nonconforming for content that breaks its format; migration_changes_decision with changed [{ field, before, after }] when the content changes an Approved or Accepted file's status, dates, or identities, or a store target's recorded status; migration_conflict naming the entries for a changed target entry or a wrong conflict; migration_pending while another format migration of the target waits; and the store's own refusals, such as store_unavailable. It returns migration { id, type, source, target, separateSource, summary, diff, targetDiff, leftovers, unknowns, conflicts, status: pending, proposedAt }; wait for the person's answer with wait_for_user_gate and migration, then call apply_migration.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string", description: "The absolute path to the active project root." },
+        type: { type: "string", enum: [...ARTIFACT_TYPES], description: "The format type of the migrated artifact." },
+        source: { oneOf: [{ type: "string", minLength: 1, maxLength: 1024 }, { type: "object", additionalProperties: false, properties: { path: { type: "string", minLength: 1, maxLength: 1024 }, scope: { type: "string", maxLength: 64 }, component: { type: "string", maxLength: 200 } }, required: ["path"] }], description: "The file to migrate: a project-relative path or { path, scope, component }." },
+        target: { oneOf: [{ type: "string", minLength: 1, maxLength: 1024 }, { type: "object", additionalProperties: false, properties: { path: { type: "string", minLength: 1, maxLength: 1024 }, scope: { type: "string", maxLength: 64 }, component: { type: "string", maxLength: 200 } }, required: ["path"] }], description: "The artifact the format migration writes, under the type's configured path; equal to source for a format migration in place." },
+        content: { type: "string", description: "The whole migrated artifact, at most 1 MiB." },
+        summary: { type: "string", minLength: 1, maxLength: 2000, description: "Plain text on what changes and why." },
+        leftovers: { type: "array", items: { type: "object", additionalProperties: false, properties: { statement: { type: "string", minLength: 1 }, home: { type: "string", minLength: 1, maxLength: 500 } }, required: ["statement", "home"] }, description: "Each source statement the content does not keep, verbatim, with its proposed home." },
+        conflicts: { type: "array", items: { type: "object", additionalProperties: false, properties: { entry: { type: "string", minLength: 1, maxLength: 200 }, content: { type: "string" } }, required: ["entry", "content"] }, description: "The source's differing version of each existing target entry." }
+      },
+      required: ["projectRoot", "type", "source", "target", "content", "summary", "leftovers"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+  },
+  {
+    name: "get_migration",
+    description: "Read a format migration that propose_migration recorded, by id: its type, source and target as { path, scope }, summary, diff, targetDiff, leftovers, unknowns, conflicts, status (pending, accepted, declined, or applied), proposedAt, the person's answer { decision, conflicts, removeSource, note, by, at } or null, and appliedAt or null. An unknown id is refused with migration_unknown. This tool changes nothing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string", description: "The absolute path to the active project root." },
+        id: { type: "string", minLength: 1, maxLength: 100, description: "The format migration's id, migration-<hex>." }
+      },
+      required: ["projectRoot", "id"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "apply_migration",
+    description: "Apply a format migration that a person accepted in the review browser: write its content with each conflict's chosen entry and the migration's id after each glossary source written as migration alone, and remove a separate source only when the answer accepted its removal. A store target or source changes only through Prism's store writes, with the version check, artifact lock, identity, recorded status, comments, and sync of update_artifact, and no accepted version changes. Refusals: migration_unknown, migration_not_accepted for a pending or declined format migration, migration_stale naming the paths whose source or target changed since the proposal, and migration_applied for one already applied. It returns { written: [{ path, scope }], removed: [{ path, scope, removedComments? }], acceptedBy, acceptedAt }; commit the written and removed checkout paths in a commit of their own when commits are on, since store artifacts need no commit.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string", description: "The absolute path to the active project root." },
+        id: { type: "string", minLength: 1, maxLength: 100, description: "The format migration's id, migration-<hex>." }
+      },
+      required: ["projectRoot", "id"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }
+  },
+  {
     name: "list_repository_intelligence_providers",
     description: "List registered repository intelligence providers and their current availability for a project. This tool does not create, synchronize, or update provider indexes. In a repository that declares components, native.components lists each component's native index status.",
     inputSchema: {
@@ -761,7 +810,7 @@ const tools = [
   },
   {
     name: "wait_for_user_gate",
-    description: "Wait until the user answers recorded user gates in the review browser, then return the answers. Call it once right after asking the user and recording the gates, with every gate id just recorded; after the first answer it waits briefly for answers to the others. The call can last hours; Claude Code moves it to the background after about two minutes, and its result wakes the session when the user answers. On Codex it returns deferred at once, and a Stop hook continues the session with the answer after the turn ends. It returns answered with the recorded answer, changed with the person's new history entries when the person changes the initiative in the review app, whether here or through a store sync, resolved when the gate was removed (answered in the conversation or withdrawn), timeout, unknown_gate, deferred, or unsupported_host when this host can wait neither in the background nor after the turn. For the approval gates that update_artifact ask_approval records on a requirement or ADR, pass artifact, its project-relative path, and scope when two scopes hold it, in place of initiative; an answered approval gate needs no resolve.",
+    description: "Wait until the user answers recorded user gates in the review browser, then return the answers. Call it once right after asking the user and recording the gates, with every gate id just recorded; after the first answer it waits briefly for answers to the others. The call can last hours; Claude Code moves it to the background after about two minutes, and its result wakes the session when the user answers. On Codex it returns deferred at once, and a Stop hook continues the session with the answer after the turn ends. It returns answered with the recorded answer, changed with the person's new history entries when the person changes the initiative in the review app, whether here or through a store sync, resolved when the gate was removed (answered in the conversation or withdrawn), timeout, unknown_gate, deferred, or unsupported_host when this host can wait neither in the background nor after the turn. For the approval gates that update_artifact ask_approval records on a requirement or ADR, pass artifact, its project-relative path, and scope when two scopes hold it, in place of initiative; an answered approval gate needs no resolve. For a format migration that propose_migration recorded, pass migration, its id, in place of initiative and gate ids; it returns answered with the migration's answer, then call apply_migration when it was accepted.",
     inputSchema: {
       type: "object",
       properties: {
@@ -769,6 +818,7 @@ const tools = [
         initiative: { type: "string", description: "The initiative whose coordination state holds the gates." },
         artifact: { type: "string", minLength: 1, description: "In place of initiative: the project-relative path of the requirement or ADR whose approval gates to wait on." },
         scope: { type: "string", minLength: 1, description: "With artifact, when two scopes hold its path: workspace, repository, or a scope label such as <repository>/<component>." },
+        migration: { type: "string", minLength: 1, maxLength: 100, description: "In place of initiative and gate ids: the id of the format migration whose answer to wait on." },
         gateIds: { type: "array", minItems: 1, maxItems: MAX_WAIT_GATES, items: { type: "string", minLength: 1 }, description: "The gate ids that the ask operations returned." },
         gateId: { type: "string", minLength: 1, description: "One gate id; use gateIds for several." },
         maxWaitMinutes: { type: "number", exclusiveMinimum: 0, maximum: MAX_WAIT_MINUTES, description: `How long to wait before returning timeout. Defaults to ${DEFAULT_WAIT_MINUTES}.` }
@@ -940,15 +990,17 @@ async function noteApprovalDelivery(name, projectRoot, value) {
 
 async function callGateWait(argumentsValue, metadata, requestId) {
   const projectRoot = await requestedProjectRoot(argumentsValue);
-  const gateIds = argumentsValue.gateIds ?? (argumentsValue.gateId === undefined ? undefined : [argumentsValue.gateId]);
+  // A format migration's wait names the migration, whose one gate carries its id.
+  const migration = typeof argumentsValue.migration === "string" && argumentsValue.migration ? argumentsValue.migration : null;
+  const gateIds = migration ? [migration] : argumentsValue.gateIds ?? (argumentsValue.gateId === undefined ? undefined : [argumentsValue.gateId]);
   if (!Array.isArray(gateIds) || !gateIds.length) {
     throw new Error("Pass the recorded gate ids in gateIds.");
   }
   // A wait names the initiative whose coordination state holds the gates, or the artifact whose status record holds them.
-  const source = typeof argumentsValue.artifact === "string" && argumentsValue.artifact
+  const source = migration ? { migration } : typeof argumentsValue.artifact === "string" && argumentsValue.artifact
     ? { artifact: argumentsValue.artifact, ...(argumentsValue.scope === undefined ? {} : { scope: argumentsValue.scope }) }
     : { initiative: argumentsValue.initiative };
-  if (source.artifact === undefined && (typeof source.initiative !== "string" || !source.initiative)) {
+  if (source.artifact === undefined && source.migration === undefined && (typeof source.initiative !== "string" || !source.initiative)) {
     throw new Error("Pass initiative, the initiative whose coordination state holds the gates, or artifact, the requirement or ADR whose approval gates to wait on.");
   }
   let value;
@@ -1011,9 +1063,9 @@ async function callGateWait(argumentsValue, metadata, requestId) {
   const text = {
     changed: () => changedText(value),
     answered: () => [...value.answered.map(answerText), value.waiting.length ? `Still waiting on: ${value.waiting.join(", ")}.` : ""].filter(Boolean).join("\n"),
-    resolved: () => source.artifact ? `Approval gates ${list} of ${source.artifact} closed without an answer: a later ask_approval replaced them, or the artifact was removed or left the scopes this checkout sees.` : `User gates ${list} were resolved without a browser answer; they were answered in the conversation or withdrawn.`,
+    resolved: () => source.migration ? `The format migration ${source.migration} is gone without an answer.` : source.artifact ? `Approval gates ${list} of ${source.artifact} closed without an answer: a later ask_approval replaced them, or the artifact was removed or left the scopes this checkout sees.` : `User gates ${list} were resolved without a browser answer; they were answered in the conversation or withdrawn.`,
     timeout: () => `No answer arrived for user gates ${list} before the wait ended.`,
-    unknown_gate: () => `No pending user gate has any of the ids ${list}.`,
+    unknown_gate: () => source.migration ? `No format migration has the id ${source.migration}.` : `No pending user gate has any of the ids ${list}.`,
     deferred: () => `This host cannot wait during a tool call, so Prism waits after this turn ends: end your turn now, and the session continues with the answer when the user answers user gates ${list} in the review browser within ${value.maxWaitMinutes} minutes. If it does not continue, the user's next message delivers any browser answer.`,
     unsupported_host: () => `The wait returned at once because it cannot run in the background here: ${value.reason} The user's next message delivers any browser answer.`,
     cancelled: () => `The wait for user gates ${list} was cancelled.`
@@ -1240,6 +1292,24 @@ async function callCheckArtifacts(argumentsValue) {
   } catch (error) {
     if (!(error instanceof ArtifactCheckError)) throw error;
     const details = Object.fromEntries(["path", "scopes", "store", "components", "component"].filter((key) => error[key] !== undefined).map((key) => [key, error[key]]));
+    const value = { code: error.code, message: error.message, ...details };
+    return { content: [{ type: "text", text: error.message }], structuredContent: value, isError: true };
+  }
+}
+
+// A refused format migration names what it refuses in its text and its structured content, so an agent sees what to correct.
+async function callMigrationTool(name, argumentsValue) {
+  const projectRoot = await requestedProjectRoot(argumentsValue);
+  try {
+    if (name !== "propose_migration") assertExactToolArguments(argumentsValue, ["projectRoot", "id"], [], `${name} arguments`);
+    const value = name === "propose_migration" ? await proposeMigration({ ...argumentsValue, projectRoot })
+      : name === "get_migration" ? await getMigration({ projectRoot, id: argumentsValue.id })
+      : await applyMigration({ projectRoot, id: argumentsValue.id });
+    const text = name === "propose_migration" ? `Proposed format migration ${value.migration.id}: a person answers it on its page in the review browser; wait with wait_for_user_gate and migration.\n${JSON.stringify(value)}` : JSON.stringify(value);
+    return { content: [{ type: "text", text }], structuredContent: value };
+  } catch (error) {
+    if (!(error instanceof FormatMigrationError)) throw error;
+    const details = Object.fromEntries(["statements", "changed", "entries", "artifacts", "paths", "path", "id", "scopes", "store", "components", "component"].filter((key) => error[key] !== undefined).map((key) => [key, error[key]]));
     const value = { code: error.code, message: error.message, ...details };
     return { content: [{ type: "text", text: error.message }], structuredContent: value, isError: true };
   }
@@ -1578,6 +1648,9 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
   }
   if (name === "check_artifacts") {
     return callCheckArtifacts(argumentsValue);
+  }
+  if (["propose_migration", "get_migration", "apply_migration"].includes(name)) {
+    return callMigrationTool(name, argumentsValue);
   }
   const review = await server(argumentsValue, metadata);
   if (name === "get_review_url") {

@@ -94,6 +94,35 @@ To go on, ask an agent for a format migration of that artifact in a session of i
 With a record store, a requirement reference cites every copy that a scope the checkout sees holds at its path, and a link in a `slice.md` cites the copy in that `slice.md`'s scope, else the only copy a seen scope holds, else every copy.
 The message then names a store artifact as `<path> in scope <label>` and ends with `Ask for a migration of <path> in scope <label> in a session of its own.`, so ask for the migration of the copy in that scope.
 
+### Format migrations
+
+A format migration converts one artifact that breaks its format, or a file that holds such content, into its format, and applies only after a person accepts it.
+It is not the move of a checkout's files into a record store.
+An agent proposes it with `propose_migration`, passing the type, the source and the target, the whole migrated content, a summary of what changes and why, and leftovers: each statement of the source that the content does not keep, with a proposed home such as the project instructions.
+The target lies under the type's configured path, and equals the source for a format migration in place.
+A checkout source or target whose path passes through a symbolic link is refused with `artifact_outside`, and one that is no regular file with `invalid_path`, when it is proposed and again when it is applied, so a format migration never touches a file outside the project.
+Prism splits the source into statements, each sentence of a paragraph, list item, blockquote line, or table cell and each fenced code block, and refuses a proposal with `migration_unaccounted` when a statement appears in neither the content, a leftover, nor a conflict.
+It refuses with `migration_invented` a statement of the content that is no statement of the source or the target, compared whole, so a sentence cut short counts as invented, while the format's structure, its default values, `unknown`, links, and dates from the source's Git history count as no statements.
+A value that neither the source nor its Git history gives is written as `unknown`, and the migration lists each one.
+A status or a Created, Approved, or Accepted date counts only when it is the type's new status, the source or the target states it in that same field, or the date comes from the source's Git history.
+Content that breaks its format is refused with `artifact_nonconforming`.
+When the source or the target is Approved or Accepted, content that changes its status, its Created or Approved date, or drops an identity, such as a requirement section number or a glossary term id, is refused with `migration_changes_decision`.
+A target that already exists keeps each of its entries, a requirement section, a glossary term, or a feature Rule, unchanged: the source's differing version of an entry goes under `conflicts`, and content that changes a target entry is refused with `migration_conflict`.
+A second proposal for a target whose format migration is still waiting for an answer, or is accepted and can still apply, is refused with `migration_pending`, also when both proposals arrive at once.
+
+The person answers the format migration in the review browser, where they accept or decline it, choose the target's or the source's version of each conflicting entry, and for a separate source choose whether to remove it, which is off by default.
+The agent waits with `wait_for_user_gate` and `migration`, reads the format migration with `get_migration`, and applies an accepted one with `apply_migration`.
+Applying writes the content with each chosen entry, writes the migration's id after each glossary `Source: migration`, so the term's source is the applied format migration, and removes a separate source only when the person accepted its removal.
+It refuses a format migration that was not accepted with `migration_not_accepted`, one whose source or target changed since the proposal with `migration_stale`, and one already applied with `migration_applied`.
+A stale format migration no longer holds its target, so a new one can be proposed from the current files.
+Applying checks the format migration's record again as a proposal checks its input, and refuses with `invalid_input` a source or target path that leaves the project or a target outside the type's configured path, and with `record_invalid` a record whose content, paths, conflicts, or diffs changed after the person answered, so it writes and removes only what the person accepted.
+An apply that stopped part way, after writing the target, completes when it is run again: a target that already holds the migration's content and a removed source count as done, and the format migration is then recorded as applied.
+A store source of a checkout target is removed before the target is written, so a change to that source in the store refuses the apply before anything is written.
+
+In a project whose `.prism/workflow.md` names a record store, a requirement, ADR, or glossary target is a store artifact, and a source under a store artifact path is one too, while feature files and every other file stay in the checkout.
+A store target's `Status:` line must equal the status Prism recorded for it, or for a new one the recorded status of a store source of the same type, else `Draft` for a requirement and `Proposed` for an ADR, and applying writes and removes store artifacts through the store's own checks, so their comments, recorded statuses, and accepted versions stay as `update_artifact` keeps them.
+Prism keeps each format migration as a record under `format-migrations/`, in the store when one is configured and under `.prism/` otherwise.
+
 ## Verification
 
 A slice whose design is accepted lists its frozen acceptance tests and says whether its implementation needs independent review.

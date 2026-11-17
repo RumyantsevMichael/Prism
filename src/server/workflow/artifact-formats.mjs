@@ -171,7 +171,8 @@ function inspectRequirements(text) {
   }
   for (const section of named) {
     if (!expected.includes(section.title)) continue;
-    const body = bodyText(section.body);
+    // The anchor of the first numbered section closes the last named one, and is no part of its body.
+    const body = bodyText(section.body.filter((item) => item.fenced || !/^<a id="[^"]*"><\/a>\s*$/.test(item.value)));
     if (body === UNKNOWN) unknowns.push({ line: section.body.find((item) => !blank(item)).line, field: section.title });
     else if (body === "") findings.push(finding(`${type}.sections`, section.line, `The section ## ${section.title} is empty.`));
   }
