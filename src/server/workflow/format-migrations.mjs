@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, realpath, rm } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { writeAtomically } from "./artifact-store.mjs";
@@ -128,13 +128,33 @@ const storePath = (config, file) => artifactAddress(artifactKinds(config), file)
 async function readArtifact(root, config, entry, { store, kind }) {
   if (!store) {
     if (entry.scope !== undefined || entry.component !== undefined) throw fail("scope_invalid", `${entry.path} is a checkout file, so it takes no scope.`, { path: entry.path });
-    const bytes = await readFile(path.join(root, entry.path)).catch((error) => { if (["ENOENT", "ENOTDIR", "EISDIR"].includes(error.code)) return null; throw error; });
+    const bytes = await checkoutFile(root, entry.path) ? await readFile(path.join(root, entry.path)).catch((error) => { if (["ENOENT", "ENOTDIR"].includes(error.code)) return null; throw error; }) : null;
     return { path: entry.path, scope: null, store: false, bytes, text: bytes === null ? null : bytes.toString("utf8"), version: bytes === null ? null : versionOf(bytes), status: null };
   }
   const copy = await storeRefusing(() => storeArtifactCopy(root, entry.path, { ...(entry.scope === undefined ? {} : { scope: entry.scope }), ...(entry.component === undefined ? {} : { component: entry.component }) }));
   if (kind !== undefined && copy.kind !== kind) throw fail("invalid_input", `${entry.path} is no artifact of the kind ${kind}.`, { path: entry.path });
   const held = copy.held;
   return { path: copy.path, scope: copy.scope, store: true, bytes: held?.bytes ?? null, text: held === null ? null : Buffer.from(held.bytes).toString("utf8"), version: held?.version ?? null, status: held?.status ?? null };
+}
+
+/**
+ * Whether a checkout path holds a regular file inside the project: true when it does, false when nothing is there.
+ * A path through a symbolic link at any folder or at the file itself is refused with artifact_outside, and one that holds no regular file with invalid_path,
+ * as the move of checkout files into the store refuses them, so a migration never reads, writes, or removes a file outside the project.
+ */
+async function checkoutFile(root, file) {
+  const parts = file.split("/");
+  let current = root;
+  for (const [index, part] of parts.entries()) {
+    current = path.join(current, part);
+    const info = await lstat(current).catch((error) => { if (["ENOENT", "ENOTDIR"].includes(error.code)) return null; throw error; });
+    if (info === null) return false;
+    if (info.isSymbolicLink()) throw fail("artifact_outside", `${file} passes through the symbolic link ${parts.slice(0, index + 1).join("/")}, so a format migration does not read, write, or remove it.`, { path: file });
+    const last = index === parts.length - 1;
+    if (!last && !info.isDirectory()) return false;
+    if (last && !info.isFile()) throw fail("invalid_path", `${file} is no regular file, so a format migration does not read, write, or remove it.`, { path: file });
+  }
+  return true;
 }
 
 // The dates of a checkout path's Git history, as author and committer dates; a path Git does not know has none.
@@ -586,12 +606,14 @@ export async function applyMigration({ projectRoot, id }) {
       for (const item of stored.filter((entry) => entry.removed)) removed.push({ path: item.path, scope: item.scope, ...(item.removedComments ? { removedComments: item.removedComments } : {}) });
     } else {
       const file = path.join(root, target.path);
+      await checkoutFile(root, target.path);
       await mkdir(path.dirname(file), { recursive: true });
+      await checkoutFile(root, target.path);
       await writeAtomically(file, content);
       written.push({ path: target.path, scope: null });
     }
     if (removeSource && !source.store) {
-      await rm(path.join(root, source.path), { force: true });
+      if (await checkoutFile(root, source.path)) await rm(path.join(root, source.path), { force: true });
       removed.push({ path: source.path, scope: null });
     } else if (removeSource && source.store && !target.store) {
       const [entry] = await applyStoreRemove(root, source);
