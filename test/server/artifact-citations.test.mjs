@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 import { CONFORMING, formatServer, PATHS, write } from "./fixtures/artifact-formats.mjs";
 import { storeProject, storeRead } from "./fixtures/artifact-formats-store.mjs";
@@ -77,3 +79,35 @@ test("a slice.md link cites only the files check_artifacts lists as artifacts, n
   assert.equal(accepted.value?.code ?? null, null, accepted.text);
 });
 
+test("update_roadmap update_initiative cites only the references the entry does not already hold", async (context) => {
+  const { root, call } = await formatServer(context, { ...CONFORMING, "docs/requirements/other.md": CONFORMING[PATHS.requirements] });
+  const added = await roadmap(call, [{ op: "add_initiative", id: "retries", title: "Retries", intent: "Bound retries.", band: "Now", requirements: ["retries.md§1"] }]);
+  assert.equal(added.value?.code ?? null, null, added.text);
+  await write(root, PATHS.requirements, BROKEN);
+  await write(root, OLD, BROKEN);
+  const kept = await roadmap(call, [{ op: "update_initiative", id: "retries", requirements: ["retries.md§1", "other.md§1"] }]);
+  assert.equal(kept.value?.code ?? null, null, kept.text);
+  const dropped = await roadmap(call, [{ op: "update_initiative", id: "retries", requirements: ["other.md§1"] }]);
+  assert.equal(dropped.value?.code ?? null, null, dropped.text);
+  const readded = await roadmap(call, [{ op: "update_initiative", id: "retries", requirements: ["other.md§1", "retries.md§1"] }]);
+  assert.equal(readded.value?.code, "artifact_nonconforming", readded.text);
+  const gained = await roadmap(call, [{ op: "update_initiative", id: "retries", requirements: ["other.md§1", "old.md§1"] }]);
+  assert.equal(gained.value?.code, "artifact_nonconforming", gained.text);
+  assert.deepEqual(gained.value.artifacts.map((artifact) => artifact.path), [OLD]);
+});
+
+test("a roadmap entry keeps a reference recorded before reference paths had to be normalized when an update carries it over", async (context) => {
+  const { root, call } = await formatServer(context, { ...CONFORMING, "docs/requirements/other.md": CONFORMING[PATHS.requirements] });
+  assert.equal((await roadmap(call, [{ op: "add_initiative", id: "retries", title: "Retries", intent: "Bound retries.", band: "Now", requirements: ["retries.md§1"] }])).value?.code ?? null, null);
+  const legacy = `./${PATHS.requirements}#1`;
+  const file = path.join(root, (await call("get_roadmap", {})).value.recordPath);
+  const record = JSON.parse(await readFile(file, "utf8"));
+  record.initiatives.find((entry) => entry.id === "retries").requirements = [legacy];
+  await writeFile(file, JSON.stringify(record, null, 2));
+  const carried = await roadmap(call, [{ op: "update_initiative", id: "retries", requirements: [legacy, "other.md§1"] }]);
+  assert.equal(carried.value?.code ?? null, null, carried.text);
+  const entry = (await call("get_roadmap", {})).value.record.initiatives.find((item) => item.id === "retries");
+  assert.deepEqual(entry.requirements, [legacy, "docs/requirements/other.md#1"]);
+  const fresh = await roadmap(call, [{ op: "update_initiative", id: "retries", requirements: [legacy, `./docs/requirements/other.md#1`] }]);
+  assert.equal(fresh.value?.code, "validation_failed", fresh.text);
+});

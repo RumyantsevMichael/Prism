@@ -97,6 +97,13 @@ async function resolveRoadmap(projectRoot, createParent = false) {
   return { root: record.root, config, recordPath: record.path, target: record.target, projectionPath: projection.deltaPath, inStore, recordName: path.posix.basename(paths.record) };
 }
 
+// The requirement references each roadmap entry holds, by entry id, read before the update's locks for its citation check; an unreadable roadmap holds none, and its update is refused later.
+async function heldRequirements(projectRoot) {
+  const loaded = await resolveRoadmap(projectRoot).then(loadRoadmap).catch(() => null);
+  const entries = loaded?.valid ? loaded.record?.initiatives ?? [] : [];
+  return new Map(entries.map((entry) => [entry.id, new Set(entry.requirements ?? [])]));
+}
+
 function emptyRoadmap() {
   return { schemaVersion: 1, serves: "", initiatives: [], openQuestions: [], history: [] };
 }
@@ -467,9 +474,11 @@ function insertInBand(record, item, targetBand, positionValue) {
   record.initiatives.splice(index, 0, item);
 }
 
-// Only references an operation adds or changes are checked, so a roadmap written before this check still loads and updates.
-function roadmapRequirements(resolved, references) {
+// Only references an operation adds or changes are checked, so a roadmap written before this check still loads and updates:
+// a reference the entry already holds is carried over as recorded, even one written before reference paths had to be normalized.
+function roadmapRequirements(resolved, references, kept = []) {
   return references.map((reference) => {
+    if (kept.includes(reference)) return reference;
     const normalized = normalizeRequirementReference(resolved.config.paths.requirements, reference);
     if (normalized.problem) throw fail("validation_failed", normalized.problem);
     return normalized.reference;
@@ -583,7 +592,10 @@ async function applyOperation(resolved, record, operation, actor, at, marks, shi
     const shipped = entryShippedDecision(record.initiatives.find((candidate) => candidate.id === operation.id));
     if (shipped) throw new ShippedHistoryError(operation.id, shipped.at);
   }
-  if (operation.requirements !== undefined && (operation.op === "add_initiative" || operation.op === "update_initiative")) operation = { ...operation, requirements: roadmapRequirements(resolved, operation.requirements) };
+  if (operation.requirements !== undefined && (operation.op === "add_initiative" || operation.op === "update_initiative")) {
+    const kept = operation.op === "update_initiative" ? record.initiatives.find((candidate) => candidate.id === operation.id)?.requirements ?? [] : [];
+    operation = { ...operation, requirements: roadmapRequirements(resolved, operation.requirements, kept) };
+  }
   if (operation.corrects !== undefined && (operation.op === "add_initiative" || operation.op === "update_initiative")) {
     if (operation.op === "update_initiative") findInitiative(record, operation.id);
     operation = { ...operation, corrects: await checkedCorrects(resolved, record, operation) };
@@ -674,10 +686,15 @@ async function applyOperation(resolved, record, operation, actor, at, marks, shi
 export async function updateRoadmap(input) {
   validateInput(UPDATE_ROADMAP_SCHEMA, input);
   // An entry that cites a requirement file breaking its format is refused before every other check, so nothing changes.
-  const cited = input.operations.filter((operation) => (operation.op === "add_initiative" || operation.op === "update_initiative") && operation.requirements !== undefined).flatMap((operation) => operation.requirements);
-  if (cited.length) {
+  // update_initiative replaces an entry's list, so it cites only the references the entry does not already hold, and an entry that already cites a nonconforming file keeps it.
+  const citing = input.operations.filter((operation) => (operation.op === "add_initiative" || operation.op === "update_initiative") && operation.requirements !== undefined);
+  if (citing.length) {
     const requirements = (await readWorkflowConfig(input.projectRoot)).paths.requirements;
-    await checkCitations(input.projectRoot, { references: cited.map((reference) => normalizeRequirementReference(requirements, reference).reference).filter(Boolean) });
+    const held = citing.some((operation) => operation.op === "update_initiative") ? await heldRequirements(input.projectRoot) : new Map();
+    const cited = citing.flatMap((operation) => operation.requirements
+      .map((reference) => normalizeRequirementReference(requirements, reference).reference)
+      .filter((reference) => reference !== undefined && !(operation.op === "update_initiative" && held.get(operation.id)?.has(reference))));
+    await checkCitations(input.projectRoot, { references: cited });
   }
   await moveLegacyRecords(input.projectRoot);
   const resolved = await resolveRoadmap(input.projectRoot, true);

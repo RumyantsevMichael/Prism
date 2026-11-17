@@ -525,7 +525,8 @@ function markdown(record) {
 }
 
 // Requirement files cite obligations as <file>.md§<n>, so that form is accepted and stored as <requirements dir>/<file>.md#<n>.
-// The roadmap validates its references the same way, so an initiative created from a roadmap item never refuses them.
+// The roadmap validates the references it adds the same way, so an initiative created from those references never refuses them;
+// a roadmap entry keeps a reference recorded before paths had to be normalized, while an initiative takes it only once it is written normalized.
 // The path of a reference is a normalized project-relative path, as a frozen test path is, so a reference names its file in exactly one way and every check of the file finds it.
 export function normalizeRequirementReference(requirementsDirectory, reference) {
   const cited = /^([^\s/#§]+\.md)§([^\s#§]+)$/.exec(reference);
