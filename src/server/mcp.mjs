@@ -128,7 +128,7 @@ async function requestedProjectRoot(argumentsValue) {
   ) {
     throw projectRootRefusal("The projectRoot argument must be an absolute path.");
   }
-  const projectRoot = hostProjectRoot ?? argumentsValue.projectRoot;
+  const projectRoot = hasSuppliedProjectRoot ? argumentsValue.projectRoot : hostProjectRoot;
   if (!projectRoot) {
     throw projectRootRefusal("The projectRoot argument is required when the host does not provide a project root.");
   }
@@ -136,10 +136,13 @@ async function requestedProjectRoot(argumentsValue) {
     throw projectRootRefusal("The projectRoot argument must be an absolute path.");
   }
   const resolvedRoot = await realpath(projectRoot);
+  // A session that starts in a folder holding several checkouts side by side names the checkout it works in, so a project root below the start folder is served,
+  // and one outside it is refused, so a session reaches only the folders it started over.
   if (hostProjectRoot && hasSuppliedProjectRoot) {
-    const suppliedRoot = await realpath(argumentsValue.projectRoot);
-    if (suppliedRoot !== resolvedRoot) {
-      throw projectRootRefusal(`The projectRoot argument does not match the host project root ${resolvedRoot}. Pass that path, which is the directory where the session started.`);
+    const hostRoot = await realpath(hostProjectRoot);
+    const relative = path.relative(hostRoot, resolvedRoot);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      throw projectRootRefusal(`The projectRoot argument ${resolvedRoot} is not the folder where the session started, or a folder below it. Pass ${hostRoot} or a checkout below it.`);
     }
   }
   // The tool call's project root is the checkout whose first store access in this call may move its existing artifacts into the store, since this call's result reports the move.
