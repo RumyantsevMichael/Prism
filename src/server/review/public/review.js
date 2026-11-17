@@ -1014,6 +1014,9 @@ const baseTitle = () => signals.project ? `${signals.project} · Prism` : "Prism
 const signals = { project: null, count: null, icon: document.querySelector('link[rel="icon"]'), plainIcon: null, badged: null };
 signals.plainIcon = signals.icon?.getAttribute("href") ?? null;
 
+// How often a tab in the background reads the count of waiting questions; a browser may stretch the timers of a long-hidden tab to about a minute.
+const ATTENTION_WATCH_MS = 15000;
+
 async function updateAttentionSignals(count) {
   const previous = signals.count;
   signals.count = count;
@@ -3353,6 +3356,12 @@ async function initialize() {
   } });
   // The first check waits one interval, since the page has just drawn from a fresh index.
   setTimeout(() => void indexPoller.start(), 1500);
+  // A hidden tab makes none of the checks above, so it reads the count of waiting questions alone, which raises the desktop notification the Attention page offers.
+  void createPoller({ interval: ATTENTION_WATCH_MS, whileHidden: true, run: async () => {
+    const response = await appFetch("./api/attention", { cache: "no-store", deadlineMs: POLL_DEADLINE_MS }).catch(() => null);
+    const answer = response?.ok ? await response.json().catch(() => null) : null;
+    if (Number.isInteger(answer?.gates)) await updateAttentionSignals(answer.gates);
+  } }).start();
 }
 
 initialize().catch((error) => {

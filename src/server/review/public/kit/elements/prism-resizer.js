@@ -1,5 +1,5 @@
 // prism-resizer: the handle on a panel's edge that sets the panel's width, in light DOM: drag it, move it with the arrow keys, or double-click it to return to the default.
-// It only reports widths; the page applies them, so a page can cap a width by the window's size and keep it as the person's preference.
+// It only reports widths, in whole pixels; the page applies them, so a page can cap a width by the window's size and keep it as the person's preference.
 import { Base, emit, setAttribute } from "./base.js";
 
 const STEP = 16;
@@ -60,8 +60,9 @@ export class PrismResizer extends Base {
     return value;
   }
 
+  // A pointer's position has fractions of a pixel, and a width is a whole number of pixels, which the page stores as the person's preference.
   report(width, done) {
-    emit(this, "prism-resize", { width: this.clamp(width), done });
+    emit(this, "prism-resize", { width: Math.round(this.clamp(width)), done });
   }
 
   onPointerDown(event) {
