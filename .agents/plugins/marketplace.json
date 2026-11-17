@@ -9,8 +9,8 @@
       "source": {
         "source": "url",
         "url": "https://github.com/RumyantsevMichael/Prism.git",
-        "ref": "prism--v0.26.0",
-        "sha": "7d83abb74939ae47f2147dc4f8e6eb9c40aac881"
+        "ref": "prism--v0.27.0",
+        "sha": "64437c04bb3a29e7aa037f6df5e3ef8baf6ffcdb"
       },
       "policy": {
         "installation": "AVAILABLE",
