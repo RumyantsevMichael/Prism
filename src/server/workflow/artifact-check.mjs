@@ -300,12 +300,12 @@ export async function checkArtifacts({ projectRoot, paths, type, legacyOf, appli
 
 /**
  * The project's artifact store reads that a check of named artifacts needs: { config, locations, store, storeType },
- * refusing as checkTargets takes it, where store is what seenArtifactTexts gives in a project with a record store, else null, and storeType(path) the format type of a path that the store holds, else null.
+ * refusing as checkTargets takes it, where store is what seenArtifactTexts gives in a project with a record store, limited to paths when they are given, else null, and storeType(path) the format type of a path that the store holds, else null.
  */
-export async function artifactSources(root, { refusing = storeRefusing } = {}) {
+export async function artifactSources(root, { refusing = storeRefusing, paths = null } = {}) {
   const config = await readWorkflowConfig(root);
   const locations = artifactLocations(config);
-  const store = (config.workspace?.store ?? null) !== null ? await refusing(() => seenArtifactTexts(root)) : null;
+  const store = (config.workspace?.store ?? null) !== null ? await refusing(() => seenArtifactTexts(root, { paths })) : null;
   const storeType = (file) => {
     const kind = store === null ? null : storeKindOf(config, file);
     return kind === null ? null : STORE_TYPES.get(kind) ?? null;

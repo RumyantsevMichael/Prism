@@ -1123,20 +1123,33 @@ async function storeScopes(seen) {
   return scopes;
 }
 
+// The seen scopes' holdings at the given project-relative paths only, so a caller that cites a few artifacts reads only those.
+async function namedHoldings(seen, kinds, paths) {
+  const found = [];
+  for (const file of new Set(paths)) {
+    const address = normalizeArtifactPath(file) === file ? artifactAddress(kinds, file) : null;
+    if (!address || address.rest === "" || malformedArtifactName(address) !== null) continue;
+    for (const { scope, target } of await holders(seen, address, seen.scopes.filter((scope) => kindInScope(address.kind, scope)), async (target) => (await locationKind(target, seen.base).catch(() => null)) === "file" ? {} : null)) {
+      found.push({ path: file, scope, kind: address.kind, target });
+    }
+  }
+  return found;
+}
+
 /**
- * The requirements, ADRs, and glossaries that every scope the checkout sees holds, read under the store's own checks and refusals, after the move of the checkout's files:
+ * The requirements, ADRs, and glossaries that every scope the checkout sees holds, or with paths only those at the given project-relative paths, read under the store's own checks and refusals, after the move of the checkout's files:
  * { repository, artifacts, copiesOf }, where artifacts lists { path, scope, kind, bytes, size, version, status } sorted by path and then scope label,
  * with bytes null for a file above the bound a read takes and status the recorded status of a requirement or ADR, else null,
  * and copiesOf(path) lists the copies that any scope of the store holds at a project-relative requirement or ADR path, as { scope, bytes, status }, whichever checkout asks.
  */
-export async function seenArtifactTexts(projectRoot) {
+export async function seenArtifactTexts(projectRoot, { paths = null } = {}) {
   return refusing(async () => {
     const { kinds } = await configuration(projectRoot);
     const seen = await seenScopes(projectRoot);
     const resolve = manyReads(seen);
     const statusOf = async (scope, file, kind) => hasStatus(kind) ? (await statusRecordOf(seen, scope, artifactAddress(kinds, file), resolve)).status : null;
     const artifacts = [];
-    for (const entry of await holdings(seen, "", null)) {
+    for (const entry of paths === null ? await holdings(seen, "", null) : await namedHoldings(seen, kinds, paths)) {
       if (!FORMAT_KINDS.has(entry.kind)) continue;
       const record = await readStored(entry.target);
       if (record === null) continue;

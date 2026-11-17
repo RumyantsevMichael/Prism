@@ -48,37 +48,41 @@ async function sliceDocument(root, file) {
  * `references` are project-relative requirement references such as docs/requirements/retries.md#1, each citing every seen copy at its path,
  * `documents` slice.md paths whose Markdown links cite the copy in the document's scope, else the only seen copy, else every copy,
  * and `files` paths cited as they are, such as frozen feature files. A path that no artifact type covers or that holds no file cites nothing.
+ * Only the cited paths are read from the store, so the check costs what the operation cites, not what the store holds.
  * Returns [{ path, scope, type, conforms, findings, legacy }] as check_artifacts lists them, legacy its mark or null.
  */
 export async function citedArtifacts(projectRoot, { references = [], documents = [], files = [] } = {}) {
   if (!references.length && !documents.length && !files.length) return [];
   const root = await realpath(projectRoot);
+  // Each cited path with the scope its citation prefers, undefined for none, so the store reads only the cited paths.
+  const cited = [];
+  for (const reference of references) cited.push({ file: reference.split("#")[0], scope: undefined });
+  for (const file of files) cited.push({ file, scope: undefined });
+  for (const file of documents) {
+    const document = await sliceDocument(root, file);
+    if (document === null) continue;
+    for (const linked of linkedPaths(document.text, file) ?? []) cited.push({ file: linked, scope: document.scope ?? null });
+  }
+  if (!cited.length) return [];
   // The store's own refusals, such as store_unavailable or repository_name_missing, refuse the operation as they are.
-  const { locations, store, storeType } = await artifactSources(root, { refusing: storeOwn });
+  const { locations, store, storeType } = await artifactSources(root, { refusing: storeOwn, paths: cited.map((entry) => entry.file) });
   const targets = new Map();
   const add = (target) => {
     const key = `${labelOf(target.scope) ?? ""}\0${target.path}`;
     if (!targets.has(key)) targets.set(key, target);
   };
-  const cite = async (file, scope) => {
+  for (const { file, scope } of cited) {
     const type = artifactTypeOf(locations, file);
-    if (type === null) return;
+    if (type === null) continue;
     if (store !== null && storeType(file) === type) {
       const copies = store.artifacts.filter((artifact) => artifact.path === file);
       const own = scope === undefined ? undefined : copies.find((artifact) => artifact.scope.label === labelOf(scope));
       const chosen = own ? [own] : copies;
       for (const artifact of chosen) add({ path: file, type, scope: artifact.scope, stored: artifact });
-      return;
+      continue;
     }
     const info = await stat(path.join(root, file)).catch(() => null);
     if (info?.isFile()) add({ path: file, type, scope: null });
-  };
-  for (const reference of references) await cite(reference.split("#")[0]);
-  for (const file of files) await cite(file);
-  for (const file of documents) {
-    const document = await sliceDocument(root, file);
-    if (document === null) continue;
-    for (const linked of linkedPaths(document.text, file) ?? []) await cite(linked, document.scope ?? null);
   }
   return checkTargets(root, store, [...targets.values()], { refusing: storeOwn });
 }

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CONFORMING, formatServer } from "./fixtures/artifact-formats.mjs";
+import { CONFORMING, formatServer, PATHS } from "./fixtures/artifact-formats.mjs";
+import { storeProject, storeRead } from "./fixtures/artifact-formats-store.mjs";
+import { seenArtifactTexts } from "../../src/server/workflow/store-artifacts.mjs";
 
 // How the citation check names and reads the artifacts that work cites.
 
@@ -38,4 +40,19 @@ test("a requirement reference whose path is not normalized is refused as invalid
     assert.equal(refused.value?.code, "validation_failed", `${reference}: ${refused.text}`);
     assert.match(refused.error?.message ?? refused.text, /normalized project-relative path/, reference);
   }
+});
+
+test("the citation check reads only the store artifacts an update cites, not every artifact the store holds", async (context) => {
+  const { root, call } = await storeProject(context, { ...CONFORMING, [OLD]: BROKEN });
+  await storeRead(call, OLD);
+  const every = await seenArtifactTexts(root);
+  assert.ok(every.artifacts.length > 2, "the store holds more artifacts than the update cites");
+  const cited = await seenArtifactTexts(root, { paths: [PATHS.requirements, PATHS.glossary, "docs/requirements/missing.md"] });
+  assert.deepEqual(cited.artifacts.map((artifact) => [artifact.path, artifact.scope.label]).sort(), [[PATHS.glossary, "api"], [PATHS.requirements, "api"]]);
+  const whole = (file) => every.artifacts.find((artifact) => artifact.path === file);
+  for (const artifact of cited.artifacts) assert.deepEqual({ ...artifact, bytes: Buffer.from(artifact.bytes) }, { ...whole(artifact.path), bytes: Buffer.from(whole(artifact.path).bytes) }, `${artifact.path} reads as the whole listing reads it`);
+  const refused = await initiative(call, [{ op: "create", slug: "retries", title: "Retries", requirements: ["old.md§1"] }]);
+  assert.equal(refused.value?.code, "artifact_nonconforming", refused.text);
+  const created = await initiative(call, [{ op: "create", slug: "retries", title: "Retries", requirements: ["retries.md§1"] }]);
+  assert.equal(created.value?.code ?? null, null, created.text);
 });
