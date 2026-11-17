@@ -103,3 +103,20 @@ test("a source folder replaced by a link after the proposal is refused at apply,
   assert.equal(await exists(path.join(outside, "audit.md")), true, "the outside file is kept");
   assert.equal(await exists(path.join(root, AUDIT)), false, "the target is not written");
 });
+
+test("a wait on a pending migration whose record cannot be read is refused rather than ended as unknown or resolved", async (context) => {
+  const { root, call } = await formatServer(context, { ...CONFORMING, [AUDIT]: DRAFT_SOURCE });
+  const proposed = await call("propose_migration", proposal(AUDIT, AUDIT));
+  const id = proposed.value?.migration?.id;
+  assert.ok(id, proposed.text);
+  const file = path.join(root, ".prism/format-migrations", `${id}.json`);
+  const bytes = await readFile(file, "utf8");
+  const wait = () => waitForUserGates({ projectRoot: root, migration: id, gateIds: [id], maxWaitMinutes: 0.02, pollMs: 50 });
+  // A later failed read keeps the wait polling until its deadline.
+  const later = wait();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await writeFile(file, bytes.slice(0, 20));
+  assert.equal((await later).status, "timeout");
+  // The first read refuses.
+  await assert.rejects(wait());
+});

@@ -551,9 +551,13 @@ export async function answerMigration(projectRoot, id, { decision, conflicts = {
   }, fail));
 }
 
-/** The gates a wait reads for a migration: one entry with its id and its answer once a person answered, or none for an unknown id. */
+/**
+ * The gates a wait reads for a migration: one entry with its id and its answer once a person answered, or none for an id that no record holds.
+ * A failed read, such as an unavailable store or a damaged record, throws with the store's own refusal, so a wait refuses on its first read and keeps polling after it.
+ */
 export async function migrationGates(projectRoot, id) {
-  const read = await readMigrationRecord(projectRoot, id).catch(() => null);
+  const read = await storeRefusing(() => readMigrationRecord(projectRoot, id));
+  if (read && !isRecord(read.record)) throw fail("record_invalid", `The format migration record ${id} holds no migration.`, { id });
   if (!read) return [];
   const { record } = read;
   return [{ id: record.id, kind: "migration", question: `Accept the format migration of ${label(record.target)}? ${record.summary}`, migration: record.id, answer: record.answer ?? null }];
