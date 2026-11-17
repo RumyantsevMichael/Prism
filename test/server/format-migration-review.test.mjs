@@ -149,3 +149,22 @@ test("a target at the source's path in another named scope is read as its own ta
   assert.ok(migration, result.text);
   assert.deepEqual([labelOf(migration.source), labelOf(migration.target), migration.separateSource], ["workspace", "api", true]);
 });
+
+test("an apply retried after an earlier one wrote the target and failed completes and records appliedAt", async (context) => {
+  const { root, call } = await formatServer(context, { ...CONFORMING, "notes/audit.md": DRAFT_SOURCE });
+  const proposed = await call("propose_migration", proposal("notes/audit.md", AUDIT));
+  const id = proposed.value?.migration?.id;
+  assert.ok(id, proposed.text);
+  await answer(root, id, { decision: "accept", removeSource: "on" });
+  // An earlier apply wrote the target and stopped before removing the source and recording appliedAt.
+  await mkdir(path.join(root, "docs/requirements"), { recursive: true });
+  await write(root, AUDIT, content());
+  const applied = await call("apply_migration", { id });
+  assert.deepEqual(applied.value?.written, [{ path: AUDIT, scope: null }], applied.text);
+  assert.deepEqual(applied.value.removed, [{ path: "notes/audit.md", scope: null }]);
+  assert.equal(await read(root, AUDIT), content());
+  assert.equal(await exists(path.join(root, "notes/audit.md")), false);
+  const got = await call("get_migration", { id });
+  assert.equal(typeof got.value?.migration?.appliedAt, "string", got.text);
+  assert.equal((await call("apply_migration", { id })).value?.code, "migration_applied");
+});

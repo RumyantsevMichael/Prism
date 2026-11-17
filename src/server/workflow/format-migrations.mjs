@@ -589,19 +589,28 @@ export async function applyMigration({ projectRoot, id }) {
     const read = (entry, store) => readArtifact(root, config, { path: entry.path, ...(store ? scopeInputOf(entry.scope) : {}) }, { store });
     const source = await read(record.source, record.sourceInput?.store === true);
     const target = record.separateSource ? await read(record.target, record.targetInput?.store === true) : source;
-    const stale = [];
-    if (source.version !== record.versions.source) stale.push(source);
-    if (record.separateSource && target.version !== record.versions.target) stale.push(target);
-    if (stale.length) throw fail("migration_stale", `${stale.map(label).join(" and ")} changed since the format migration ${id} was proposed, so it does not apply; propose it again from the current ${stale.length === 1 ? "file" : "files"}.`, { paths: stale.map(named) });
     let content = record.content;
     for (const conflict of record.conflicts ?? []) {
       if (record.answer.conflicts?.[conflict.entry] === "source") content = replaceEntry(record.type, content, conflict.entry, conflict.source) ?? content;
     }
     content = withMigrationId(record.type, content, id);
     const removeSource = record.separateSource && record.answer.removeSource === true;
+    // An earlier apply that failed part way, after writing the target or removing the source, left them as this apply would: such a target and source are done, not stale, so a retry completes and records appliedAt.
+    const targetDone = target.version === versionOf(Buffer.from(content, "utf8"));
+    const sourceDone = removeSource && source.version === null && targetDone;
+    const stale = [];
+    if (source.version !== record.versions.source && !sourceDone && !(!record.separateSource && targetDone)) stale.push(source);
+    if (record.separateSource && target.version !== record.versions.target && !targetDone) stale.push(target);
+    if (stale.length) throw fail("migration_stale", `${stale.map(label).join(" and ")} changed since the format migration ${id} was proposed, so it does not apply; propose it again from the current ${stale.length === 1 ? "file" : "files"}.`, { paths: stale.map(named) });
     const written = [], removed = [];
     const stored = [];
-    if (target.store) {
+    if (target.store && targetDone) {
+      written.push(named(target));
+      if (removeSource && source.store && !sourceDone) {
+        const [entry] = await applyStoreRemove(root, source);
+        removed.push({ path: source.path, scope: entry?.scope ?? source.scope, ...(entry?.removedComments ? { removedComments: entry.removedComments } : {}) });
+      } else if (sourceDone && source.store) removed.push(named(source));
+    } else if (target.store) {
       const storeRemove = removeSource && source.store ? { path: source.path, scope: source.scope, expectedVersion: source.version } : null;
       const status = record.type === "requirements" || record.type === "adr" ? headerValue(content, "Status") : null;
       try {
@@ -613,6 +622,8 @@ export async function applyMigration({ projectRoot, id }) {
       const entry = stored.find((item) => item.path === target.path && !item.removed);
       written.push({ path: target.path, scope: entry?.scope ?? target.scope });
       for (const item of stored.filter((entry) => entry.removed)) removed.push({ path: item.path, scope: item.scope, ...(item.removedComments ? { removedComments: item.removedComments } : {}) });
+    } else if (targetDone) {
+      written.push({ path: target.path, scope: null });
     } else {
       const file = path.join(root, target.path);
       await checkoutFile(root, target.path);
@@ -624,6 +635,8 @@ export async function applyMigration({ projectRoot, id }) {
     if (removeSource && !source.store) {
       if (await checkoutFile(root, source.path)) await rm(path.join(root, source.path), { force: true });
       removed.push({ path: source.path, scope: null });
+    } else if (sourceDone && !target.store) {
+      removed.push(named(source));
     } else if (removeSource && source.store && !target.store) {
       const [entry] = await applyStoreRemove(root, source);
       removed.push({ path: source.path, scope: entry?.scope ?? source.scope, ...(entry?.removedComments ? { removedComments: entry.removedComments } : {}) });
