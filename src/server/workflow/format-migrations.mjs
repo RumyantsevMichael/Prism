@@ -140,7 +140,7 @@ async function readArtifact(root, config, entry, { store, kind }) {
 // The dates of a checkout path's Git history, as author and committer dates; a path Git does not know has none.
 async function historyDates(root, file) {
   try {
-    const { stdout } = await run("git", ["log", "--follow", "--format=%as%n%cs", "--", file], { cwd: root, maxBuffer: 4 * 1024 * 1024 });
+    const { stdout } = await run("git", ["log", "--follow", "--format=%as%n%cs", "--", file], { cwd: root, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
     return new Set(stdout.split("\n").map((line) => line.trim()).filter((line) => DATE.test(line)));
   } catch {
     return new Set();
