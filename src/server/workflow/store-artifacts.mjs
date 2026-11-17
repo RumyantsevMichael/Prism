@@ -1149,16 +1149,17 @@ const labeledScope = (seen, label) => seen.scopes.find((scope) => scope.label ==
 /**
  * Every scope's artifacts in the store of a checkout, or of a folder that stands for a store without one, from the store's artifact index:
  * { indexedAt, held, scopes, entries }, where held says whether the store holds an artifacts/ folder, scopes lists every scope the store holds by label,
- * and entries lists { location, scope, kind, rest, path } by location, path being the checkout's path of the artifact or null when its configuration gives the kind none.
+ * and entries lists { location, scope, kind, rest, path } by location, path being the checkout's path of the artifact or null when its configuration gives the kind none,
+ * with status, the recorded status, for a requirement or ADR; repository names the checkout's own repository, or null for a store read without a checkout.
  */
 export async function workspaceArtifacts(projectRoot) {
   return refusing(async () => {
     const seen = await seenScopes(projectRoot);
     const index = await artifactIndex(seen, seen.all);
     const held = (await lstat(seen.base).catch(() => null))?.isDirectory() === true;
-    const entries = index.entries.map((entry) => ({ location: entry.location, scope: entry.scope, kind: entry.kind, rest: entry.rest, path: checkoutPath(seen.kinds, entry) }))
+    const entries = index.entries.map((entry) => ({ location: entry.location, scope: entry.scope, kind: entry.kind, rest: entry.rest, path: checkoutPath(seen.kinds, entry), ...(hasStatus(entry.kind) ? { status: entry.status } : {}) }))
       .sort((left, right) => left.location < right.location ? -1 : left.location > right.location ? 1 : 0);
-    return { indexedAt: index.indexedAt, held, scopes: seen.all, entries };
+    return { indexedAt: index.indexedAt, held, scopes: seen.all, entries, repository: seen.repository ?? null };
   });
 }
 
