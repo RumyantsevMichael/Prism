@@ -1031,8 +1031,8 @@ async function layoutId() {
   return layoutHash;
 }
 
-/** Record that the disk holds the shared files of commit, as this version of Prism writes them; a clone writes it once its files are written. */
-export async function recordDiskCommit(base, commit) {
+/** Record that the disk holds the shared files of commit, as this version of Prism writes them. */
+async function recordDiskCommit(base, commit) {
   await mkdir(syncPath(base), { recursive: true });
   await writeAtomically(syncPath(base, DISK_RECORD), `${JSON.stringify({ commit, layout: await layoutId() })}\n`);
 }
@@ -3180,7 +3180,6 @@ export async function writeCommitFiles(base, commit) {
     start = end;
   }
   await required(base, ["read-tree", commit]);
-  await recordDiskCommit(base, commit);
 }
 
 // A changed path is written only below the store and through no symbolic link that sits in the store, whatever the upstream holds.
