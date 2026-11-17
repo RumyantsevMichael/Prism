@@ -107,3 +107,42 @@ test("delivers a gate's answer and resume reminder only to the session that aske
   assert.equal(await deliverGateAnswers({ input: prompt(root, "unknown-session"), environment: {}, directory }), null, "a session that asked nothing gets nothing");
   assert.equal(await deliverGateAnswers({ input: Readable.from([JSON.stringify({ hook_event_name: "UserPromptSubmit", cwd: root, prompt: "go" })]), environment: {}, directory }), null, "input without a session gets nothing");
 });
+
+test("a long question is shortened so that each gate keeps its id and whole answer within the bound", async (context) => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-gate-hook-long-")));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const initiative = "reports";
+  const directory = path.join(root, ".app", NOTICE_FOLDER);
+  await mkdir(path.join(root, ".prism"), { recursive: true });
+  await writeFile(path.join(root, ".prism/workflow.md"), "## Paths\n- Plans (scratch): docs/plans/\n");
+  await mkdir(path.join(root, "docs/plans", initiative), { recursive: true });
+  const ask = (index) => ({ op: "ask", kind: "decision", question: `Question ${index}: ${"Which behavior should the export keep? ".repeat(100)}`.slice(0, 3990), context: "The run reached a choice that needs the person, for example which export columns to keep.", artifacts: [], options: [{ id: "keep", label: `Keep it ${index}`, consequence: "The run continues." }, { id: "drop", label: "Drop it", consequence: "The run continues." }], recommended: { option: "keep", reason: "It keeps the current behavior." } });
+  const created = await updateCoordinationState({ projectRoot: root, initiative, expectedRevision: null, changes: { gateOperations: [ask(1), ask(2), ask(3)] } });
+  const gates = created.openedGates.map((gate) => gate.id);
+  await rememberAskedGates({ projectRoot: root, initiative, gateIds: gates, session: sessionHolder({ CLAUDE_CODE_SESSION_ID: SESSION }), directory });
+  await answerUserGate({ projectRoot: root, initiative, id: gates[0], choice: "keep", note: "Keep the current columns." });
+  const one = (await deliverGateAnswers({ input: prompt(root), environment: {}, directory })).hookSpecificOutput.additionalContext;
+  assert.ok(one.length <= 3500, `the context stays within the bound, at ${one.length} characters`);
+  assert.match(one, new RegExp(`Gate ${gates[0]} \\(decision, initiative reports\\): "Question 1: Which behavior[^"]*…" \\(question shortened; read the whole gate with get_coordination_state\\) Answer: Keep it 1\\. Note: Keep the current columns\\.$`, "m"));
+  assert.doesNotMatch(one, /More gates are open/);
+  // Answers whose notes together fill the bound: the first gates keep their whole answers, and the rest wait for a later prompt.
+  const note = (index) => `Note ${index}: ${"Keep the current columns and the order. ".repeat(40)}`.trim();
+  await answerUserGate({ projectRoot: root, initiative, id: gates[1], choice: "keep", note: note(2) });
+  await answerUserGate({ projectRoot: root, initiative, id: gates[2], choice: "keep", note: note(3) });
+  const many = (await deliverGateAnswers({ input: prompt(root), environment: {}, directory })).hookSpecificOutput.additionalContext;
+  assert.ok(many.length <= 3500, `the context stays within the bound, at ${many.length} characters`);
+  assert.match(many, new RegExp(`Gate ${gates[0]} .* Answer: Keep it 1\\. Note: Keep the current columns\\.$`, "m"));
+  assert.ok(many.includes(`Answer: Keep it 2. Note: ${note(2)}`), "the second answer stays whole");
+  assert.doesNotMatch(many, new RegExp(gates[2]), "a gate that does not fit is left out whole rather than cut");
+  assert.match(many, /\n… More gates are open; read them with get_coordination_state/);
+  // A single answer longer than the bound still arrives whole.
+  const { revision } = await readCoordinationState({ projectRoot: root, initiative });
+  const reopened = await updateCoordinationState({ projectRoot: root, initiative, expectedRevision: revision, changes: { gateOperations: [...gates.map((id) => ({ op: "resolve", id, reason: "Handled." })), ask(4)] } });
+  const last = reopened.openedGates[0].id;
+  await rememberAskedGates({ projectRoot: root, initiative, gateIds: [last], session: sessionHolder({ CLAUDE_CODE_SESSION_ID: SESSION }), directory });
+  const long = "Keep every column. ".repeat(200).trim();
+  await answerUserGate({ projectRoot: root, initiative, id: last, choice: "keep", note: long });
+  const whole = (await deliverGateAnswers({ input: prompt(root), environment: {}, directory })).hookSpecificOutput.additionalContext;
+  assert.ok(whole.includes(`Answer: Keep it 4. Note: ${long}`), "an answer is never cut, even past the bound");
+  assert.match(whole, /question shortened/);
+});
