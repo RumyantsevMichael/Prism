@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -76,6 +76,33 @@ test("lists no source files outside a git repository", async (context) => {
   try {
     assert.deepEqual(JSON.parse((await get(`${review.baseUrl}/api/index`)).text).sources, []);
     assert.equal((await get(`${review.baseUrl}/api/artifact?path=src%2Fapp.py`)).status, 404);
+  } finally {
+    await review.close();
+  }
+});
+
+test("serves no tracked symlink whose target is inside .git or outside the checkout", async (context) => {
+  const projectRoot = await project(context);
+  const outside = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-review-sources-outside-")));
+  context.after(() => rm(outside, { recursive: true, force: true }));
+  await writeFile(path.join(outside, "notes.txt"), "outside the checkout\n");
+  await mkdir(path.join(projectRoot, "deep"), { recursive: true });
+  const links = { "link": path.join(".git", "config"), "deep/head.txt": path.join("..", ".git", "HEAD"), "docs/requirements/config.md": path.join("..", "..", ".git", "config"), "away.txt": path.join(outside, "notes.txt") };
+  for (const [link, target] of Object.entries(links)) await symlink(target, path.join(projectRoot, link));
+  await symlink("app.py", path.join(projectRoot, "src/alias.py"));
+  execFileSync("git", ["add", ...Object.keys(links), "src/alias.py"], { cwd: projectRoot });
+  execFileSync("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "links"], { cwd: projectRoot });
+  const review = await startReviewServer({ projectRoot });
+  try {
+    const index = JSON.parse((await get(`${review.baseUrl}/api/index`)).text);
+    for (const link of Object.keys(links)) {
+      assert.equal(index.sources.includes(link) || index.artifacts.includes(link), false, link);
+      const read = await get(`${review.baseUrl}/api/artifact?path=${encodeURIComponent(link)}`);
+      assert.ok(read.status >= 400, `${link} answered ${read.status}`);
+      assert.doesNotMatch(read.text, /repositoryformatversion|refs\/heads|outside the checkout/, link);
+    }
+    assert.ok(index.sources.includes("src/alias.py"));
+    assert.equal(JSON.parse((await get(`${review.baseUrl}/api/artifact?path=src%2Falias.py`)).text).content, "def main():\n    return 1\n");
   } finally {
     await review.close();
   }
