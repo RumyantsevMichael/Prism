@@ -4,10 +4,12 @@ import { artifactChip, artifactLink, bindLinks, card, documentTitle, emptyState,
 // Knowledge's libraries of requirements, decisions, and diagrams: one kit library table each, with a filter and a Group by choice above it.
 // Each row is a record's title with a detail line, then its status, date, and what it is linked to; the grouping is the person's preference.
 
+// Scope is offered only while the page lists records of more than one scope; otherwise a Scope choice groups as the next choice does.
 const GROUPINGS = Object.freeze({
-  requirements: [["status", "Status"], ["area", "Area"], ["initiative", "Initiative"], ["none", "None"]],
-  decisions: [["area", "Area"], ["status", "Status"], ["initiative", "Initiative"], ["none", "None"]],
-  diagrams: [["owner", "Belongs to"], ["kind", "Kind"], ["none", "None"]]
+  requirements: [["scope", "Scope"], ["status", "Status"], ["area", "Area"], ["initiative", "Initiative"], ["none", "None"]],
+  decisions: [["scope", "Scope"], ["area", "Area"], ["status", "Status"], ["initiative", "Initiative"], ["none", "None"]],
+  diagrams: [["scope", "Scope"], ["owner", "Belongs to"], ["kind", "Kind"], ["none", "None"]],
+  glossary: [["scope", "Scope"], ["none", "None"]]
 });
 
 // Statuses group in the order a record moves through them; any other status follows, by name, and a record without one comes last.
@@ -16,11 +18,15 @@ const NO_STATUS = "No status";
 const statusWord = (entry) => String(entry.status ?? "").trim().split(/\s+/)[0] || NO_STATUS;
 const statusRank = (word) => word === NO_STATUS ? Infinity : STATUS_ORDER.indexOf(word) === -1 ? STATUS_ORDER.length : STATUS_ORDER.indexOf(word);
 
-// The scope label of a store artifact in a workspace, which tells two scopes' files of one name apart, or nothing for a checkout's own file.
-function scopeChip(path, ctx) {
-  const label = ctx.scopeLabel?.(path);
-  return label ? `<prism-chip data-scope-label>${escapeHtml(label)}</prism-chip>` : "";
+// The scope label of a store artifact in a workspace, which tells two scopes' files of one name apart, or nothing for a checkout's own file or while the rows group by scope.
+function scopeChip(path, ctx, scope) {
+  const label = scope ?? ctx.scopeLabel?.(path);
+  return label && !ctx.groupedByScope ? `<prism-chip data-scope-label>${escapeHtml(label)}</prism-chip>` : "";
 }
+
+// Where a scope's records come from, beside its group's name.
+const scopeSource = (label) => label === "workspace" ? "every repository" : label.includes("/") ? `component of ${label.split("/")[0]}` : "repository";
+const byScopeLabel = (left, right) => (left === "workspace" ? -1 : right === "workspace" ? 1 : left.localeCompare(right));
 
 const head = (columns) => `<div class="prism-lib-row is-head" aria-hidden="true">${columns.map((column) => `<span>${escapeHtml(column)}</span>`).join("")}</div>`;
 const groupHead = (name, count, source = "") => `<div class="prism-lib-group"><h2 class="prism-lib-group-name">${name} <prism-badge tone="neutral">${count}</prism-badge></h2>${source ? `<span class="prism-lib-group-source">${escapeHtml(source)}</span>` : ""}</div>`;
@@ -28,8 +34,8 @@ const cell = (html, className = "") => `<span class="prism-lib-cell${className ?
 const quiet = (text) => cell(escapeHtml(text), "muted");
 
 // A record's title links to its page, after its kind's glyph, with a detail line below it when there is one; no line names a file, since the page names records by title.
-function titleCell(path, ctx, title, icon, detail = "") {
-  return `<span class="prism-lib-title"><prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon><span class="prism-lib-title-text">${artifactLink(path, ctx, title)}${scopeChip(path, ctx)}${detail ? `<span class="prism-lib-cell is-detail">${escapeHtml(detail)}</span>` : ""}</span></span>`;
+function titleCell(path, ctx, title, icon, detail = "", scope = null) {
+  return `<span class="prism-lib-title"><prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon><span class="prism-lib-title-text">${artifactLink(path, ctx, title)}${scopeChip(path, ctx, scope)}${detail ? `<span class="prism-lib-cell is-detail">${escapeHtml(detail)}</span>` : ""}</span></span>`;
 }
 
 // A link chip with quieter meta text, such as a slice with the requirements it builds.
@@ -59,7 +65,7 @@ function assigned(entry, ctx) {
 }
 
 function requirementRow(entry, ctx) {
-  return `<div class="prism-lib-row" data-library-row>${titleCell(entry.path, ctx, entry.title, "list", entry.requirements ? plural(entry.requirements, "requirement") : "")}${cell(recordStatus(entry.status ?? ""))}${cell(escapeHtml(dated(entry, false)))}${assigned(entry, ctx)}</div>`;
+  return `<div class="prism-lib-row" data-library-row>${titleCell(entry.path, ctx, entry.title, "list", entry.requirements ? plural(entry.requirements, "requirement") : "", entry.scope)}${cell(recordStatus(entry.status ?? ""))}${cell(escapeHtml(dated(entry, false)))}${assigned(entry, ctx)}</div>`;
 }
 
 function decisionRow(entry, ctx, titles) {
@@ -69,13 +75,13 @@ function decisionRow(entry, ctx, titles) {
     ...(entry.requirementLinks ?? []).map((link) => linkChip(link.path, ctx, documentTitle(link.path, ctx), link.anchors.length ? `req ${link.anchors.join(", ")}` : "")),
     ...(entry.initiatives ?? []).map((use) => linkChip(`initiative:${use.initiative}`, ctx, use.title, "initiative"))
   ];
-  return `<div class="prism-lib-row" data-library-row>${titleCell(entry.path, ctx, entry.title, "scale", detail)}${cell(recordStatus(entry.status ?? ""))}${cell(escapeHtml(dated(entry, true)))}${applies.length ? cell(applies.join(""), "chip-row") : quiet("Nothing linked")}</div>`;
+  return `<div class="prism-lib-row" data-library-row>${titleCell(entry.path, ctx, entry.title, "scale", detail, entry.scope)}${cell(recordStatus(entry.status ?? ""))}${cell(escapeHtml(dated(entry, true)))}${applies.length ? cell(applies.join(""), "chip-row") : quiet("Nothing linked")}</div>`;
 }
 
 function diagramRow(diagram, about, ctx) {
   const facts = about[diagram.path] ?? {};
   const owner = facts.owner ? cell(artifactChip(facts.owner, ctx, diagram.owner.title), "chip-row") : quiet(diagram.owner.title);
-  return `<div class="prism-lib-row" data-library-row>${titleCell(diagram.path, ctx, diagram.name, "diagram")}${cell(escapeHtml(facts.kind ?? "Diagram"))}${owner}</div>`;
+  return `<div class="prism-lib-row" data-library-row>${titleCell(diagram.path, ctx, diagram.name, "diagram", "", diagram.scope)}${cell(escapeHtml(facts.kind ?? "Diagram"))}${owner}</div>`;
 }
 
 // Groups in the order the grouping gives, each with its rows; a record in two initiatives shows under each.
@@ -95,6 +101,7 @@ const lastly = (name) => (left, right) => (left === name) - (right === name) || 
 
 // What each grouping groups by, the group's name as markup, and where it comes from, per library.
 function groupingOf(kind, grouping, data) {
+  if (grouping === "scope") return { key: (entry) => entry.scope ?? "workspace", order: byScopeLabel, name: escapeHtml, source: scopeSource };
   if (grouping === "status") return { key: statusWord, order: (left, right) => statusRank(left) - statusRank(right) || byName(left, right), name: (word) => word === NO_STATUS ? NO_STATUS : recordStatus(word), source: () => "" };
   if (grouping === "area") return { key: areaOf, order: lastly("General"), name: escapeHtml, source: () => "" };
   if (grouping === "initiative") {
@@ -121,40 +128,63 @@ const LIBRARIES = Object.freeze({
     noun: "requirements file", icon: "list", columns: ["Requirements file", "Status", "Date", "Assigned to"],
     entries: (data) => data.entries,
     text: (entry) => [entry.title, entry.status, ...(entry.assignedTo ?? []).map((use) => use.title)].join(" "),
-    sub: (data) => `${plural(data.entries.length, "requirements file")}: what the product must do, and which slices build each requirement.`,
+    sub: (count) => `${count}: what the product must do, and which slices build each requirement.`,
     empty: (data) => emptyState("No requirements yet", data.directory ? "No requirement file exists yet." : "The workflow settings turn requirements off.")
   },
   decisions: {
     noun: "decision", icon: "scale", columns: ["Decision", "Status", "Created", "Applies to"],
     entries: (data) => data.entries,
     text: (entry) => [entry.title, entry.status, ...(entry.initiatives ?? []).map((use) => use.title)].join(" "),
-    sub: (data) => `${plural(data.entries.length, "decision")}: what was decided, why, and the work each one shapes.`,
+    sub: (count) => `${count}: what was decided, why, and the work each one shapes.`,
     empty: (data) => emptyState("No decisions yet", data.directory ? "No decision record exists yet." : "The workflow settings turn decision records off.")
   },
   diagrams: {
     noun: "diagram", icon: "diagram", columns: ["Diagram", "Kind", "Belongs to"],
     entries: (data) => data.diagrams ?? [],
     text: (diagram, data) => [diagram.name, diagram.owner.title, data.about?.[diagram.path]?.kind].join(" "),
-    sub: (data) => `${plural((data.diagrams ?? []).length, "diagram")} in the plans and decisions folders: what each one draws and what it belongs to.`,
+    sub: (count) => `${count} in the plans and decisions folders: what each one draws and what it belongs to.`,
     empty: () => emptyState("No diagrams yet", "No PlantUML file exists in the plans or decisions folders.")
+  },
+  // A workspace's glossary is each scope's own, listed term by term; a term that another scope also defines names that scope.
+  glossary: {
+    noun: "term", icon: "book", columns: ["Term", "Meaning", "Elsewhere"],
+    entries: (data) => (data.glossaries ?? []).flatMap((glossary) => glossary.terms.map((term) => ({ ...term, scope: glossary.scope, path: glossary.ref }))),
+    text: (entry) => [entry.term, entry.text].join(" "),
+    sub: (count) => `${count}, each scope's from its own glossary.`,
+    empty: () => emptyState("No terms yet", "No glossary defines a term yet.")
   }
 });
+
+const NOUNS = Object.freeze({ requirements: "requirements file", decisions: "decision", diagrams: "diagram", glossary: "term" });
+
+function termRow(entry, ctx, elsewhere) {
+  const others = elsewhere(entry);
+  const also = others.length ? cell(`${others.map((label) => `<prism-chip data-scope-label>${escapeHtml(label)}</prism-chip>`).join("")}<span class="muted">${others.length === 1 ? "also defines it" : "also define it"}</span>`, "chip-row") : quiet("");
+  return `<div class="prism-lib-row" data-library-row>${titleCell(entry.path, ctx, entry.term, "book", "", entry.scope)}${cell(escapeHtml(entry.text))}${also}</div>`;
+}
 
 // The table's rows for the shown entries, grouped as chosen, or a line that says the filter matches nothing.
 function tableBody(kind, data, entries, grouping, ctx) {
   if (!entries.length) return '<p class="prism-lib-nothing">No record matches the filter.</p>';
   const titles = new Map((data.entries ?? []).map((entry) => [entry.path, entry.title]));
-  const row = kind === "requirements" ? (entry) => requirementRow(entry, ctx) : kind === "decisions" ? (entry) => decisionRow(entry, ctx, titles) : (diagram) => diagramRow(diagram, data.about ?? {}, ctx);
+  const definers = new Map();
+  if (kind === "glossary") for (const entry of LIBRARIES.glossary.entries(data)) {
+    const key = entry.term.toLowerCase();
+    if (!definers.has(key)) definers.set(key, new Set());
+    definers.get(key).add(entry.scope);
+  }
+  const elsewhere = (entry) => [...(definers.get(entry.term.toLowerCase()) ?? [])].filter((label) => label !== entry.scope).sort(byScopeLabel);
+  const row = kind === "requirements" ? (entry) => requirementRow(entry, ctx) : kind === "decisions" ? (entry) => decisionRow(entry, ctx, titles) : kind === "glossary" ? (entry) => termRow(entry, ctx, elsewhere) : (diagram) => diagramRow(diagram, data.about ?? {}, ctx);
   const by = groupingOf(kind, grouping, data);
   if (!by) return entries.map(row).join("");
   return grouped(entries, by.key, by.order).map(([key, members]) => `${groupHead(by.name(key), members.length, by.source(key))}${members.map(row).join("")}`).join("");
 }
 
-function toolbar(kind, grouping, filter) {
+function toolbar(kind, grouping, filter, choices) {
   const library = LIBRARIES[kind];
   return `<div class="library-toolbar" role="toolbar" aria-label="${escapeHtml(library.columns[0])} list">
     <prism-field type="search" variant="filter" label="Filter" placeholder="Filter ${escapeHtml(kind)}" value="${escapeHtml(filter)}" class="library-filter" data-library-filter><prism-icon slot="start" name="filter" size="sm"></prism-icon></prism-field>
-    <span class="library-toolbar-group"><span class="library-toolbar-label" aria-hidden="true">Group by</span><prism-segmented label="Group by" value="${grouping}" data-library-group>${GROUPINGS[kind].map(([value, label]) => `<span value="${value}">${label}</span>`).join("")}</prism-segmented></span>
+    <span class="library-toolbar-group"><span class="library-toolbar-label" aria-hidden="true">Group by</span><prism-segmented label="Group by" value="${grouping}" data-library-group>${choices.map(([value, label]) => `<span value="${value}">${label}</span>`).join("")}</prism-segmented></span>
   </div>`;
 }
 
@@ -164,26 +194,49 @@ const matches = (text, filter) => {
   return words.every((word) => haystack.includes(word));
 };
 
-/** One library page, `requirements`, `decisions`, or `diagrams`, drawn into `container` with its line under the page's title. */
+// Scope labels in their listed order: the workspace first, then by label.
+const scopesOf = (entries) => [...new Set(entries.map((entry) => entry.scope).filter(Boolean))].sort(byScopeLabel);
+
+const andList = (labels) => labels.length < 2 ? labels.join("") : `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`;
+
+/**
+ * One library page, `requirements`, `decisions`, `diagrams`, or a workspace's `glossary`, drawn into `container` with its line under the page's title.
+ * In a workspace the page lists the records of the scopes that Knowledge's scope filter shows, and says what it is narrowed to.
+ */
 function renderLibrary(container, kind, data, ctx) {
   const library = LIBRARIES[kind];
-  const all = library.entries(data);
-  const sub = pageSub(escapeHtml(library.sub(data)));
+  const every = library.entries(data);
+  const scopes = scopesOf(every);
+  const narrowed = ctx.scopeFilter?.() ?? null;
+  const all = narrowed ? every.filter((entry) => !entry.scope || ctx.scopeShown(entry.scope)) : every;
+  const count = narrowed ? `${all.length} of ${plural(every.length, NOUNS[kind])}` : `${plural(every.length, NOUNS[kind])}${scopes.length > 1 ? ` in ${plural(scopes.length, "scope")}` : ""}`;
+  const note = narrowed ? `<p class="library-narrowed muted" data-library-narrowed>Narrowed to ${escapeHtml(andList(narrowed))}. <a href="#" data-show-all-scopes>Show all scopes</a></p>` : "";
+  const sub = pageSub(escapeHtml(library.sub(count)));
+  const bindNarrowed = () => container.querySelector("[data-show-all-scopes]")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    ctx.showAllScopes?.();
+  });
   if (!all.length) {
-    const body = library.empty(data);
+    const body = `${note}${every.length ? '<p class="prism-lib-nothing">No record of the chosen scopes.</p>' : library.empty(data)}`;
     container.innerHTML = setPageSub(container, sub, ctx) ? body : `${sub}${body}`;
+    bindNarrowed();
     return;
   }
   const key = `library.${kind}.groupBy`;
   ctx.state.libraryFilter ??= {};
-  let grouping = preference(key);
+  // Scope is a choice only while the records lie in more than one scope, and a stored Scope groups as the next choice otherwise.
+  const choices = GROUPINGS[kind].filter(([value]) => value !== "scope" || scopes.length > 1);
+  const effective = (value) => choices.some(([name]) => name === value) ? value : choices[0][0];
+  let grouping = effective(preference(key));
   const filter = () => ctx.state.libraryFilter[kind] ?? "";
-  const body = `${toolbar(kind, grouping, filter())}<prism-lib-table class="library-table is-${kind}">${head(library.columns)}<div class="library-rows" data-library-rows></div></prism-lib-table>`;
+  const body = `${note}${toolbar(kind, grouping, filter(), choices)}<prism-lib-table class="library-table is-${kind}">${head(library.columns)}<div class="library-rows" data-library-rows></div></prism-lib-table>`;
   container.innerHTML = setPageSub(container, sub, ctx) ? body : `${sub}${body}`;
+  bindNarrowed();
   const rows = container.querySelector("[data-library-rows]");
   const draw = () => {
     const shown = all.filter((entry) => matches(library.text(entry, data), filter()));
-    rows.innerHTML = tableBody(kind, data, shown, grouping, ctx);
+    rows.innerHTML = tableBody(kind, data, shown, grouping, { ...ctx, groupedByScope: grouping === "scope" });
+    bindLinks(rows, ctx);
   };
   draw();
   // The filter draws only the rows, so the field keeps its focus and its text while the person types.
@@ -202,7 +255,7 @@ function renderLibrary(container, kind, data, ctx) {
   });
   container.querySelector("[data-library-group]").addEventListener("change", (event) => {
     const value = event.detail?.value;
-    if (!GROUPINGS[kind].some(([name]) => name === value)) return;
+    if (!choices.some(([name]) => name === value)) return;
     grouping = value;
     void setPreference(key, value).catch(() => ctx.showToast?.("The grouping changed here, but the review app could not store the choice."));
     draw();
@@ -211,6 +264,11 @@ function renderLibrary(container, kind, data, ctx) {
 
 export function render(container, entity, ctx) {
   const data = entity.data;
+  if (entity.kind === "glossary" && Array.isArray(data.glossaries)) {
+    renderLibrary(container, "glossary", data, ctx);
+    bindLinks(container, ctx);
+    return;
+  }
   if (entity.kind === "glossary") {
     container.innerHTML = data.exists
       ? `<section class="view-section document-sheet"><prism-doc class="document-content">${ctx.renderMarkdown(data.content, data.path)}</prism-doc></section>`

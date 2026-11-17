@@ -21,7 +21,7 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { entityContext, entityExists, forgetWorkspace, loadClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
+import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, loadClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
 import { shippedCommit, sliceFiles } from "./slice-files.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
@@ -1428,9 +1428,10 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   // A page's reads resolve the record store and its folders once per request; the event streams stay open for the page's life, so they read afresh.
+  // A workspace's page reads every scope's store artifacts in its libraries, and a checkout's own page reads the checkout's paths.
   function handle(request, response, route, url) {
-    if (request.method !== "GET" || route.startsWith("/api/events")) return serve(request, response, route, url);
-    return withRecordReads(() => serve(request, response, route, url));
+    const read = () => request.method !== "GET" || route.startsWith("/api/events") ? serve(request, response, route, url) : withRecordReads(() => serve(request, response, route, url));
+    return workspace ? asWorkspaceView(read) : read();
   }
 
   async function serve(request, response, route, url) {

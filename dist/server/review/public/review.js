@@ -122,6 +122,8 @@ function setScopeFilter(labels) {
   const url = withScopeFilter(new URL(location.href));
   history.replaceState(history.state, "", `${url.pathname}${url.search}`);
   renderNavigation();
+  // A Knowledge page lists only the chosen scopes' records, so the open one draws again.
+  if (["requirements", "decisions", "glossary", "knowledge"].includes(parseEntityRef(selectedPath ?? "")?.kind)) void showArtifact(selectedPath);
 }
 
 // A session snapshot with every store artifact named as the page opens it.
@@ -1645,17 +1647,21 @@ function workInitiativeItem(item, nodes, scope, query) {
   return treeItem(ref, item.title, { selected: selectedPath === ref, expanded, start: [kitElement("prism-status", { value: state, label: stateWord, "glyph-only": true })], end, children, tip });
 }
 
-// The store tree lists every scope's artifacts together, each scope with its label and count, behind the scope filter; a scope lists its first artifacts and the palette finds the rest.
-const SCOPE_ITEM = "store-scope:";
-const SCOPE_ARTIFACTS_SHOWN = 50;
+// The scope label that a store ref's location names: <repository>/<component>, <repository>, or workspace.
+function scopeOfRef(ref) {
+  const names = ref.slice(STORE_REF.length).split("/");
+  if (names[0] !== "repositories" || names.length < 3) return "workspace";
+  return names[2] === "components" && names.length > 4 ? `${names[1]}/${names[3]}` : names[1];
+}
 
-// A store artifact's location below its scope's folder, such as requirements/billing.md, as the store tree names it.
+// A store artifact's location below its scope's folder, such as requirements/billing.md, as the Jump palette names it.
 function belowScope(ref) {
   const names = ref.slice(STORE_REF.length).split("/");
   const at = names[0] === "repositories" && names.length > 2 ? names[2] === "components" && names.length > 4 ? 4 : 2 : 0;
   return names.slice(at).join("/");
 }
 
+// The scope filter atop Knowledge: one chip per scope with its count of artifacts, and All scopes while it narrows; it narrows every count and list of Knowledge and the Jump palette.
 function scopeFilterChips() {
   const holder = element("div", "nav-scope-filter");
   holder.dataset.scopeFilter = "";
@@ -1678,36 +1684,26 @@ function scopeFilterChips() {
   if (scopeFilter) {
     const all = element("prism-chip", "", "All scopes");
     all.setAttribute("interactive", "");
+    all.setAttribute("tip", "Show every scope again");
     all.addEventListener("click", () => setScopeFilter(null));
     holder.append(all);
   }
   return holder;
 }
 
-function storeNavigation() {
-  if (!storeScopes.length && !storeNotes.length) return [];
-  const parts = [section("Store", refScopes.size)];
-  for (const note of storeNotes) parts.push(element("p", "nav-note", note.message ?? String(note)));
-  if (!storeScopes.length) return parts;
-  parts.push(scopeFilterChips());
-  const byScope = new Map(storeScopes.map((scope) => [scope.label, []]));
-  for (const [ref, label] of refScopes) byScope.get(label)?.push(ref);
-  let cut = false;
-  const items = storeScopes.filter((scope) => scopeShown(scope.label)).map((scope) => {
-    const refs = byScope.get(scope.label) ?? [];
-    const value = `${SCOPE_ITEM}${scope.label}`;
-    const holdsCurrent = refs.includes(selectedPath);
-    const shown = refs.slice(0, SCOPE_ARTIFACTS_SHOWN);
-    if (holdsCurrent && !shown.includes(selectedPath)) shown.push(selectedPath);
-    if (shown.length < refs.length) cut = true;
-    const count = element("span", "nav-count", String(scope.artifacts));
-    const children = shown.map((ref) => treeItem(ref, belowScope(ref), { selected: selectedPath === ref }));
-    return treeItem(value, scope.label, { expanded: treeToggles.get(value) ?? holdsCurrent, end: [count], children });
-  });
-  if (items.length) parts.push(tree("Store artifacts by scope", items));
-  else parts.push(element("p", "nav-note", "No scope matches the filter."));
-  if (cut) parts.push(element("p", "nav-note", `A scope lists its first ${SCOPE_ARTIFACTS_SHOWN} artifacts here; press Ctrl K to find any other.`));
-  return parts;
+// Knowledge's Scopes section: the scope filter while the store holds more than one scope's artifacts, and the store's notes.
+function scopeNavigation() {
+  const notes = storeNotes.map((note) => element("p", "nav-note", note.message ?? String(note)));
+  if (storeScopes.length < 2) return notes;
+  const chosen = storeScopes.filter((scope) => scopeFilter?.has(scope.label)).length;
+  return [section(scopeFilter ? `Scopes · ${chosen} of ${storeScopes.length}` : "Scopes"), scopeFilterChips(), ...notes];
+}
+
+// A kind's count in Knowledge: the workspace's count, or the sum over the chosen scopes while the scope filter narrows.
+function scopedCount(kind, total) {
+  const byScope = navigation.library?.byScope?.[kind];
+  if (!scopeFilter || !byScope) return total;
+  return Object.entries(byScope).reduce((sum, [label, count]) => sum + (scopeShown(label) ? count : 0), 0);
 }
 
 // The current place: the one the person chose last in this browser, or the one a `place=` address names, and Attention when none was stored.
@@ -2012,7 +2008,9 @@ function knowledgeMatches(query) {
     const group = knowledgeResults.groups.find((entry) => entry.kind === kind);
     if (!group?.results.length) continue;
     // A glossary term opens the Glossary, so it is never marked as the open page.
-    const rows = group.results.map((result) => treeItem(result.ref, result.title, { selected: kind !== "glossary-term" && selectedPath === result.ref, start: [navIcon(icon)], tip: result.title }));
+    const results = group.results.filter((result) => !isStoreRef(result.ref) || scopeShown(scopeOfRef(result.ref)));
+    if (!results.length) continue;
+    const rows = results.map((result) => treeItem(result.ref, result.title, { selected: kind !== "glossary-term" && selectedPath === result.ref, start: [navIcon(icon)], tip: result.title }));
     parts.push(section(label), tree(label, rows));
   }
   return parts;
@@ -2027,7 +2025,8 @@ function knowledgeNavigation() {
   const library = navigation.library ?? {};
   const entries = navigation.places?.knowledge ?? {};
   const count = (value) => Number.isInteger(value) ? [meta(String(value))] : [];
-  const total = ["requirements", "decisions", "terms", "diagrams"].reduce((sum, kind) => sum + (Number.isInteger(library[kind]) ? library[kind] : 0), 0);
+  const shown = (kind) => Number.isInteger(library[kind]) ? scopedCount(kind, library[kind]) : library[kind];
+  const total = ["requirements", "decisions", "terms", "diagrams"].reduce((sum, kind) => sum + (Number.isInteger(shown(kind)) ? shown(kind) : 0), 0);
   const field = knowledgeSearch(total);
   const query = knowledgeQuery();
   const matches = query.length >= KNOWLEDGE_SEARCH_MINIMUM ? knowledgeMatches(query) : null;
@@ -2035,6 +2034,7 @@ function knowledgeNavigation() {
   const row = (ref, label, icon, end) => treeItem(ref, label, { selected: selectedPath === ref, start: [navIcon(icon)], end });
   return [
     field,
+    ...scopeNavigation(),
     section("Start from"),
     tree("Start from", [
       row("knowledge:touched", "Touched by my work", "branch", count(lastSlice ? touchedCount : 0)),
@@ -2042,13 +2042,12 @@ function knowledgeNavigation() {
     ]),
     section("Browse by kind"),
     tree("Browse by kind", [
-      row("requirements", ENTITY_LABELS.requirements, "list", count(library.requirements)),
-      row("decisions", ENTITY_LABELS.decisions, "scale", count(library.decisions)),
-      row("glossary", "Glossary", "book", glossary.exists ? count(library.terms) : [element("span", "nav-state", "missing")]),
-      row("knowledge:diagrams", "Diagrams", "diagram", count(library.diagrams)),
+      row("requirements", ENTITY_LABELS.requirements, "list", count(shown("requirements"))),
+      row("decisions", ENTITY_LABELS.decisions, "scale", count(shown("decisions"))),
+      row("glossary", "Glossary", "book", glossary.exists ? count(shown("terms")) : [element("span", "nav-state", "missing")]),
+      row("knowledge:diagrams", "Diagrams", "diagram", count(shown("diagrams"))),
       ...(codeRepositories.length ? [row("code", ENTITY_LABELS.code, "code", [])] : [])
-    ]),
-    ...storeNavigation()
+    ])
   ];
 }
 
@@ -2457,6 +2456,7 @@ async function showEntity(path) {
     return;
   }
   const entity = await response.json();
+  entity.scopeFilter = scopeFilter ? [...scopeFilter] : null;
   // Touched by my work's records come from the remembered slice rather than from the page's address, so they join the snapshot and a change to them redraws the page.
   if (entity.kind === "touched") entity.touched = await touchedAnswer(lastSlice);
   const snapshot = JSON.stringify(entity);
@@ -2703,6 +2703,11 @@ function viewContext(path, state) {
     hasArtifact: (artifactPath) => availableArtifacts.has(localTab(artifactPath)) || Boolean(parseEntityRef(artifactPath)),
     // A store artifact's scope label, which the record views show beside it, or null for any other file.
     scopeLabel: (artifactPath) => refScopes.get(localTab(artifactPath)) ?? null,
+    // The scope filter of Knowledge: whether a scope label is shown, the chosen labels or null for every scope, the store's scopes by label, and a way back to every scope.
+    scopeShown,
+    scopeFilter: () => scopeFilter ? [...scopeFilter] : null,
+    storeScopes: () => storeScopes.map((scope) => scope.label),
+    showAllScopes: () => setScopeFilter(null),
     openArtifact(given, options = {}) {
       const artifactPath = localTab(given);
       if (!availableArtifacts.has(artifactPath) && !parseEntityRef(artifactPath)) {
@@ -3162,14 +3167,6 @@ async function initialize() {
   }, { capture: true });
   navRoot.addEventListener("prism-select", (event) => {
     const ref = event.detail?.value;
-    // A scope of the store tree opens and closes its list of artifacts rather than opening a page.
-    if (ref?.startsWith(SCOPE_ITEM)) {
-      const item = [...navRoot.querySelectorAll("prism-tree-item")].find((node) => node.getAttribute("value") === ref);
-      treeToggles.set(ref, !(item?.hasAttribute("expanded") ?? false));
-      renderNavigation();
-      navKeep = false;
-      return;
-    }
     if (ref && Object.hasOwn(NAVIGATION_ACTIONS, ref)) NAVIGATION_ACTIONS[ref]();
     else if (ref?.startsWith(LANE_VALUE)) showLane(ref.slice(LANE_VALUE.length), { keep: navKeep });
     else if (ref) openRef(ref, { keep: navKeep });

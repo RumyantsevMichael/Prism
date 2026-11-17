@@ -21,9 +21,11 @@ export const PREFERENCES = Object.freeze({
   "initiative.view": Object.freeze({ kind: "enum", values: Object.freeze(["board", "list", "graph"]), default: "board" }),
   "changeMap.view": Object.freeze({ kind: "enum", values: Object.freeze(["list", "graph"]), default: "list" }),
   "changeMap.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["action", "file"]), default: "action" }),
-  "library.requirements.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["status", "area", "initiative", "none"]), default: "status" }),
-  "library.decisions.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["area", "status", "initiative", "none"]), default: "area" }),
-  "library.diagrams.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["owner", "kind", "none"]), default: "owner" })
+  // A library grouped by scope in a workspace whose records lie in one scope groups as its first other choice does.
+  "library.requirements.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["scope", "status", "area", "initiative", "none"]), default: "scope" }),
+  "library.decisions.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["scope", "area", "status", "initiative", "none"]), default: "scope" }),
+  "library.diagrams.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["scope", "owner", "kind", "none"]), default: "scope" }),
+  "library.glossary.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["scope", "none"]), default: "scope" })
 });
 
 export const DEFAULT_PREFERENCES = Object.freeze(Object.fromEntries(Object.entries(PREFERENCES).map(([key, entry]) => [key, entry.default])));
