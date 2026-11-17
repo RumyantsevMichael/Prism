@@ -82,11 +82,12 @@ The refusal is `artifact_nonconforming`, and it applies to these requests:
 
 - Creating or splitting an initiative, reporting a defect, or adding a fix with `update_initiative`, for each requirement file the request references.
 - Proposing or accepting a design, for each requirement file, ADR, glossary, or feature file that a Markdown link in the scope's or a planned slice's `slice.md` points to, and for each frozen test that is a `.feature` file.
-- Adding or updating a roadmap entry with `update_roadmap`, for each requirement file the entry references.
+- Adding a roadmap entry with `update_roadmap`, for each requirement file the entry references, and updating one, for each requirement file the update adds to the entry's references.
 
 Prism checks what a request cites before anything else except its arguments, and a refused request changes nothing.
 The refusal lists each artifact with its path, its scope, its type, its findings, and whether a legacy mark covers it, and its message names each artifact with its broken rule ids and ends with `Ask for a migration of <path> in a session of its own.`
 A legacy mark keeps an artifact off the format counts on Attention, but it does not let new work cite the artifact.
+Only a file that `check_artifacts` lists as an artifact is cited, so a link to a `README.md`, a diagram, or a file more than four folders below its configured folder refuses nothing.
 A cited file that does not exist, and a value written as `unknown`, refuse nothing, and records that already cite a nonconforming artifact still load.
 
 To go on, ask an agent for a format migration of that artifact in a session of its own, and send the refused request again once the migration is applied.
