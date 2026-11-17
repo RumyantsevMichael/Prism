@@ -1,7 +1,7 @@
 import { execFile, spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { copyFile, lstat, mkdir, open, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { copyFile, link, lstat, mkdir, open, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, IDENTITY_FILE_MAX, identityContent, identityOf, letterCaseKey, locationIdentity, STATUS_RECORD_NAME, uniqueIdentities, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
@@ -884,6 +884,7 @@ async function moveBranch(base, commit, previous, message) {
     await git(base, previous ? ["read-tree", previous] : ["read-tree", "--empty"]);
     throw error;
   });
+  await recordDiskCommit(base, commit);
 }
 
 // The sync folder's record that a clone's files hold their blobs' bytes, which the line-ending migration writes once it has run.
@@ -1056,6 +1057,87 @@ async function sameDiskFile(target, disk) {
   return Boolean(now) && Object.keys(disk).every((key) => now[key] === disk[key]);
 }
 
+// The commit whose shared files this version of Prism last left the disk holding, with a hash of the layout that decides which files a store shares: .prism-sync/disk.json.
+// A sync of this version writes it each time it moves the branch, so a branch that has moved since, or a record of another layout, means another program moved the branch:
+// an older Prism, which takes the remote's newer files into the branch without writing those that its version does not share, a newer one, or a person with Git.
+// A shared file that the branch holds and the disk lacks is then committed as removed only when the recorded commit already held it as the branch does, so its removal happened on disk;
+// any other such file, one the disk never received, is written back from the branch, and no sync pushes a removal that nothing on this machine made.
+const DISK_RECORD = "disk.json";
+let layoutHash = null;
+async function layoutId() {
+  if (layoutHash) return layoutHash;
+  const { isStoreFile, isStoreFolder, isRootStoreFile } = await import("./record-store.mjs");
+  layoutHash = createHash("sha256").update([isStoreFile, isStoreFolder, isRootStoreFile].map(String).join("\n")).digest("hex");
+  return layoutHash;
+}
+
+/** Record that the disk holds the shared files of commit, as this version of Prism writes them. */
+async function recordDiskCommit(base, commit) {
+  // A record that already names the commit is left as it is, so a sync that changes nothing writes nothing that a watcher of the store could take for a change.
+  if (await readDiskCommit(base) === commit) return;
+  await mkdir(syncPath(base), { recursive: true });
+  await writeAtomically(syncPath(base, DISK_RECORD), `${JSON.stringify({ commit, layout: await layoutId() })}\n`);
+}
+
+async function readDiskCommit(base) {
+  const recorded = await readFile(syncPath(base, DISK_RECORD), "utf8").then(parseStoreJson).catch(() => null);
+  return recorded && typeof recorded.commit === "string" && recorded.layout === await layoutId() ? recorded.commit : null;
+}
+
+/**
+ * Keep in this commit every shared file of the branch that the disk lacks and never received, and write it back from the branch; run.restored takes the paths written back.
+ * Where the disk record names the branch's commit, every file the disk lacks was removed on disk, and nothing is kept;
+ * where it names another commit, a file counts as never received when that commit did not hold it as the branch does.
+ * The write never replaces a file that appeared meanwhile, and a file whose bytes the branch holds above its kind's bound, or whose path leads through a link, stays in the commit unwritten.
+ */
+async function keepUnreceivedFiles(base, previous, branch, files, withheld, oversized, run) {
+  if (!previous) return;
+  // A README, license, .gitattributes, or .gitignore at the store's root is no record of Prism's, so its removal by hand syncs whatever moved the branch.
+  const { rootFile } = await storeLayout();
+  const missing = [...branch.keys()].filter((file) => !files.has(file) && !withheld.has(file) && !oversized.has(file) && !rootFile(file));
+  if (!missing.length) return;
+  const recorded = await readDiskCommit(base);
+  if (recorded === previous) return;
+  let written = null;
+  if (recorded) {
+    try { written = (await partition(await treeFiles(base, recorded))).shared; }
+    catch { written = null; }
+  }
+  // With no record of this layout, as in a clone that an older Prism made or synced last, a top folder of the store that is missing from the disk is one that no Prism ever wrote,
+  // since a removal leaves the store's top folders in place, so each of its files counts as never received; a file of a top folder the disk holds counts as removed on disk.
+  const top = (file) => file.includes("/") ? file.slice(0, file.indexOf("/")) : null;
+  const absent = new Set();
+  for (const folder of new Set(missing.map(top))) if (folder !== null && !(await lstat(path.join(base, folder)).catch(() => null))) absent.add(folder);
+  const unreceived = written ? missing.filter((file) => !sameEntry(written.get(file), branch.get(file))) : missing.filter((file) => absent.has(top(file)));
+  if (!unreceived.length) return;
+  for (const file of unreceived) files.set(file, branch.get(file));
+  const contents = await readBlobs(base, unreceived.map((file) => ({ file, entry: branch.get(file) })));
+  for (const [index, file] of unreceived.entries()) {
+    const bytes = contents[index];
+    if (!Buffer.isBuffer(bytes) || await outsideStore(base, file)) continue;
+    const target = path.join(base, ...file.split("/"));
+    const temporary = syncPath(base, `restore-${randomBytes(6).toString("hex")}`);
+    try {
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(temporary, bytes);
+      await link(temporary, target);
+    } catch (error) {
+      if (!["EEXIST", "ENOTDIR", "EISDIR"].includes(error.code)) throw error;
+    } finally {
+      await rm(temporary, { force: true });
+    }
+  }
+  run.restored = [...new Set([...(run.restored ?? []), ...unreceived])].sort();
+}
+
+// A status that names the files a sync wrote back because the branch holds them and the disk never received them.
+function restoredIn(status, restored) {
+  if (!restored?.length) return status;
+  const listed = restored.slice(0, 5).map(shownPath).join(", ") + (restored.length > 5 ? `, and ${restored.length - 5} more` : "");
+  const note = `The sync wrote back ${restored.length === 1 ? "1 file" : `${restored.length} files`} that the branch holds and the disk never received, as when an older Prism moved the branch, so the store keeps them: ${listed}.`;
+  return { ...status, restored, message: [status.message, note].filter(Boolean).join(" ") };
+}
+
 // Why a sync leaves a file out of its commits, as its status names it.
 const OBJECT_CHECK = "Git's object check, which every other machine's fetch applies, refuses it";
 const TOO_LONG = `its name holds more than ${STORE_NAME_BYTES_MAX} bytes or its path more than ${STORE_PATH_BYTES_MAX}, so some machine could not write it`;
@@ -1089,7 +1171,11 @@ async function commitLocal(base, author, run) {
   // The local version of each file withheld because Git's object check refuses it, which a merge that replaces the file saves.
   run.heldBack = new Map();
   const oversized = new Map();
-  const files = await withFileLock(path.join(base, ARTIFACTS), () => localFiles(base, shared, withheld, oversized), undefined, { timeoutMs: run.lockTried ? SETTINGS.applyLockMs : 1 })
+  const files = await withFileLock(path.join(base, ARTIFACTS), async () => {
+    const found = await localFiles(base, shared, withheld, oversized);
+    await keepUnreceivedFiles(base, previous, shared, found, withheld, oversized, run);
+    return found;
+  }, undefined, { timeoutMs: run.lockTried ? SETTINGS.applyLockMs : 1 })
     .catch((error) => { if (error.code !== "lock_timeout") throw error; return null; });
   run.lockTried = true;
   run.lockBusy = files === null;
@@ -1124,7 +1210,8 @@ async function commitLocal(base, author, run) {
   const { treeFilesMax } = await storeLayout();
   for (;;) {
     const entries = besides(files, other);
-    if (sameFiles(entries, branch)) return false;
+    // The disk now holds the branch's shared files, save this machine's changes, so the record names the branch's commit, as every later move of the branch by this sync keeps it.
+    if (sameFiles(entries, branch)) { if (previous) await recordDiskCommit(base, previous); return false; }
     const changed = [...new Set([...branch.keys(), ...entries.keys()])].filter((file) => !sameEntry(branch.get(file), entries.get(file))).sort();
     const listed = changed.slice(0, COMMIT_LIST).join("\n") + (changed.length > COMMIT_LIST ? `\n… and ${changed.length - COMMIT_LIST} more` : "");
     const tree = await writeTree(base, entries);
@@ -1738,7 +1825,7 @@ async function sync(base, options) {
   // Local versions that a sync stopped while saving or replacing are saved for good, or dropped when no file was replaced, before anything else changes.
   const conflicts = await recoverSaved(base);
   const run = {};
-  const report = (status) => writeStatus(base, withheldIn({ ...status, conflicts: [...conflicts, ...(status.conflicts ?? [])] }, run.withheld));
+  const report = (status) => writeStatus(base, restoredIn(withheldIn({ ...status, conflicts: [...conflicts, ...(status.conflicts ?? [])] }, run.withheld), run.restored));
   const checked = await checkedTip(base);
   const started = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
   // A sync stopped at the bound on a store tree's files takes off the commits it made of this machine's changes, if any, so the branch, the index,
@@ -1750,7 +1837,7 @@ async function sync(base, options) {
     if (await checkedTip(base) !== checked) await git(base, checked ? ["update-ref", CHECKED_REF, checked] : ["update-ref", "-d", CHECKED_REF]);
     const now = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
     const kept = now.ok && now.text !== (started.ok ? started.text : null);
-    return writeStatus(base, withheldIn({ state: "merge_failed", message: await pastTreeRefusal(pastTree, kept), conflicts, ...await counts(base) }, null));
+    return writeStatus(base, restoredIn(withheldIn({ state: "merge_failed", message: await pastTreeRefusal(pastTree, kept), conflicts, ...await counts(base) }, null), run.restored));
   };
   // A sync that found an artifact update holding the artifact lock commits, merges, and pushes nothing, so no merge moves an artifact away from a file on disk that no commit holds yet;
   // it is no failure, so it ends as a sync that found another sync running does, writes no status, and the next sync, which the update's write schedules, tries again.
@@ -3031,6 +3118,7 @@ async function takeOffCommit(base, { from, to }) {
   if (!head.ok || head.text !== to) return;
   await required(base, from ? ["read-tree", from] : ["read-tree", "--empty"]);
   await required(base, from ? ["update-ref", "-m", "prism: keep the store's tree within its bound", "HEAD", from, to] : ["update-ref", "-d", "HEAD", to]);
+  if (from) await recordDiskCommit(base, from);
 }
 
 // What a refusal of a file above its bound asks for where no commit can be taken off the branch without one that other machines share.
@@ -3251,6 +3339,7 @@ async function apply(base, from, to, options, progress = {}, held = new Map(), d
             await git(base, from ? ["read-tree", from] : ["read-tree", "--empty"]);
             throw error;
           });
+          await recordDiskCommit(base, to);
           return true;
         });
       } finally {

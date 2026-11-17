@@ -118,6 +118,12 @@ Prism shares the regular files at the paths it writes in a store: the records un
 It also shares a `README`, `README.md`, `README.txt`, `LICENSE`, `LICENSE.md`, `LICENSE.txt`, or `COPYING` at the store's root, spelled exactly so, which Prism never reads.
 Prism uses Git in the store only to keep these files' bytes: the clone and every sync write each file as the remote's branch holds it, and every commit holds each file as it is on disk.
 So no `.gitignore` or `.gitattributes` line, in the store or in your Git configuration, and no line-ending setting such as `core.autocrlf`, changes what Prism commits, merges, or writes.
+A sync commits the removal of a file Prism shares only when the disk once held that file as the branch does, so a removal on disk, by Prism or by hand, still syncs.
+Each sync records in `.prism-sync/disk.json` the commit whose files it left on disk.
+When another program moved the branch since, such as an older Prism, which takes the remote's newer files into the branch without writing the files its version does not share, or Git run by hand, a file that the branch gained or changed meanwhile and that the disk lacks never reached the disk, so the sync writes it back from the branch instead of pushing its removal.
+A README, license, `.gitattributes`, or `.gitignore` at the store's root is never written back, so its removal by hand always syncs.
+A clone with no such record from a Prism that shares the same files, such as one an older Prism made or synced last, has every file written back the same way when its top folder, such as `artifact-status/`, is missing from the disk altogether, since a removal leaves the store's top folders in place.
+The sync's status then lists each file it wrote back under `restored`, and its message names them.
 Prism runs each Git command in the store with `core.autocrlf=false`, `core.eol=lf`, `core.safecrlf=false`, `core.longpaths=true`, and an empty `core.attributesFile` and `core.excludesFile` for that command only, without changing your Git configuration.
 On Windows, a store path can pass 260 characters, so a Git command that you run yourself in a store folder needs `git config core.longpaths true` in that folder, which a managed clone already has.
 Your Git configuration, the variables Prism's process inherits, and the store's own refs also never change what Prism checks or pushes:
@@ -502,7 +508,7 @@ The list shows saved records, while a saved artifact is named in the next tool r
 
 | State | Meaning | What to do |
 | --- | --- | --- |
-| `ok` | The last sync committed, merged, and pushed; a file it left out is listed under `withheld`, and its message names it with the fix that fits its reason. | Nothing, or give each withheld file the fix that the message names for it. |
+| `ok` | The last sync committed, merged, and pushed; a file it left out is listed under `withheld`, and its message names it with the fix that fits its reason, and a file it wrote back because the disk never received it is listed under `restored`. | Nothing, or give each withheld file the fix that the message names for it. |
 | `conflicts` | A record, an artifact, or a README, license, `.gitattributes`, or `.gitignore` at the store's root changed on both sides in a way that does not merge, so this machine's version is saved under `.prism-sync/conflicts/`; where this machine's removal of an artifact stands against the other machine's comment or status record, that change of the other machine is saved there instead, a comment or status record of either machine whose path would be too long at its moved artifact's new place is saved there too, and a local removal that gave way saves nothing. The message says whose copy each saved file holds and why. | Review the saved file. |
 | `no_upstream` | A path store's branch has no upstream, so Prism only commits locally; a remote store sets its upstream on its first sync instead. | Set an upstream with `git branch --set-upstream-to`. |
 | `not_a_repository` | Sync is on, but the store is not the top of a Git checkout. | Clone the store, or turn sync off. |
@@ -517,6 +523,7 @@ The session needs read and push access to the store repository, so add the store
 A cloud session that attached the store repository with push access could push to the store's `main` branch in a test on 2 November 2026, so sync works there without changes.
 A session that may push only its own `claude/...` branch reports `push_rejected` and keeps its records in its own clone until a person merges them.
 A path store such as `Store: ../prism-store` still works in a cloud session, because the session clones each of its repositories next to each other under `/home/user/`.
+A session that starts in `/home/user/`, above those checkouts, passes the checkout it works in as `projectRoot`: Prism serves the folder where the session started and every folder below it, and refuses any other.
 
 ## How it works
 

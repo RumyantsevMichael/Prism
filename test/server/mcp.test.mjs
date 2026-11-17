@@ -793,7 +793,34 @@ test("uses the consumer root provided by Claude Code", async (context) => {
   assert.equal((await fetchReview(outsideUrl)).status, 400);
 
   const mismatched = await callTool(mcp, 4, "list_reviewable_artifacts", { projectRoot: pluginRoot });
-  assert.match(mismatched.error.message, /does not match the host project root/);
+  assert.match(mismatched.error.message, /is not the folder where the session started, or a folder below it/);
+});
+
+test("serves a checkout below the folder where a Claude Code session started, and refuses one outside it", async (context) => {
+  // A multi-repository session starts in a folder that holds several checkouts side by side, and an agent names the one it works in.
+  const startFolder = await mkdtemp(path.join(os.tmpdir(), "start-folder-"));
+  defer(context, () => rm(startFolder, { recursive: true, force: true }));
+  const checkout = path.join(startFolder, "checkout");
+  await mkdir(path.join(checkout, "docs"), { recursive: true });
+  await mkdir(path.join(checkout, ".prism"), { recursive: true });
+  await writeFile(path.join(checkout, "docs", "checkout-only.md"), "# checkout\n");
+  await writeFile(path.join(checkout, ".prism", "workflow.md"), "## Paths\n- Documents: docs\n");
+  const outside = await projectFixture(context, "outside", "outside-only.md");
+  const mcp = mcpProcess(context, startFolder, startFolder);
+
+  await initialize(mcp);
+  const inside = await callTool(mcp, 2, "list_reviewable_artifacts", { projectRoot: checkout });
+  assert.deepEqual(inside.result?.structuredContent.artifacts, ["docs/checkout-only.md"], inside.error?.message);
+
+  const refused = await callTool(mcp, 3, "list_reviewable_artifacts", { projectRoot: outside });
+  assert.match(refused.error.message, /is not the folder where the session started, or a folder below it/);
+
+  // A folder whose name only begins with the start folder's name is outside it.
+  const siblingFolder = `${startFolder}-sibling`;
+  await mkdir(siblingFolder);
+  defer(context, () => rm(siblingFolder, { recursive: true, force: true }));
+  const sibling = await callTool(mcp, 4, "list_reviewable_artifacts", { projectRoot: siblingFolder });
+  assert.match(sibling.error.message, /is not the folder where the session started, or a folder below it/);
 });
 
 test("keeps Codex tasks bound to separate consumer roots", async (context) => {
