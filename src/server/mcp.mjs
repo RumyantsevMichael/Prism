@@ -50,6 +50,7 @@ import { managedStoresDirectory } from "./workflow/remote-url.mjs";
 import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
 import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
 import { ArtifactCheckError, MAX_CHECK_PATHS, checkArtifacts } from "./workflow/artifact-check.mjs";
+import { ArtifactCitationError } from "./workflow/artifact-citations.mjs";
 import { ARTIFACT_TYPES } from "./workflow/artifact-formats.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, waitForUserGates } from "./workflow/gate-wait.mjs";
 import { endGateWait, keptSettingsText, personChangesText, rememberAskedGates, startGateWait, takePersonChanges } from "./workflow/change-notices.mjs";
@@ -1549,10 +1550,17 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
   if (["get_roadmap", "update_roadmap", "get_initiative", "update_initiative"].includes(name)) {
     const projectRoot = await requestedProjectRoot(argumentsValue);
     const input = { ...argumentsValue, projectRoot };
-    let value = name === "get_roadmap" ? await getRoadmap(input)
-      : name === "update_roadmap" ? await updateRoadmap(input)
-      : name === "get_initiative" ? await getInitiative(input)
-      : initiativeAcknowledgement(await updateInitiative(input), input.operations);
+    let value;
+    try {
+      value = name === "get_roadmap" ? await getRoadmap(input)
+        : name === "update_roadmap" ? await updateRoadmap(input)
+          : name === "get_initiative" ? await getInitiative(input)
+            : initiativeAcknowledgement(await updateInitiative(input), input.operations);
+    } catch (error) {
+      // A refusal of work that cites a nonconforming artifact names each artifact and its migration offer in its text, so an agent can relay it.
+      if (!(error instanceof ArtifactCitationError)) throw error;
+      return { content: [{ type: "text", text: error.message }], structuredContent: { code: error.code, message: error.message, artifacts: error.artifacts }, isError: true };
+    }
     if (name === "get_initiative") value = { ...value, runTotals: await readInitiativeRecordRunTotals(projectRoot, value.initiative, value) };
     const marks = name === "get_initiative" ? await historyMarksContent(projectRoot, value.shippedHistory)
       : name === "get_roadmap" ? await Promise.all((value.markedHistory ?? []).map(async (item) => ({ type: "text", text: await historyMarksText(projectRoot, item.initiative, item.marked) })))

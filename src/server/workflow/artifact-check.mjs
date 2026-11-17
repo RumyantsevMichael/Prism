@@ -236,15 +236,9 @@ export async function checkArtifacts({ projectRoot, paths, type, legacyOf, appli
   if (type !== undefined && !ARTIFACT_TYPES.includes(type)) throw fail("invalid_input", `type must be one of ${ARTIFACT_TYPES.join(", ")}.`);
   if (paths !== undefined && (!Array.isArray(paths) || paths.length > MAX_CHECK_PATHS)) throw fail("invalid_input", `paths must be a list of at most ${MAX_CHECK_PATHS} project-relative files or { path, scope, component } entries.`);
   const root = await realpath(projectRoot);
-  const config = await readWorkflowConfig(root);
-  const locations = artifactLocations(config);
   const entries = paths === undefined ? null : paths.map(pathEntry);
-  const store = (config.workspace?.store ?? null) !== null ? await storeRefusing(() => seenArtifactTexts(root)) : null;
+  const { config, locations, store, storeType } = await artifactSources(root);
   legacyOf ??= legacyLookup(await storeRefusing(() => readLegacySets(root)));
-  const storeType = (file) => {
-    const kind = store === null ? null : storeKindOf(config, file);
-    return kind === null ? null : STORE_TYPES.get(kind) ?? null;
-  };
   let targets;
   if (entries === null) {
     targets = (await listArtifacts(root, locations, type)).filter((entry) => storeType(entry.path) === null).map((entry) => ({ ...entry, scope: null }));
@@ -300,8 +294,33 @@ export async function checkArtifacts({ projectRoot, paths, type, legacyOf, appli
       }
     }
   }
+  const artifacts = await checkTargets(root, store, targets, { legacyOf, appliedMigration });
+  return { formats: ARTIFACT_FORMATS.map((entry) => ({ type: entry.type, version: entry.version, reference: entry.reference })), artifacts };
+}
+
+/**
+ * The project's artifact store reads that a check of named artifacts needs: { config, locations, store, storeType },
+ * where store is what seenArtifactTexts gives in a project with a record store, else null, and storeType(path) the format type of a path that the store holds, else null.
+ */
+export async function artifactSources(root) {
+  const config = await readWorkflowConfig(root);
+  const locations = artifactLocations(config);
+  const store = (config.workspace?.store ?? null) !== null ? await storeRefusing(() => seenArtifactTexts(root)) : null;
+  const storeType = (file) => {
+    const kind = store === null ? null : storeKindOf(config, file);
+    return kind === null ? null : STORE_TYPES.get(kind) ?? null;
+  };
+  return { config, locations, store, storeType };
+}
+
+/**
+ * Checks resolved artifacts, each { path, type, scope, stored }, with stored the store's entry of a store artifact, in clause order of type, then path, then scope label:
+ * the artifacts as check_artifacts lists them. `legacyOf` defaults to the project's legacy sets.
+ */
+export async function checkTargets(root, store, targets, { legacyOf, appliedMigration = () => false } = {}) {
+  legacyOf ??= legacyLookup(await storeRefusing(() => readLegacySets(root)));
   const order = (entry) => ARTIFACT_TYPES.indexOf(entry.type);
-  targets.sort((a, b) => order(a) - order(b) || compare(a.path, b.path) || compare(labelOf(a), labelOf(b)));
+  targets = [...targets].sort((a, b) => order(a) - order(b) || compare(a.path, b.path) || compare(labelOf(a), labelOf(b)));
   const artifacts = [];
   for (const target of targets) {
     const bytes = target.stored ? target.stored.bytes ?? oversized(target.stored.size) : await readFile(path.join(root, target.path));
@@ -317,7 +336,7 @@ export async function checkArtifacts({ projectRoot, paths, type, legacyOf, appli
     const legacy = result.conforms ? null : legacyOf(target.path, target.type, target.scope) ?? null;
     artifacts.push({ path: target.path, scope: target.scope, type: target.type, version: result.version, conforms: result.conforms, findings: result.findings, unknowns: result.unknowns, earlierFormat: result.earlierFormat, legacy });
   }
-  return { formats: ARTIFACT_FORMATS.map((entry) => ({ type: entry.type, version: entry.version, reference: entry.reference })), artifacts };
+  return artifacts;
 }
 
 // The checks of artifacts whose findings depend on their bytes alone, by scope and path, each kept with the hash of the version it checked,
