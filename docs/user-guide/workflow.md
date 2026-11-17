@@ -89,13 +89,15 @@ A status or a Created, Approved, or Accepted date counts only when it is the typ
 Content that breaks its format is refused with `artifact_nonconforming`.
 When the source or the target is Approved or Accepted, content that changes its status, its Created or Approved date, or drops an identity, such as a requirement section number or a glossary term id, is refused with `migration_changes_decision`.
 A target that already exists keeps each of its entries, a requirement section, a glossary term, or a feature Rule, unchanged: the source's differing version of an entry goes under `conflicts`, and content that changes a target entry is refused with `migration_conflict`.
-A second proposal for a target whose format migration is still waiting is refused with `migration_pending`.
+A second proposal for a target whose format migration is still waiting for an answer, or is accepted and can still apply, is refused with `migration_pending`, also when both proposals arrive at once.
 
 The person answers the format migration in the review browser, where they accept or decline it, choose the target's or the source's version of each conflicting entry, and for a separate source choose whether to remove it, which is off by default.
 The agent waits with `wait_for_user_gate` and `migration`, reads the format migration with `get_migration`, and applies an accepted one with `apply_migration`.
 Applying writes the content with each chosen entry, writes the migration's id after each glossary `Source: migration`, so the term's source is the applied format migration, and removes a separate source only when the person accepted its removal.
 It refuses a format migration that was not accepted with `migration_not_accepted`, one whose source or target changed since the proposal with `migration_stale`, and one already applied with `migration_applied`.
+A stale format migration no longer holds its target, so a new one can be proposed from the current files.
 An apply that stopped part way, after writing the target, completes when it is run again: a target that already holds the migration's content and a removed source count as done, and the format migration is then recorded as applied.
+A store source of a checkout target is removed before the target is written, so a change to that source in the store refuses the apply before anything is written.
 
 In a project whose `.prism/workflow.md` names a record store, a requirement, ADR, or glossary target is a store artifact, and a source under a store artifact path is one too, while feature files and every other file stay in the checkout.
 A store target's `Status:` line must equal the status Prism recorded for it, or for a new one the recorded status of a store source of the same type, else `Draft` for a requirement and `Proposed` for an ADR, and applying writes and removes store artifacts through the store's own checks, so their comments, recorded statuses, and accepted versions stay as `update_artifact` keeps them.

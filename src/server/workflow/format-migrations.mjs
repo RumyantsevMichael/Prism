@@ -415,9 +415,14 @@ export async function proposeMigration(input) {
 
   // The check for a migration that holds the target and the write of the new record run under one lock of the target, so two concurrent proposals of it record one pending migration.
   return storeRefusing(() => withRecordLock(root, targetLockKey(target), async () => {
-    // A pending or accepted migration of the same target that is not applied yet holds it.
-    const holding = (await allMigrations(root)).find((record) => record.target?.path === target.path && sameScope(record.target?.scope, target.scope) && ["pending", "accepted"].includes(statusOf(record)));
-    if (holding) throw fail("migration_pending", `The format migration ${holding.id} of ${label(target)} is still ${statusOf(holding)}, so another one cannot be proposed until it is answered${statusOf(holding) === "accepted" ? " and applied" : ""}.`, { id: holding.id });
+    // A pending migration of the same target holds it, and so does an accepted one that is not applied yet while it can still apply, since a stale one never can.
+    let holding = null;
+    for (const record of await allMigrations(root)) {
+      if (record.target?.path !== target.path || !sameScope(record.target?.scope, target.scope)) continue;
+      const status = statusOf(record);
+      if (status === "pending" || (status === "accepted" && await appliable(root, config, record))) { holding = record; break; }
+    }
+    if (holding) throw fail("migration_pending", `The format migration ${holding.id} of ${label(target)} is still ${statusOf(holding)}, so another one cannot be proposed until it is ${statusOf(holding) === "accepted" ? "applied" : "answered"}.`, { id: holding.id });
 
     // The content conforms to its format, unknown values aside.
     const checked = findingsOf(type, content);
@@ -580,6 +585,40 @@ export async function migrationGates(projectRoot, id) {
 const withMigrationId = (type, text, id) => type !== "glossary" ? text : text.replace(/^(Source:.*)$/gm, (line) => line.replace(/(^Source:\s*|,\s*)migration(?![\w-]|\s+migration-)/g, `$1migration ${id}`));
 
 /**
+ * The state an accepted migration applies from: its checked source and target as they are now, the content to write, and which parts an earlier apply already did.
+ * stale lists the source or target that changed since the proposal other than as this migration changes it.
+ */
+async function applyState(root, config, record) {
+  const sourceStore = record.sourceInput?.store === true, targetStore = record.targetInput?.store === true;
+  const read = (entry, store) => readArtifact(root, config, { path: entry.path, ...(store ? scopeInputOf(entry.scope) : {}) }, { store });
+  const source = await read(record.source, sourceStore);
+  const target = record.separateSource ? await read(record.target, targetStore) : source;
+  let content = record.content;
+  for (const conflict of record.conflicts ?? []) {
+    if (record.answer?.conflicts?.[conflict.entry] === "source") content = replaceEntry(record.type, content, conflict.entry, conflict.source) ?? content;
+  }
+  content = withMigrationId(record.type, content, record.id);
+  const removeSource = record.separateSource && record.answer?.removeSource === true;
+  // An earlier apply that failed part way, after writing the target or removing the source, left them as this apply would: such a target and source are done, not stale, so a retry completes and records appliedAt.
+  // A store source of a checkout target is removed before the target is written, so its removal alone is done.
+  const targetDone = target.version === versionOf(Buffer.from(content, "utf8"));
+  const sourceDone = removeSource && source.version === null && (targetDone || (source.store && !target.store));
+  const stale = [];
+  if (source.version !== record.versions.source && !sourceDone && !(!record.separateSource && targetDone)) stale.push(source);
+  if (record.separateSource && target.version !== record.versions.target && !targetDone) stale.push(target);
+  return { source, target, content, removeSource, targetDone, sourceDone, stale };
+}
+
+// Whether an accepted migration can still apply, so it holds its target: a stale one never can.
+async function appliable(root, config, record) {
+  try { return (await applyState(root, config, record)).stale.length === 0; }
+  catch (error) {
+    if (error instanceof FormatMigrationError && ["artifact_outside", "invalid_path", "scope_invalid"].includes(error.code)) return false;
+    throw error;
+  }
+}
+
+/**
  * Apply an accepted format migration: write the content with each conflict's chosen entry and the migration's id after each migration source that stands alone,
  * remove a separate source only when the answer accepted its removal, and record appliedAt.
  * A store target or source changes only through Prism's store writes; returns { written, removed, acceptedBy, acceptedAt }.
@@ -592,30 +631,15 @@ export async function applyMigration({ projectRoot, id }) {
     if (typeof record.appliedAt === "string") throw fail("migration_applied", `The format migration ${id} was applied at ${record.appliedAt}.`);
     if (record.answer?.decision !== "accept") throw fail("migration_not_accepted", record.answer ? `A person declined the format migration ${id}, so it does not apply.` : `The format migration ${id} has no answer yet: a person accepts it on its page in the review browser first.`);
     const config = await readWorkflowConfig(root);
-    const read = (entry, store) => readArtifact(root, config, { path: entry.path, ...(store ? scopeInputOf(entry.scope) : {}) }, { store });
-    const source = await read(record.source, record.sourceInput?.store === true);
-    const target = record.separateSource ? await read(record.target, record.targetInput?.store === true) : source;
-    let content = record.content;
-    for (const conflict of record.conflicts ?? []) {
-      if (record.answer.conflicts?.[conflict.entry] === "source") content = replaceEntry(record.type, content, conflict.entry, conflict.source) ?? content;
-    }
-    content = withMigrationId(record.type, content, id);
-    const removeSource = record.separateSource && record.answer.removeSource === true;
-    // An earlier apply that failed part way, after writing the target or removing the source, left them as this apply would: such a target and source are done, not stale, so a retry completes and records appliedAt.
-    const targetDone = target.version === versionOf(Buffer.from(content, "utf8"));
-    const sourceDone = removeSource && source.version === null && targetDone;
-    const stale = [];
-    if (source.version !== record.versions.source && !sourceDone && !(!record.separateSource && targetDone)) stale.push(source);
-    if (record.separateSource && target.version !== record.versions.target && !targetDone) stale.push(target);
+    const { source, target, content, removeSource, targetDone, sourceDone, stale } = await applyState(root, config, record);
     if (stale.length) throw fail("migration_stale", `${stale.map(label).join(" and ")} changed since the format migration ${id} was proposed, so it does not apply; propose it again from the current ${stale.length === 1 ? "file" : "files"}.`, { paths: stale.map(named) });
     const written = [], removed = [];
     const stored = [];
+    const storeRemoved = (entry) => ({ path: source.path, scope: entry?.scope ?? source.scope, ...(entry?.removedComments ? { removedComments: entry.removedComments } : {}) });
     if (target.store && targetDone) {
       written.push(named(target));
-      if (removeSource && source.store && !sourceDone) {
-        const [entry] = await applyStoreRemove(root, source);
-        removed.push({ path: source.path, scope: entry?.scope ?? source.scope, ...(entry?.removedComments ? { removedComments: entry.removedComments } : {}) });
-      } else if (sourceDone && source.store) removed.push(named(source));
+      if (removeSource && source.store && !sourceDone) removed.push(storeRemoved((await applyStoreRemove(root, source))[0]));
+      else if (sourceDone && source.store) removed.push(named(source));
     } else if (target.store) {
       const storeRemove = removeSource && source.store ? { path: source.path, scope: source.scope, expectedVersion: source.version } : null;
       const status = record.type === "requirements" || record.type === "adr" ? headerValue(content, "Status") : null;
@@ -628,24 +652,21 @@ export async function applyMigration({ projectRoot, id }) {
       const entry = stored.find((item) => item.path === target.path && !item.removed);
       written.push({ path: target.path, scope: entry?.scope ?? target.scope });
       for (const item of stored.filter((entry) => entry.removed)) removed.push({ path: item.path, scope: item.scope, ...(item.removedComments ? { removedComments: item.removedComments } : {}) });
-    } else if (targetDone) {
-      written.push({ path: target.path, scope: null });
     } else {
-      const file = path.join(root, target.path);
-      await checkoutFile(root, target.path);
-      await mkdir(path.dirname(file), { recursive: true });
-      await checkoutFile(root, target.path);
-      await writeAtomically(file, content);
+      // A store source of a checkout target is removed first, through the store's checked update, so a store change refuses the apply before the checkout is written.
+      if (removeSource && source.store) removed.push(sourceDone ? named(source) : storeRemoved((await applyStoreRemove(root, source))[0]));
+      if (!targetDone) {
+        const file = path.join(root, target.path);
+        await checkoutFile(root, target.path);
+        await mkdir(path.dirname(file), { recursive: true });
+        await checkoutFile(root, target.path);
+        await writeAtomically(file, content);
+      }
       written.push({ path: target.path, scope: null });
     }
     if (removeSource && !source.store) {
       if (await checkoutFile(root, source.path)) await rm(path.join(root, source.path), { force: true });
       removed.push({ path: source.path, scope: null });
-    } else if (sourceDone && !target.store) {
-      removed.push(named(source));
-    } else if (removeSource && source.store && !target.store) {
-      const [entry] = await applyStoreRemove(root, source);
-      removed.push({ path: source.path, scope: entry?.scope ?? source.scope, ...(entry?.removedComments ? { removedComments: entry.removedComments } : {}) });
     }
     const appliedAt = new Date().toISOString();
     await writeRecord(root, recordKey(id), serialize({ ...record, appliedAt, written, removed }));

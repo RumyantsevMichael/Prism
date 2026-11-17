@@ -3,12 +3,12 @@ import { mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink,
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { CONFORMING, formatServer, read, write } from "./fixtures/artifact-formats.mjs";
+import { CONFORMING, FEATURE, formatServer, read, write } from "./fixtures/artifact-formats.mjs";
 import { labelOf, otherCheckout, storeProject, storeRead, storeWrite } from "./fixtures/artifact-formats-store.mjs";
 import { defer } from "./fixtures/teardown.mjs";
 
 // Format migrations stay inside the project, invent no decision or wording, keep a pending migration's wait open on a failed read, keep a named target scope, and complete a retried apply.
-// One target has one pending migration.
+// A stale migration releases its target, and one target has one pending migration.
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-migration-review-data-")));
 process.env.PLUGIN_DATA = privateData;
@@ -170,6 +170,30 @@ test("an apply retried after an earlier one wrote the target and failed complete
   assert.equal((await call("apply_migration", { id })).value?.code, "migration_applied");
 });
 
+async function accepted(context, extra = {}) {
+  const { root, call } = await formatServer(context, { ...CONFORMING, "notes/audit.md": DRAFT_SOURCE });
+  const proposed = await call("propose_migration", proposal("notes/audit.md", AUDIT));
+  const id = proposed.value?.migration?.id;
+  assert.ok(id, proposed.text);
+  await answer(root, id, { decision: "accept", removeSource: "on", ...extra });
+  return { root, call, id };
+}
+
+test("an accepted migration whose source changed before apply is stale and no longer holds its target", async (context) => {
+  const { root, call, id } = await accepted(context);
+  await write(root, "notes/audit.md", `${DRAFT_SOURCE}\nThe system shall keep the log for a year.\n`);
+  assert.equal((await call("apply_migration", { id })).value?.code, "migration_stale");
+  const again = await call("propose_migration", proposal("notes/audit.md", AUDIT, { leftovers: [{ statement: "The system shall keep the log for a year.", home: "A retention requirement." }] }));
+  assert.ok(again.value?.migration?.id, again.text);
+});
+
+test("an accepted migration that can still apply keeps holding its target", async (context) => {
+  const { call, id } = await accepted(context);
+  const again = await call("propose_migration", proposal("notes/audit.md", AUDIT));
+  assert.equal(again.value?.code, "migration_pending", again.text);
+  assert.equal(again.value?.id, id);
+});
+
 test("two concurrent proposals of one target record one pending migration", async (context) => {
   const { root, call } = await formatServer(context, { ...CONFORMING, "notes/audit.md": DRAFT_SOURCE });
   const results = await Promise.all([1, 2, 3].map(() => call("propose_migration", proposal("notes/audit.md", AUDIT))));
@@ -179,3 +203,36 @@ test("two concurrent proposals of one target record one pending migration", asyn
   assert.equal(records.length, 1, records.join(", "));
 });
 
+const SCENARIOS = "docs/requirements/retry-scenarios.md";
+const FEATURE_TARGET = "docs/Features/F-retry-scenarios.feature";
+async function storeSourceAccepted(context) {
+  const { root, call } = await storeProject(context, { ...CONFORMING, [SCENARIOS]: FEATURE });
+  const source = await storeRead(call, SCENARIOS);
+  const proposed = await call("propose_migration", { type: "feature", source: SCENARIOS, target: FEATURE_TARGET, content: FEATURE, summary: "Moves the retry scenarios into a feature file.", leftovers: [] });
+  const id = proposed.value?.migration?.id;
+  assert.ok(id, proposed.text);
+  await answer(root, id, { decision: "accept", removeSource: "on" });
+  return { root, call, id, source };
+}
+
+test("a store source of a checkout target that changed after acceptance refuses the apply before the checkout is written, and releases the target", async (context) => {
+  const { root, call, id, source } = await storeSourceAccepted(context);
+  await storeWrite(call, SCENARIOS, `${source.content}\n      And the client logs the failure\n`, { expectedVersion: source.version });
+  const applied = await call("apply_migration", { id });
+  assert.equal(applied.value?.code, "migration_stale", applied.text);
+  assert.equal(await exists(path.join(root, FEATURE_TARGET)), false, "the checkout target is not written");
+  const again = await call("propose_migration", { type: "feature", source: SCENARIOS, target: FEATURE_TARGET, content: FEATURE, summary: "Moves the retry scenarios into a feature file.", leftovers: [{ statement: "And the client logs the failure", home: "A logging scenario." }] });
+  assert.ok(again.value?.migration?.id, again.text);
+});
+
+test("an apply that removed a store source and stopped before writing its checkout target completes on a retry", async (context) => {
+  const { root, call, id, source } = await storeSourceAccepted(context);
+  // The store source of a checkout target goes first, so an apply that stopped after it left the source removed and the target unwritten.
+  const removed = await call("update_artifact", { operations: [{ op: "remove", path: SCENARIOS, expectedVersion: source.version }] });
+  assert.equal(removed.value?.code ?? null, null, removed.text);
+  const applied = await call("apply_migration", { id });
+  assert.deepEqual(applied.value?.written, [{ path: FEATURE_TARGET, scope: null }], applied.text);
+  assert.deepEqual(applied.value.removed.map((entry) => [entry.path, labelOf(entry)]), [[SCENARIOS, "api"]]);
+  assert.equal(await read(root, FEATURE_TARGET), FEATURE);
+  assert.equal(typeof (await call("get_migration", { id })).value?.migration?.appliedAt, "string");
+});
