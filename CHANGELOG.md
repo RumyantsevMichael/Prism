@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.27.1](https://github.com/RumyantsevMichael/Prism/compare/v0.27.0...v0.27.1) (2026-11-17)
+
+
+### Fixed
+
+* attention notifications, sidebar width, scrollbars, resize handles, switcher label ([#311](https://github.com/RumyantsevMichael/Prism/issues/311)) ([6cc0f1e](https://github.com/RumyantsevMichael/Prism/commit/6cc0f1ea2d0adc69f17de97980b1a57b8d8dd94d)), closes [#302](https://github.com/RumyantsevMichael/Prism/issues/302) [#303](https://github.com/RumyantsevMichael/Prism/issues/303) [#304](https://github.com/RumyantsevMichael/Prism/issues/304) [#305](https://github.com/RumyantsevMichael/Prism/issues/305) [#306](https://github.com/RumyantsevMichael/Prism/issues/306) [#307](https://github.com/RumyantsevMichael/Prism/issues/307)
+* **hooks:** keep gate answers whole when a gate question is long ([#319](https://github.com/RumyantsevMichael/Prism/issues/319)) ([ac47410](https://github.com/RumyantsevMichael/Prism/commit/ac47410ee42fc55598161c81edd8e39d1884c047)), closes [#241](https://github.com/RumyantsevMichael/Prism/issues/241)
+* keep SSH in batch mode with a user-set SSH command ([#317](https://github.com/RumyantsevMichael/Prism/issues/317)) ([25f00ee](https://github.com/RumyantsevMichael/Prism/commit/25f00eec83b491287318378b990ed023661a0c5e)), closes [#273](https://github.com/RumyantsevMichael/Prism/issues/273)
+* move artifacts with long store paths into the store ([#310](https://github.com/RumyantsevMichael/Prism/issues/310)) ([c2e1255](https://github.com/RumyantsevMichael/Prism/commit/c2e1255cc8f7e14f14573d392cfdc1f9f87125f0)), closes [#309](https://github.com/RumyantsevMichael/Prism/issues/309)
+* redact query strings and fragments of URLs in Git errors ([#301](https://github.com/RumyantsevMichael/Prism/issues/301)) ([a954165](https://github.com/RumyantsevMichael/Prism/commit/a954165989e21ac694b69b1556770e296f7d8bec))
+* refuse review files that resolve into .git through a symlink ([#299](https://github.com/RumyantsevMichael/Prism/issues/299)) ([c020081](https://github.com/RumyantsevMichael/Prism/commit/c02008181068a9173b58072da6d8cd5cc35d3776)), closes [#272](https://github.com/RumyantsevMichael/Prism/issues/272)
+* report a record move made on a review browser request ([#320](https://github.com/RumyantsevMichael/Prism/issues/320)) ([8411793](https://github.com/RumyantsevMichael/Prism/commit/841179303b94c90ebf88bde41b3d91cd7809b5c1)), closes [#242](https://github.com/RumyantsevMichael/Prism/issues/242)
+* **review:** check origin and write session before decoding a code route ([#300](https://github.com/RumyantsevMichael/Prism/issues/300)) ([e5a0761](https://github.com/RumyantsevMichael/Prism/commit/e5a076132ba6d6d7d367e0ee0c4aefd27e386b63)), closes [#276](https://github.com/RumyantsevMichael/Prism/issues/276)
+* **review:** keep host names whole in the Launch menu ([#313](https://github.com/RumyantsevMichael/Prism/issues/313)) ([61706a6](https://github.com/RumyantsevMichael/Prism/commit/61706a6819d6d8421d935240ce304f5183314cb0)), closes [#312](https://github.com/RumyantsevMichael/Prism/issues/312)
+* stop store sync from pushing removals the disk never received ([#316](https://github.com/RumyantsevMichael/Prism/issues/316)) ([6724063](https://github.com/RumyantsevMichael/Prism/commit/6724063c213f52ce6b90550af12ba12156999d71)), closes [#314](https://github.com/RumyantsevMichael/Prism/issues/314) [#315](https://github.com/RumyantsevMichael/Prism/issues/315) [#88](https://github.com/RumyantsevMichael/Prism/issues/88)
+
 ## [0.27.0](https://github.com/RumyantsevMichael/Prism/compare/v0.26.0...v0.27.0) (2026-11-17)
 
 
