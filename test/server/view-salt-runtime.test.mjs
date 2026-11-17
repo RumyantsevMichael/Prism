@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 
 // Requirements: docs/requirements/design-views.md §1, §7.
 // Contract: docs/plans/design-views/slice.md clause 13.
-// The vendored PlantUML runtime parses PlantUML Salt, so a wireframe view passes the design check and the review page can draw it.
+// The vendored PlantUML runtime parses PlantUML Salt written as @startsalt, so a wireframe view passes the design check and the review page can draw it.
+// No MIT @plantuml/core release parses salt inside @startuml, so a wireframe written that way is refused, never accepted.
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-view-salt-data-")));
 process.env.PLUGIN_DATA = privateData;
@@ -43,13 +44,17 @@ async function proposeWireframe(root, source) {
   return updateInitiative({ projectRoot: root, initiative: INITIATIVE, expectedRevision: current.revision, operations: [{ op: "propose_design", slug: INITIATIVE, operations: [{ op: "accept_design", slug: INITIATIVE, frozenTests: ["test/download.test.mjs"], review: "none" }] }] });
 }
 
-test("clause 13: a Salt wireframe parses, both as its own diagram and inside @startuml", async (context) => {
+test("clause 13: a @startsalt wireframe parses", async (context) => {
   const root = await project(context);
   const own = await proposeWireframe(root, SALT);
   assert.ok(own.record.proposals[INITIATIVE], "the wireframe parses");
-  const other = await project(context);
-  const embedded = await proposeWireframe(other, EMBEDDED);
-  assert.ok(embedded.record.proposals[INITIATIVE], "salt inside @startuml parses");
+});
+
+test("clause 13: a wireframe written as salt inside @startuml is refused", async (context) => {
+  const root = await project(context);
+  await assert.rejects(proposeWireframe(root, EMBEDDED));
+  const current = await getInitiative({ projectRoot: root, initiative: INITIATIVE });
+  assert.equal(current.record.proposals?.[INITIATIVE], undefined, "a refused proposal records nothing");
 });
 
 test("clause 13: the third-party notice names the vendored PlantUML release that draws Salt", async () => {
