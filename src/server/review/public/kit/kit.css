@@ -23,6 +23,40 @@ body {
   box-sizing: border-box;
 }
 
+/* Every scrolling area shows a thin scrollbar in the theme's line color on a clear track, so a scrollbar sits on any surface it crosses.
+   The color inherits, so each element that sets a theme sets it again for its subtree. */
+:root,
+[data-theme] {
+  scrollbar-color: var(--prism-color-line-strong) transparent;
+}
+
+* {
+  scrollbar-width: thin;
+}
+
+/* A browser without the standard scrollbar properties takes the same look from its own scrollbar parts. */
+@supports not (scrollbar-color: auto) {
+  ::-webkit-scrollbar {
+    width: calc(var(--prism-space-2) * 2);
+    height: calc(var(--prism-space-2) * 2);
+  }
+
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    border: var(--prism-space-1) solid transparent;
+    border-radius: var(--prism-radius-round);
+    background: var(--prism-color-line-strong) padding-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--prism-color-ink-faint);
+  }
+}
+
 button,
 input {
   color: inherit;

@@ -1,17 +1,19 @@
 // prism-resizer: the handle on a panel's edge that sets the panel's width, in light DOM: drag it, move it with the arrow keys, or double-click it to return to the default.
-// It only reports widths; the page applies them, so a page can cap a width by the window's size and keep it as the person's preference.
+// It sits in its panel, or beside it, in the gap to the next panel, when it names the panel with for.
+// It only reports widths, in whole pixels; the page applies them, so a page can cap a width by the window's size and keep it as the person's preference.
 import { Base, emit, setAttribute } from "./base.js";
 
 const STEP = 16;
 
 export class PrismResizer extends Base {
   static tag = "prism-resizer";
-  static observedAttributes = ["label", "edge", "min", "max", "value"];
+  static observedAttributes = ["label", "edge", "for", "min", "max", "value"];
   static catalog = {
     purpose: "The handle on a panel's edge that sets the panel's width: dragging it, the arrow keys, and a double click to return to the default report the new width, and the page applies it, such as the sidebar's and the side panel's.",
     options: [
       { name: "label", values: ["text"], default: "Resize", description: "The handle's accessible name, such as Resize the sidebar." },
       { name: "edge", values: ["end", "start"], default: "end", description: "The panel's edge the handle sits on: end for a panel at the window's start, such as the sidebar, and start for one at its end, such as the side panel." },
+      { name: "for", values: ["id"], default: "", description: "The id of the panel it resizes, when the handle stands beside the panel, in the gap to the next one, rather than inside it." },
       { name: "min", values: ["number"], default: "", description: "The smallest width in pixels, which the handle reports as its minimum." },
       { name: "max", values: ["number"], default: "", description: "The largest width in pixels, which the handle reports as its maximum." },
       { name: "value", values: ["number"], default: "", description: "The panel's width now, in pixels, set by the page." }
@@ -40,15 +42,25 @@ export class PrismResizer extends Base {
 
   sync() {
     setAttribute(this, "aria-label", this.getAttribute("label") || "Resize");
+    setAttribute(this, "aria-controls", this.getAttribute("for"));
     setAttribute(this, "aria-valuemin", this.getAttribute("min"));
     setAttribute(this, "aria-valuemax", this.getAttribute("max"));
     setAttribute(this, "aria-valuenow", this.getAttribute("value"));
     if (!this.hasAttribute("tip")) this.setAttribute("tip", "Drag to resize · double-click to reset");
   }
 
-  // The width the page set, or the panel's own width when it set none; the panel is the handle's parent.
+  // The panel it resizes: the one named by for, or the handle's parent.
+  panel() {
+    return (this.hasAttribute("for") && this.ownerDocument.getElementById(this.getAttribute("for"))) || this.parentElement;
+  }
+
+  // The width the page set, or the panel's own width with the gap on its resized edge when it set none.
   current() {
-    return Number(this.getAttribute("value")) || Math.round(this.parentElement.getBoundingClientRect().width);
+    const value = Number(this.getAttribute("value"));
+    if (value) return value;
+    const panel = this.panel();
+    const gap = parseFloat(getComputedStyle(panel)[this.getAttribute("edge") === "start" ? "marginInlineStart" : "marginInlineEnd"]) || 0;
+    return Math.round(panel.getBoundingClientRect().width + gap);
   }
 
   clamp(width) {
@@ -60,8 +72,9 @@ export class PrismResizer extends Base {
     return value;
   }
 
+  // A pointer's position has fractions of a pixel, and a width is a whole number of pixels, which the page stores as the person's preference.
   report(width, done) {
-    emit(this, "prism-resize", { width: this.clamp(width), done });
+    emit(this, "prism-resize", { width: Math.round(this.clamp(width)), done });
   }
 
   onPointerDown(event) {
