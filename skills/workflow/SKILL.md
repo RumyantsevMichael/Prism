@@ -22,6 +22,7 @@ sdm: "0.3"
 | Review a verified slice | `review` |
 | Analyze reuse or restructure existing concepts | `refactor` |
 | Author a specific artifact | The matching `write-*` skill |
+| Convert one artifact into its format after a person asks for it or accepts the offer | `migrate-artifact` |
 
 These names resolve under the Prism plugin namespace, and a direct skill invocation does not require an earlier `orchestrate` invocation.
 
@@ -41,6 +42,7 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 - Stop and report conflicting durable sources for user resolution.
 - Change Prism records only through Prism MCP tools, never by editing their files or generated views, and report a refusal that the tool's message does not resolve.
 - In a project with a store, read each [store artifact](#common-terms) only through `get_artifact` and change it only through `update_artifact`, never through a checkout file, and leave its status lines to [approval gates](#common-terms) and to the ship that a [correctness gate](#common-terms) confirms, while a project without a store edits these files and their status lines in the checkout as the owning skill says.
+- When you find an artifact that breaks its [artifact format](#common-terms) in a way that `check_artifacts` did not report, report the artifact and the break to the person with an offer of a [format migration](#common-terms) in a session of its own, and leave the artifact unchanged in this task.
 - Persist a fact only when a later session needs it and no existing artifact owns it.
 - Keep durable requirements, ADRs, features, and user guidance free of slice identities and plans paths.
 
@@ -62,6 +64,11 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 | Store artifact | A requirement, ADR, plan file such as `slice.md`, a diagram, or `recovery.md`, the glossary, or the roadmap view in a project whose `.prism/workflow.md` names a store, which Prism keeps in the store under its project-relative path with its [artifact scope](#common-terms), its comments from the review browser, and, for a requirement or ADR, the status that only gates change, read through `get_artifact` and changed through `update_artifact` with the version last read; the first Prism call of a checkout moves its tracked files of these kinds into the store and reports each move or why a file stays, while feature files, step definitions, tests, executable contracts, user documentation, and code stay in the checkout and the tools refuse them with `not_an_artifact`. |
 | Artifact scope | The workspace, a repository, or a component that a store artifact belongs to, labeled `workspace`, `<repository>`, or `<repository>/<component>`; a checkout sees the workspace scope and its own repository's scopes, a new artifact takes the given `scope`, else its nearest folder's, else the workspace's, and `move_scope` moves an artifact with its comments. |
 | Accepted version | A store artifact's bytes when a person last accepted it: at its approval gate, at the acceptance of the design of the slices whose folder holds it, or at the ship of its initiative; `get_artifact` returns `acceptedVersion` and `changedSinceAccepted`, and reads those bytes with `accepted` true, which a reader that needs only approved text uses. |
+| Artifact format | The versioned rules and complete example that every requirement file, ADR, glossary, or feature file follows, stated in a reference beside the skill that writes it and checked by `check_artifacts`. |
+| Format finding | A rule of its artifact format that an artifact breaks, which `check_artifacts` reports with its rule id, line, and message and Attention counts; Prism refuses work that cites such an artifact with `artifact_nonconforming`. |
+| Legacy mark | A person's mark in the review browser on a set of artifacts that break their format, which keeps them off Attention's format counts until the person removes it, while work that cites them is still refused. |
+| Format migration | The conversion of one artifact, or of a file that holds such content, into its artifact format, proposed through `propose_migration`, answered by a person in the review browser, and applied through `apply_migration`; it is not the move of a checkout's files into the store. |
+| Leftover list | The source statements that a format migration's content does not keep, each verbatim with a proposed home, which the person sees before answering. |
 | Portable name | A file, folder, or identifier name that agents choose in every project, with or without a store, so that a repository shared by Windows, macOS, and Linux engineers checks out everywhere: an ASCII letter or digit first, then only ASCII letters, digits, `.`, `_`, and `-`; no `.` or `.lock` ending; no Windows device name such as `con`, `aux`, `nul`, `com1`, or `lpt1` before the first `.`, in any letter case; no other name in the same folder that differs from it only in letter case; a project-relative path of at most 100 characters; and, for an initiative or slice identifier, no `.` and at most 40 characters. |
 | Component | A part of a repository with its own folder, optional test command, and dependencies, declared under `## Components` in `.prism/workflow.md` and identified across the workspace as `<repository>/<component>`, where the repository's name is its `Repository` name under `## Workspace`, or `root` when it gives none. |
 | Root component | The component named after the repository that holds every file outside the declared folders and tests with the repository's test command; a repository that declares no components is its root component alone. |
@@ -132,6 +139,5 @@ Requirements preserve obligations, ADRs preserve decisions, `slice.md` preserves
 
 ## Supporting procedures
 
-- Read [delegation.md](references/delegation.md) before starting child agents.
-- Read [visual-review.md](references/visual-review.md) before human artifact review, and [glossary-format.md](references/glossary-format.md) before writing or converting a glossary.
+- Read [delegation.md](references/delegation.md) before starting child agents, [visual-review.md](references/visual-review.md) before human artifact review, and [glossary-format.md](references/glossary-format.md) before writing or converting a glossary.
 - Ask only at a real gate or unresolved choice, as a [blocker](#common-terms) in plain language before its artifact reference.

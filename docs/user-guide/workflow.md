@@ -58,6 +58,7 @@ Each format's reference sits beside the skill that writes the artifact:
 
 Any required value or section body may be the single word `unknown` when nobody knows it yet, except a title, a status, or an identity.
 A glossary term whose sources are a Draft requirement, a Proposed or Declined ADR, or a missing file is reported, and so is a term whose every source was withdrawn or superseded.
+So agents add a term to the glossary once its source is decided: when a person approves the requirement file or amendment that introduces it, and when an ADR that introduces it is accepted.
 
 Agents check artifacts with the `check_artifacts` tool.
 Without paths it checks every `.md` file other than `README.md` up to four folders below the configured Requirements and ADRs paths, every `.feature` file up to four folders below the Feature files path, and the configured Glossary file.
@@ -98,6 +99,9 @@ The message then names a store artifact as `<path> in scope <label>` and ends wi
 
 A format migration converts one artifact that breaks its format, or a file that holds such content, into its format, and applies only after a person accepts it.
 It is not the move of a checkout's files into a record store.
+Ask an agent for one when `check_artifacts` or Attention reports an artifact that breaks its format, when Prism refuses work with `artifact_nonconforming`, or when an agent offers one because it found a break that the check did not report.
+The agent runs the `prism:migrate-artifact` skill for one artifact per session and, when commits are on, commits the checkout files it writes or removes in a commit of their own.
+In other work, agents report an artifact that breaks its format and leave it unchanged.
 An agent proposes it with `propose_migration`, passing the type, the source and the target, the whole migrated content, a summary of what changes and why, and leftovers: each statement of the source that the content does not keep, with a proposed home such as the project instructions.
 The target lies under the type's configured path, and equals the source for a format migration in place.
 A checkout source or target whose path passes through a symbolic link is refused with `artifact_outside`, and one that is no regular file with `invalid_path`, when it is proposed and again when it is applied, so a format migration never touches a file outside the project.

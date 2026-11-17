@@ -20,7 +20,7 @@ Each requirement file covers one product capability, independent of components, 
 
 - For a new capability:
   1. Select an unused readable slug that is a [portable name](../workflow/SKILL.md#common-terms) directly under the requirements directory.
-  2. Create a Draft file with the shape below.
+  2. Create a Draft file in the [requirement format](references/requirement-format.md).
 - For an existing Draft:
   1. Edit its obligations in place.
 - For an Approved file:
@@ -29,43 +29,6 @@ Each requirement file covers one product capability, independent of components, 
   3. For an obligation that ends without replacement, propose `Disposition: Withdrawn`.
 
 The [requirement format](references/requirement-format.md) states the rules that `check_artifacts` checks and a complete example.
-
-```markdown
-# <Capability>
-
-Status: Draft
-Created: <YYYY-MM-DD>
-Approved: n/a
-
-## Problem
-
-<The user or system problem.>
-
-## Goals
-
-- <An intended outcome.>
-
-## Non-goals
-
-- <An excluded outcome.>
-
-## Design questions
-
-- <An unresolved architecture question, or n/a.>
-
-<a id="1"></a>
-## 1. <Requirement title>
-
-Pattern: <Ubiquitous | State-driven | Event-driven | Optional feature | Unwanted behavior | Complex>
-
-Disposition: Active
-
-Requirement: <One EARS statement naming the system and using shall.>
-
-Rationale: <Why the obligation exists.>
-
-Related: <Requirement links, or n/a>
-```
 
 The slug and explicit anchor form the requirement identity, such as `[capability.md§1](capability.md#1)`.
 Numbers are flat positive integers, starting at `1` and increasing without reuse.
@@ -95,12 +58,14 @@ Reverse traceability uses repository link searches instead of a central backlink
   2. Tell the user to answer each gate in the review browser.
   3. For each file, call `wait_for_user_gate` with the file as `artifact` and its gate id.
   4. When the person requests changes, revise the file from the note and ask again.
+  5. As soon as `wait_for_user_gate` returns the approving answer, which itself records the approval, add to the glossary each term that the approved file or amendment introduces and the glossary lacks, in the [glossary format](../workflow/references/glossary-format.md) with that requirement section as its source.
 - Otherwise:
   1. Present the complete proposal through the [workflow gate rules](../workflow/SKILL.md#supporting-procedures).
   2. Request explicit user acceptance of each Draft file or Approved-file amendment.
   3. For accepted Draft files, set `Status: Approved` and `Approved: <approval date>` together.
   4. For accepted amendments, apply the approved additions, disposition changes, and reciprocal links together.
-  5. For unaccepted proposals, leave Draft files Draft and preserve existing Approved content.
+  5. In the same change that records the approval, add to the glossary each term that the approved file or amendment introduces and the glossary lacks, in the [glossary format](../workflow/references/glossary-format.md) with that requirement section as its source.
+  6. For unaccepted proposals, leave Draft files Draft and preserve existing Approved content.
 
 With a store, approving writes the file's `Status:` and `Approved:` lines, so an agent leaves them as written.
 
