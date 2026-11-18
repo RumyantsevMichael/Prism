@@ -54,7 +54,7 @@ const OVER = [
   ["sequence", sequence(2, 31), "31 messages, more than 30"],
   ["activity", activity(31), "31 actions and decisions, more than 30"],
   ["state", states(21, 21), "21 states, more than 20"],
-  ["state", states(5, 41), "41 transitions, more than 40"],
+  ["state", states(5, 40), "41 transitions, more than 40"],
   ["component", components(31, 1), "31 elements, more than 30"],
   ["component", components(10, 51), "51 relations, more than 50"],
   ["code", uml(range(31).map((n) => `class C${n}`)), "31 elements, more than 30"],
