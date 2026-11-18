@@ -1,4 +1,4 @@
-/* prism-doc-tab-group: a group's head in the tab strip, its name as a pill in the group's color, which the group's tabs underline in the same color. */
+/* prism-doc-tab-group: a group's head in the tab strip, its name in the group's color on a pale wash of that color, while the group's tabs carry the same color along their top. */
 
 :host {
   --prism-doc-tab-group-color: var(--prism-color-group-1);
@@ -22,16 +22,12 @@
   gap: var(--prism-space-1);
   width: 100%;
   min-width: 0;
-  padding: 0 var(--prism-space-1) 0 var(--prism-space-2);
-  box-shadow: inset 0 calc(-1 * var(--prism-stroke-strong)) 0 var(--prism-doc-tab-group-color);
+  /* The start keeps the room the close button and its gap take at the end, as a tab's does. */
+  padding: 0 var(--prism-space-2) 0 calc(var(--prism-space-2) + var(--prism-doc-tab-slot) + var(--prism-space-1));
+  background: var(--prism-doc-tab-group-tint);
   white-space: nowrap;
   cursor: pointer;
   user-select: none;
-}
-
-/* A collapsed group has no tabs to underline, so its head carries no line and reads as one closed unit. */
-:host([collapsed]) .group {
-  box-shadow: none;
 }
 
 :host([dragging]) .group {
@@ -40,31 +36,23 @@
   cursor: grabbing;
 }
 
-/* The group's name is a pill in the group's color, not a tab: it has no tab's border or surface, so it reads as the label of the tabs after it. */
+/* The group's name is text in the group's color, not a tab: it has no tab's surface, so it reads as the label of the tabs after it. */
 .head {
   display: flex;
   align-items: center;
   gap: var(--prism-space-2);
   flex: 1 1 auto;
   min-width: 0;
-  height: calc(var(--prism-control-height) - var(--prism-space-1));
-  padding: 0 var(--prism-space-3);
-  border: var(--prism-stroke) solid transparent;
-  border-radius: var(--prism-radius-round);
-  background: var(--prism-doc-tab-group-tint);
+  height: var(--prism-control-height);
+  border-radius: var(--prism-radius-xs);
   color: var(--prism-doc-tab-group-color);
-  font-size: var(--prism-font-size-xs);
+  font-size: var(--prism-font-size-sm);
   font-weight: var(--prism-font-weight-semibold);
-  transition: border-color var(--prism-duration-fast) var(--prism-easing-standard);
 }
 
-:host(:hover) .head {
-  border-color: var(--prism-doc-tab-group-color);
-}
-
-/* A collapsed group's pill is outlined in its color, so a closed group reads apart from an open one. */
-:host([collapsed]) .head {
-  border-color: var(--prism-doc-tab-group-color);
+/* Under the pointer the wash gains an outline in the group's color, so the head reads as the control it is. */
+:host(:hover) .group {
+  box-shadow: inset 0 0 0 var(--prism-stroke) var(--prism-doc-tab-group-color);
 }
 
 .name {

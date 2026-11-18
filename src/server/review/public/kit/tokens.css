@@ -73,6 +73,8 @@
   --prism-menu-width: 320px;
   --prism-doc-tab-width: 220px;
   --prism-doc-tab-group-width: 180px;
+  /* The room a tab keeps at its start, as wide as its close button, for the title to sit between equal ends and for an icon later. */
+  --prism-doc-tab-slot: var(--prism-control-height-sm);
   --prism-palette-width: 800px;
   --prism-preview-width: 260px;
   /* At this window width and below, a menu marked sheet spans the window, as the phone layout's menus do; the shell's own phone breakpoint is the same width. */

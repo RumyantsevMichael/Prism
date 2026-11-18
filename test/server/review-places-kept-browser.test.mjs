@@ -31,7 +31,7 @@ test("clause 27: Ctrl K, Cmd K, the search button, and / outside a field open th
   assert.deepEqual(page.errors, []);
 });
 
-test("clause 27: the strip of tabs keeps its preview, Keep, close, middle-click close, and reload, opened from the places' sidebars", { skip, timeout: 90000 }, async (context) => {
+test("clause 27: the strip of tabs keeps its preview, a double click to keep it, close, middle-click close, and reload, opened from the places' sidebars", { skip, timeout: 90000 }, async (context) => {
   const { base, browser } = await placesDemo(context);
   const page = await open(browser, base, "attention");
   await choosePlace(page, "Work");
@@ -44,9 +44,8 @@ test("clause 27: the strip of tabs keeps its preview, Keep, close, middle-click 
   await item(sidebar(page), "Decisions").click({ modifiers: ["Control"] });
   await settledOn(page, "decisions");
   assert.deepEqual(await tabs(page), ["initiative:activity-reports(p)", "decisions*"], "Ctrl-click kept a tab");
-  await page.getByRole("tab", { name: /^Export activity reports/ }).click();
-  await page.getByRole("tablist", { name: "Open artifacts" }).getByRole("button", { name: "Keep", exact: true }).click();
-  assert.deepEqual(await settled(() => tabs(page), ["initiative:activity-reports*", "decisions"]), ["initiative:activity-reports*", "decisions"], "Keep kept the preview tab");
+  await page.getByRole("tab", { name: /^Export activity reports/ }).dblclick();
+  assert.deepEqual(await settled(() => tabs(page), ["initiative:activity-reports*", "decisions"]), ["initiative:activity-reports*", "decisions"], "a double click kept the preview tab");
   await page.reload();
   // The page draws the tabs once the review server answers with the session, which takes longer than a second on a slow disk.
   await page.waitForFunction(() => document.querySelectorAll("#open-tabs prism-doc-tab").length > 0, null, { timeout: 15000 }).catch(() => {});
