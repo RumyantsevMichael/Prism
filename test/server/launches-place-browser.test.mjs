@@ -122,7 +122,9 @@ test("the initiative page head shows nothing about runs while none was launched 
   await s.start("search", "codex");
   const page = await openPage(s.browser, reviewUrl(s.base, `initiative:${INITIATIVE}`));
   await waitForView(page);
-  await page.waitForTimeout(500);
+  // The page reads the launches every few seconds; once a later read is answered, the earlier one has been shown.
+  await page.waitForResponse((response) => new URL(response.url()).pathname.endsWith("/api/launches"), { timeout: 15000 });
+  await page.waitForResponse((response) => new URL(response.url()).pathname.endsWith("/api/launches"), { timeout: 15000 });
   assert.equal(await page.locator("#artifact [data-initiative-last-run]:visible").count(), 0, "another initiative's run is not this one's");
   assert.deepEqual(page.errors, []);
 });
