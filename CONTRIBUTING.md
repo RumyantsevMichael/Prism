@@ -128,9 +128,9 @@ npx playwright install chromium
 PRISM_REQUIRE_BROWSER=1 npm test
 ```
 
-CI splits the server tests into four shards on Linux and four on Windows, each on its own runner, so the browser tests do not hold one runner for half an hour.
+CI splits the server tests into four shards on Linux and eight on Windows, each on its own runner, so the browser and Git tests do not hold one runner for half an hour or more.
 A Windows shard runs two test files at a time with `--test-concurrency=2`, because three browser test files at once on one Windows runner fail with `net::ERR_NO_BUFFER_SPACE`.
-`scripts/test-shard.mjs` balances the shards by the file durations in `test/server/durations.json`, and the `validate` and `windows` checks pass only when every shard passed.
+`scripts/test-shard.mjs` balances the shards by recorded file durations, from `test/server/durations.win32.json` on Windows and `test/server/durations.json` elsewhere, and the `validate` and `windows` checks pass only when every shard passed.
 When Validate fails on main, the `Report main failures` workflow comments on the open issue labelled `ci-main-failure` with each failed test and its error, and opens that issue when none is open.
 Close that issue once main is stable again.
 A test file that the durations do not list counts as a median file, so a new file needs no update to run.
@@ -141,11 +141,25 @@ PRISM_REQUIRE_BROWSER=1 node scripts/test-shard.mjs --shard 2/4 -- --test-timeou
 node scripts/test-shard.mjs --shard 2/4 --list
 ```
 
-When a shard runs much longer than the others, record the durations again with a full run and commit the rewritten file:
+When a shard runs much longer than the others, record the durations again with a full run on that system and commit the rewritten file.
+The run writes the table of the system it runs on: run the first command on Linux, and the second on Windows, with the concurrency that CI uses there.
 
 ```bash
 PRISM_REQUIRE_BROWSER=1 node scripts/test-shard.mjs --record
+PRISM_REQUIRE_BROWSER=1 node scripts/test-shard.mjs --record -- --test-concurrency=2
 ```
+
+### Waiting in tests
+
+A test waits for the event or state it checks, never for a fixed time, because a CI runner, a Windows one above all, can be several times slower than a developer machine and uneven from one run to the next.
+`test/server/fixtures/wait.mjs` holds the helpers:
+
+- `settled(read, expected)` reads until the value is the expected one, or a predicate accepts it, and returns the last reading after a generous ceiling, so the test's own assertion reports a real failure.
+- `repainted(page)` waits for the page's fonts, its finite animations, and two drawn frames, after the test mounts or changes markup.
+- `pause(ms, reason)` is the only fixed pause, for a check that something does not happen or a time the test itself is about, and its reason says why nothing can be awaited.
+
+Prefer an event the code already gives, such as a locator's `waitFor`, a response, or a pushed event, and add one to the code where that is cheap.
+`npm run check:test-waits` fails on `waitForTimeout` and on a fixed sleep directly followed by an assertion, and the `checks` job runs it.
 
 ### Review app design values
 
@@ -166,7 +180,7 @@ A screen's own rules go in its area stylesheet, read only tokens, and lay out ki
 Each element class also carries a static `tag` and a static `catalog` of its purpose, options, states, and keys.
 The component catalog at `<review URL>/kit/catalog` shows one entry per element from that `catalog`, with a live specimen per state from `SPECIMENS` in `kit/catalog.js`, plus long text and an unbroken name.
 To add an element, add its file, list it in `KIT_ELEMENTS`, and add its specimens to `SPECIMENS`.
-The review page's **Appearance** button, at the end of the status bar, links to the catalog.
+The **About Prism** section of the review page's **Settings**, which the gear at the start of the status bar opens, links to the catalog.
 
 The kit guard names each raw design value and each control styled or written around the kit:
 
@@ -210,7 +224,12 @@ It fails on content that escapes its container, a page that scrolls the whole wi
 It also checks the component catalog of the empty project at each viewport and theme, and prints each catalog problem as `catalog <entry>: <problem> at <viewport> (<width>px), <theme>`.
 `--catalog <url>` checks only the catalog at that URL.
 `--viewports`, `--themes`, and `--screenshots <directory>` widen the run or keep screenshots for a visual pass.
-Playwright is not a repository dependency, so the check uses an installed copy and is not part of CI.
+Playwright is not a repository dependency, so the check uses an installed copy.
+Run it with `--themes light,dark` before you finish a UI change.
+
+CI runs the layout check and the places comparison in the light theme only, and compares only the places' colors in the dark theme, at 1440 pixels.
+The dark theme changes only colors and shadows, which `test/server/review-kit-tokens.test.mjs` holds, so its layout is the light theme's, and the contrast tests check its colors.
+The person or agent who changes a screen still checks it in both themes, as the [verify-ui skill](.claude/skills/verify-ui/SKILL.md) describes.
 
 A change to a screen that the UI kit mockup shows is done only when the rendered screen matches the mockup, so compare them side by side:
 
@@ -218,7 +237,7 @@ A change to a screen that the UI kit mockup shows is done only when the rendered
 node scripts/review-demo/mockup-compare.mjs --out /tmp/mockup-compare
 ```
 
-It puts the demo app into the state of each mockup scene (Attention with a gate and the Appearance menu, the roadmap with Who's working, a slice with its diagram beside it, the command palette, and the navigation drawer) and writes one picture per scene, width, theme, and density, the mockup on the left and the app on the right, with an `index.html` that shows them in pairs.
+It puts the demo app into the state of each mockup scene (Attention with a gate and Settings open, the roadmap with Who's working, a slice with its diagram beside it, the command palette, and the navigation drawer) and writes one picture per scene, width, theme, and density, the mockup on the left and the app on the right, with an `index.html` that shows them in pairs.
 `--scenes`, `--widths`, `--themes`, and `--densities` narrow the run.
 Read every pair: the layout check finds broken layouts, but only this comparison shows a screen that works and still looks nothing like the design.
 Differences that come from the demo's data, or from mockup content that is deliberately out of scope, are expected; name them in the pull request.
@@ -235,7 +254,7 @@ An outline reads the rail, the place head, the sidebar's groups with their fixed
 A geometry value that differs by more than 2 pixels is a difference, and so is any other value that differs, except that the app may leave out a sidebar group that the mockup marks `data-optional`.
 `--scenes`, `--widths`, `--themes`, and `--parts` narrow the run to comma-separated values, `--mockup <file>` reads another mockup, and `--app-mockup <file>` renders that mockup in place of the app, so the comparison can check itself.
 It exits 0 when no pair differs, 1 when one does, after printing each difference, and 2 with a message for a missing `--out`, an unknown scene, part, width, or theme, an unreadable mockup, or no Playwright.
-A slice that changes a screen that a scene shows is done only when its frozen tests run this comparison for its scenes and parts at 390, 820, and 1440 pixels in both themes, it passes, and the implementer has looked at every pair it wrote and names in the pull request each difference that the outline does not measure.
+A slice that changes a screen that a scene shows is done only when its frozen tests run this comparison for its scenes and parts at 390, 820, and 1440 pixels, it passes, and the implementer has run it in both themes, looked at every pair it wrote, and names in the pull request each difference that the outline does not measure.
 
 With both manifests present the CLI validates the marketplace one.
 To validate `plugin.json` in isolation, copy the plugin into a scratch directory without `marketplace.json` and validate that.

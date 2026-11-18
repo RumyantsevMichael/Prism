@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { INITIATIVE, launchFixture, waitFor } from "./fixtures/launched-sessions.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { apply, get, pageSession, startActionReview } from "./fixtures/review-actions.mjs";
 
 // Review checks of the launch actions beyond the frozen tests: which asks mark a gate, what a stop leaves for a later answer, and the bounds of the gate record.
@@ -65,7 +66,7 @@ test("an answer kept for a run that the person then stops causes no resume, even
   assert.equal(stopped.status, 200, stopped.text);
   assert.equal(stopped.json.launch.state, "stopped");
   assert.deepEqual(stopped.json.launch.exit, { code: 0, signal: null });
-  await new Promise((resolve) => setTimeout(resolve, 800));
+  await pause(800, "no resume may follow, and a change that must not happen leaves nothing to wait for");
   assert.equal(s.runs("codex").length, 1, "a stop is never followed by a resume for an answer");
 });
 
@@ -131,7 +132,7 @@ import(pathToFileURL(${JSON.stringify(path.resolve("dist/server/workflow/record-
   const resumed = await apply(s.base, { action: "launch.resume", target: `launch:${id}`, input: {}, revision: null }, s.headers);
   assert.equal(resumed.status, 409, resumed.text);
   assert.equal(resumed.json.code, "action_unavailable");
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  await pause(500, "no resume may follow, and a change that must not happen leaves nothing to wait for");
   assert.equal(s.runs("claude").length, 1);
   assert.deepEqual(await historyOf(s.root), before);
 });

@@ -10,7 +10,7 @@ const { version } = JSON.parse(await readFile(pluginURL(".claude-plugin", "plugi
 // The app runs detached with no terminal, so the shared Prism log file is its only record.
 startProcessLog("review-app", { version });
 // A detached watcher finishes the app's pending store syncs if the app is ended by force.
-configureRecordSync({ watchPending: true });
+configureRecordSync({ watchPending: true, log });
 let app;
 try {
   app = await startReviewApp({ directory: reviewAppDirectory(), pluginVersion: version });

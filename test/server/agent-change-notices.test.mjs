@@ -8,6 +8,8 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
+import { writeOverview } from "./fixtures/overview.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { INITIATIVE, actionProject, authorOf } from "./fixtures/review-actions.mjs";
 import { defer } from "./fixtures/teardown.mjs";
 
@@ -201,7 +203,7 @@ test("a gate wait ends when the person changes the initiative and counts the cha
   const mcp = server(context, root, { data, sessionId: "waiting-session" });
   await mcp.call("get_coordination_state", { initiative: INITIATIVE });
   const id = mcp.start("wait_for_user_gate", { initiative: INITIATIVE, gateIds: [gateIds.review] }, { progressToken: "wait" });
-  await new Promise((resolve) => setTimeout(resolve, 600));
+  await pause(600, "the wait must still be waiting, and an answer that does not come leaves nothing to wait for");
   assert.equal(mcp.messages.some((message) => message.id === id), false, "the wait is still waiting");
   const changed = await person(root, "initiative.continuation", { value: "stepwise" });
   const ended = await mcp.response(id);
@@ -268,6 +270,7 @@ async function designProject(context) {
   await mkdir(path.join(root, "test"), { recursive: true });
   for (const name of ["download", "audit"]) await writeFile(path.join(root, "test", `${name}.test.mjs`), `// frozen ${name} test\n`);
   await writeFile(path.join(root, "docs/plans", INITIATIVE, "slice.md"), "# Export reports\n\n## Contract\n1. Downloads write the report.\n");
+  await writeOverview(root, `docs/plans/${INITIATIVE}`, ["download", "audit"]);
   return root;
 }
 
@@ -357,7 +360,7 @@ test("a gate wait of an agent that does not coordinate ends only on an answer", 
   const id = mcp.start("wait_for_user_gate", { initiative: INITIATIVE, gateIds: [gateIds.assistance] }, { ...(await preToolUse(root, { sessionId, toolUseId: "toolu_child_wait", agentId: "b1b2c3d4e5f6a7b8c", tool: "wait_for_user_gate" })), progressToken: "child-wait" });
   await new Promise((resolve) => setTimeout(resolve, 400));
   const push = await person(root, "initiative.push", { value: "on" }, { confirmed: true });
-  await new Promise((resolve) => setTimeout(resolve, 800));
+  await pause(800, "the change must not end the wait, and a change that must not happen leaves nothing to wait for");
   assert.equal(mcp.messages.some((message) => message.id === id), false, "the person's change does not end a sub-agent's wait");
   await person(root, "gate.answer", { choice: "done" }, { actionTarget: `gate:${INITIATIVE}/${gateIds.assistance}` });
   const ended = await mcp.response(id);

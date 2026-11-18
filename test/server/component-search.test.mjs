@@ -4,6 +4,7 @@ import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { entry, fakeRuntime, manifestPath, project, settled } from "./fixtures/component-indexes.mjs";
+import { READY_WAIT_MS } from "./fixtures/wait.mjs";
 
 // Acceptance tests of components.md §24-§26 for the component-indexes contract, clauses 12, 14-17, and 19 for search.
 process.env.PLUGIN_DATA ||= mkdtempSync(path.join(os.tmpdir(), "prism-component-search-data-"));
@@ -13,7 +14,7 @@ const { searchRepositoryConcepts } = await import("../../dist/server/repository-
 const { NativeSemanticRuntime } = await import("../../dist/server/repository-intelligence/native-semantic-runtime.mjs");
 const { callConservationTool } = await import("../../dist/server/conservation/conservation-tools.mjs");
 
-const search = (root, runtime, input = {}, waitMs = 2000) => searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...input }, { runtime, waitMs });
+const search = (root, runtime, input = {}, waitMs = READY_WAIT_MS) => searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...input }, { runtime, waitMs });
 const names = (found) => found.results.map((result) => result.name);
 
 async function scored(t) {

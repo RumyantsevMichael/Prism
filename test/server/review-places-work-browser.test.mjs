@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { shownTooltip, skip } from "./fixtures/kit-browser.mjs";
+import { settled } from "./fixtures/wait.mjs";
 import { choosePlace, comparePlaces, editJson, groupHeadings, item, itemNames, open, placesDemo, sidebar, writeText } from "./fixtures/places-browser.mjs";
 
 // Work lists only designed, unshipped work, grouped by state, on the demo project with a few records added before its server starts:
@@ -60,22 +61,18 @@ test("clauses 32, 34: rows show state, title, shipped out of all, phase, Blocked
   assert.equal(await initiative.getAttribute("aria-expanded"), "true", "the initiative of the open slice is expanded");
   assert.match((await itemNames(work)).find((name) => name.startsWith("Harden request retries")), /2\/10/, "the row shows shipped leaf slices out of all");
   await initiative.locator(":scope > a").hover();
-  await page.waitForTimeout(700);
-  assert.match(await shownTooltip(page) ?? "", /^Harden request retries · In progress · 2 of 10 shipped/);
+  assert.match(await settled(async () => await shownTooltip(page) ?? "", (tip) => /^Harden request retries · In progress · 2 of 10 shipped/.test(tip)), /^Harden request retries · In progress · 2 of 10 shipped/);
   const blocked = item(work, "Retry dropped connections");
   assert.match((await itemNames(work)).find((name) => name.startsWith("Retry dropped connections")), /Blocked/, "a blocked slice says so");
   await blocked.locator(":scope > a").hover();
-  await page.waitForTimeout(700);
-  assert.match(await shownTooltip(page) ?? "", /Retry dropped connections · .*Blocked/);
+  assert.match(await settled(async () => await shownTooltip(page) ?? "", (tip) => /Retry dropped connections · .*Blocked/.test(tip)), /Retry dropped connections · .*Blocked/);
   const claimed = item(work, "Emit retry metrics");
   assert.equal(await claimed.locator("prism-avatar, prism-claim").count() >= 1, true, "a claimed slice shows its holder");
   await claimed.locator(":scope > a").hover();
-  await page.waitForTimeout(700);
-  assert.match(await shownTooltip(page) ?? "", /Emit retry metrics · .* holds it for /, "the tooltip names the claim");
+  assert.match(await settled(async () => await shownTooltip(page) ?? "", (tip) => /Emit retry metrics · .* holds it for /.test(tip)), /Emit retry metrics · .* holds it for /, "the tooltip names the claim");
   assert.equal(await claimed.locator("prism-phase").count(), 1, "a slice row shows its phase");
   await initiative.locator(":scope > a .prism-tree-twisty").click();
-  await page.waitForTimeout(300);
-  assert.equal(await initiative.getAttribute("aria-expanded"), "false", "the person can collapse it");
+  assert.equal(await settled(() => initiative.getAttribute("aria-expanded"), "false"), "false", "the person can collapse it");
   assert.equal(await item(work, "Export activity reports").getAttribute("aria-expanded"), "false", "an initiative with nothing open or active stays collapsed");
   assert.deepEqual(page.errors, []);
 });
@@ -110,28 +107,23 @@ test("clause 35: the filter keeps the initiatives and slices whose title holds t
   const work = sidebar(page);
   const field = work.getByRole("searchbox", { name: "Filter work" }).or(work.getByRole("textbox", { name: "Filter work" }));
   await field.fill("DASHBOARD");
-  await page.waitForTimeout(400);
-  const names = await itemNames(work);
+  const names = await settled(() => itemNames(work), (shown) => shown.length === 2);
   assert.equal(names.length, 2, `only the initiative and its matching slice remain: ${names.join(" | ")}`);
   assert.match(names[0], /^Harden request retries/);
   assert.match(names[1], /^Chart retries on the service dashboard/);
   assert.deepEqual((await work.getByRole("heading", { level: 3 }).allInnerTexts()).map((text) => text.replace(/\s+/g, " ").trim()), ["In progress 1"]);
   await field.fill("authorize");
-  await page.waitForTimeout(400);
-  assert.match((await itemNames(work)).join(" | "), /^Export activity reports.*\| Authorize report access/);
+  assert.match(await settled(async () => (await itemNames(work)).join(" | "), (shown) => /^Export activity reports.*\| Authorize report access/.test(shown)), /^Export activity reports.*\| Authorize report access/);
   await field.fill("report");
-  await page.waitForTimeout(400);
-  assert.ok((await itemNames(work)).some((name) => name.startsWith("Export activity reports")), "an initiative whose title matches stays");
+  assert.ok((await settled(() => itemNames(work), (shown) => shown.some((name) => name.startsWith("Export activity reports")))).some((name) => name.startsWith("Export activity reports")), "an initiative whose title matches stays");
   await field.fill("zzz");
-  await page.waitForTimeout(400);
-  assert.equal(await work.getByText('No work matches "zzz".', { exact: true }).isVisible(), true);
+  assert.equal(await settled(() => work.getByText('No work matches "zzz".', { exact: true }).isVisible(), true), true);
   await field.fill("");
-  await page.waitForTimeout(400);
-  assert.deepEqual(await groupHeadings(work), ["In progress", "Blocked", "Not on the roadmap"], "clearing restores the groups");
+  assert.deepEqual(await settled(() => groupHeadings(work), ["In progress", "Blocked", "Not on the roadmap"]), ["In progress", "Blocked", "Not on the roadmap"], "clearing restores the groups");
   assert.deepEqual(page.errors, []);
 });
 
-test("clauses 30, 32, 33, 73: the Work sidebar matches the mockup at three widths in both themes", { skip, timeout: 900000 }, async (context) => {
+test("clauses 30, 32, 33, 73: the Work sidebar matches the mockup at three widths, and in its colors in the dark theme", { skip, timeout: 900000 }, async (context) => {
   const result = await comparePlaces(context, { scenes: "work,collapsed,drawer-tablet,drawer-phone", parts: "sidebar,head,geometry,tokens" });
   assert.equal(result.status, 0, `the comparison found differences:\n${result.stdout}${result.stderr}`);
   for (const pair of result.report.pairs) assert.deepEqual(pair.differences, [], `${pair.scene} ${pair.width} ${pair.theme}`);

@@ -1,7 +1,7 @@
 import { execFile, spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { copyFile, lstat, mkdir, open, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { copyFile, link, lstat, mkdir, open, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, ARTIFACT_STATUS, ARTIFACTS, IDENTITY_FILE_MAX, identityContent, identityOf, letterCaseKey, locationIdentity, STATUS_RECORD_NAME, uniqueIdentities, portableName, STORE_NAME_BYTES_MAX, STORE_PATH_BYTES_MAX, storePathFits, wellFormedName } from "./artifact-paths.mjs";
@@ -38,11 +38,18 @@ const managed = new Set();
 // which the parent process may hold, as when a Git hook starts the server, so no store command inherits them.
 const INHERITED_OUT = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|QUARANTINE_PATH|REPLACE_REF_BASE|GRAFT_FILE|SHALLOW_FILE|LITERAL_PATHSPECS|GLOB_PATHSPECS|NOGLOB_PATHSPECS|ICASE_PATHSPECS|ATTR_SOURCE|REDIRECT_STDIN|REDIRECT_STDOUT|REDIRECT_STDERR)$/;
 
-/** Change the debounce, pull interval, or torn-read wait, or the bound on a store tree's files, which tests shorten, turn off the pull that a record read starts, or turn on the watcher that syncs what is pending when the process ends. */
+// The log that sync outcomes are written to, which a server process passes; this module is also loaded where the log is not, so it writes nothing until one is given.
+let log = null;
+
+/**
+ * Change the debounce, pull interval, or torn-read wait, or the bound on a store tree's files, which tests shorten, turn off the pull that a record read starts,
+ * turn on the watcher that syncs what is pending when the process ends, or give the log, an object with info and warn, that sync outcomes are written to.
+ */
 export function configureRecordSync(settings = {}) {
   for (const key of Object.keys(SETTINGS)) if (Number.isFinite(settings[key])) SETTINGS[key] = settings[key];
   if (typeof settings.pullOnRead === "boolean") pullOnRead = settings.pullOnRead;
   if (typeof settings.watchPending === "boolean") watchPending = settings.watchPending;
+  if (settings.log !== undefined) log = settings.log;
 }
 
 /** Cancel every debounced sync and forget fetch times, so a process or a test can finish. */
@@ -136,15 +143,82 @@ const syncPath = (base, ...parts) => path.join(base, SYNC_DIRECTORY, ...parts);
 // The pending notices of saved conflicts, one per conflict stamp, which tool results clear once they carry them.
 const NOTICES = "notices";
 
-function gitEnvironment(extra = {}) {
+// How each SSH variant that Git names is told never to ask, added after the person's own options, which an SSH client reads first.
+// Git already passes -batch to TortoisePlink, and a program whose variant Git only finds by probing it may take no options at all, so neither gets one.
+const NO_PROMPT_OPTION = { ssh: "-o BatchMode=yes", plink: "-batch", putty: "-batch" };
+
+// The variant Git gives an SSH program, from GIT_SSH_VARIANT, else from ssh.variant, else from the program's name, as Git's connect.c decides it.
+// Git takes a named variant as written and treats a name it does not know as ssh.
+function sshVariant(named, program) {
+  if (named) return ["auto", "plink", "putty", "tortoiseplink", "simple"].includes(named) ? named : "ssh";
+  const name = program.split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, "");
+  return ["ssh", "plink", "tortoiseplink"].includes(name) ? name : "auto";
+}
+
+// The first word of a shell command line, with the quotes that Git's split_cmdline reads taken off.
+function firstWord(command) {
+  let word = "";
+  let quote = null;
+  for (let at = command.trimStart(), index = 0; index < at.length; index += 1) {
+    const char = at[index];
+    if (quote) {
+      if (char === quote) quote = null;
+      else if (char === "\\" && quote === '"' && index + 1 < at.length) word += at[++index];
+      else word += char;
+    } else if (char === "'" || char === '"') quote = char;
+    else if (/\s/.test(char)) break;
+    else if (char === "\\" && index + 1 < at.length) word += at[++index];
+    else word += char;
+  }
+  return word;
+}
+
+// An SSH password, passphrase, or host-key prompt would hang a sync that holds the store lock, or a background fetch nobody watches,
+// so the SSH command Git runs is the one the person set, with its variant's batch option added, or plain SSH in batch mode.
+// Git takes the command from GIT_SSH_COMMAND, else core.sshCommand, else GIT_SSH, and settings holds the person's core.sshCommand and ssh.variant, if any.
+function sshEnvironment(env, settings = {}) {
+  const command = env.GIT_SSH_COMMAND || settings.sshCommand;
+  // GIT_SSH names a program that Git runs without a shell, so it becomes a quoted command line that the option can follow.
+  const line = command || (env.GIT_SSH ? `'${env.GIT_SSH.replaceAll("'", "'\\''")}'` : "");
+  if (!line) return { GIT_SSH_COMMAND: `ssh ${NO_PROMPT_OPTION.ssh}` };
+  const option = NO_PROMPT_OPTION[sshVariant(env.GIT_SSH_VARIANT || settings.variant, command ? firstWord(command) : env.GIT_SSH)];
+  return option ? { GIT_SSH_COMMAND: `${line} ${option}` } : {};
+}
+
+function gitEnvironment(extra = {}, settings = {}) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !INHERITED_OUT.test(name)));
-  // An SSH password or host-key prompt would hang a sync that holds the store lock, so SSH never asks unless the user configured it.
-  const ssh = env.GIT_SSH_COMMAND || env.GIT_SSH ? {} : { GIT_SSH_COMMAND: "ssh -o BatchMode=yes" };
+  const ssh = sshEnvironment(env, settings);
   // The system attributes file, like the person's own and the store's, never decides which bytes a store command hands over.
   // A replace ref, which pack-objects and push ignore, would make the checks read other objects than the push sends, and a grafts file other parents than every other machine reads,
   // so every store command reads the real objects and parents instead: /dev/null, which Git for Windows also opens, holds no graft,
   // and FIXED_CONFIG turns off the advice Git gives about any grafts file it opens.
   return { ...env, ...ssh, GIT_TERMINAL_PROMPT: "0", GIT_MERGE_AUTOEDIT: "no", GIT_ATTR_NOSYSTEM: "1", GIT_NO_REPLACE_OBJECTS: "1", GIT_GRAFT_FILE: "/dev/null", LC_ALL: "C", ...extra };
+}
+
+// The Git commands that reach a remote, and so may run SSH.
+const REMOTE_COMMANDS = new Set(["clone", "fetch", "pull", "push", "ls-remote", "archive"]);
+
+// The leading -c settings of a command's arguments, and its Git command after them.
+function commandOf(args) {
+  const settings = [];
+  let index = 0;
+  for (; args[index]?.startsWith("-"); index += 1) if (args[index] === "-c" || args[index] === "-C") { if (args[index] === "-c") settings.push("-c", args[index + 1]); index += 1; }
+  return { settings, command: args[index] };
+}
+
+// The environment of one Git command in base, whose SSH command, when the command may reach a remote, is the person's core.sshCommand with the batch option added, if they set one.
+// Git reads core.sshCommand and ssh.variant from every configuration that applies in base, so the command reads them there, with its own -c settings, unless GIT_SSH_COMMAND and GIT_SSH_VARIANT already decide both.
+async function commandEnvironment(base, args, extra, connects) {
+  const { settings, command } = commandOf(args);
+  if (!(connects || REMOTE_COMMANDS.has(command)) || (process.env.GIT_SSH_COMMAND && process.env.GIT_SSH_VARIANT)) return gitEnvironment(extra);
+  const listed = await git(base, [...settings, "config", "-z", "--get-regexp", "^(core\\.sshcommand|ssh\\.variant)$"], { env: extra });
+  const found = {};
+  // Each entry is the key, a newline, and the value, and the last value of a key is the one Git uses.
+  for (const entry of listed.ok ? listed.stdout.toString("utf8").split("\0").filter(Boolean) : []) {
+    const at = entry.indexOf("\n");
+    if (at > 0) found[entry.slice(0, at)] = entry.slice(at + 1);
+  }
+  return gitEnvironment(extra, { sshCommand: found["core.sshcommand"], variant: found["ssh.variant"] });
 }
 
 // The sync uses Git only as an object store: it hashes a file's bytes with no filters, writes a blob's bytes as they are, and never runs add, checkout, reset, or status, so no ignore or attributes rule applies.
@@ -165,7 +239,7 @@ export function markManagedStore(base) {
   managed.add(base);
 }
 
-/** Run Git in a folder with the sanitized store environment and timeout: { ok, code, missing, stdout, text, stderr }. */
+/** Run Git in a folder with the sanitized store environment and timeout: { ok, code, missing, stdout, text, stderr }; connects says a command that Git would not otherwise name as reaching a remote may still reach one, as a blobless clone does to read a blob. */
 export function runGit(base, args, options) {
   return git(base, args, options);
 }
@@ -176,9 +250,10 @@ const GIT_OUTPUT_MAX = 64 * 1024 * 1024;
 // The most bytes of Git's error output that a sync keeps, which a remote's messages could otherwise grow without end.
 const GIT_ERRORS_MAX = 64 * 1024;
 
-function git(base, args, { env = {}, input } = {}) {
+async function git(base, args, { env = {}, input, connects = false } = {}) {
+  const environment = await commandEnvironment(base, args, env, connects);
   return new Promise((resolve) => {
-    const child = execFile("git", [...FIXED_CONFIG, "-C", base, ...args], { env: gitEnvironment(env), timeout: SETTINGS.gitTimeoutMs, maxBuffer: GIT_OUTPUT_MAX, encoding: "buffer", windowsHide: true }, (error, stdout, stderr) => {
+    const child = execFile("git", [...FIXED_CONFIG, "-C", base, ...args], { env: environment, timeout: SETTINGS.gitTimeoutMs, maxBuffer: GIT_OUTPUT_MAX, encoding: "buffer", windowsHide: true }, (error, stdout, stderr) => {
       // Nothing here may throw, since a throw in this callback would end the process rather than the sync.
       try {
         const over = error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
@@ -201,9 +276,10 @@ function git(base, args, { env = {}, input } = {}) {
  * take may return a promise, and the output waits for it, so a reader can act on a batch of records before more arrive; take returning false stops the listing.
  * Returns { ok, over, long, stopped, stderr }: over is "count" or "bytes" when a bound on all records was passed, long holds the first bytes of a record above maxRecord, and stopped says take stopped it.
  */
-function gitRecords(base, args, { separator, limit = Infinity, maxBytes = Infinity, maxRecord = Infinity, take, input, env = {} }) {
+async function gitRecords(base, args, { separator, limit = Infinity, maxBytes = Infinity, maxRecord = Infinity, take, input, env = {} }) {
+  const environment = await commandEnvironment(base, args, env, false);
   return new Promise((resolve) => {
-    const child = spawn("git", [...FIXED_CONFIG, "-C", base, ...args], { env: gitEnvironment(env), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    const child = spawn("git", [...FIXED_CONFIG, "-C", base, ...args], { env: environment, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     let count = 0, bytes = 0, over = null, long = null, stopped = false, failure = null, done = false;
     const errors = [];
     let errorBytes = 0;
@@ -477,6 +553,7 @@ export async function readSavedConflict(base, savedAs) {
  * and a file at the store's root, such as a README, that the other machine changed too carries bothChanged true, while any other such file is one whose local version this machine's sync withheld.
  * Ahead of each stamp's copies come the local changes its merge undid and no copy names: { store, undoneRemoval, folder, at } for a removal that gave way, naming the location that holds the artifact again,
  * { store, undoneFile, folder, at } for a removal of a file at the store's root that gave way, naming its path there,
+ * { store, undoneRecord, folder, at } for a removal of a record, such as an initiative's or the roadmap's, that gave way, naming it as .prism/<path> as a saved record is named,
  * and { store, undoneMove, movedTo, folder, at } for a move sent elsewhere, naming the location that keeps the artifact and the one this machine moved it to, with folder the store's conflicts folder.
  * A tool result that carries them confirms them with confirmSavedConflicts, which clears their pending notices.
  */
@@ -507,7 +584,7 @@ export async function takeSavedConflicts() {
         return { store: base, file, savedAs, at: when, ...whose };
       });
       // The local changes that the stamp's merge undid come first, as the result names them first.
-      items.unshift(...about.undone.map((change) => ({ store: base, ...("removal" in change ? { undoneRemoval: change.removal } : "file" in change ? { undoneFile: change.file } : { undoneMove: change.move, movedTo: change.movedTo }), folder: directory, at: when })));
+      items.unshift(...about.undone.map((change) => ({ store: base, ...("removal" in change ? { undoneRemoval: change.removal } : "file" in change ? { undoneFile: change.file } : "record" in change ? { undoneRecord: `.prism/${change.record}` } : { undoneMove: change.move, movedTo: change.movedTo }), folder: directory, at: when })));
       // A stamp that holds only claims and registrations, which other results report, has nothing to carry.
       if (notice && !items.length) await rm(notice, { force: true });
       for (const item of items) { if (notice) notices.set(item, notice); reportKeys.set(item, key); found.push(item); }
@@ -518,13 +595,13 @@ export async function takeSavedConflicts() {
 
 // A location as the sync folder's own notes name one: a store path below artifacts/ that leads nowhere else.
 const noteLocation = (location) => typeof location === "string" && location.length > 0 && location.split("/").every((part) => part && part !== "." && part !== "..");
-const undoneForm = (change) => change !== null && typeof change === "object" && (noteLocation(change.removal) || noteLocation(change.file) || (noteLocation(change.move) && noteLocation(change.movedTo)));
+const undoneForm = (change) => change !== null && typeof change === "object" && (noteLocation(change.removal) || noteLocation(change.file) || (noteLocation(change.record) && isRecordFile(change.record)) || (noteLocation(change.move) && noteLocation(change.movedTo)));
 
 // What a conflict stamp's copies are and which local changes its merge undid, from the note beside it, or nothing for a stamp without one or with a note of any other form.
 async function readAbout(base, stamp) {
   const value = await readFile(aboutPath(base, stamp), "utf8").then(parseStoreJson).catch(() => null);
   const paths = (list) => new Set(Array.isArray(list) ? list.filter((file) => typeof file === "string") : []);
-  const undone = Array.isArray(value?.undone) ? value.undone.filter(undoneForm).map((change) => noteLocation(change.removal) ? { removal: change.removal } : noteLocation(change.file) ? { file: change.file } : { move: change.move, movedTo: change.movedTo }) : [];
+  const undone = Array.isArray(value?.undone) ? value.undone.filter(undoneForm).map((change) => noteLocation(change.removal) ? { removal: change.removal } : noteLocation(change.file) ? { file: change.file } : noteLocation(change.record) && isRecordFile(change.record) ? { record: change.record } : { move: change.move, movedTo: change.movedTo }) : [];
   const tooLong = new Map(Array.isArray(value?.tooLong) ? value.tooLong.filter((entry) => typeof entry?.path === "string" && noteLocation(entry.location)).map((entry) => [entry.path, entry.location]) : []);
   return { theirs: paths(value?.theirs), tooLong, surplus: paths(value?.surplus), bothChanged: paths(value?.bothChanged), overBound: paths(value?.overBound), undone };
 }
@@ -591,7 +668,10 @@ export function syncRecordStore(base, options = {}) {
     await mkdir(syncPath(base), { recursive: true });
     try {
       return await withFileLock(syncPath(base, "sync"), async () => {
+        // Only a process that logs reads the state before the sync, so a sync where nothing logs runs no Git command more.
+        const before = log ? await Promise.all([readSyncStatus(base), headOf(base)]).catch(() => null) : null;
         const status = await sync(base, options);
+        if (before) await logSync(base, before[0], before[1], status).catch(() => {});
         // A caller that must act on the store exactly as this sync left it, such as a move that decides against this pull, does so before the lock is released.
         await options.whileLocked?.(status);
         return status;
@@ -614,6 +694,24 @@ export function syncRecordStore(base, options = {}) {
   if (written.delete(base)) writing.add(base);
   updateWatcher();
   return pending;
+}
+
+const headOf = async (base) => { const head = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]); return head.ok ? head.text : null; };
+
+// The log names each sync that changed the store's branch, each failure once until its reason changes, and the sync that ends a run of failures,
+// so a person reads in the log when records were shared and why they were not, without a line for every sync that found nothing to do.
+async function logSync(base, previous, head, status) {
+  if (!log || !status || status.state === "skipped") return;
+  const failed = (value) => value && value.state !== "ok";
+  if (failed(status)) {
+    if (previous?.state !== status.state || previous?.message !== status.message) log.warn("store_sync_failed", { store: base, state: status.state, message: status.message, ahead: status.ahead, behind: status.behind });
+    return;
+  }
+  const now = await headOf(base);
+  const conflicts = status.conflicts?.length ?? 0;
+  // A sync that pushed commits an earlier sync left unpushed changes no branch, so it shows by its count of unpushed commits.
+  if (now !== head || conflicts || (previous?.ahead > 0 && !status.ahead)) log.info("store_synced", { store: base, from: head, to: now, ahead: status.ahead, behind: status.behind, ...(conflicts ? { savedConflicts: conflicts } : {}) });
+  else if (failed(previous)) log.info("store_synced", { store: base, recovered: previous.state, ahead: status.ahead, behind: status.behind });
 }
 
 async function identity(base) {
@@ -816,6 +914,7 @@ async function moveBranch(base, commit, previous, message) {
     await git(base, previous ? ["read-tree", previous] : ["read-tree", "--empty"]);
     throw error;
   });
+  await recordDiskCommit(base, commit);
 }
 
 // The sync folder's record that a clone's files hold their blobs' bytes, which the line-ending migration writes once it has run.
@@ -988,6 +1087,87 @@ async function sameDiskFile(target, disk) {
   return Boolean(now) && Object.keys(disk).every((key) => now[key] === disk[key]);
 }
 
+// The commit whose shared files this version of Prism last left the disk holding, with a hash of the layout that decides which files a store shares: .prism-sync/disk.json.
+// A sync of this version writes it each time it moves the branch, so a branch that has moved since, or a record of another layout, means another program moved the branch:
+// an older Prism, which takes the remote's newer files into the branch without writing those that its version does not share, a newer one, or a person with Git.
+// A shared file that the branch holds and the disk lacks is then committed as removed only when the recorded commit already held it as the branch does, so its removal happened on disk;
+// any other such file, one the disk never received, is written back from the branch, and no sync pushes a removal that nothing on this machine made.
+const DISK_RECORD = "disk.json";
+let layoutHash = null;
+async function layoutId() {
+  if (layoutHash) return layoutHash;
+  const { isStoreFile, isStoreFolder, isRootStoreFile } = await import("./record-store.mjs");
+  layoutHash = createHash("sha256").update([isStoreFile, isStoreFolder, isRootStoreFile].map(String).join("\n")).digest("hex");
+  return layoutHash;
+}
+
+/** Record that the disk holds the shared files of commit, as this version of Prism writes them. */
+async function recordDiskCommit(base, commit) {
+  // A record that already names the commit is left as it is, so a sync that changes nothing writes nothing that a watcher of the store could take for a change.
+  if (await readDiskCommit(base) === commit) return;
+  await mkdir(syncPath(base), { recursive: true });
+  await writeAtomically(syncPath(base, DISK_RECORD), `${JSON.stringify({ commit, layout: await layoutId() })}\n`);
+}
+
+async function readDiskCommit(base) {
+  const recorded = await readFile(syncPath(base, DISK_RECORD), "utf8").then(parseStoreJson).catch(() => null);
+  return recorded && typeof recorded.commit === "string" && recorded.layout === await layoutId() ? recorded.commit : null;
+}
+
+/**
+ * Keep in this commit every shared file of the branch that the disk lacks and never received, and write it back from the branch; run.restored takes the paths written back.
+ * Where the disk record names the branch's commit, every file the disk lacks was removed on disk, and nothing is kept;
+ * where it names another commit, a file counts as never received when that commit did not hold it as the branch does.
+ * The write never replaces a file that appeared meanwhile, and a file whose bytes the branch holds above its kind's bound, or whose path leads through a link, stays in the commit unwritten.
+ */
+async function keepUnreceivedFiles(base, previous, branch, files, withheld, oversized, run) {
+  if (!previous) return;
+  // A README, license, .gitattributes, or .gitignore at the store's root is no record of Prism's, so its removal by hand syncs whatever moved the branch.
+  const { rootFile } = await storeLayout();
+  const missing = [...branch.keys()].filter((file) => !files.has(file) && !withheld.has(file) && !oversized.has(file) && !rootFile(file));
+  if (!missing.length) return;
+  const recorded = await readDiskCommit(base);
+  if (recorded === previous) return;
+  let written = null;
+  if (recorded) {
+    try { written = (await partition(await treeFiles(base, recorded))).shared; }
+    catch { written = null; }
+  }
+  // With no record of this layout, as in a clone that an older Prism made or synced last, a top folder of the store that is missing from the disk is one that no Prism ever wrote,
+  // since a removal leaves the store's top folders in place, so each of its files counts as never received; a file of a top folder the disk holds counts as removed on disk.
+  const top = (file) => file.includes("/") ? file.slice(0, file.indexOf("/")) : null;
+  const absent = new Set();
+  for (const folder of new Set(missing.map(top))) if (folder !== null && !(await lstat(path.join(base, folder)).catch(() => null))) absent.add(folder);
+  const unreceived = written ? missing.filter((file) => !sameEntry(written.get(file), branch.get(file))) : missing.filter((file) => absent.has(top(file)));
+  if (!unreceived.length) return;
+  for (const file of unreceived) files.set(file, branch.get(file));
+  const contents = await readBlobs(base, unreceived.map((file) => ({ file, entry: branch.get(file) })));
+  for (const [index, file] of unreceived.entries()) {
+    const bytes = contents[index];
+    if (!Buffer.isBuffer(bytes) || await outsideStore(base, file)) continue;
+    const target = path.join(base, ...file.split("/"));
+    const temporary = syncPath(base, `restore-${randomBytes(6).toString("hex")}`);
+    try {
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(temporary, bytes);
+      await link(temporary, target);
+    } catch (error) {
+      if (!["EEXIST", "ENOTDIR", "EISDIR"].includes(error.code)) throw error;
+    } finally {
+      await rm(temporary, { force: true });
+    }
+  }
+  run.restored = [...new Set([...(run.restored ?? []), ...unreceived])].sort();
+}
+
+// A status that names the files a sync wrote back because the branch holds them and the disk never received them.
+function restoredIn(status, restored) {
+  if (!restored?.length) return status;
+  const listed = restored.slice(0, 5).map(shownPath).join(", ") + (restored.length > 5 ? `, and ${restored.length - 5} more` : "");
+  const note = `The sync wrote back ${restored.length === 1 ? "1 file" : `${restored.length} files`} that the branch holds and the disk never received, as when an older Prism moved the branch, so the store keeps them: ${listed}.`;
+  return { ...status, restored, message: [status.message, note].filter(Boolean).join(" ") };
+}
+
 // Why a sync leaves a file out of its commits, as its status names it.
 const OBJECT_CHECK = "Git's object check, which every other machine's fetch applies, refuses it";
 const TOO_LONG = `its name holds more than ${STORE_NAME_BYTES_MAX} bytes or its path more than ${STORE_PATH_BYTES_MAX}, so some machine could not write it`;
@@ -1021,7 +1201,11 @@ async function commitLocal(base, author, run) {
   // The local version of each file withheld because Git's object check refuses it, which a merge that replaces the file saves.
   run.heldBack = new Map();
   const oversized = new Map();
-  const files = await withFileLock(path.join(base, ARTIFACTS), () => localFiles(base, shared, withheld, oversized), undefined, { timeoutMs: run.lockTried ? SETTINGS.applyLockMs : 1 })
+  const files = await withFileLock(path.join(base, ARTIFACTS), async () => {
+    const found = await localFiles(base, shared, withheld, oversized);
+    await keepUnreceivedFiles(base, previous, shared, found, withheld, oversized, run);
+    return found;
+  }, undefined, { timeoutMs: run.lockTried ? SETTINGS.applyLockMs : 1 })
     .catch((error) => { if (error.code !== "lock_timeout") throw error; return null; });
   run.lockTried = true;
   run.lockBusy = files === null;
@@ -1056,7 +1240,8 @@ async function commitLocal(base, author, run) {
   const { treeFilesMax } = await storeLayout();
   for (;;) {
     const entries = besides(files, other);
-    if (sameFiles(entries, branch)) return false;
+    // The disk now holds the branch's shared files, save this machine's changes, so the record names the branch's commit, as every later move of the branch by this sync keeps it.
+    if (sameFiles(entries, branch)) { if (previous) await recordDiskCommit(base, previous); return false; }
     const changed = [...new Set([...branch.keys(), ...entries.keys()])].filter((file) => !sameEntry(branch.get(file), entries.get(file))).sort();
     const listed = changed.slice(0, COMMIT_LIST).join("\n") + (changed.length > COMMIT_LIST ? `\n… and ${changed.length - COMMIT_LIST} more` : "");
     const tree = await writeTree(base, entries);
@@ -1670,7 +1855,7 @@ async function sync(base, options) {
   // Local versions that a sync stopped while saving or replacing are saved for good, or dropped when no file was replaced, before anything else changes.
   const conflicts = await recoverSaved(base);
   const run = {};
-  const report = (status) => writeStatus(base, withheldIn({ ...status, conflicts: [...conflicts, ...(status.conflicts ?? [])] }, run.withheld));
+  const report = (status) => writeStatus(base, restoredIn(withheldIn({ ...status, conflicts: [...conflicts, ...(status.conflicts ?? [])] }, run.withheld), run.restored));
   const checked = await checkedTip(base);
   const started = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
   // A sync stopped at the bound on a store tree's files takes off the commits it made of this machine's changes, if any, so the branch, the index,
@@ -1682,7 +1867,7 @@ async function sync(base, options) {
     if (await checkedTip(base) !== checked) await git(base, checked ? ["update-ref", CHECKED_REF, checked] : ["update-ref", "-d", CHECKED_REF]);
     const now = await git(base, ["rev-parse", "--verify", "--quiet", "HEAD"]);
     const kept = now.ok && now.text !== (started.ok ? started.text : null);
-    return writeStatus(base, withheldIn({ state: "merge_failed", message: await pastTreeRefusal(pastTree, kept), conflicts, ...await counts(base) }, null));
+    return writeStatus(base, restoredIn(withheldIn({ state: "merge_failed", message: await pastTreeRefusal(pastTree, kept), conflicts, ...await counts(base) }, null), run.restored));
   };
   // A sync that found an artifact update holding the artifact lock commits, merges, and pushes nothing, so no merge moves an artifact away from a file on disk that no commit holds yet;
   // it is no failure, so it ends as a sync that found another sync running does, writes no status, and the next sync, which the update's write schedules, tries again.
@@ -1880,6 +2065,8 @@ async function merge(base, author, options, run, remote) {
   // A file at the store's root that both sides changed keeps the upstream's version: this machine's copy is saved and named as such, and where this machine removed the file, the removal that gave way is named instead.
   const bothChanged = new Map(copies.filter(([file, entry]) => entry && rootFile(file)));
   const undoneFiles = copies.filter(([file, entry]) => !entry && rootFile(file) && !placed.local.has(file)).map(([file]) => ({ file }));
+  // A record that this machine removed and the other machine changed keeps the other machine's version, so the removal that gave way is named, as an artifact's is; a claim or a registration is its holder's news.
+  const undoneRecords = copies.filter(([file, entry]) => !entry && isRecordFile(file) && !isQuietConflict(file) && !placed.local.has(file)).map(([file]) => ({ record: file }));
   for (const [file, entry] of [...stranded, ...surplus]) if (!copies.some(([candidate]) => candidate === file)) copies.push([file, entry]);
   // A file that the merge took out of a place, as the other artifact where two met at one location or one whose placed path a store cannot hold, is saved as a conflict's local version is.
   for (const [file, entry] of placed.saved) {
@@ -1900,7 +2087,7 @@ async function merge(base, author, options, run, remote) {
   // A saved copy of such a file is named as a change that both machines made, unless it holds the version that this machine's sync withheld, which is named as withheld.
   const bothSaved = new Set(copies.filter(([file, entry]) => entry && bothChanged.get(file) === entry).map(([file]) => file));
   // The files on disk hold this machine's side of the merge, which is the commit left unmade where there is one, while the branch moves from where it is.
-  return replaceFiles(base, run, { from: head.text, diskTree: pending ?? head.text, to: commit, copies, theirs: theirsSaved, tooLong: tooLongSaved, surplus: surplusSaved, bothChanged: bothSaved, undone: [...placed.undone, ...undoneFiles] }, options);
+  return replaceFiles(base, run, { from: head.text, diskTree: pending ?? head.text, to: commit, copies, theirs: theirsSaved, tooLong: tooLongSaved, surplus: surplusSaved, bothChanged: bothSaved, undone: [...placed.undone, ...undoneFiles, ...undoneRecords] }, options);
 }
 
 /**
@@ -2457,11 +2644,11 @@ async function publishCopies(base, source, about = null) {
 }
 
 // Beside each conflict stamp that needs it, the sync folder keeps what the stamp's copies are and which local changes its merge undid:
-// { theirs: [path], tooLong: [{ path, location }], surplus: [path], bothChanged: [path], overBound: [path], undone: [{ removal } | { file } | { move, movedTo }] }, with theirs naming the saved paths that hold another machine's change rather than this machine's,
+// { theirs: [path], tooLong: [{ path, location }], surplus: [path], bothChanged: [path], overBound: [path], undone: [{ removal } | { file } | { record } | { move, movedTo }] }, with theirs naming the saved paths that hold another machine's change rather than this machine's,
 // tooLong the saved paths that the merge left out because their path at the location it gave their artifact, named there, would pass a store path's bounds,
 // surplus the saved comments of this machine's that their folder's bound left out of the store, bothChanged the saved files at the store's root that the other machine changed too,
 // overBound the saved files that this machine's sync held back because each was above its kind's bound and that the other machine then changed or removed,
-// and a file in undone a file at the store's root, such as its README, whose removal by this machine gave way to the other machine's change.
+// a file in undone a file at the store's root, such as its README, and a record in undone a record, such as an initiative's, whose removal by this machine gave way to the other machine's change.
 const ABOUT = "conflict-notes";
 const aboutPath = (base, stamp) => syncPath(base, ABOUT, `${stamp}.json`);
 
@@ -2963,6 +3150,7 @@ async function takeOffCommit(base, { from, to }) {
   if (!head.ok || head.text !== to) return;
   await required(base, from ? ["read-tree", from] : ["read-tree", "--empty"]);
   await required(base, from ? ["update-ref", "-m", "prism: keep the store's tree within its bound", "HEAD", from, to] : ["update-ref", "-d", "HEAD", to]);
+  if (from) await recordDiskCommit(base, from);
 }
 
 // What a refusal of a file above its bound asks for where no commit can be taken off the branch without one that other machines share.
@@ -3183,6 +3371,7 @@ async function apply(base, from, to, options, progress = {}, held = new Map(), d
             await git(base, from ? ["read-tree", from] : ["read-tree", "--empty"]);
             throw error;
           });
+          await recordDiskCommit(base, to);
           return true;
         });
       } finally {

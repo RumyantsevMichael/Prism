@@ -10,7 +10,8 @@ const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-s
 process.env.PLUGIN_DATA = privateData;
 delete process.env.CLAUDE_PLUGIN_DATA;
 const {
-  appendRecord, ensureRecords, forgetMigrations, keyOfPath, listInitiatives, listRecordEntries, locateRecord, readRecord, removeInitiativeRecords, repositoryId, sameRecord, writeRecord
+  appendRecord, ensureRecords, forgetMigrations, keyOfPath, listInitiatives, listRecordEntries, locateRecord, readRecord, removeInitiativeRecords, repositoryId,
+  restoreMigrationReports, sameRecord, takeMigrationReports, toolCallContext, withToolCall, writeRecord
 } = await import("../../dist/server/workflow/record-store.mjs");
 const { getInitiative, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 const { startReviewServer } = await import("../../dist/server/review/review-server.mjs");
@@ -161,6 +162,49 @@ test("lists and serves store records through their .prism artifact paths", async
   } finally {
     await review.close();
   }
+});
+
+test("a record move on a review browser request is reported by the checkout's next tool call, in any process, once", async (context) => {
+  const { parent, root, store } = await workspace(context);
+  const other = path.join(parent, "other");
+  await mkdir(path.join(other, ".prism"), { recursive: true });
+  await writeFile(path.join(other, ".prism/workflow.md"), STORE_CONFIG.replace("Repository: project", "Repository: other"));
+  await put(root, "docs/plans/legacy/state.json", "legacy state");
+  await takeMigrationReports(new Set([root, other]));
+  const review = await startReviewServer({ projectRoot: root });
+  try {
+    assert.equal((await fetchJson(`${review.baseUrl}/api/index`)).status, 200);
+  } finally {
+    await review.close();
+  }
+  assert.equal(await readFile(path.join(store, "initiatives/legacy/state.json"), "utf8"), "legacy state");
+  // The shared review app runs in a process of its own, so no tool call reads its memory: the report waits in the store's sync folder.
+  forgetMigrations();
+  assert.equal((await readdir(path.join(store, ".prism-sync/record-moves"))).length, 1);
+  assert.deepEqual(await takeMigrationReports(new Set([other])), [], "another checkout's tool call does not take the report");
+  const call = toolCallContext();
+  call.roots.add(root);
+  const reports = await withToolCall(call, () => takeMigrationReports(call.roots));
+  assert.deepEqual(reports.map((report) => [report.root, report.store, report.moved.map((move) => move.from)]), [[root, store, ["docs/plans/legacy/state.json"]]]);
+  assert.equal(await exists(path.join(store, ".prism-sync/record-moves")), false, "a taken report leaves no file");
+  assert.deepEqual(await takeMigrationReports(new Set([root])), [], "a move is reported once");
+  // A result that is never written gives its reports back to the next result.
+  restoreMigrationReports(reports);
+  assert.deepEqual((await takeMigrationReports(new Set([root]))).map((report) => report.moved.length), [1]);
+});
+
+test("a record move in a tool call is reported by that call's result, with no file in the store's sync folder", async (context) => {
+  const { root, store } = await workspace(context);
+  await put(root, "docs/plans/legacy/state.json", "legacy state");
+  const call = toolCallContext();
+  call.roots.add(root);
+  const reports = await withToolCall(call, async () => {
+    await readRecord(root, { kind: "state", initiative: "legacy" });
+    return takeMigrationReports(call.roots);
+  });
+  // The call also reports its own move of the checkout's artifacts, which has a report of its own.
+  assert.deepEqual(reports.filter((report) => !report.artifacts).map((report) => report.moved.map((move) => move.from)), [["docs/plans/legacy/state.json"]]);
+  assert.equal(await exists(path.join(store, ".prism-sync/record-moves")), false);
 });
 
 test("refuses a symlink inside the store that points outside it", async (context) => {

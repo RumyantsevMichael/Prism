@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { cloneOf, configure, git, registration, repository, storeFolder } from "./fixtures/repository-checkouts.mjs";
+import { pause } from "./fixtures/wait.mjs";
 
 // Review proofs for the repository-registration slice (compatibility lane): how long a running server trusts a name check.
 const environment = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-repository-compat-env-")));
@@ -40,7 +41,7 @@ test("C1: a running server accepts a shallow clone by its root commit after the 
   git(moved, "remote", "set-url", "origin", "https://example.com/acme/api.git");
   assert.equal(git(moved, "rev-parse", "--is-shallow-repository"), "false");
   // The refusal is trusted for five seconds, as an acceptance is, and the check after that sees the revealed root commit.
-  await new Promise((resolve) => setTimeout(resolve, 5200));
+  await pause(5200, "the refusal is trusted for five seconds, and that time is what this checks");
   assert.equal((await recordStoreOf(moved)).repository, "api", "the same process accepts the unshallowed clone without a restart");
   assert.deepEqual((await registration(store, "api")).remotes, ["https://github.com/acme/api.git", "https://example.com/acme/api.git"]);
 });

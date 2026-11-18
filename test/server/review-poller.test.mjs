@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { coalesce, createPoller, deadline } from "../../dist/server/review/public/views/poller.js";
+import { settled } from "./fixtures/wait.mjs";
 
 // A fake clock and document, so a test steps through the schedule without waiting.
 function harness() {
@@ -140,6 +141,28 @@ test("a poller that starts in a hidden tab waits until the tab is shown", async 
   assert.equal(calls, 1);
 });
 
+test("a poller made for a hidden tab polls only while the tab is hidden", async () => {
+  const clock = harness();
+  let calls = 0;
+  const poller = createPoller({ ...clock, interval: 15000, whileHidden: true, run: async () => { calls += 1; } });
+  await poller.start();
+  assert.equal(calls, 0, "a shown tab does not poll");
+  assert.equal(clock.timers.size, 0);
+  clock.show("hidden");
+  await settle();
+  assert.equal(calls, 1, "hiding the tab polls once at once");
+  assert.equal(clock.timers.size, 1, "and keeps a schedule while hidden");
+  clock.fire();
+  await settle();
+  assert.equal(calls, 2);
+  clock.show("visible");
+  clock.fire();
+  await settle();
+  assert.equal(calls, 2, "a timer that fires once the tab is shown does not poll");
+  assert.equal(clock.timers.size, 0, "and schedules nothing");
+  poller.stop();
+});
+
 test("a failed poll keeps the schedule and passes no result to the interval", async () => {
   const clock = harness();
   const seen = [];
@@ -170,7 +193,7 @@ test("a coalesced call made while one runs shares one follow-up run", async () =
 
 test("a deadline aborts a request that is not answered in time", async () => {
   const signal = deadline(20);
-  await new Promise((resolve) => setTimeout(resolve, 60));
+  await settled(() => signal.aborted, true);
   assert.equal(signal.aborted, true);
   assert.equal(signal.reason?.name, "TimeoutError");
 });

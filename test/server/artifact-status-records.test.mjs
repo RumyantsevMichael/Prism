@@ -9,6 +9,7 @@ import { answerApproval, newRecord, parseRecord, rewriteStatusLines, serializeRe
 import { startStandaloneReview } from "../../dist/server/review/review-server-pool.mjs";
 import { answerArtifactApproval } from "../../dist/server/workflow/store-artifacts.mjs";
 import { actionOf, apply as applyOn, listing, writeHeaders } from "./fixtures/review-actions.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { adrFile, answerGate, browserRequest, checkout, eventually, git, isolateGit, ok, remoteFile, requirementFile, reviewBrowser, server, syncedWorkspace, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
 // Status records of store artifacts: how status lines are read and rewritten, and that a record syncs with its artifact.
@@ -294,7 +295,7 @@ test("an approval answer that a wait returned is not delivered again with the ne
   const gate = await askApproval(prism);
   const review = await reviewBrowser(context, api);
   const waiting = prism.call("wait_for_user_gate", { artifact: FILE, gateIds: [gate], maxWaitMinutes: 1 });
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await pause(1000, "lets the wait start before the answer, so the answer ends a running wait");
   assert.equal((await answer(review, { artifact: FILE, scope: "workspace", id: gate, choice: "request-changes", note: "Name the currency." })).status, 200);
   assert.equal(ok(await waiting).status, "answered");
   assert.equal(await hook("UserPromptSubmit", api, place.app), null);

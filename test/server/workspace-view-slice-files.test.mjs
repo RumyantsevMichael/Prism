@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { rm, unlink, writeFile } from "node:fs/promises";
+import { rename, rm, unlink, writeFile } from "node:fs/promises";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { alias, bareRemote, blobOf, checkout, git, isolateGit, networkStore, ok, place, server, startApp, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
+import { alias, bareRemote, blobOf, checkout, eventually, git, isolateGit, networkStore, ok, place, server, startApp, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
 import { answerGate, reviewBrowser } from "./fixtures/workspace-artifacts.mjs";
 
 // Contract clauses 54-57 of the workspace-view design: a slice's files at its verified or ship commit, whether each still matches, and unpushed work as presence.
@@ -20,7 +21,7 @@ const CONTRACT = "# Reports\n\n## Contract\n1. `src/report.js` reports.\n\n## Ch
  * A store workspace whose repository api verified the slice reports on branch feature-x, which adds src/report.js and removes src/old.js.
  * pushed false keeps feature-x on this machine, and dirty true verifies an uncommitted change of src/report.js.
  */
-async function verifiedSlice(context, { pushed = true, dirty = false, verify = true } = {}) {
+async function verifiedSlice(context, { pushed = true, dirty = false, verify = true, app: appOptions = {} } = {}) {
   const where = await place(context);
   // The review browser of the checkout runs in this process, so it resolves the store's clone in this machine's application folder.
   process.env.PRISM_REVIEW_APP_DIR = where.app;
@@ -50,7 +51,7 @@ async function verifiedSlice(context, { pushed = true, dirty = false, verify = t
     assert.equal((await answerGate(review, { initiative: "reports", id: asked.gateId, choice: "allow" })).status, 200);
     assert.equal(ok(await prism.call("verify_slice", { initiative: "reports", slice: "reports", approvalGate: asked.gateId })).status, "passed");
   }
-  const app = await startApp(context, where);
+  const app = await startApp(context, where, appOptions);
   await app.grant();
   await app.register(root);
   const id = workspaceId(store.identity);
@@ -117,6 +118,19 @@ test("clause 56: without either commit or without code content the page says why
   const none = await unverified.files();
   assert.deepEqual(none.files, []);
   assert.match(none.message, /passing/);
+});
+
+test("clause 56: a repository whose fetch fails after a clone still shows the slice's files from the clone it fetched last", async (context) => {
+  const slice = await verifiedSlice(context, { app: { workspaceFetchMs: 300 } });
+  await codeOn(slice);
+  await rename(slice.code, `${slice.code}.gone`);
+  const stream = http.get(`${slice.app.viewer}/w/${slice.id}/api/events`);
+  context.after(() => stream.destroy());
+  const repositories = async () => (await slice.app.get(`/w/${slice.id}/api/index`)).json.repositories;
+  await eventually(async () => (await repositories()).some((entry) => entry.name === "api" && entry.code.state === "unreachable"), 10000, "the failed fetch");
+  const answer = await slice.files();
+  assert.deepEqual(answer.shown, { commit: slice.head, source: "verified" });
+  assert.ok(answer.files.every((file) => file.state === "same as verified"), JSON.stringify(answer.files));
 });
 
 test("clause 57: unpushed work shows only as presence from runs and claims, never as content", async (context) => {

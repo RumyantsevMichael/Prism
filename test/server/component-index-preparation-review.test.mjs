@@ -5,6 +5,7 @@ import { access, mkdir, mkdtemp, readdir, realpath, rm, symlink, utimes, writeFi
 import os from "node:os";
 import path from "node:path";
 import { FILES, entry, fakeRuntime, manifestPath, project, settled, workflow } from "./fixtures/component-indexes.mjs";
+import { READY_WAIT_MS } from "./fixtures/wait.mjs";
 
 // Review findings of the component-index-preparation slice: searches beside a long build, a component that another session prepares,
 // superseded jobs, the scan without Git, the declaration check of retained baselines, and background preparation with components.
@@ -16,7 +17,7 @@ const { componentSources, indexComponents } = await import("../../dist/server/re
 const { resetBackgroundPreparation, startBackgroundPreparation, startIndexRebuild } = await import("../../dist/server/repository-intelligence/background-preparation.mjs");
 const { conservationStore } = await import("../../dist/server/conservation/conservation-store.mjs");
 
-const search = (root, runtime, input = {}, waitMs = 2000) => provider.searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...input }, { runtime, waitMs });
+const search = (root, runtime, input = {}, waitMs = READY_WAIT_MS) => provider.searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...input }, { runtime, waitMs });
 const NET = { name: "net", identity: "root/net", folder: "packages/net" };
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const within = (promise, ms, what) => Promise.race([promise, delay(ms).then(() => { throw new Error(`${what} did not answer within ${ms} ms.`); })]);

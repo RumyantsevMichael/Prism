@@ -7,7 +7,7 @@ export class PrismPageSub extends Base {
   static catalog = {
     purpose: "A line under a page's title that says what the page shows: a leading glyph, its text with names in bold, and a link at its end; lines that belong together stand in a .prism-page-subs group kept to the reading measure.",
     options: [
-      { name: "slot=\"glyph\"", values: ["children"], default: "", description: "A glyph before the text, such as a prism-state; it is hidden from assistive technology, since the text says the same." },
+      { name: "slot=\"glyph\"", values: ["children"], default: "", description: "A glyph before the text, such as a prism-status; it is hidden from assistive technology, since the text says the same." },
       { name: "slot=\"end\"", values: ["children"], default: "", description: "Content after the text, such as a link back to the whole list." },
       { name: "detail", values: ["boolean"], default: "false", description: "A quieter, smaller line, such as the reason of a decision under the line that names it." }
     ],

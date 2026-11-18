@@ -4,10 +4,14 @@ import { rename, rm } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { checkout, eventually, git, isolateGit, networkStore, ok, place, pushToRemote, server, startApp, storeFolderId, workspaceId } from "./fixtures/workspace-view.mjs";
+import { pause, settled } from "./fixtures/wait.mjs";
 
 // Contract clauses 22-25 of the workspace-view design: an open workspace fetches on its own, shows its last synced copy, and pushes the app's writes.
 const environment = await isolateGit();
 test.after(() => rm(environment, { recursive: true, force: true }));
+
+// On Windows a running git fetch holds the store's files open, and renaming the folder fails with EBUSY until it ends, so the move is retried until it goes through.
+const move = (from, to) => settled(() => rename(from, to).then(() => true));
 
 // A page of the workspace: its events stream stays connected until close().
 function openPage(context, prism, id) {
@@ -40,7 +44,7 @@ test("clause 22: an open page makes the app fetch the store on its own timer, an
   close();
   await new Promise((resolve) => setTimeout(resolve, 600));
   await pushToRemote(where, store.bare, { "artifacts/requirements/second.md": "# Second\n" });
-  await new Promise((resolve) => setTimeout(resolve, 1500));
+  await pause(1500, "no page is connected, so no fetch may happen, and a change that must not happen leaves nothing to wait for");
   assert.equal(fetched(clone, "artifacts/requirements/second.md"), false, "no page is connected, so nothing fetches");
 });
 
@@ -65,26 +69,31 @@ test("clause 22: reading the index of a workspace served through a checkout star
     assert.equal(index.status, 200, index.body);
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await pause(1000, "no page is connected, so no fetch may happen, and a change that must not happen leaves nothing to wait for");
   assert.equal(fetched(clone, "artifacts/requirements/unread.md"), false, "no page is connected, so reading the index fetches nothing");
 });
 
 test("clause 23: failed fetches back off by doubling up to the maximum, and a success restores the interval", async (context) => {
   const { store, prism, id, sync } = await addedWorkspace(context);
-  await rename(store.bare, `${store.bare}.away`);
+  await move(store.bare, `${store.bare}.away`);
   openPage(context, prism, id);
-  const attempts = [];
-  const deadline = Date.now() + 6000;
-  while (Date.now() < deadline) {
+  // Each wait is read from the attempt it follows, from its start to the next fetch it schedules, so a slow Git fetch does not lengthen it.
+  // While a fetch runs, the next fetch is still the one it started at, which a timer can fire a millisecond early, so a wait shorter than the interval is that one.
+  // The first fetch has no next fetch until it ends, so a sample taken while it still syncs is not a wait.
+  const waits = new Map();
+  const deadline = Date.now() + 20000;
+  while (waits.size < 4 && Date.now() < deadline) {
     const state = await sync();
-    if (state?.lastAttemptAt && attempts.at(-1) !== state.lastAttemptAt) attempts.push(state.lastAttemptAt);
+    const wait = Date.parse(state?.nextFetchAt) - Date.parse(state?.lastAttemptAt);
+    if (state?.state !== "syncing" && wait >= 300) waits.set(state.lastAttemptAt, wait);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  const gaps = attempts.slice(1).map((at, index) => Date.parse(at) - Date.parse(attempts[index]));
-  assert.ok(gaps.length >= 3, `several failed fetches were attempted: ${attempts.join(", ")}`);
-  assert.ok(gaps[0] >= 500, `the second wait doubles: ${gaps.join(", ")}`);
-  assert.ok(gaps.every((gap) => gap <= 1200 + 400), `no wait passes the maximum: ${gaps.join(", ")}`);
-  await rename(`${store.bare}.away`, store.bare);
+  const observed = [...waits.values()];
+  assert.ok(observed.length >= 4, `several failed fetches were attempted: ${observed.join(", ")}`);
+  assert.ok(observed.every((wait, index) => index === 0 || wait === Math.min(observed[index - 1] * 2, 1200)), `each wait doubles: ${observed.join(", ")}`);
+  assert.ok(observed[0] >= 600, `the wait after a failure is twice the interval or more: ${observed.join(", ")}`);
+  assert.equal(observed.at(-1), 1200, `the waits stop at the maximum: ${observed.join(", ")}`);
+  await move(`${store.bare}.away`, store.bare);
   const restored = await eventually(async () => { const state = await sync(); return state.state === "ok" && state; }, 10000, "a fetch succeeding again");
   assert.ok(Date.parse(restored.nextFetchAt) - Date.parse(restored.lastAttemptAt) <= 300 + 200, "the wait is the interval again");
 });
@@ -93,8 +102,8 @@ test("clause 24: an unreachable store shows its last synced copy with the time o
   const { store, prism, id, sync } = await addedWorkspace(context);
   openPage(context, prism, id);
   const first = await eventually(async () => { const state = await sync(); return state?.state === "ok" && state.lastSyncedAt && state; }, 10000, "a first fetch");
-  await rename(store.bare, `${store.bare}.away`);
-  context.after(() => rename(`${store.bare}.away`, store.bare).catch(() => {}));
+  await move(store.bare, `${store.bare}.away`);
+  context.after(() => move(`${store.bare}.away`, store.bare).catch(() => {}));
   const unreachable = await eventually(async () => { const state = await sync(); return state.state === "unreachable" && state; }, 10000, "the store becoming unreachable");
   assert.ok(Date.parse(unreachable.lastSyncedAt) >= Date.parse(first.lastSyncedAt), "the time of the last fetch that succeeded");
   assert.ok(unreachable.message.includes(`example.invalid/${store.owner}/store`), unreachable.message);

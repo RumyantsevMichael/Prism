@@ -9,17 +9,18 @@ export class PrismChip extends Base {
   static styles = ["prism-chip.css"];
   static observedAttributes = ["href", "interactive", "target", "label", "pressed"];
   static catalog = {
-    purpose: "A short label in a tone, with quieter secondary text from slot=\"meta\"; static text, a link with href, or a button with interactive, which pressed makes a toggle such as a filter.",
+    purpose: "A short label in a tone, led by an optional glyph from slot=\"start\" and followed by quieter secondary text from slot=\"meta\"; static text, a link with href, or a button with interactive, which pressed makes a toggle such as a filter.",
     options: [
       { name: "tone", values: TONES, default: "neutral", description: "The color of the chip; the text stays at 4.5:1 on its soft fill." },
       { name: "href", values: ["URL"], default: "", description: "Makes the chip a link to that address." },
       { name: "interactive", values: ["boolean"], default: "false", description: "Makes the chip a button that sends click." },
       { name: "label", values: ["text"], default: "", description: "The accessible name of a link or button chip whose text alone does not say what it does." },
       { name: "pressed", values: ["true", "false"], default: "", description: "Makes a button chip a toggle, exposed as aria-pressed and filled in the accent while true." },
+      { name: "slot=\"start\"", values: ["children"], default: "", description: "A glyph that leads the label, such as a prism-icon, set apart from it by the chip's gap." },
       { name: "slot=\"meta\"", values: ["children"], default: "", description: "Secondary text shown after the label, such as a count or a kind." },
       { name: "tip", values: ["text"], default: "", description: "A short description the kit tooltip shows on hover and keyboard focus." }
     ],
-    states: ["static", "tones", "link", "interactive", "pressed", "meta"],
+    states: ["static", "tones", "link", "interactive", "pressed", "start", "meta"],
     keyboard: ["A link chip opens with Enter and a button chip activates with Enter and Space, which also toggles a pressed chip's state through its click handler.", "A static chip whose text is shortened joins the Tab order so its full text can be read."]
   };
 
@@ -83,7 +84,7 @@ export class PrismChip extends Base {
       return;
     }
     this.rendered = mode;
-    const inner = `<span class="text"><slot></slot></span><span class="meta" hidden><slot name="meta"></slot></span>`;
+    const inner = `<span class="start" hidden><slot name="start"></slot></span><span class="text"><slot></slot></span><span class="meta" hidden><slot name="meta"></slot></span>`;
     this.root.innerHTML = mode === "link"
       ? `<a class="chip" part="chip">${inner}</a>`
       : mode === "button"
@@ -91,12 +92,13 @@ export class PrismChip extends Base {
         : `<span class="chip" part="chip">${inner}</span>`;
     this.control = mode === "static" ? null : this.root.querySelector(".chip");
     this.text = this.root.querySelector(".text");
-    // The meta part shows only when a child fills slot="meta".
-    const meta = this.root.querySelector(".meta");
-    const slot = meta.querySelector("slot");
-    const showMeta = () => { meta.hidden = !slot.assignedNodes().length; };
-    slot.addEventListener("slotchange", showMeta);
-    showMeta();
+    // The start and meta parts show only when a child fills their slot.
+    for (const part of this.root.querySelectorAll(".start, .meta")) {
+      const slot = part.querySelector("slot");
+      const show = () => { part.hidden = !slot.assignedNodes().length; };
+      slot.addEventListener("slotchange", show);
+      show();
+    }
     if (mode === "link") {
       this.control.setAttribute("href", this.getAttribute("href"));
       const target = this.getAttribute("target");

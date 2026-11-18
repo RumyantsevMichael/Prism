@@ -119,6 +119,9 @@ function taskId(metadata = {}) {
 // The project roots that tool calls named in a host that names no project at start; only the first call for a root asks whether to open the browser.
 const namedRoots = new Set();
 
+// A projectRoot argument that the server cannot use is the caller's mistake, which the log records as a refusal rather than as a failure of the server.
+const projectRootRefusal = (message) => Object.assign(new Error(message), { refusal: true });
+
 async function requestedProjectRoot(argumentsValue) {
   const hostProjectRoot = process.env.CLAUDE_PROJECT_DIR;
   const hasSuppliedProjectRoot = Object.hasOwn(argumentsValue, "projectRoot");
@@ -126,20 +129,23 @@ async function requestedProjectRoot(argumentsValue) {
     hasSuppliedProjectRoot
     && (typeof argumentsValue.projectRoot !== "string" || !path.isAbsolute(argumentsValue.projectRoot))
   ) {
-    throw new Error("The projectRoot argument must be an absolute path.");
+    throw projectRootRefusal("The projectRoot argument must be an absolute path.");
   }
-  const projectRoot = hostProjectRoot ?? argumentsValue.projectRoot;
+  const projectRoot = hasSuppliedProjectRoot ? argumentsValue.projectRoot : hostProjectRoot;
   if (!projectRoot) {
-    throw new Error("The projectRoot argument is required when the host does not provide a project root.");
+    throw projectRootRefusal("The projectRoot argument is required when the host does not provide a project root.");
   }
   if (!path.isAbsolute(projectRoot)) {
-    throw new Error("The projectRoot argument must be an absolute path.");
+    throw projectRootRefusal("The projectRoot argument must be an absolute path.");
   }
   const resolvedRoot = await realpath(projectRoot);
+  // A session that starts in a folder holding several checkouts side by side names the checkout it works in, so a project root below the start folder is served,
+  // and one outside it is refused, so a session reaches only the folders it started over.
   if (hostProjectRoot && hasSuppliedProjectRoot) {
-    const suppliedRoot = await realpath(argumentsValue.projectRoot);
-    if (suppliedRoot !== resolvedRoot) {
-      throw new Error(`The projectRoot argument does not match the host project root ${resolvedRoot}. Pass that path, which is the directory where the session started.`);
+    const hostRoot = await realpath(hostProjectRoot);
+    const relative = path.relative(hostRoot, resolvedRoot);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      throw projectRootRefusal(`The projectRoot argument ${resolvedRoot} is not the folder where the session started, or a folder below it. Pass ${hostRoot} or a checkout below it.`);
     }
   }
   // The tool call's project root is the checkout whose first store access in this call may move its existing artifacts into the store, since this call's result reports the move.
@@ -164,6 +170,9 @@ async function server(argumentsValue, metadata) {
 
 // Claude Code gives its agent only the structured content of a result that has one, so the text items after the first, which carry notes such as a move report or a saved conflict,
 // also go into the structured content as notes, in their order, after any notes it already holds.
+// Prism's refusal codes are lower-case words joined by "_", such as validation_failed, unlike Node's system error codes, such as ENOENT.
+const isRefusal = (error) => error?.refusal === true || (typeof error?.code === "string" && /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(error.code));
+
 function withNotesInStructure(value) {
   const structured = value?.structuredContent;
   if (!structured || typeof structured !== "object" || Array.isArray(structured) || !Array.isArray(value.content) || value.content.length < 2) return value;
@@ -367,7 +376,7 @@ function stateErrorData(error) {
   }
   // A refused artifact read or update names the current version, the scopes that hold a path, the scope that already holds it, the edit that did not apply, the name that breaks the artifact name form, or the declared components.
   if (error?.name === "ArtifactError") {
-    return { code: error.code, ...Object.fromEntries(["version", "scopes", "scope", "edit", "invalidName", "path", "location", "limit", "component", "components", "proposed"].filter(key => error[key] !== undefined).map(key => [key, error[key]])) };
+    return { code: error.code, ...Object.fromEntries(["version", "scopes", "scope", "edit", "invalidName", "path", "location", "limit", "nameLimit", "component", "components", "proposed"].filter(key => error[key] !== undefined).map(key => [key, error[key]])) };
   }
   if (error instanceof RepositoryIntelligenceSelectionError) {
     return { code: error.code, provider: error.provider, recoverable: error.recoverable };
@@ -468,7 +477,7 @@ const tools = [
   },
   {
     name: "update_design_view",
-    description: "Replace a designed slice's design view, which the review browser shows at the design gate: one example per acceptance test, each a single line under the number of the slice.md Contract clause it checks, restating only what the test asserts. Prism checks that each cited test name occurs in its test file and each clause number exists, lists clauses without examples as gaps, and marks the view stale when the contract or a test file changes. It also parses the PlantUML files beside slice.md and reports any that accept_design would refuse.",
+    description: "Replace a designed slice's design view, which the review browser shows at the design gate: one example per acceptance test, each a single line under the number of the slice.md Contract clause it checks, restating only what the test asserts. Prism checks that each cited test name occurs in its test file and each clause number exists, lists clauses without examples as gaps, and marks the view stale when the contract or a test file changes. It also checks the declared views of the folders that accept_design checks, by the same rules, and returns views ({ path, kind, elements, relations }) and viewProblems, each problem that accept_design would refuse.",
     inputSchema: UPDATE_DESIGN_VIEW_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
@@ -1368,6 +1377,7 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
   const saved = taken.filter((item) => item.record && !item.overBound);
   const removals = taken.filter((item) => item.undoneRemoval);
   const fileRemovals = taken.filter((item) => item.undoneFile);
+  const recordRemovals = taken.filter((item) => item.undoneRecord);
   const moves = taken.filter((item) => item.undoneMove);
   // A file of either machine's that a sync took out because its path at its artifact's new location would be too long is named with that location, for that cause alone.
   const tooLong = taken.filter((item) => item.tooLongAt && !item.overBound);
@@ -1390,6 +1400,10 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
   if (fileRemovals.length) {
     const them = fileRemovals.length === 1 ? "it" : "them";
     sections.push({ header: `Store sync undid this machine's removal of ${plural(fileRemovals.length, "store file")} at the store's root, such as its README, because another machine changed ${them} before this machine's removal reached the store; the store holds ${them} again with the other machine's version. Remove ${them} from the store again if the removal still matters.`, items: fileRemovals, line: async (item) => `- ${item.undoneFile} in the record store at ${item.store}` });
+  }
+  if (recordRemovals.length) {
+    const them = recordRemovals.length === 1 ? "it" : "them";
+    sections.push({ header: `Store sync undid this machine's removal of ${plural(recordRemovals.length, "record")}, because another machine changed ${them} before this machine's removal reached the store; the store holds ${them} again with the other machine's version. Read each record again, and redo the removal if it still matters.`, items: recordRemovals, line: async (item) => `- ${item.undoneRecord} in the record store at ${item.store}` });
   }
   if (moves.length) {
     sections.push({ header: `Store sync undid this machine's move of ${plural(moves.length, "artifact")} to another scope, because another machine moved ${moves.length === 1 ? "it" : "them"} elsewhere, or kept its own file at the path this machine moved ${moves.length === 1 ? "it" : "them"} to, before this machine's move reached the store; the store keeps each in the first scope named below, with this machine's other changes to it. Read each one again with get_artifact and move it again with move_scope if the move still matters.`, items: moves, line: (item) => undoneMoveLine(item, argumentsValue) });
@@ -1446,7 +1460,7 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
   // A decided move, the call's own or one that a refused, cancelled, or background call left, removes the checkout's files only here, right before a result of a tool call of the checkout is written,
   // so the result that follows names every file it removed; a refused or cancelled call never gets here and removes nothing.
   await finishUnfinishedMoves(call.roots, { proceed, writes: call.writes }).catch(() => {});
-  const reports = takeMigrationReports(call.roots);
+  const reports = await takeMigrationReports(call.roots);
   if (!reports.length && !taken.length) return none;
   const lines = [];
   // Each move of a checkout's artifacts is a text item of its own, after the other notes, so its bound and its closing line are its own.
@@ -1643,7 +1657,10 @@ input.on("line", async (line) => {
       failure(request.id, -32601, `Method not found: ${request.method}`);
     }
   } catch (error) {
-    log.warn("request_failed", { method: request?.method, ...(callNames.has(request?.id) ? { tool: callNames.get(request.id) } : {}), ...errorFields(error) });
+    const tool = callNames.has(request?.id) ? { tool: callNames.get(request.id) } : {};
+    // A refusal, which names its reason by a code of Prism's own, answers a call that the caller can fix, so it is no warning and carries no stack; any other error is one.
+    if (isRefusal(error)) log.info("request_refused", { method: request?.method, ...tool, ...(typeof error.code === "string" ? { code: error.code } : {}), error: error.message });
+    else log.warn("request_failed", { method: request?.method, ...tool, ...errorFields(error) });
     if (request?.id !== undefined && !cancelledCalls.has(request.id)) {
       const data = stateErrorData(error);
       failure(request.id, -32603, errorMessage(error, data), data);
@@ -1661,7 +1678,7 @@ input.on("line", async (line) => {
 // even when index preparation, a store sync, or a child process started meanwhile would keep it alive.
 // Claude Code sends SIGINT and then SIGTERM about a tenth of a second apart, and ends the process soon after, so the stores' pending syncs go to a detached process first.
 // On Windows a signal ends the process without running any of its code, so a detached watcher holds the pending syncs while any are pending and finishes them however the server ends.
-configureRecordSync({ watchPending: true });
+configureRecordSync({ watchPending: true, log });
 const CLOSE_GRACE_MS = 5000;
 let closing = false;
 async function stop(reason) {

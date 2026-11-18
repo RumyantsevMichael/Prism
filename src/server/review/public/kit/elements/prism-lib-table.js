@@ -9,12 +9,13 @@ export class PrismLibTable extends Base {
     options: [
       { name: ".prism-lib-row", values: ["children"], default: "", description: "A row of cells; with is-head it names the columns in small capitals and is hidden from assistive technology with aria-hidden." },
       { name: ".prism-lib-title", values: ["children"], default: "", description: "A record's title cell: a .prism-lib-kind glyph and a link that wraps when it is long." },
+      { name: ".prism-lib-title-text", values: ["children"], default: "", description: "Inside a title cell, the link with a .prism-lib-cell is-detail line under it, such as the record's path." },
       { name: ".prism-lib-cell", values: ["children"], default: "", description: "A quiet cell in the table's smaller muted text; is-detail makes it smaller still." },
       { name: ".prism-lib-group", values: ["children"], default: "", description: "A group head: a .prism-lib-group-name heading with its count and, when the group has one, a .prism-lib-group-source at its end." },
       { name: ".prism-lib-nothing", values: ["children"], default: "", description: "The line of a group without records." },
       { name: "--prism-lib-columns", values: ["grid columns"], default: "minmax(0, 1fr)", description: "The columns every row shares, set by the page." }
     ],
-    states: ["default", "grouped", "empty-group", "no-source"],
+    states: ["default", "grouped", "with-detail", "empty-group", "no-source"],
     keyboard: ["The table is not a control; Tab reaches the links in its rows."]
   };
 }

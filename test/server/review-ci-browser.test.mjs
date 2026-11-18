@@ -38,12 +38,30 @@ async function workflowJob(name) {
   };
 }
 
+// The shard count a system runs, from the test step's --shard k/n, where n is a number or ${{ matrix.os == 'os' && n || m }}.
+function shardCounts(body) {
+  const fixed = /--shard \$\{\{ matrix\.shard \}\}\/(\d+)/.exec(body);
+  if (fixed) return () => Number(fixed[1]);
+  const chosen = /--shard \$\{\{ matrix\.shard \}\}\/\$\{\{ matrix\.os == '([\w.-]+)' && (\d+) \|\| (\d+) \}\}/.exec(body);
+  if (!chosen) throw new Error("The test step names no shard count.");
+  return (os) => Number(os === chosen[1] ? chosen[2] : chosen[3]);
+}
+
+// The server-tests matrix's runs: every os and shard pair, less the pairs its exclude list names.
+function matrixRuns(text) {
+  const list = (name) => /^ {8}NAME: \[([^\]]*)\]$/m.source.replace("NAME", name);
+  const oses = new RegExp(list("os"), "m").exec(text)?.[1].split(",").map((item) => item.trim()) ?? [];
+  const shards = new RegExp(list("shard"), "m").exec(text)?.[1].split(",").map(Number) ?? [];
+  const excluded = [...text.matchAll(/^ {10}- \{ os: ([\w.-]+), shard: (\d+) \}$/gm)].map((match) => `${match[1]} ${match[2]}`);
+  return oses.flatMap((os) => shards.map((shard) => ({ os, shard }))).filter((run) => !excluded.includes(`${run.os} ${run.shard}`));
+}
+
 // The validate check passes only once the server test shards passed, and each shard installs the browser before its tests.
 test("clause 83: the validate job installs Playwright and Chromium before the tests and requires the browser while they run", async () => {
   const validate = await workflowJob("validate");
   assert.match(validate.text, /^ {4}needs: \[[^\]]*\bserver-tests\b[^\]]*\]$/m, "validate waits for the server test shards");
   const { text, steps } = await workflowJob("server-tests");
-  const testing = steps.findIndex((step) => /node scripts\/test-shard\.mjs --shard \$\{\{ matrix\.shard \}\}\/\d+/.test(step.body));
+  const testing = steps.findIndex((step) => /node scripts\/test-shard\.mjs --shard \$\{\{ matrix\.shard \}\}\//.test(step.body));
   assert.ok(testing >= 0, "a step runs this runner's shard of the server tests");
   const installing = steps.findIndex((step) => /npm install -g playwright@1\.63\.0(\s|$)/m.test(step.body));
   assert.ok(installing >= 0, "a step installs playwright@1.63.0 globally");
@@ -54,10 +72,12 @@ test("clause 83: the validate job installs Playwright and Chromium before the te
   assert.ok(installing < testing && linux < testing && other < testing, "Playwright and Chromium are installed before the tests run");
   assert.ok(steps[testing].requireBrowser, "the step that runs the tests sets PRISM_REQUIRE_BROWSER to 1");
   assert.match(text, /^ {8}os: \[ubuntu-latest, windows-2025\]$/m, "the shards run on Linux and on Windows");
-  // Every shard of the count that the test step names is in the matrix, so no part of the suite goes unrun.
-  const count = Number(/--shard \$\{\{ matrix\.shard \}\}\/(\d+)/.exec(steps[testing].body)[1]);
-  const shards = /^ {8}shard: \[([\d, ]+)\]$/m.exec(text)?.[1].split(",").map(Number);
-  assert.deepEqual(shards, Array.from({ length: count }, (_, index) => index + 1), `the matrix runs shards 1 to ${count}`);
+  // Each system runs every shard of the count that the test step names for it, and no other, so no part of the suite goes unrun.
+  const counts = shardCounts(steps[testing].body);
+  const runs = matrixRuns(text);
+  for (const os of ["ubuntu-latest", "windows-2025"]) {
+    assert.deepEqual(runs.filter((run) => run.os === os).map((run) => run.shard), Array.from({ length: counts(os) }, (_, index) => index + 1), `${os} runs shards 1 to ${counts(os)}`);
+  }
 });
 
 test("the validate and windows checks pass only when the test shards passed", async () => {

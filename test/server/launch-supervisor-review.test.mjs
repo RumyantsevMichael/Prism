@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { CODEX_THREAD, INITIATIVE, launchFixture, waitFor } from "./fixtures/launched-sessions.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { codexThreadRequest, hostConversation, resumeCommandOf } from "../../dist/server/session/launch-hosts.mjs";
 import { RETENTION_MS, launchView, launchesDirectory } from "../../dist/server/session/launch-records.mjs";
 import { withFileLock } from "../../dist/server/workflow/artifact-store.mjs";
@@ -126,7 +127,7 @@ test("listing removes an expired launch folder only under the launch lock", { sk
   let listed = null;
   await withFileLock(path.join(launchesDirectory(fixture.env), "launches"), async () => {
     listed = listLaunches({ projectRoot: fixture.root, env: fixture.env, now: later });
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await pause(500, "the folder must survive while the lock is held, and a change that must not happen leaves nothing to wait for");
     assert.ok(existsSync(folder), "the folder was removed while another process held the launch lock");
   });
   const { launches } = await listed;

@@ -161,7 +161,15 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  /* A compact row puts its control under its name, so a long reason beside the name never squeezes it to a letter a line. */
+}
+
+/* A compact list measures its own width, since it often sits in a narrow popover on a wide window. */
+.action-list.is-compact {
+  container: action-list / inline-size;
+}
+
+/* A narrow compact row puts its control under its name, so a long reason or error beside the name never squeezes it to a letter a line. */
+@container action-list (max-width: 520px) {
   .action-list.is-compact .action-row {
     grid-template-columns: minmax(0, 1fr);
   }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import http from "node:http";
-import { rm } from "node:fs/promises";
+import { rename, rm } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { alias, artifactConfig, bareRemote, blobOf, commitFiles, eventually, exists, git, isolateGit, networkStore, ok, place, server, sha16, startApp, storeCheckout, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
@@ -47,6 +47,17 @@ test("clause 41: turning code content on keeps a bare blobless clone with every 
   assert.equal(git(clone, "rev-parse", "--is-bare-repository"), "true");
   assert.equal(git(clone, "config", "--get", "remote.origin.partialclonefilter"), "blob:none");
   assert.equal((await enable(prism, id, "mobile")).status, 404);
+});
+
+test("clause 41: a malformed escape in the repository name is refused by the origin and write-session checks first, then answers a plain 400", async (context) => {
+  const { prism, id } = await codeWorkspace(context);
+  const route = `/w/${id}/api/code/%E0%A4%A`;
+  const foreign = await prism.put(route, { enabled: true }, { Origin: "http://evil.example" });
+  assert.deepEqual([foreign.status, foreign.json?.code], [403, "origin_refused"], foreign.body);
+  const anonymous = await prism.put(route, { enabled: true }, { "X-Prism-Write": "" });
+  assert.deepEqual([anonymous.status, anonymous.json?.code], [403, "write_forbidden"], anonymous.body);
+  const malformed = await prism.put(route, { enabled: true });
+  assert.deepEqual([malformed.status, malformed.json?.code], [400, "invalid_request"], malformed.body);
 });
 
 test("clause 41: a repository whose registration lists no remote cannot take code content", async (context) => {
@@ -105,6 +116,25 @@ test("clauses 44 and 45: a repository whose code cannot be fetched is named, whi
   const index = await prism.get(`/w/${id}/api/index`);
   assert.equal(index.status, 200);
   assert.deepEqual(index.json.repositories.map((entry) => [entry.name, entry.code.state]), [["api", "on"], ["web", "unreachable"]]);
+});
+
+test("clause 44: a repository whose fetch fails after a clone keeps showing the branches and files it fetched last", async (context) => {
+  const { code, prism, id } = await codeWorkspace(context);
+  assert.equal((await enable(prism, id, "api")).status, 200);
+  // A blobless clone holds the contents of the files someone opened, so a file opened before the fetch failed still reads.
+  const route = `/w/${id}/api/code/file?repository=api&branch=main&path=packages/billing/total.js`;
+  assert.equal((await prism.get(route)).status, 200);
+  await rename(code, `${code}.gone`);
+  const repositories = async () => (await prism.get(`/w/${id}/api/index`)).json.repositories;
+  const stream = http.get(`${prism.viewer}/w/${id}/api/events`);
+  context.after(() => stream.destroy());
+  const failed = await eventually(async () => (await repositories()).find((entry) => entry.name === "api" && entry.code.state === "unreachable"), 10000, "the failed fetch");
+  assert.match(failed.code.message, /shows what it fetched last/);
+  assert.equal(typeof failed.code.fetchedAt, "string");
+  assert.deepEqual(failed.code.branches.map((branch) => branch.name), ["feature-x", "main"]);
+  const file = await prism.get(route);
+  assert.equal(file.status, 200, file.body);
+  assert.equal(file.json.content, TOTAL);
 });
 
 test("clause 46: a folder lists each entry of every branch with the branches and blobs that hold it", async (context) => {
@@ -272,4 +302,82 @@ test("clause 50: the page opens a link resolved from the clone as a tab with its
   await settle(page);
   assert.match(await page.locator("body").innerText(), /export const total/);
   assert.ok((await page.locator("[data-branch-label]").allTextContents()).some((label) => label.includes("main")), "the tab shows the default branch's label");
+});
+
+test("clause 46: the compare answer lists how every other branch differs from the compared branch, read from trees alone", async (context) => {
+  const { prism, id, clone } = await codeWorkspace(context);
+  assert.equal((await enable(prism, id, "api")).status, 200);
+  const fromDefault = await prism.get(`/w/${id}/api/code/compare?repository=api`);
+  assert.equal(fromDefault.status, 200, fromDefault.body);
+  assert.deepEqual(fromDefault.json, { repository: "api", base: "main", branches: [{ branch: "feature-x", changes: [
+    { path: ".prism/workflow.md", change: "modified" },
+    { path: "packages/web/page.js", change: "added" }
+  ] }] }, "without a base, the branch the remote's HEAD names is compared with");
+  const fromFeature = (await prism.get(`/w/${id}/api/code/compare?repository=api&base=feature-x`)).json;
+  assert.deepEqual(fromFeature.branches, [{ branch: "main", changes: [
+    { path: ".prism/workflow.md", change: "modified" },
+    { path: "packages/web/page.js", change: "deleted" }
+  ] }]);
+  assert.equal(present(clone, blobOf("export const page = 1;\n")), false, "comparing fetches no file's contents");
+  const unknown = await prism.get(`/w/${id}/api/code/compare?repository=api&base=gone`);
+  assert.equal(unknown.status, 404);
+  assert.equal(unknown.json.code, "branch_unknown");
+  assert.equal((await prism.get(`/w/${id}/api/code/compare?repository=web`)).status, 404, "a repository without a clone compares nothing");
+});
+
+test("clauses 25 and 46: the Code page lists every branch's files, marks where they differ from Compare with, and Branch picks the version shown", { skip, timeout: 120000 }, async (context) => {
+  const { prism, id } = await codeWorkspace(context);
+  assert.equal((await enable(prism, id, "api")).status, 200);
+  const browser = await launch(context);
+  const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+  await page.goto(`${prism.viewer}/w/${id}/review?artifact=code`);
+  await settle(page);
+  const tree = page.locator("[data-code-tree]");
+  await tree.waitFor();
+  const item = (value) => tree.locator(`prism-tree-item[value="${value}"]`);
+  const flagOf = (value) => item(value).locator(":scope > .prism-tree-row .prism-tree-flag").textContent();
+  assert.equal(await flagOf("packages"), "1 branch", "a folder whose files another branch changes says how many branches do");
+  assert.equal(await item("docs").locator(":scope > .prism-tree-row .prism-tree-flag").count(), 0, "a folder that is the same everywhere carries no mark");
+  await item("packages").locator(":scope > .prism-tree-row .prism-tree-twisty").click();
+  await item("packages/web").waitFor();
+  assert.equal(await flagOf("packages/web"), "1 branch", "a folder only feature-x holds is listed");
+  await item("packages/web").locator(":scope > .prism-tree-row .prism-tree-twisty").click();
+  await item("packages/web/page.js").waitFor();
+  assert.equal(await flagOf("packages/web/page.js"), "New on 1");
+  assert.match(await item("packages/web/page.js").getAttribute("tip"), /New on feature-x/);
+  await item("packages/web/page.js").locator(":scope > .prism-tree-row").click();
+  const view = page.locator("[data-code-view]");
+  await view.locator("prism-code").waitFor();
+  assert.match(await view.locator("prism-code").innerText(), /export const page = 1/);
+  assert.equal(await view.locator("[data-branch-label]").textContent(), "feature-x", "a file the chosen branch lacks shows from a branch that holds it");
+  assert.match(await view.locator("[data-code-elsewhere]").textContent(), /Not on main/);
+  assert.match(await view.locator("[data-code-standing]").textContent(), /New on this branch · 1 line/);
+  await tree.locator('prism-tree-item[value=".prism"] > .prism-tree-row .prism-tree-twisty').click();
+  await item(".prism/workflow.md").waitFor();
+  assert.equal(await flagOf(".prism/workflow.md"), "Differs on 1");
+  await item(".prism/workflow.md").locator(":scope > .prism-tree-row").click();
+  await view.getByText("Other branches differ: feature-x").waitFor();
+  assert.equal(await view.locator("[data-branch-label]").textContent(), "main");
+  assert.doesNotMatch(await view.locator("prism-code").innerText(), /web: packages\/web/);
+  await page.getByRole("button", { name: "Branch: main" }).click();
+  await page.locator("[data-code-branch-menu]").getByRole("menuitemradio", { name: "feature-x" }).click();
+  await view.getByText("Differs from main").waitFor();
+  assert.equal(await view.locator("[data-branch-label]").textContent(), "feature-x", "Branch picks the version the viewer shows");
+  assert.match(await view.locator("prism-code").innerText(), /web: packages\/web/);
+  await page.getByRole("button", { name: "Compare with: main" }).click();
+  await page.locator("[data-code-base-menu]").getByRole("menuitemradio", { name: "feature-x" }).click();
+  await page.getByRole("button", { name: "Compare with: feature-x" }).waitFor();
+  await item("packages/web/page.js").waitFor();
+  assert.equal(await flagOf("packages/web/page.js"), "Removed on 1", "compared with feature-x, main lacks the page");
+  assert.equal(await view.locator("[data-branch-label]").textContent(), "feature-x", "the open file stays open across a new comparison");
+  await page.getByRole("button", { name: "Repository: api" }).click();
+  await page.locator("[data-code-repository-menu]").getByRole("menuitemradio", { name: /web/ }).click();
+  await page.getByText("Code content is off").waitFor();
+  await page.locator("[data-code-repositories]").click();
+  const dialog = page.locator("[data-code-dialog]");
+  await dialog.locator('[data-code-repository-row="api"]').waitFor({ state: "visible" });
+  assert.match(await dialog.locator('[data-code-repository-row="api"]').innerText(), /On[\s\S]*2 branches[\s\S]*Turn code content off/);
+  assert.match(await dialog.locator('[data-code-repository-row="web"]').innerText(), /Off[\s\S]*Turn code content on/);
+  assert.equal(await dialog.locator('[data-code-switch="web"]').getAttribute("disabled"), "", "without a session that may write, the switch is off limits");
+  await dialog.getByText("This tab can only read").waitFor();
 });

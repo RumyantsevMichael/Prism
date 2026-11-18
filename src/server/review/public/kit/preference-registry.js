@@ -12,13 +12,20 @@ export const PREFERENCES = Object.freeze({
   theme: Object.freeze({ kind: "enum", values: Object.freeze(["system", "light", "dark"]), default: "system" }),
   density: Object.freeze({ kind: "enum", values: Object.freeze(["compact", "comfortable"]), default: "compact" }),
   "sidebar.collapsed": Object.freeze({ kind: "boolean", default: false }),
+  "sidebar.width": Object.freeze({ kind: "integer", min: 200, max: 480, default: null }),
   "sidePanel.width": Object.freeze({ kind: "integer", min: 320, max: 4096, default: null }),
   "roadmap.view": Object.freeze({ kind: "enum", values: Object.freeze(["board", "list", "graph"]), default: "board" }),
+  "roadmap.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["band", "status"]), default: "band" }),
   "roadmap.showArchived": Object.freeze({ kind: "boolean", default: false }),
   "roadmap.collapsedLanes": Object.freeze({ kind: "set", default: Object.freeze([]) }),
   "initiative.view": Object.freeze({ kind: "enum", values: Object.freeze(["board", "list", "graph"]), default: "board" }),
   "changeMap.view": Object.freeze({ kind: "enum", values: Object.freeze(["list", "graph"]), default: "list" }),
-  "changeMap.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["action", "file"]), default: "action" })
+  "changeMap.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["action", "file"]), default: "action" }),
+  // A library grouped by scope in a workspace whose records lie in one scope groups as its first other choice does.
+  "library.requirements.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["scope", "status", "area", "initiative", "none"]), default: "scope" }),
+  "library.decisions.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["scope", "area", "status", "initiative", "none"]), default: "scope" }),
+  "library.diagrams.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["scope", "owner", "kind", "none"]), default: "scope" }),
+  "library.glossary.groupBy": Object.freeze({ kind: "enum", values: Object.freeze(["scope", "none"]), default: "scope" })
 });
 
 export const DEFAULT_PREFERENCES = Object.freeze(Object.fromEntries(Object.entries(PREFERENCES).map(([key, entry]) => [key, entry.default])));

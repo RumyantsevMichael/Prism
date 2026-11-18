@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { contrastFailures, demoProject, launch, movingElements, openPage, reviewUrl, ROOT, serveProject, skip, stateFileNames, useAppDirectory, waitForView, writeClaim } from "./fixtures/kit-browser.mjs";
+import { repainted } from "./fixtures/wait.mjs";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §5, §8, §11, §13.
 // Contract: docs/plans/review-app-ui-kit/slice.md clauses 7, 8, 9, 21, 24, 62, and 69.
@@ -15,18 +16,19 @@ const choose = (base, body) => fetch(`${base}/api/preferences`, { method: "PUT",
 
 // The check runs in two parts side by side, each over half of the pages, since a lone check spends much of its time waiting for pages to settle.
 // More parts finish sooner but load the runner enough to slow the browser tests that run beside them past their own bounds.
-// Together they take about five minutes on a Linux runner and up to twice that on Windows.
+// Together they take about three minutes on a Linux runner and up to twice that on Windows.
+// The dark theme changes only colors, which the tokens test holds, so the light theme's layout is the dark theme's too, and the contrast tests check the dark colors.
 const LAYOUT_CHECK_PARTS = 2;
 const LAYOUT_CHECK_MS = process.platform === "win32" ? 890000 : 590000;
-test("clause 62: the layout check passes every page, overlay, and the catalog at a phone and a laptop width in both themes", { skip, timeout: LAYOUT_CHECK_MS + 10000 }, async () => {
-  const parts = await Promise.all(Array.from({ length: LAYOUT_CHECK_PARTS }, (_, index) => run(process.execPath, [path.join(ROOT, "scripts/review-demo/layout-check.mjs"), "--viewports", "phone,laptop", "--themes", "light,dark", "--part", `${index + 1}/${LAYOUT_CHECK_PARTS}`], { maxBuffer: 16 * 1024 * 1024, timeout: LAYOUT_CHECK_MS }).catch((error) => error)));
+test("clause 62: the layout check passes every page, overlay, and the catalog at a phone and a laptop width in the light theme", { skip, timeout: LAYOUT_CHECK_MS + 10000 }, async () => {
+  const parts = await Promise.all(Array.from({ length: LAYOUT_CHECK_PARTS }, (_, index) => run(process.execPath, [path.join(ROOT, "scripts/review-demo/layout-check.mjs"), "--viewports", "phone,laptop", "--themes", "light", "--part", `${index + 1}/${LAYOUT_CHECK_PARTS}`], { maxBuffer: 16 * 1024 * 1024, timeout: LAYOUT_CHECK_MS }).catch((error) => error)));
   for (const [index, result] of parts.entries()) {
     const part = `part ${index + 1} of ${LAYOUT_CHECK_PARTS}`;
     assert.equal(result.signal ?? null, null, `the layout check's ${part} finished within ${LAYOUT_CHECK_MS} ms`);
     assert.equal(result.code ?? 0, 0, `the layout check's ${part} reports:\n${result.stdout}`);
     assert.match(result.stdout, /^[1-9]\d* page checks, \d+ catalog checks, 0 distinct findings/m, `the layout check's ${part} checked pages and found nothing`);
   }
-  assert.match(parts[0].stdout, /, 4 catalog checks,/, "the first part checks the catalog at each viewport and theme");
+  assert.match(parts[0].stdout, /, 2 catalog checks,/, "the first part checks the catalog at each viewport");
 });
 
 const PAGES = ["attention", "roadmap", "initiative:retry-hardening", "slice:retry-hardening/timeout-retries", "requirements", "decisions", "glossary", "docs/retry.md", "src/retry/strategy.ts", "config/retry.json", "docs/plans/retry-hardening/timeout-retries/timeout-retries.puml"];
@@ -72,7 +74,7 @@ test("clauses 7, 8: a further theme given the dark theme's values renders every 
       document.documentElement.dataset.themeChoice = "dark";
       document.documentElement.dataset.theme = "dark";
     });
-    await page.waitForTimeout(300);
+    await repainted(page);
     const dark = await computedColors(page);
     // A theme rule of another name that copies every value of the dark rule; the page must not tell the two apart.
     await page.evaluate(() => {
@@ -87,7 +89,7 @@ test("clauses 7, 8: a further theme given the dark theme's values renders every 
       document.adoptedStyleSheets = [...document.adoptedStyleSheets, copy];
       document.documentElement.dataset.theme = "probe";
     });
-    await page.waitForTimeout(300);
+    await repainted(page);
     const probe = await computedColors(page);
     for (const [element, value] of Object.entries(dark)) if (probe[element] !== undefined && probe[element] !== value) differences.push(`${ref}: ${element} computes ${probe[element]} in the probe theme but ${value} in dark`);
     await page.context().close();
@@ -171,7 +173,7 @@ test("clause 69: no page or overlay of the review app names Prism's own files", 
     await waitForView(page);
     for (const failure of await stateFileNames(page)) failures.push(`${ref}: ${failure}`);
     await page.locator("header").getByRole("button", { name: /working/ }).click();
-    await page.waitForTimeout(300);
+    await repainted(page);
     for (const failure of await stateFileNames(page)) failures.push(`${ref} with Who's working open: ${failure}`);
     await page.keyboard.press("Escape");
     await page.context().close();

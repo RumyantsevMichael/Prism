@@ -1,6 +1,7 @@
 import { highlight, highlightLines, languageOf } from "./highlight.js";
 import { anchorTarget, decorateFolds, HEADING_PREFIX, LINE_RANGE, revealInDocument } from "./markdown.js";
 import { escapeHtml } from "./util.js";
+import { bindViewLinks, viewKind, viewNoteHtml } from "./design-views.js";
 import { onPreferencesChange, preference, setPreference } from "../kit/preferences.js";
 
 // The panel's width is the person's preference, kept by the review app for every port; the width an older page kept in this browser moves there once.
@@ -48,7 +49,7 @@ const NARROW = "(max-width: 720px)";
  * Opening another item replaces the current one. At 720px and below the island opens in `sheet`, a prism-dialog that rises from the bottom edge.
  * `describe(path)` names a file: { label, kind, code }, where code marks a repository file whose path is the subject.
  */
-export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown, mountDiagram = null, onOpenTab, onChange, describe = (path) => ({ label: path.split("/").pop() || path, kind: "File", code: true }) }) {
+export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown, mountDiagram = null, onOpenTab, onOpenClause = null, onChange, describe = (path) => ({ label: path.split("/").pop() || path, kind: "File", code: true }) }) {
   const root = document.getElementById("side-panel");
   const home = { parent: root.parentElement, next: root.nextSibling };
   const source = document.getElementById("side-panel-source");
@@ -138,9 +139,16 @@ export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown
     }
   }
 
+  // A declared design view is named by its question and kind, as its page names it, with the same note above its drawing.
+  function viewHeader(data) {
+    if (!data.view) return;
+    header({ eyebrow: viewKind(data.view), name: data.view.question, detail: null, ref: current.ref });
+  }
+
   function render(data, anchor, { keepScroll = false } = {}) {
     const top = body.scrollTop;
-    body.innerHTML = fileBody(data, { renderMarkdown });
+    viewHeader(data);
+    body.innerHTML = (data.view ? viewNoteHtml(data.view, "view-note side-panel-view-note") : "") + fileBody(data, { renderMarkdown });
     for (const content of body.querySelectorAll(".document-content")) decorateFolds(content, current.folds);
     void drawDiagrams(data, request).then(() => {
       if (keepScroll) body.scrollTop = top;
@@ -212,32 +220,22 @@ export function createSidePanel({ shell, sheet = null, fetchJson, renderMarkdown
     }
   }
 
+  if (onOpenClause) bindViewLinks(body, onOpenClause);
   openButton.addEventListener("click", () => {
     if (current?.ref) onOpenTab(current.ref, current.anchor);
   });
   closeButton.addEventListener("click", close);
 
-  // Dragging the panel's edge sets its width, which the review app keeps as the person's preference.
-  resizer.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    resizer.setPointerCapture(event.pointerId);
-    const right = shell.getBoundingClientRect().right;
-    const move = (next) => applyWidth(right - next.clientX);
-    const stop = (last) => {
-      resizer.removeEventListener("pointermove", move);
-      resizer.removeEventListener("pointerup", stop);
-      resizer.removeEventListener("pointercancel", stop);
-      storeWidth(applyWidth(right - last.clientX));
-    };
-    resizer.addEventListener("pointermove", move);
-    resizer.addEventListener("pointerup", stop);
-    resizer.addEventListener("pointercancel", stop);
+  // Dragging the panel's edge, or moving it with the arrow keys, sets its width, which the review app keeps as the person's preference; a double click returns to the default.
+  resizer.addEventListener("prism-resize", (event) => {
+    const width = applyWidth(event.detail.width);
+    resizer.setAttribute("value", String(width));
+    if (event.detail.done) storeWidth(width);
   });
-  resizer.addEventListener("keydown", (event) => {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    event.preventDefault();
-    const width = root.getBoundingClientRect().width + (event.key === "ArrowLeft" ? 32 : -32);
-    storeWidth(applyWidth(width));
+  resizer.addEventListener("prism-resize-reset", () => {
+    shell.style.removeProperty("--side-panel-width");
+    resizer.removeAttribute("value");
+    void setPreference("sidePanel.width", null).catch(() => {});
   });
 
   return { showFile, showContent, close, refresh, isOpen: () => !root.hidden, body, current: () => current };

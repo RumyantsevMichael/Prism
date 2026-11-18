@@ -5,13 +5,13 @@ import { lstat, mkdir, open, readdir, readlink, realpath, rmdir, unlink } from "
 import path from "node:path";
 import { promisify } from "node:util";
 import { writeAtomically } from "./artifact-store.mjs";
-import { ARTIFACT_MIGRATIONS, ARTIFACT_NAME_FORM, artifactAddress, artifactLocation, malformedArtifactName, repositoryScope, WORKSPACE_SCOPE } from "./artifact-paths.mjs";
+import { ARTIFACT_MIGRATIONS, ARTIFACT_NAME_FORM, artifactAddress, artifactLocation, locationExcess, malformedArtifactName, repositoryScope, WORKSPACE_SCOPE } from "./artifact-paths.mjs";
 import { hasStatus, writtenStatus } from "./artifact-status.mjs";
 import { folderChecks, resolveArtifactFile, resolveLedgerFile, STORE_FILE_BOUNDS, withArtifactStoreLock } from "./record-store.mjs";
 import { scheduleRecordSync } from "./record-store-sync.mjs";
 import { roadmapViewOf } from "./roadmap.mjs";
 import { generatedNotice } from "./projection.mjs";
-import { ARTIFACT_CONTENT_MAX, ARTIFACT_LOCATION_MAX, artifactText, artifactVersion, collidingPath, createMovedArtifacts, pathIndex, recordMovedStatus, seenArtifacts, storedArtifactIn, writeMovedView } from "./store-artifacts.mjs";
+import { ARTIFACT_CONTENT_MAX, artifactText, artifactVersion, collidingPath, createMovedArtifacts, pathIndex, recordMovedStatus, seenArtifacts, storedArtifactIn, writeMovedView } from "./store-artifacts.mjs";
 import { roadmapPaths } from "./workflow-config.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 
@@ -133,7 +133,7 @@ export async function waitingArtifactFiles(root, kinds) {
 /**
  * The files that Git tracks under a checkout's artifact paths and that its work tree holds, other than a skip-worktree entry and those that left says stay, sorted by what a move does with them: { waiting, kept } as counts,
  * or null when Git cannot list them. An assume-unchanged entry and an unmerged path are kept, whatever a ledger lists; an ordinary file is kept when a ledger of the repository lists it as kept and none lists it as moved,
- * unless every such ledger kept it as too_large or not_text and it now holds at most 1 MiB of UTF-8 text; every other file waits for a move to decide on it. It reads the checkout and the store's ledgers, and writes nothing.
+ * unless every such ledger kept it as too_large, not_text, or path_too_long and it now holds at most 1 MiB of UTF-8 text at a location that fits; every other file waits for a move to decide on it. It reads the checkout and the store's ledgers, and writes nothing.
  */
 export async function checkoutArtifactsByMove(root, kinds, { store, repository, left = () => false }) {
   const listing = await checkoutListing(root, kinds);
@@ -142,14 +142,17 @@ export async function checkoutArtifactsByMove(root, kinds, { store, repository, 
   const counts = { waiting: 0, kept: (await heldFiles(root, [...listing.assumed, ...listing.unmerged])).filter((file) => !left(file)).length };
   if (!files.length) return counts;
   const ledger = await ledgersOf(store, repository);
-  const resolvable = new Set(["too_large", "not_text"]);
+  const own = repositoryScope(repository);
+  // A file kept for its size or bytes waits again once it holds at most 1 MiB of UTF-8 text, and one kept for a location that was too long once that location fits, as under an earlier, shorter limit.
+  const resolvable = new Set(["too_large", "not_text", "path_too_long"]);
   await withCheckoutFiles(root, async (access) => {
     for (const file of files) {
       const reasons = ledger.keptFor.get(file);
       let kept = reasons !== undefined && !ledger.movedFrom.has(file);
       if (kept && [...reasons].every((reason) => resolvable.has(reason))) {
-        const read = await access.read(file, ARTIFACT_CONTENT_MAX).catch(() => null);
-        if (read?.bytes && artifactText(read.bytes) !== null) kept = false;
+        const fits = !reasons.has("path_too_long") || locationExcess(artifactLocation(own, artifactAddress(kinds, file))) === null;
+        const content = !reasons.has("too_large") && !reasons.has("not_text") ? true : await access.read(file, ARTIFACT_CONTENT_MAX).then((read) => Boolean(read?.bytes) && artifactText(read.bytes) !== null, () => false);
+        if (fits && content) kept = false;
       }
       counts[kept ? "kept" : "waiting"] += 1;
     }
@@ -502,7 +505,7 @@ async function decideLocally(access, kinds, own, file) {
   if (text === null) return { address, kept: "not_text" };
   // A location that is too long keeps the file whatever the store holds, so the store is never read for it, and a copy there decides nothing.
   const location = artifactLocation(own, address);
-  if (location.length > ARTIFACT_LOCATION_MAX) return { address, kept: "path_too_long", details: { location } };
+  if (locationExcess(location) !== null) return { address, kept: "path_too_long", details: { location } };
   return { address, size, bytes, text, location };
 }
 
@@ -550,7 +553,7 @@ async function decideAndWrite(seen, access, files) {
       const stored = await storedArtifactIn(seen, holder.scope, address);
       if (stored.record?.version !== version) { keep(file, "differs", { location: stored.location }); continue; }
       // A store copy without its status record, as a move interrupted between the two leaves it, gets the written status before the checkout file goes.
-      if (hasStatus(address.kind)) statuses.push({ scope: holder.scope, address, written: writtenStatus(text) });
+      if (hasStatus(address.kind)) statuses.push({ scope: holder.scope, address, written: writtenStatus(text), bytes });
       moved.push({ from: file, to: stored.location, version, size: bytes.length });
       continue;
     }
@@ -570,7 +573,7 @@ async function decideAndWrite(seen, access, files) {
   for (const batch of batches(writes)) {
     for (const item of await createWrites(seen, access, batch, keep, held)) moved.push({ from: item.file, to: item.location, version: item.version, size: item.size });
   }
-  for (const { scope, address, written } of statuses) await recordMovedStatus(seen, scope, address, written);
+  for (const { scope, address, written, bytes } of statuses) await recordMovedStatus(seen, scope, address, written, bytes);
   const name = await writeLedger(seen, ledger, moved, kept);
   return { moved, kept, ledger: name };
 }
@@ -815,9 +818,10 @@ async function pruneCheckoutFolders(access, kinds, removed) {
 }
 
 /**
- * Each tracked file left in the checkout whose text names the former path of a moved file or a file moved earlier, or the configured folder of a kind that lost either, as { file, lines, more },
+ * Each tracked file left in the checkout, apart from the workflow configuration, whose text names the former path of a moved file or a file moved earlier, or the configured folder of a kind that lost either, as { file, lines, more },
  * with at most REFERENCE_LINES_MAX line numbers and the number of its other matching lines, at most REFERENCE_FILES_MAX files, with the count of the rest.
  */
+const WORKFLOW_CONFIG = ".prism/workflow.md";
 async function referencesOf(access, kinds, tracked, movedFiles) {
   const none = { references: [], moreReferences: 0 };
   if (!movedFiles.length) return none;
@@ -827,6 +831,8 @@ async function referencesOf(access, kinds, tracked, movedFiles) {
   const found = [];
   let more = 0;
   for (const file of tracked) {
+    // The workflow configuration names the configured folders as the artifacts' addresses, which stay after the move, so its lines are no reference to update.
+    if (file === WORKFLOW_CONFIG) continue;
     const bytes = (await access.read(file, REFERENCE_BYTES_MAX).catch(() => null))?.bytes ?? null;
     if (bytes === null || bytes.includes(0)) continue;
     const lines = [];
@@ -863,7 +869,7 @@ export function keptExplanation(entry) {
     case "removed_in_store": return `it moved into the store at ${where} before and was removed there since, so the store does not take it back; a person decides whether to write it again with update_artifact or to remove the checkout's copy`;
     case "name_invalid": return `its path breaks the artifact name form, so the store does not take it: ${ARTIFACT_NAME_FORM}; rename it to that form, and a later first access moves it`;
     case "name_conflict": return `it differs only in letter case from ${shownPath(entry.other)}, and the two would be one file on a file system that ignores letter case; rename one of them, and a later first access moves it`;
-    case "path_too_long": return `its location ${where} would hold ${entry.location.length} characters, above the ${ARTIFACT_LOCATION_MAX} that a location may hold; give it a shorter path, and a later first access moves it`;
+    case "path_too_long": return `its location ${where} ${locationExcess(entry.location) ?? "was too long when the move ran"}, so some machine could not write it or its comments; give it a shorter path, and a later first access moves it`;
     case "too_large": return `it holds ${entry.size} bytes, above the ${ARTIFACT_CONTENT_MAX} bytes (1 MiB) that an artifact may hold, so the store does not take it; keep it in the checkout, or make it smaller and commit it for a later first access to move`;
     case "not_text": return "it is not UTF-8 text, which the artifact tools read and write, so the store does not take it; keep it in the checkout";
     case "view_differs": return `it differs from the roadmap view at ${where} that the store generates from the roadmap record; put content that the roadmap record lacks into the record through update_roadmap before a person removes the file`;

@@ -2,10 +2,11 @@
 // Run one shard of the server tests, so CI can spread them over several runners that finish at about the same time.
 // Usage: node scripts/test-shard.mjs --shard k/n [--list] [-- any node --test option ...]
 //        node scripts/test-shard.mjs --record [-- any node --test option ...]
-// Shards are balanced by the file durations in test/server/durations.json, not by file order, since a few browser files take most of the time.
+// Shards are balanced by recorded file durations, not by file order, since a few browser files take most of the time.
+// Each system reads its own table, test/server/durations.<platform>.json, when there is one, since Windows spends far more of its time in Git and browser files than Linux does; any other system reads test/server/durations.json.
 // A file without a recorded duration counts as the median one, so a new test file needs no update to run; --record runs every file and rewrites the durations.
 import { spawn } from "node:child_process";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +15,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 export const TEST_DIRECTORY = "test/server";
 export const DURATIONS = path.join(TEST_DIRECTORY, "durations.json");
+
+// The table a system records into and balances by: its own table, or the shared one where the system has none.
+export function durationsFile(platform = process.platform, root = ROOT) {
+  const own = path.join(TEST_DIRECTORY, `durations.${platform}.json`);
+  return existsSync(path.join(root, own)) ? own : DURATIONS;
+}
 
 export function testFiles(root = ROOT) {
   return readdirSync(path.join(root, TEST_DIRECTORY)).filter((name) => name.endsWith(".test.mjs")).sort();
@@ -42,7 +49,7 @@ export function shardFiles(files, durations, parts) {
 
 function readDurations(root = ROOT) {
   try {
-    return JSON.parse(readFileSync(path.join(root, DURATIONS), "utf8"));
+    return JSON.parse(readFileSync(path.join(root, durationsFile(process.platform, root)), "utf8"));
   } catch (error) {
     if (error.code === "ENOENT") return {};
     throw error;
@@ -68,8 +75,9 @@ async function record(options) {
       durations[file] = Math.max(1, Math.round(seconds));
     }
     const sorted = Object.fromEntries(Object.entries(durations).sort(([a], [b]) => a.localeCompare(b)));
-    writeFileSync(path.join(ROOT, DURATIONS), `${JSON.stringify(sorted, null, 2)}\n`);
-    process.stdout.write(`Recorded the durations of ${Object.keys(sorted).length} files in ${DURATIONS}.\n`);
+    const table = durationsFile();
+    writeFileSync(path.join(ROOT, table), `${JSON.stringify(sorted, null, 2)}\n`);
+    process.stdout.write(`Recorded the durations of ${Object.keys(sorted).length} files in ${table}.\n`);
     return code;
   } finally {
     await rm(directory, { recursive: true, force: true });

@@ -13,6 +13,7 @@
     "validate:sdm": "node scripts/validate-sdm.mjs",
     "render": "bun scripts/render-diagrams.ts",
     "stage:native": "node scripts/native-build/stage.mjs",
-    "check:licenses": "node scripts/check-dependency-licenses.mjs"
+    "check:licenses": "node scripts/check-dependency-licenses.mjs",
+    "check:test-waits": "node scripts/check-test-waits.mjs"
   }
 }

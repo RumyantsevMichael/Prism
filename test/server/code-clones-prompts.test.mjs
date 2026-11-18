@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -170,4 +170,77 @@ test("the page says a binary code file is not shown, not that it was moved or de
   assert.match(text, /This file is not shown/);
   assert.match(text, /binary file/);
   assert.doesNotMatch(text, /moved or deleted/);
+});
+
+// A program at folder/name that records the arguments of each call to a log in logs, one call per line, and fails as an unreachable SSH host does.
+async function recordingProgram(folder, name, logs) {
+  const log = path.join(logs, `${name}.log`);
+  const program = path.join(folder, name);
+  await writeFile(program, `#!/bin/sh\necho "$*" >> '${log}'\nexit 255\n`);
+  await chmod(program, 0o755);
+  return { program, calls: async () => (await readFile(log, "utf8").catch(() => "")).split("\n").filter(Boolean) };
+}
+
+// Set the SSH variables of the process for one test, and put the person's own values back after it.
+function sshVariables(context, values) {
+  const names = ["GIT_SSH_COMMAND", "GIT_SSH", "GIT_SSH_VARIANT"];
+  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  for (const name of names) if (values[name] === undefined) delete process.env[name]; else process.env[name] = values[name];
+  context.after(() => { for (const [name, value] of Object.entries(saved)) if (value === undefined) delete process.env[name]; else process.env[name] = value; });
+}
+
+// What a code clone of an SSH remote passes to each SSH program the person may have set: the variant's batch option after their own options, or nothing it might not take.
+const SSH_CASES = [
+  { title: "a GIT_SSH_COMMAND naming ssh", name: "ssh", set: (program) => ({ GIT_SSH_COMMAND: `${program} -o ConnectTimeout=5` }), expect: /^-o ConnectTimeout=5 -o BatchMode=yes .*git@ssh\.invalid/ },
+  { title: "a GIT_SSH naming ssh in a folder with a space and a quote", name: "ssh", folder: "it's here", set: (program) => ({ GIT_SSH: program }), expect: /^-o BatchMode=yes .*git@ssh\.invalid/ },
+  { title: "a GIT_SSH naming plink", name: "plink", set: (program) => ({ GIT_SSH: program }), expect: /^-batch .*git@ssh\.invalid/ },
+  { title: "a wrapper that GIT_SSH_VARIANT names as ssh", name: "wrapper", set: (program) => ({ GIT_SSH_COMMAND: program, GIT_SSH_VARIANT: "ssh" }), expect: /^-o BatchMode=yes .*git@ssh\.invalid/ },
+  { title: "a simple wrapper", name: "wrapper", set: (program) => ({ GIT_SSH_COMMAND: program, GIT_SSH_VARIANT: "simple" }), expect: /^git@ssh\.invalid git-upload-pack/ },
+  { title: "a core.sshCommand naming ssh", name: "ssh", configure: (program) => ({ "core.sshCommand": `${program} -o ConnectTimeout=5` }), expect: /^-o ConnectTimeout=5 -o BatchMode=yes .*git@ssh\.invalid/ },
+  { title: "a core.sshCommand, which Git runs instead of GIT_SSH", name: "ssh", set: () => ({ GIT_SSH: "/bin/false" }), configure: (program) => ({ "core.sshCommand": program }), expect: /^-o BatchMode=yes .*git@ssh\.invalid/ },
+  { title: "a core.sshCommand wrapper that ssh.variant names as simple", name: "wrapper", configure: (program) => ({ "core.sshCommand": program, "ssh.variant": "simple" }), expect: /^git@ssh\.invalid git-upload-pack/ },
+  { title: "a GIT_SSH naming a wrapper that ssh.variant names as plink", name: "wrapper", set: (program) => ({ GIT_SSH: program }), configure: () => ({ "ssh.variant": "plink" }), expect: /^-batch .*git@ssh\.invalid/ },
+  { title: "a GIT_SSH_COMMAND, which Git runs instead of core.sshCommand", name: "ssh", set: (program) => ({ GIT_SSH_COMMAND: program }), configure: () => ({ "core.sshCommand": "/bin/false" }), expect: /^-o BatchMode=yes .*git@ssh\.invalid/ }
+];
+
+// Set SSH settings in the person's global Git configuration for one test, and take them out after it.
+function sshSettings(context, values) {
+  for (const [key, value] of Object.entries(values)) git(os.tmpdir(), "config", "--global", key, value);
+  context.after(() => { for (const key of Object.keys(values)) git(os.tmpdir(), "config", "--global", "--unset-all", key); });
+}
+
+for (const { title, name, folder, set = () => ({}), configure = () => ({}), expect } of SSH_CASES) {
+  test(`a code clone keeps SSH from asking with ${title}`, { skip: process.platform === "win32" }, async (context) => {
+    const parent = await folders(context);
+    const where = path.join(parent, folder ?? "bin");
+    await mkdir(where);
+    const ssh = await recordingProgram(where, name, parent);
+    sshVariables(context, set(ssh.program));
+    sshSettings(context, configure(ssh.program));
+    const code = await createCodeClones({ directory: path.join(parent, "app") });
+    assert.equal((await code.enable("w1", "api", "ssh://git@ssh.invalid/repo.git")).state, "unreachable");
+    const calls = (await ssh.calls()).filter((call) => !/(^| )-G( |$)/.test(call));
+    assert.notEqual(calls.length, 0, "Git ran the person's SSH program");
+    for (const call of calls) assert.match(call, expect);
+  });
+}
+
+// A file a blobless clone opens is fetched then, through the same SSH command as a fetch, so that fetch never asks either.
+test("a code clone opens a file through the person's core.sshCommand in batch mode", { skip: process.platform === "win32" }, async (context) => {
+  const parent = await folders(context);
+  const log = path.join(parent, "ssh.log");
+  // An SSH program that records its arguments and runs the remote's command here, as the host would.
+  const program = path.join(parent, "ssh");
+  await writeFile(program, `#!/bin/sh\necho "$*" >> '${log}'\nfor last; do :; done\neval "set -- $last"\nexec git upload-pack "$2"\n`);
+  await chmod(program, 0o755);
+  sshVariables(context, {});
+  sshSettings(context, { "core.sshCommand": program });
+  const code = await createCodeClones({ directory: path.join(parent, "app") });
+  assert.equal((await code.enable("w1", "api", `ssh://git@ssh.invalid${path.join(parent, "repo.git")}`)).state, "on");
+  const cloned = (await readFile(log, "utf8")).split("\n").filter(Boolean).length;
+  const read = await code.file("w1", "api", { branch: "main", path: "src/total.js" });
+  assert.equal(read?.content, "export const total = 1;\n");
+  const calls = (await readFile(log, "utf8")).split("\n").filter(Boolean);
+  assert.ok(calls.length > cloned, "opening the file fetched it over SSH");
+  for (const call of calls) assert.match(call, /^-o BatchMode=yes .*git@ssh\.invalid/);
 });

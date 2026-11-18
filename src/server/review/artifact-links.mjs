@@ -102,3 +102,17 @@ function resolveLink(href, { location, artifact, own, kinds, has }) {
   }
   return null;
 }
+
+// The project-relative targets of a Markdown document's links, resolved against the document's folder, without their anchors.
+export function relativeLinkTargets(source, documentPath) {
+  const targets = [];
+  for (const match of (source ?? "").matchAll(/!?\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g)) {
+    const raw = match[1].split("#")[0];
+    if (!raw || /^[a-z][a-z0-9+.-]*:/i.test(raw) || raw.startsWith("/")) continue;
+    let decoded = raw;
+    try { decoded = decodeURIComponent(raw); } catch { /* keep the raw target */ }
+    const target = path.posix.normalize(path.posix.join(path.posix.dirname(documentPath), decoded));
+    if (!target.startsWith("../")) targets.push(target);
+  }
+  return targets;
+}

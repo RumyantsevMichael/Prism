@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { skip } from "./fixtures/kit-browser.mjs";
+import { settled } from "./fixtures/wait.mjs";
 import { choosePlace, item, open, placesDemo, reviewUrl, row as rowOf, settledOn, shownRef, sidebar, SLICE, tabs } from "./fixtures/places-browser.mjs";
 
 // What the review app did before the places must keep working with them: shortcuts, tabs, banners, and every page within reach without the palette.
 
 const palette = (page) => page.getByRole("dialog", { name: "Command palette" });
 
-test("clause 27: Ctrl K, Cmd K, the search button, and / outside a field open the palette, and Ctrl+, opens Appearance", { skip, timeout: 60000 }, async (context) => {
+test("clause 27: Ctrl K, Cmd K, the search button, and / outside a field open the palette, and Ctrl+, opens Settings", { skip, timeout: 60000 }, async (context) => {
   const { base, browser } = await placesDemo(context);
   const page = await open(browser, base, "attention");
   for (const open of [() => page.keyboard.press("Control+k"), () => page.keyboard.press("Meta+k"), () => page.locator("header").getByRole("button", { name: /^Search or jump to/ }).click(), () => page.keyboard.press("/")]) {
@@ -19,13 +20,14 @@ test("clause 27: Ctrl K, Cmd K, the search button, and / outside a field open th
     await palette(page).waitFor({ state: "hidden", timeout: 3000 });
   }
   await page.keyboard.press("Control+,");
-  const menu = page.getByRole("menu", { name: /Appearance/ });
-  await menu.waitFor({ timeout: 3000 });
-  assert.equal(await menu.isVisible(), true, "Ctrl+, opened Appearance");
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await settings.waitFor({ timeout: 3000 });
+  assert.equal(await settings.isVisible(), true, "Ctrl+, opened Settings");
   await page.keyboard.press("Escape");
-  await page.locator("#statusbar").getByRole("button", { name: /Appearance/ }).click();
-  await menu.waitFor({ timeout: 3000 });
-  assert.equal(await menu.isVisible(), true, "the status bar's Appearance button opened it");
+  await settings.waitFor({ state: "hidden", timeout: 3000 });
+  await page.locator("#statusbar").getByRole("button", { name: "Settings", exact: true }).click();
+  await settings.waitFor({ timeout: 3000 });
+  assert.equal(await settings.isVisible(), true, "the status bar's Settings button opened it");
   assert.deepEqual(page.errors, []);
 });
 
@@ -44,19 +46,15 @@ test("clause 27: the strip of tabs keeps its preview, Keep, close, middle-click 
   assert.deepEqual(await tabs(page), ["initiative:activity-reports(p)", "decisions*"], "Ctrl-click kept a tab");
   await page.getByRole("tab", { name: /^Export activity reports/ }).click();
   await page.getByRole("tablist", { name: "Open artifacts" }).getByRole("button", { name: "Keep", exact: true }).click();
-  await page.waitForTimeout(400);
-  assert.deepEqual(await tabs(page), ["initiative:activity-reports*", "decisions"], "Keep kept the preview tab");
+  assert.deepEqual(await settled(() => tabs(page), ["initiative:activity-reports*", "decisions"]), ["initiative:activity-reports*", "decisions"], "Keep kept the preview tab");
   await page.reload();
   // The page draws the tabs once the review server answers with the session, which takes longer than a second on a slow disk.
   await page.waitForFunction(() => document.querySelectorAll("#open-tabs prism-doc-tab").length > 0, null, { timeout: 15000 }).catch(() => {});
-  await page.waitForTimeout(400);
-  assert.deepEqual(await tabs(page), ["initiative:activity-reports*", "decisions"], "the tabs came back after a reload");
+  assert.deepEqual(await settled(() => tabs(page), ["initiative:activity-reports*", "decisions"]), ["initiative:activity-reports*", "decisions"], "the tabs came back after a reload");
   await page.getByRole("tab", { name: /^Decisions/ }).click({ button: "middle" });
-  await page.waitForTimeout(400);
-  assert.deepEqual(await tabs(page), ["initiative:activity-reports*"], "a middle click closed the tab");
+  assert.deepEqual(await settled(() => tabs(page), ["initiative:activity-reports*"]), ["initiative:activity-reports*"], "a middle click closed the tab");
   await page.getByRole("tablist", { name: "Open artifacts" }).getByRole("button", { name: /^Close/ }).first().click();
-  await page.waitForTimeout(400);
-  assert.deepEqual(await tabs(page), [], "the close button closed the last tab");
+  assert.deepEqual(await settled(() => tabs(page), []), [], "the close button closed the last tab");
   assert.deepEqual(page.errors, []);
 });
 
@@ -127,9 +125,11 @@ test("clause 28: every page the app served before is reachable from the rail, a 
   await page.locator("#sidebar").getByRole("treeitem").first().click();
   await settledOn(page, "attention");
   reached.push(await shownRef(page));
-  await page.locator("#statusbar").getByRole("button", { name: /Appearance/ }).click();
+  await page.locator("#statusbar").getByRole("button", { name: "Settings", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await settings.getByRole("treeitem", { name: "About Prism" }).click();
   const catalog = page.context().waitForEvent("page", { timeout: 5000 });
-  await page.getByRole("menuitem", { name: /Component catalog/ }).click();
+  await settings.getByRole("button", { name: /Open the catalog/ }).click();
   const opened = await catalog;
   await opened.waitForURL(/\/kit\/catalog/, { timeout: 15000 });
   assert.match(opened.url(), /\/kit\/catalog/);

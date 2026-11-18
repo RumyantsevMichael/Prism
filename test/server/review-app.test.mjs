@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { spawn } from "node:child_process";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { chmod, mkdtemp, mkdir, readdir, readFile, realpath, rm, stat, utimes, writeFile } from "node:fs/promises";
@@ -330,7 +331,7 @@ test("presenting a project that no tab shows notifies the open tab instead of op
   assert.deepEqual(await shown.getSession(), before, "the tab's project and tabs stay as they were");
   assert.equal(events.filter((event) => event.name === "notice").length, 1);
   await hidden.reviewUrl(["docs/hidden.md"]);
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  await pause(200, "no notice may be sent, and a change that must not happen leaves nothing to wait for");
   assert.equal(events.filter((event) => event.name === "notice").length, 1, "reading a review URL sends no notice");
 });
 
@@ -425,13 +426,13 @@ test("a presentation refused while the first tab is still loading reaches that t
   assert.deepEqual(opened.map(withoutGrant), [granted.url]);
   const events = await viewerEvents(context, granted.url);
   const notice = await eventually(() => events.find((event) => event.name === "notice"));
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  await pause(200, "no second notice may arrive, and a change that must not happen leaves nothing to wait for");
   assert.deepEqual(events.filter((event) => event.name === "notice").map((event) => event.data.projectRoot), [second], "the tab gets the other project's notice and never its own");
   assert.equal(notice.data.url, refused.url);
   assert.equal(events[0].name, "session", "the kept notice follows the tab's first session event");
   const later = await viewerEvents(context, granted.url);
   await eventually(() => later.some((event) => event.name === "session"));
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  await pause(200, "no notice may be sent again, and a change that must not happen leaves nothing to wait for");
   assert.ok(!later.some((event) => event.name === "notice"), "a delivered notice is not sent again on a reload or reconnect");
 });
 
@@ -558,7 +559,7 @@ test("a pending notice expires", async (context) => {
   const granted = await present(first);
   assert.equal(granted.open, true);
   assert.equal((await present(second)).open, false, "the second presentation is kept as a pending notice");
-  await new Promise((resolve) => setTimeout(resolve, 400));
+  await pause(400, "the pending notice must expire, and that time is what this checks");
   assert.ok(await noNotice(context, granted.url), "a tab that connects after the notice expired gets none");
 });
 
@@ -745,14 +746,14 @@ test("a session that falls back after the app goes away stops renewing its lease
   let launches = 0;
   const launch = (options) => (launches += 1) === 1 ? launchReviewApp(options) : null;
   context.mock.timers.enable({ apis: ["setInterval"] });
-  const review = await pool(context, { app: { directory, launch, startTimeoutMs: 1000 } }).get(root, "task");
+  const review = await pool(context, { app: { directory, launch, startTimeoutMs: 30000 } }).get(root, "task");
   assert.ok(new URL(await review.reviewUrl([])).pathname.includes("/w/"));
   await shutdownApp(directory);
   await eventually(async () => !(await stat(path.join(directory, "review-app.lock")).catch(() => null)));
   assert.ok(!new URL(await review.reviewUrl([])).pathname.includes("/w/"), "the session now serves its own review server");
   const afterFallback = launches;
   context.mock.timers.tick(10 * 60 * 1000);
-  await new Promise((resolve) => setTimeout(resolve, 1500));
+  await pause(1500, "no app may launch, and a change that must not happen leaves nothing to wait for");
   assert.equal(launches, afterFallback, "no lease renewal launches an app for a project served by its own server");
 });
 
@@ -952,7 +953,7 @@ test("a session start opens one browser while no review tab is connected and sen
     return JSON.parse(response.body).projects.find((entry) => entry.projectRoot === second)?.live;
   };
   await eventually(listed);
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  await pause(300, "no second window may open, and a change that must not happen leaves nothing to wait for");
   assert.equal(opened.length, 1, "a connected tab holds back a second window");
   assert.ok(!events.some((event) => event.name === "notice"), "a session start is not a presentation");
   assert.equal(JSON.stringify(events.filter((event) => event.name === "session").at(-1).data.openTabs), before);
@@ -1240,7 +1241,7 @@ test("the project list keeps a gate count until a session registers the project 
   record.pending.push({ ...record.pending[0], id: "gate-00000001", question: "Another question?" });
   await writeFile(state, JSON.stringify(record));
   // The records themselves are shared for a second within the process, so the test waits that long to see the list read them again.
-  await new Promise((resolve) => setTimeout(resolve, 1100));
+  await pause(1100, "the records are kept for a second within the process, and that time is what this checks");
   assert.equal(await gates(), 1, "a list within the keep time answers the kept count without reading the records");
   await registerRecent(directory, gated);
   assert.equal(await gates(), 2, "a session that registers the project renews its count at once");

@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { appendFile, lstat, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { writeAtomically } from "../workflow/artifact-store.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
@@ -18,6 +18,11 @@ const FALLBACK_LOG_BYTES = 256 * 1024;
 export function reviewAppDirectory(env = process.env) {
   if (env.PRISM_REVIEW_APP_DIR) {
     return path.resolve(env.PRISM_REVIEW_APP_DIR);
+  }
+  // The person's folder holds the review app's state and every managed store clone, so a process under Node's test runner, and every server or hook it spawns with its environment,
+  // uses one temporary folder of its own instead, and no test, run by CI or by hand, can sync or change a real store's clone.
+  if (env.NODE_TEST_CONTEXT) {
+    return path.join(tmpdir(), `prism-test-app-${process.getuid?.() ?? "user"}`);
   }
   if (process.platform === "darwin") {
     return path.join(homedir(), "Library", "Application Support", "Prism");

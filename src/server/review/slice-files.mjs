@@ -43,8 +43,10 @@ export async function sliceFiles(projectRoot, initiative, slice, code = null) {
     message,
     ...(run.filesTruncated === true ? { filesTruncated: true } : {})
   });
-  const state = code && repository ? (await code.state(repository).catch(() => null))?.state ?? "off" : "off";
-  if (state !== "on") return answer(null, null, `The code of ${repository ?? "the slice's repository"} is not available on this machine, because its code content is ${state === "unreachable" ? "unreachable" : "off"}, so the review app cannot show the slice's files.`);
+  // An unreachable repository still answers from the clone it fetched last, so only code content that is off or never cloned withholds the files.
+  const known = code && repository ? await code.state(repository).catch(() => null) : null;
+  const state = known?.state ?? "off";
+  if (state === "off" || (state === "unreachable" && !known.branches?.length)) return answer(null, null, `The code of ${repository ?? "the slice's repository"} is not available on this machine, because its code content is ${state === "unreachable" ? "unreachable" : "off"}, so the review app cannot show the slice's files.`);
   const paths = recorded.map((file) => file.path);
   for (const [commit, source] of [[verified, "verified"], [shipped, "ship"]]) {
     if (!commit || !(await code.reachable(repository, commit))) continue;

@@ -109,7 +109,9 @@ export function designProblems(design) {
   if (design === undefined) return [];
   if (design === null || typeof design !== "object" || Array.isArray(design)) return ["design must be an object."];
   const problems = [];
-  if (Object.keys(design).some((key) => !["acceptedAt", "frozenTests", "review", "baselineId", "staged", "startTree", "startRecordedAt", "startDeclaration"].includes(key))) problems.push("design holds only acceptedAt, frozenTests, review, baselineId, staged, startTree, startRecordedAt, and startDeclaration.");
+  if (Object.keys(design).some((key) => !["acceptedAt", "frozenTests", "review", "views", "baselineId", "staged", "startTree", "startRecordedAt", "startDeclaration"].includes(key))) problems.push("design holds only acceptedAt, frozenTests, review, views, baselineId, staged, startTree, startRecordedAt, and startDeclaration.");
+  // The views of the slice's own folder as the design check counted them, with whether each is dense.
+  if (design.views !== undefined && (!Array.isArray(design.views) || design.views.some((item) => !isText(item?.path) || !isText(item?.kind) || !Number.isInteger(item?.elements) || !Number.isInteger(item?.relations) || typeof item?.dense !== "boolean"))) problems.push("design.views must list { path, kind, elements, relations, dense } entries.");
   if (design.staged !== undefined && design.staged !== true) problems.push("design.staged must be true when present.");
   // The start content is the Git tree a started slice's verification compares with, to find the changes that leave its component,
   // with the time Prism recorded it and the ## Components declaration in force then, which classifies those changes.

@@ -2,11 +2,11 @@ import { createServer } from "node:http";
 import { arrangeGroups, GROUP_LIMIT, groupNameOf, joinGroup } from "./public/views/tab-groups.js";
 import { randomBytes } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { readFile, readdir, realpath, stat } from "node:fs/promises";
+import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { PLUGIN_ROOT } from "../plugin-root.mjs";
+import { PLUGIN_ROOT, pluginVersion } from "../plugin-root.mjs";
 import { CHANGE_MAP_FILES, getChangeMap } from "../conservation/change-map.mjs";
 import { conservationStore } from "../conservation/conservation-store.mjs";
 import { listComponents } from "../workflow/components.mjs";
@@ -21,7 +21,7 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { entityContext, entityExists, forgetWorkspace, loadClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
+import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, loadAttention, loadClaims, loadDeclaredView, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
 import { shippedCommit, sliceFiles } from "./slice-files.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
@@ -59,6 +59,11 @@ function isInside(root, target) {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+// A resolved file is served only inside its root and never from a Git folder there, so a tracked symlink cannot show what the checkout's .git holds.
+function servableFrom(root, resolved) {
+  return isInside(root, resolved) && !path.relative(root, resolved).split(path.sep).some((segment) => segment.toLowerCase() === ".git");
+}
+
 async function resolveProjectFile(projectRoot, requestedPath) {
   if (!requestedPath || path.isAbsolute(requestedPath)) {
     throw new Error("The artifact path must be relative to the project root.");
@@ -69,8 +74,8 @@ async function resolveProjectFile(projectRoot, requestedPath) {
     throw new Error("The artifact path leaves the project root.");
   }
   const resolved = await realpath(candidate);
-  if (!isInside(root, resolved)) {
-    throw new Error("The artifact resolves outside the project root.");
+  if (!servableFrom(root, resolved)) {
+    throw new Error("The artifact resolves outside the project root or into its Git folder.");
   }
   return resolved;
 }
@@ -144,12 +149,16 @@ export async function listSourceFiles(projectRoot) {
     return !SECRET_NAME.test(name) && !BINARY_EXTENSION.test(name);
   });
   const files = [];
+  const root = await realpath(projectRoot).catch(() => path.resolve(projectRoot));
   let next = 0;
   const check = async () => {
     while (next < candidates.length) {
       const file = candidates[next++];
       try {
-        const metadata = await stat(path.join(projectRoot, file));
+        const absolute = path.join(projectRoot, file);
+        // A symlink is listed only when it resolves to a file the review would serve, never into .git or out of the checkout.
+        if ((await lstat(absolute)).isSymbolicLink() && !servableFrom(root, await realpath(absolute))) continue;
+        const metadata = await stat(absolute);
         if (metadata.isFile() && metadata.size <= SOURCE_SIZE_LIMIT) files.push(file);
       } catch {
         // A file deleted after git listed it is skipped.
@@ -1095,6 +1104,10 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const entries = await workspace.code.tree(repository, folder);
       if (entries === null) off();
       else sendJson(response, 200, { repository, folder, entries });
+    } else if (route === "/api/code/compare") {
+      const compared = await workspace.code.compare(repository, url.searchParams.get("base") || null);
+      if (compared === null) sendJson(response, 404, { code: "branch_unknown", message: "The clone of that repository holds no such branch, or its code content is off." });
+      else sendJson(response, 200, { repository, ...compared });
     } else if (route === "/api/code/file") {
       const read = await workspace.code.file(repository, { branch: url.searchParams.get("branch"), commit: url.searchParams.get("commit"), path: url.searchParams.get("path") });
       if (read?.withheld) sendJson(response, 404, withheldAnswer(read));
@@ -1245,6 +1258,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     const answer = { ref, path: ref, location, scope, content, modifiedAt: read.modifiedAt, artifact, links, unresolvedLinks: links.filter((link) => link.resolved === false).length };
     if (path.posix.extname(location).toLowerCase() === ".json") Object.assign(answer, { diagrams: [] }, await loadJsonArtifact(projectRoot, location, content));
     else answer.diagrams = await storeDiagrams(location, content, links, held);
+    const view = read.path ? await loadDeclaredView(projectRoot, read.path).catch(() => null) : null;
+    if (view) answer.view = view;
     send(response, 200, JSON.stringify(answer), "application/json; charset=utf-8");
   }
 
@@ -1424,9 +1439,10 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   // A page's reads resolve the record store and its folders once per request; the event streams stay open for the page's life, so they read afresh.
+  // A workspace's page reads every scope's store artifacts in its libraries, and a checkout's own page reads the checkout's paths.
   function handle(request, response, route, url) {
-    if (request.method !== "GET" || route.startsWith("/api/events")) return serve(request, response, route, url);
-    return withRecordReads(() => serve(request, response, route, url));
+    const read = () => request.method !== "GET" || route.startsWith("/api/events") ? serve(request, response, route, url) : withRecordReads(() => serve(request, response, route, url));
+    return workspace ? asWorkspaceView(read) : read();
   }
 
   async function serve(request, response, route, url) {
@@ -1468,8 +1484,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const checkout = workspace && await isStoreWithoutCheckout(projectRoot) ? null : await readWorkspaceIdentity(projectRoot);
       const named = workspace ? { workspace: await workspace.describe(), checkout, storeRefs: await storeArtifactRefs(projectRoot), sync: await workspace.sync?.() ?? null, repositories: await codeRepositories() } : { workspace: checkout };
       const scoped = storeIndex ? { artifactScopes: storeIndex.artifactScopes, scopes: storeIndex.scopes, ...(storeIndex.scopeFilter ? { scopeFilter: storeIndex.scopeFilter, unknownScopes: storeIndex.unknownScopes } : {}), notes: storeIndex.notes } : { artifactScopes: await listArtifactScopes(projectRoot) };
-      send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, ...scoped, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
-    } else if (["/api/code/tree", "/api/code/file", "/api/code/components"].includes(route) && request.method === "GET") {
+      send(response, 200, JSON.stringify({ projectRoot, ...named, artifacts, ...scoped, sources, navigation: await loadNavigation(projectRoot), recordStore: await describeRecordStore(projectRoot).then(async (store) => ({ ...store, workspaceName: store.kind === "project" ? null : await readWorkspaceName(projectRoot), ...await checkoutArtifactsOf(projectRoot, store) })).catch(() => null), storeSync: await recordSyncStatus(projectRoot), ...snapshot, missingTabs, version: appVersion ?? pluginVersion(), ...(privateServer ? { privateServer } : {}) }), "application/json; charset=utf-8");
+    } else if (["/api/code/tree", "/api/code/compare", "/api/code/file", "/api/code/components"].includes(route) && request.method === "GET") {
       await serveCode(response, route, url);
     } else if (route === "/api/slice-files" && request.method === "GET") {
       const ref = `slice:${url.searchParams.get("initiative") ?? ""}/${url.searchParams.get("slice") ?? ""}`;
@@ -1547,7 +1563,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         return;
       }
       if (ref === "code" && workspace) {
-        sendJson(response, 200, { ref, kind: "code", data: { repositories: await codeRepositories() } });
+        // The page leaves out when each clone was last fetched, so a fetch that brings nothing new does not redraw the page the person is reading.
+        const repositories = (await codeRepositories()).map(({ name, code: { fetchedAt, ...code } }) => ({ name, code }));
+        sendJson(response, 200, { ref, kind: "code", data: { repositories } });
         return;
       }
       const entity = await loadEntity(projectRoot, ref, { intelligenceDirectories: intelligenceDirectories() });
@@ -1557,6 +1575,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         entity.presence = await slicePresence(projectRoot, entity.data.id, entity.data.slug, { reachable: code ? code.reachable : undefined, shipped: await shippedCommit(projectRoot, entity.data.id, entity.data.slug) });
       }
       send(response, 200, JSON.stringify(entity), "application/json; charset=utf-8");
+    } else if (route === "/api/attention" && request.method === "GET") {
+      // The count of waiting questions alone, which a page in a background tab reads to raise its desktop notification.
+      send(response, 200, JSON.stringify({ gates: (await loadAttention(projectRoot)).gateCount }), "application/json; charset=utf-8");
     } else if (route === "/api/claims" && request.method === "GET") {
       send(response, 200, JSON.stringify(await loadClaims(projectRoot)), "application/json; charset=utf-8");
     } else if (route === "/api/evidence") {
@@ -1627,7 +1648,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         send(response, 404, "The file is not available for review.");
         return;
       }
-      send(response, 200, JSON.stringify(loaded), "application/json; charset=utf-8");
+      // A design view that its folder declares carries its kind, question, clauses, and governing contract.
+      const view = await loadDeclaredView(projectRoot, artifactPath).catch(() => null);
+      send(response, 200, JSON.stringify(view ? { ...loaded, view } : loaded), "application/json; charset=utf-8");
     } else if (wantsPage(request) && !/^\/(api|kit|styles|views|vendor)\//.test(route)) {
       // A page address the app no longer has, such as one from an earlier release, opens the project's start page instead of a line of text.
       response.writeHead(302, { Location: `${baseUrl}/`, "Cache-Control": "no-store" });

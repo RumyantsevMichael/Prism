@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { closeServers, cloneOf, configure, git, prismServer, repository, snapshot, storeFolder } from "./fixtures/repository-checkouts.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { defer } from "./fixtures/teardown.mjs";
 
 // Git runs with a private home and configuration, a fixed identity, and only local repositories; each test has its own Prism application folder.
@@ -63,7 +64,7 @@ test("a server that learns its checkout from its first tool call records it then
   const feature = await realpath(path.join(place.parent, "api-feature"));
   const clone = await cloneOf(api, place.parent, "api-clone", {});
   const codex = await prismServer(context, web, { appFolder: place.app, hostRoot: false });
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await pause(1000, "nothing may be recorded, and a change that must not happen leaves nothing to wait for");
   assert.deepEqual(await entries(place), [], "a server that has not seen its checkout records nothing");
   ok(await codex.call("get_roadmap"));
   for (const checkout of [api, feature, clone]) ok(await (await prismServer(context, checkout, { appFolder: place.app, hostRoot: false })).call("get_roadmap"));

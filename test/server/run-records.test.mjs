@@ -89,9 +89,11 @@ async function claudeSession(context, { root, dataDirectory, sessionId, baseMs }
   await writeFile(rootTranscript, "");
   await writeFile(subagentTranscript, "");
   const time = clock(baseMs);
+  // These tests check what a finished run records, not the hook's time limit, so a slow runner must not leave a run pending.
   const hook = (input) => recordSessionTrace({
     input: Readable.from([JSON.stringify({ session_id: sessionId, cwd: root, transcript_path: rootTranscript, ...input, timestamp: time(input.at) })]),
-    environment: { CLAUDE_PLUGIN_DATA: dataDirectory, CLAUDE_PROJECT_DIR: root }
+    environment: { CLAUDE_PLUGIN_DATA: dataDirectory, CLAUDE_PROJECT_DIR: root },
+    finalizationBudgetMs: 60 * 1000
   });
   const message = (file, { id, at, usage, agent = null }) => appendFile(file, line({
     type: "assistant",

@@ -20,7 +20,13 @@ export function writeEvent(response, event, data) {
   response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
+// The responses that are event streams, which stay open while their page does.
+const streams = new WeakSet();
+/** Whether a response is an event stream, whose length tells nothing about how fast the app answers. */
+export const isEventStream = (response) => streams.has(response);
+
 export function openEventStream(response, onGone, heartbeatMs = HEARTBEAT_MS) {
+  streams.add(response);
   response.writeHead(200, STREAM_HEADERS);
   response.flushHeaders();
   const heartbeat = setInterval(() => {

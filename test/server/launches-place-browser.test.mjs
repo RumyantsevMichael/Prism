@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { launch as launchBrowser, openPage, reviewUrl, serveProject, skip, waitForView } from "./fixtures/kit-browser.mjs";
+import { settled } from "./fixtures/wait.mjs";
 import { CODEX_THREAD, INITIATIVE, launchFixture, waitFor } from "./fixtures/launched-sessions.mjs";
 
 // The Launched sessions place of the real review page: one row per session on this computer with its initiative, host, start,
@@ -49,8 +50,7 @@ test("the place lists each launched session with its state, reason, and terminal
   assert.match(runningText, /Running/);
   assert.equal(await row(page, running).locator("code", { hasText: "codex resume" }).count(), 0, "no terminal command while the session runs");
   const before = await row(page, running).locator("[data-running-time]").innerText();
-  await page.waitForTimeout(2200);
-  assert.notEqual(await row(page, running).locator("[data-running-time]").innerText(), before, "the running time counts while the session runs");
+  assert.notEqual(await settled(() => row(page, running).locator("[data-running-time]").innerText(), (shown) => shown !== before), before, "the running time counts while the session runs");
   assert.deepEqual(page.errors, []);
 });
 
@@ -91,4 +91,40 @@ test("the initiative page offers both launch actions with their availability", {
   await waitForView(page);
   assert.equal(await page.getByText("Launch with Claude Code").count() >= 1, true);
   assert.equal(await page.getByText("Launch with Codex").count() >= 1, true);
+});
+
+test("the initiative page shows how its latest launched run ended, a failed one with the host's error, and links to the place", { skip: skipHere, timeout: 60000 }, async (t) => {
+  const s = await place(t, { claude: [{ isError: true, exit: 1 }] });
+  const id = await s.start(INITIATIVE, "claude-code");
+  await waitFor(async () => (await s.state(id)) === "failed", { what: "the failed session" });
+  const page = await openPage(s.browser, reviewUrl(s.base, `initiative:${INITIATIVE}`));
+  await waitForView(page);
+  const latest = page.locator("#artifact [data-page-end] [data-initiative-last-run]");
+  await latest.waitFor();
+  assert.match(await latest.innerText(), /Last run failed/, "the page head says the latest run failed without opening anything");
+  await latest.click();
+  const launcher = page.getByRole("dialog", { name: "Launch an orchestration" });
+  await launcher.waitFor();
+  const run = launcher.locator("[data-launch-latest]");
+  await run.waitFor();
+  const text = await run.innerText();
+  assert.match(text, /Failed/);
+  assert.match(text, /Claude Code reported an error: The API returned an error\./, "the reason says why the run failed");
+  await run.getByRole("link", { name: "Open in Launched sessions" }).click();
+  await waitForView(page);
+  assert.equal(new URL(page.url()).searchParams.get("artifact"), "launches");
+  await row(page, id).waitFor();
+  assert.deepEqual(page.errors, []);
+});
+
+test("the initiative page head shows nothing about runs while none was launched for it here", { skip: skipHere, timeout: 60000 }, async (t) => {
+  const s = await place(t, { codex: [{ hold: "forever" }] });
+  await s.start("search", "codex");
+  const page = await openPage(s.browser, reviewUrl(s.base, `initiative:${INITIATIVE}`));
+  await waitForView(page);
+  // The page reads the launches every few seconds; once a later read is answered, the earlier one has been shown.
+  await page.waitForResponse((response) => new URL(response.url()).pathname.endsWith("/api/launches"), { timeout: 15000 });
+  await page.waitForResponse((response) => new URL(response.url()).pathname.endsWith("/api/launches"), { timeout: 15000 });
+  assert.equal(await page.locator("#artifact [data-initiative-last-run]:visible").count(), 0, "another initiative's run is not this one's");
+  assert.deepEqual(page.errors, []);
 });

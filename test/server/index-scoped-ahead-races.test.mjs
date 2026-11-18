@@ -40,6 +40,8 @@ test("a needed build that starts while a call checks for stored indexes is not q
   const app = (await runtime.location(root, APP)).directory;
   const published = runtime.published.bind(runtime);
   let raced = false;
+  // app's build stays running until the checks below, so a fast machine cannot finish it and start the next job first.
+  control.hold("packages/app/client.ts");
   // The call's read of app's stored index lasts until the net build ended and the queue started app.
   runtime.published = async (directory) => {
     if (directory === app && !raced) {
@@ -54,6 +56,7 @@ test("a needed build that starts while a call checks for stored indexes is not q
   assert.equal(runtime.running?.directory, app);
   assert.equal(runtime.queue.some((job) => job.directory === app), false, "the running app build is not queued again");
   runtime.published = published;
+  control.release("packages/app/client.ts");
   await settled(runtime, root);
   assert.equal(runs(control, APP_FILES), 1, "the app build ran once");
   assert.equal(runs(control, NET_FILES), 1);

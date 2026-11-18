@@ -20,10 +20,10 @@
     <header id="topbar" class="topbar">
       <prism-button id="nav-button" class="topbar-navigation" variant="ghost" label="Navigation" tip="Navigation"><prism-icon name="menu"></prism-icon></prism-button>
       <a class="brand" href="./review?artifact=attention" aria-label="Prism review, Attention">
-        <img class="brand-mark" src="./prism-mark.svg" alt="" aria-hidden="true">
+        <span class="brand-col"><img class="brand-mark" src="./prism-mark.svg" alt="" aria-hidden="true"></span>
         <span class="wordmark">Prism</span>
       </a>
-      <prism-button id="project-button" class="topbar-project" variant="chrome" disabled>
+      <prism-button id="project-button" class="topbar-project" variant="chrome" shrink disabled>
         <prism-avatar id="project-tile" class="project-tile" kind="workspace" aria-hidden="true"></prism-avatar>
         <span id="project" class="project-label">Loading project</span>
         <prism-badge id="project-gates" variant="count" tone="danger" hidden></prism-badge>
@@ -57,14 +57,15 @@
     </div>
     <div id="shell-body" class="shell-body">
       <div id="rail-dock" class="rail-dock">
-        <prism-rail id="rail" label="Places">
-          <prism-rail-item slot="head" id="sidebar-toggle" value="sidebar" label="Collapse the sidebar" tip="Collapse the sidebar ([)" icon="panel-left" aria-controls="sidebar" aria-expanded="true" aria-keyshortcuts="["></prism-rail-item>
-        </prism-rail>
+        <prism-rail id="rail" label="Places"></prism-rail>
       </div>
       <nav id="sidebar" class="sidebar" aria-label="Sidebar">
-        <prism-place-head id="place-head"></prism-place-head>
+        <prism-place-head id="place-head">
+          <prism-button slot="end" id="sidebar-toggle" variant="ghost" shape="square" size="sm" label="Hide the sidebar" tip="Hide the sidebar ([)" aria-controls="sidebar" aria-expanded="true" aria-keyshortcuts="["><prism-icon name="panel-left" size="sm"></prism-icon></prism-button>
+        </prism-place-head>
         <div id="nav" class="nav"></div>
       </nav>
+      <prism-resizer id="sidebar-resizer" class="sidebar-resizer" for="sidebar" label="Resize the sidebar" min="200" max="480"></prism-resizer>
       <prism-panel id="main" class="main" variant="island" flush>
         <prism-doc-tabs id="open-tabs" class="open-documents" label="Open artifacts" empty></prism-doc-tabs>
         <div id="page-bar" class="page-bar"></div>
@@ -79,17 +80,19 @@
       <prism-panel id="side-panel" class="side" variant="island" flush hidden>
         <prism-button slot="tools" id="side-panel-open" variant="ghost" size="sm">Open as tab</prism-button>
         <prism-button slot="tools" id="side-panel-close" variant="ghost" size="sm" label="Close the side panel" tip="Close (Esc)"><prism-icon name="close"></prism-icon></prism-button>
-        <div id="side-panel-resizer" class="side-resizer" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" tabindex="0"></div>
         <p class="side-source" id="side-panel-source"></p>
         <div class="side-body" id="side-panel-body"></div>
       </prism-panel>
+      <prism-resizer id="side-panel-resizer" class="side-panel-resizer" for="side-panel" edge="start" label="Resize the side panel" min="320"></prism-resizer>
     </div>
     <footer class="statusbar" id="statusbar" aria-label="Status">
+      <span class="statusbar-settings">
+        <prism-button class="status-item" id="settings-button" variant="status" shape="square" label="Settings" tip="Settings (Ctrl ,)" aria-keyshortcuts="Control+Comma Meta+Comma"><prism-icon name="settings" size="sm"></prism-icon></prism-button>
+      </span>
       <prism-button class="status-item" id="store-status" variant="status" hidden>
         <prism-icon name="store" size="xs"></prism-icon>
         <span id="store-status-label" class="status-label"></span>
         <span id="store-sync" class="store-sync" hidden>
-          <span class="status-dot" aria-hidden="true"></span>
           <span id="store-sync-label" class="status-label"></span>
         </span>
       </prism-button>
@@ -104,21 +107,6 @@
         </prism-button>
         <prism-popover id="indexing-panel" for="indexing-button" heading="Repository index"></prism-popover>
       </span>
-      <span class="statusbar-appearance">
-        <prism-button class="status-item" id="appearance-button" variant="status" aria-keyshortcuts="Control+Comma Meta+Comma"><prism-icon name="contrast" size="sm"></prism-icon><span class="status-label appearance-label">Appearance</span></prism-button>
-        <prism-menu id="appearance-menu" for="appearance-button" heading="Appearance" keys="Ctrl ," size="wide" sheet>
-          <prism-menu-group label="Theme" layout="tiles">
-            <prism-menu-item type="radio" variant="tile" preview="system" value="system"><prism-icon name="monitor" size="xs"></prism-icon>System</prism-menu-item>
-            <prism-menu-item type="radio" variant="tile" preview="light" value="light"><prism-icon name="sun" size="xs"></prism-icon>Light</prism-menu-item>
-            <prism-menu-item type="radio" variant="tile" preview="dark" value="dark"><prism-icon name="moon" size="xs"></prism-icon>Dark</prism-menu-item>
-          </prism-menu-group>
-          <prism-menu-group label="Density" layout="segmented">
-            <prism-menu-item type="radio" variant="segment" value="compact">Compact</prism-menu-item>
-            <prism-menu-item type="radio" variant="segment" value="comfortable">Comfortable</prism-menu-item>
-          </prism-menu-group>
-          <prism-menu-item value="catalog"><prism-icon name="grid" size="sm"></prism-icon>Component catalog<prism-icon slot="hint" name="external" size="xs"></prism-icon></prism-menu-item>
-        </prism-menu>
-      </span>
     </footer>
   </div>
   <prism-dialog id="nav-drawer" heading="Navigation" placement="start" bare flush>
@@ -127,6 +115,71 @@
     </div>
   </prism-dialog>
   <prism-dialog id="side-panel-sheet" heading="Side panel" placement="bottom" bare></prism-dialog>
+  <prism-dialog id="settings-dialog" heading="Settings" size="lg">
+    <div class="settings">
+      <prism-tree id="settings-sections" class="settings-sections" label="Settings sections">
+        <prism-tree-item value="appearance" label="Appearance" selected><prism-icon slot="start" name="contrast" size="sm"></prism-icon></prism-tree-item>
+        <prism-tree-item value="layout" label="Layout"><prism-icon slot="start" name="panel-left" size="sm"></prism-icon></prism-tree-item>
+        <prism-tree-item value="store" label="Record store"><prism-icon slot="start" name="store" size="sm"></prism-icon></prism-tree-item>
+        <prism-tree-item value="about" label="About Prism"><prism-icon slot="start" name="info" size="sm"></prism-icon></prism-tree-item>
+      </prism-tree>
+      <div class="settings-body">
+        <section class="settings-section" data-section="appearance" aria-labelledby="settings-appearance">
+          <h3 id="settings-appearance">Appearance</h3>
+          <div class="settings-row">
+            <div><strong>Theme</strong><span class="settings-hint">System follows your operating system's light or dark setting.</span></div>
+            <prism-segmented id="settings-theme" label="Theme">
+              <span value="system"><prism-icon name="monitor" size="xs"></prism-icon>System</span>
+              <span value="light"><prism-icon name="sun" size="xs"></prism-icon>Light</span>
+              <span value="dark"><prism-icon name="moon" size="xs"></prism-icon>Dark</span>
+            </prism-segmented>
+          </div>
+          <div class="settings-row">
+            <div><strong>Density</strong><span class="settings-hint">Comfortable gives every row and control more room.</span></div>
+            <prism-segmented id="settings-density" label="Density">
+              <span value="compact">Compact</span>
+              <span value="comfortable">Comfortable</span>
+            </prism-segmented>
+          </div>
+        </section>
+        <section class="settings-section" data-section="layout" aria-labelledby="settings-layout" hidden>
+          <h3 id="settings-layout">Layout</h3>
+          <div class="settings-row">
+            <div><strong>Sidebar</strong><span class="settings-hint">On windows wider than 1100 pixels. Hidden, a place opens over the page from the rail, and the [ key hides or shows it.</span></div>
+            <prism-segmented id="settings-sidebar" label="Sidebar">
+              <span value="shown">Shown</span>
+              <span value="hidden">Hidden</span>
+            </prism-segmented>
+          </div>
+          <div class="settings-row">
+            <div><strong>Sidebar width</strong><span class="settings-hint" id="settings-sidebar-width">Drag the sidebar's edge to change it.</span></div>
+            <prism-button id="settings-sidebar-reset" size="sm">Reset the width</prism-button>
+          </div>
+        </section>
+        <section class="settings-section" data-section="store" aria-labelledby="settings-store" hidden>
+          <h3 id="settings-store">Record store</h3>
+          <div class="settings-row">
+            <div><strong id="settings-store-name">Records</strong><span class="settings-hint" id="settings-store-state">Where Prism keeps this workspace's records and whether they are synced.</span></div>
+            <prism-button id="settings-store-open" size="sm">Open the store's details</prism-button>
+          </div>
+        </section>
+        <section class="settings-section" data-section="about" aria-labelledby="settings-about" hidden>
+          <h3 id="settings-about">About Prism</h3>
+          <div class="about">
+            <img class="about-mark" src="./prism-mark.svg" alt="" aria-hidden="true">
+            <div class="about-text">
+              <p class="about-name">Prism</p>
+              <p class="about-version">Version <span id="about-version">not known</span></p>
+            </div>
+          </div>
+          <div class="settings-row">
+            <div><strong>Component catalog</strong><span class="settings-hint">Every control of the review app in each of its states.</span></div>
+            <prism-button id="about-catalog" size="sm"><prism-icon name="external" size="sm"></prism-icon>Open the catalog</prism-button>
+          </div>
+        </section>
+      </div>
+    </div>
+  </prism-dialog>
   <prism-dialog id="store-dialog" heading="Record store" size="lg"></prism-dialog>
   <prism-dialog id="action-dialog" heading="Confirm the change">
     <p id="action-dialog-message" class="action-dialog-message"></p>

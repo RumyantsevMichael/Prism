@@ -1,0 +1,31 @@
+/* prism-slice-bar: a row of rounded segments, one per slice, each a prism-status segment in its class's color, then a quiet label. */
+
+:host {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+/* The segments have no width of their own, so the bar keeps a minimum that still reads as a bar where its row gives it only its content's width. */
+.bar {
+  display: flex;
+  flex: 1 1 calc(var(--prism-space-8) * 2);
+  gap: var(--prism-space-1);
+  min-width: calc(var(--prism-space-8) * 2);
+}
+
+.label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.label:empty {
+  display: none;
+}

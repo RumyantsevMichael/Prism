@@ -1,0 +1,54 @@
+/* prism-severity: three bars of rising height, filled up to the level in its color, then the level's word. */
+
+:host {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--prism-space-2);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-semibold);
+  white-space: nowrap;
+}
+
+:host([data-level="high"]) {
+  color: var(--prism-color-warning);
+}
+
+:host([data-level="blocker"]) {
+  color: var(--prism-color-danger);
+}
+
+.bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: var(--prism-stroke);
+  height: var(--prism-icon-size-xs);
+}
+
+.bars b {
+  display: block;
+  width: var(--prism-space-2);
+  border-radius: var(--prism-stroke);
+  background: var(--prism-color-line-strong);
+}
+
+.bars b:nth-child(1) {
+  height: 40%;
+}
+
+.bars b:nth-child(2) {
+  height: 70%;
+}
+
+.bars b:nth-child(3) {
+  height: 100%;
+}
+
+.bars b.is-filled {
+  background: currentColor;
+}
+
+.word:empty {
+  display: none;
+}

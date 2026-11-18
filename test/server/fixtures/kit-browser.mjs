@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CHROMIUM_OPTIONS } from "../../../scripts/review-demo/layout-audit.mjs";
 import { defer } from "./teardown.mjs";
+import { repainted, WAIT_MS } from "./wait.mjs";
 
 export const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
@@ -110,12 +111,12 @@ export async function settle(page) {
   await page.waitForLoadState("load");
   await page.evaluate(() => document.fonts.ready);
   await page.waitForFunction(() => document.querySelector("#artifact")?.getAttribute("aria-busy") !== "true", null, { timeout: 10000 }).catch(() => {});
-  await page.waitForTimeout(400);
+  await repainted(page);
 }
 
 export async function waitForView(page) {
-  await page.waitForFunction(() => document.querySelector("#artifact")?.getAttribute("aria-busy") === "false", null, { timeout: 10000 });
-  await page.waitForTimeout(200);
+  await page.waitForFunction(() => document.querySelector("#artifact")?.getAttribute("aria-busy") === "false", null, { timeout: WAIT_MS });
+  await repainted(page);
 }
 
 export function reviewUrl(base, ref) {
@@ -205,6 +206,13 @@ const disabled = (element) => {
   }
   return false;
 };
+// Whether one of the element's border sides or its fill reaches 3:1 against what surrounds it.
+const bounded = (node) => {
+  const style = getComputedStyle(node);
+  const around = parentOf(node) ?? document.documentElement;
+  const sides = ["Top", "Right", "Bottom", "Left"].filter((side) => parseFloat(style["border" + side + "Width"]) > 0 && style["border" + side + "Style"] !== "none" && rgba(style["border" + side + "Color"])[3] > 0);
+  return worst(rgba(style.backgroundColor), around) >= 3 || sides.some((side) => worst(rgba(style["border" + side + "Color"]), around) >= 3);
+};
 const FIELD_OR_CHOICE = "input:not([type=hidden]):not([type=button]):not([type=submit]):not([type=reset]), select, textarea, [role=textbox], [role=searchbox], [role=combobox], [role=radio], [role=checkbox], [role=switch], [data-indicator]";
 `;
 
@@ -240,11 +248,10 @@ export function boundaryFailures(page, selector = "body") {
       for (const scope of document.querySelectorAll(selector)) {
         for (const node of walk(scope)) {
           if (node.nodeType !== Node.ELEMENT_NODE || !node.matches(FIELD_OR_CHOICE) || node.closest("svg") || !visible(node) || disabled(node)) continue;
-          const style = getComputedStyle(node);
-          const around = parentOf(node) ?? document.documentElement;
-          const sides = ["Top", "Right", "Bottom", "Left"].filter((side) => parseFloat(style["border" + side + "Width"]) > 0 && style["border" + side + "Style"] !== "none" && rgba(style["border" + side + "Color"])[3] > 0);
-          const passes = worst(rgba(style.backgroundColor), around) >= 3 || sides.some((side) => worst(rgba(style["border" + side + "Color"]), around) >= 3);
-          if (!passes) failures.push(describe(node));
+          // An option of a segmented switch that is not chosen is told apart by its text inside the switch's own boundary, as WCAG 1.4.11 allows, so the switch's boundary stands for it.
+          const group = node.getAttribute("role") === "radio" && node.getAttribute("aria-checked") !== "true" ? node.closest("[role=radiogroup]") : null;
+          if (group?.tagName === "PRISM-SEGMENTED" && bounded(group)) continue;
+          if (!bounded(node)) failures.push(describe(node));
         }
       }
       return [...new Set(failures)];

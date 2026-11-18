@@ -7,6 +7,7 @@ import readline from "node:readline";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { notes, prismServer, repository } from "./fixtures/repository-checkouts.mjs";
 
 // A saved version is named by the next tool result that a server writes to its host, so a result that is never written, as for a cancelled call or a wait the session's end aborts,
@@ -91,7 +92,7 @@ async function savedDuringWait(context) {
 test("a cancelled wait is never written, so it leaves the saved version pending and the server's next result names it", async (context) => {
   const { prism, wait, savedAs, notice } = await savedDuringWait(context);
   prism.send({ method: "notifications/cancelled", params: { requestId: wait, reason: "user pressed Esc" } });
-  await new Promise((resolve) => setTimeout(resolve, 1500));
+  await pause(1500, "a cancelled request must get no response, and a response that does not come leaves nothing to wait for");
   assert.equal(prism.messages.some((message) => message.id === wait), false, "a cancelled request gets no response");
   assert.equal(await exists(notice), true, "the cancelled result cleared no pending notice");
   const named = notes(await prism.call("get_roadmap"));
@@ -119,7 +120,7 @@ test("any call that the host cancels before its result is written gets no respon
   for (const name of ["get_roadmap", "list_reviewable_artifacts"]) {
     const cancelled = prism.request("tools/call", { name, arguments: { projectRoot: prism.root } });
     prism.send({ method: "notifications/cancelled", params: { requestId: cancelled, reason: "user pressed Esc" } });
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await pause(1500, "a cancelled request must get no response, and a response that does not come leaves nothing to wait for");
     assert.equal(prism.messages.some((message) => message.id === cancelled), false, `a cancelled ${name} gets no response`);
     assert.equal(await exists(notice), true, `the cancelled ${name} cleared no pending notice`);
   }

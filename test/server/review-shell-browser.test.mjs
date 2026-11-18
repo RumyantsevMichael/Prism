@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { boundaryFailures, contrastFailures, demoProject, escapes, launch, movingElements, openPage, paintedBackgrounds, reviewUrl, serveProject, skip, stateFileNames, useAppDirectory, waitForView, writeClaim } from "./fixtures/kit-browser.mjs";
+import { repainted } from "./fixtures/wait.mjs";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §2, §3, §7, §8, §9.
 // Contract: docs/plans/review-app-ui-kit/slice.md clauses 20, 21, 22, 66, 67, 68, 69, 74, 75, 76, 77, and 78.
@@ -229,7 +230,8 @@ test("clauses 20, 21, 22: the shell's text and fields reach WCAG AA, glass overl
     await page.keyboard.press("Control+k");
     await page.getByRole("dialog", { name: "Command palette" }).waitFor();
     await page.keyboard.type("retry");
-    await page.waitForTimeout(400);
+    await page.getByRole("dialog", { name: "Command palette" }).getByRole("option").first().waitFor();
+    await repainted(page);
     assert.deepEqual(await contrastFailures(page, "body"), [], `the palette over the page, ${theme}`);
     assert.deepEqual(await boundaryFailures(page, "body"), [], `the palette's field on glass, ${theme}`);
     await page.context().close();
@@ -247,7 +249,8 @@ test("clause 69: the shell names Prism's records by title and kind, never by fil
     await page.keyboard.press("Control+k");
     await page.getByRole("dialog", { name: "Command palette" }).waitFor();
     await page.keyboard.type("retry");
-    await page.waitForTimeout(500);
+    await page.getByRole("dialog", { name: "Command palette" }).getByRole("option").first().waitFor();
+    await repainted(page);
     assert.deepEqual(await stateFileNames(page, '[role="dialog"]'), [], `the palette on ${ref}, its Files group aside`);
     await page.context().close();
   }
@@ -272,7 +275,8 @@ test("clauses 36, 77, 78: with long names the shell stays inside a phone and a l
     await page.keyboard.press("Control+k");
     await page.getByRole("dialog", { name: "Command palette" }).waitFor();
     await page.keyboard.type("slice");
-    await page.waitForTimeout(600);
+    await page.getByRole("dialog", { name: "Command palette" }).getByRole("option").first().waitFor();
+    await repainted(page);
     assert.deepEqual(await escapes(page, "body"), [], `the palette at ${viewport.width}px`);
     await page.context().close();
   }

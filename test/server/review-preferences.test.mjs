@@ -145,12 +145,12 @@ test("every registered preference starts at its default, is stored by a PUT, sur
   const { DEFAULT_PREFERENCES } = await import("../../dist/server/review/public/kit/preference-registry.js");
   const first = await serve(context, await project(context));
   assert.deepEqual((await readAll(first.base)).body, DEFAULT_PREFERENCES);
-  const change = { "roadmap.view": "graph", "roadmap.showArchived": true, "roadmap.collapsedLanes": ["Later", "Next"], "sidebar.collapsed": true, "sidePanel.width": 480, "initiative.view": "list", "changeMap.view": "graph", "changeMap.groupBy": "file" };
+  const change = { "roadmap.view": "graph", "roadmap.groupBy": "status", "roadmap.showArchived": true, "roadmap.collapsedLanes": ["Later", "Next"], "sidebar.collapsed": true, "sidePanel.width": 480, "initiative.view": "list", "changeMap.view": "graph", "changeMap.groupBy": "file" };
   assert.deepEqual((await put(first.base, change)).all, { ...DEFAULT_PREFERENCES, ...change });
   const second = await serve(context, await project(context));
   await first.close();
   assert.deepEqual((await readAll(second.base)).body, { ...DEFAULT_PREFERENCES, ...change });
-  for (const body of [{ "roadmap.view": "table" }, { "sidebar.collapsed": "yes" }, { "sidePanel.width": 100 }, { "sidePanel.width": 480.5 }, { "roadmap.collapsedLanes": "Later" }, { "roadmap.collapsedLanes": ["Later", "Later"] }, { "roadmap.collapsedLanes": [""] }, { "roadmap.layout": "board" }]) {
+  for (const body of [{ "roadmap.view": "table" }, { "roadmap.groupBy": "lane" }, { "sidebar.collapsed": "yes" }, { "sidePanel.width": 100 }, { "sidePanel.width": 480.5 }, { "roadmap.collapsedLanes": "Later" }, { "roadmap.collapsedLanes": ["Later", "Later"] }, { "roadmap.collapsedLanes": [""] }, { "roadmap.layout": "board" }]) {
     const answer = await put(second.base, body);
     assert.equal(answer.status, 400, `${JSON.stringify(body)} answers 400`);
     assert.equal(answer.body?.code, "invalid_preference");

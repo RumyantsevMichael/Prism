@@ -40,7 +40,7 @@ import { createWriteSessions } from "./write-sessions.mjs";
 import { watchWorkspace, WORKSPACE_FETCH_MAX_MS, WORKSPACE_FETCH_MS } from "./workspace-sync.mjs";
 import { codeFolder, createCodeClones, registeredRemotes } from "./code-clones.mjs";
 import { parseStoreJson } from "../workflow/store-json.mjs";
-import { createViewerHub } from "./viewer-hub.mjs";
+import { createViewerHub, isEventStream } from "./viewer-hub.mjs";
 import { createCachedValue } from "./cached-value.mjs";
 
 const LEASE_MS = 3 * 60 * 1000;
@@ -326,6 +326,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
           folder: codeFolder,
           state: (repository) => code.state(view.id, repository),
           tree: (repository, folder) => code.tree(view.id, repository, folder),
+          compare: (repository, base) => code.compare(view.id, repository, base),
           file: (repository, at) => code.file(view.id, repository, at),
           defaultFile: (repository, file) => code.defaultFile(view.id, repository, file),
           defaultFiles: (repository) => code.defaultFiles(view.id, repository),
@@ -507,8 +508,15 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
   }
 
   // Turning a repository's code content on clones its first registered remote, and turning it off deletes the clone; both change only the app's own state on this machine.
-  async function setCode(request, response, view, repository) {
+  // The repository's name is decoded only after the origin and write-session checks, so a malformed escape never answers a request those checks refuse.
+  async function setCode(request, response, view, encodedRepository) {
     if (refuseChange(request, response)) return;
+    let repository;
+    try { repository = decodeURIComponent(encodedRepository); } catch {
+      await readBody(request);
+      sendJson(response, 400, { code: "invalid_request", message: "The repository name in the address is not a valid percent-encoded name." });
+      return;
+    }
     let body;
     try { body = await readJson(request); } catch (error) { sendJson(response, 400, { code: "invalid_request", message: error.message }); return; }
     if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.enabled !== "boolean") {
@@ -781,6 +789,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
   }
 
   // A request that takes longer than this is logged, by its route without the viewer credential, so a stalled app leaves a trace.
+  // An event stream stays open while its page does, by design, so its length is no slowness and is not logged.
   const SLOW_REQUEST_MS = 2000;
   const routeOf = (request) => {
     let pathname;
@@ -792,7 +801,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
     const started = performance.now();
     response.once("finish", () => {
       const ms = performance.now() - started;
-      if (ms >= SLOW_REQUEST_MS) log.warn("slow_request", { method: request.method, route: routeOf(request), status: response.statusCode, ms: Math.round(ms) });
+      if (ms >= SLOW_REQUEST_MS && !isEventStream(response)) log.warn("slow_request", { method: request.method, route: routeOf(request), status: response.statusCode, ms: Math.round(ms) });
     });
     try {
       if (!isTrustedHost(request.headers.host)) {
@@ -835,13 +844,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
         }
         const codeSwitch = /^\/api\/code\/([^/]+)$/.exec(inWorkspace[2]);
         if (codeSwitch && request.method === "PUT") {
-          let repository;
-          try { repository = decodeURIComponent(codeSwitch[1]); }
-          catch {
-            sendJson(response, 400, { code: "invalid_request", message: "The repository name in the address is not a valid percent-encoded name." });
-            return;
-          }
-          await setCode(request, response, view, repository);
+          await setCode(request, response, view, codeSwitch[1]);
           return;
         }
         if (inWorkspace[2] === "/api/projects" && request.method === "GET") {

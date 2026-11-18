@@ -18,15 +18,16 @@ import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createPresence } from "./views/presence.js";
 import { DENSITIES, onPreferencesChange, preference, preferencesReady, savePreferences, setPreference, THEMES } from "./kit/preferences.js";
 import { shownActionEntries } from "./views/actions.js";
-import { artifactReviewHtml, focusAfterMore, mountArtifactReview, readListedComments } from "./views/artifact-review.js";
+import { artifactChangesView, artifactReviewHtml, focusAfterMore, mountArtifactReview, readListedComments } from "./views/artifact-review.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
 import { createWorkspaceForms } from "./views/workspace-forms.js";
 import { currentPhase } from "./views/slice.js";
 import { messageHtml, shortDate } from "./views/util.js";
-import { LANES, laneHeading, ROADMAP_VIEWS } from "./views/roadmap.js";
+import { LANES, laneHeading } from "./views/roadmap.js";
 import { createPoller, deadline, POLL_DEADLINE_MS } from "./views/poller.js";
 import { createEventRelay } from "./views/event-relay.js";
 import { shippedHistoryHtml } from "./views/shipped-history.js";
+import { bindViewLinks, requestClause, viewKind, viewNoteHtml } from "./views/design-views.js";
 import { arrangeGroups } from "./views/tab-groups.js";
 
 const project = document.getElementById("project");
@@ -122,6 +123,8 @@ function setScopeFilter(labels) {
   const url = withScopeFilter(new URL(location.href));
   history.replaceState(history.state, "", `${url.pathname}${url.search}`);
   renderNavigation();
+  // A Knowledge page lists only the chosen scopes' records, so the open one draws again.
+  if (["requirements", "decisions", "glossary", "knowledge"].includes(parseEntityRef(selectedPath ?? "")?.kind)) void showArtifact(selectedPath);
 }
 
 // A session snapshot with every store artifact named as the page opens it.
@@ -684,6 +687,7 @@ function openRef(given, { keep = false, fromHistory = false, keepDrawer = false 
   lastSnapshot = "";
   updateLocation(path, moved && !fromHistory);
   if (navDrawer.isOpen && !keepDrawer) navDrawer.close();
+  if (sidebarFlyoutOpen() && !keepDrawer) setSidebarFlyout(false);
   setBusy(true);
   renderTabs();
   renderNavigation();
@@ -816,15 +820,9 @@ function workspaceName(identity) {
   return identity.worktree;
 }
 
-// A checkout of a workspace leads with the workspace's name, because the records it shows belong to the whole workspace.
-function projectLabel(identity, workspace = null) {
-  const label = element("span", "project-label-text");
-  if (workspace) label.append(element("span", "project-workspace", workspace), element("span", "project-separator is-workspace", "·"));
-  label.append(element("span", "project-repository", identity.repository));
-  const name = workspaceName(identity);
-  if (name) label.append(element("span", "project-separator", "/"), element("span", "project-worktree", name));
-  return label;
-}
+// The switcher names what its menu has checked: the workspace, whose records the page shows whichever checkout serves it, or the project without one.
+// The checkout's repository, branch, and folder say nothing about those records, so only the tip names them.
+const projectName = (identity, projectRoot, workspace = null) => workspace ?? identity.repository ?? folderName(projectRoot);
 
 function projectTitle(identity, projectRoot) {
   return [projectRoot, identity.branch ? `${identity.detached ? "Detached at" : "Branch:"} ${identity.branch}` : "", identity.worktree ? `Worktree: ${identity.worktree}` : ""].filter(Boolean).join("\n");
@@ -990,10 +988,12 @@ function noWorkspaceItem() {
 
 // A checkout of a workspace leads with the workspace's name, because the records it shows belong to the whole workspace.
 function setProjectLabel(identity, projectRoot, workspace = null) {
-  project.replaceChildren(projectLabel(identity, workspace));
-  projectTile.setAttribute("name", workspace ?? identity.repository ?? folderName(projectRoot));
-  projectButton.setAttribute("tip", [workspace ? `Workspace: ${workspace}` : "", projectTitle(identity, projectRoot)].filter(Boolean).join("\n"));
-  signals.project = [workspace, [identity.repository ?? folderName(projectRoot), workspaceName(identity)].filter(Boolean).join("/")].filter(Boolean).join(" · ");
+  const name = projectName(identity, projectRoot, workspace);
+  project.replaceChildren(element("span", "project-label-text project-workspace", name));
+  projectTile.setAttribute("name", name);
+  const repository = workspace && identity.repository && identity.repository !== workspace ? `Repository: ${identity.repository}` : "";
+  projectButton.setAttribute("tip", [workspace ? `Workspace: ${workspace}` : "", repository, projectTitle(identity, projectRoot)].filter(Boolean).join("\n"));
+  signals.project = name;
   document.title = signalTitle(baseTitle(), signals.count ?? 0);
 }
 
@@ -1010,6 +1010,9 @@ const baseTitle = () => signals.project ? `${signals.project} · Prism` : "Prism
 // The tab title, the tab icon, and an installed app's badge count the recorded questions, so a waiting question shows in a background tab.
 const signals = { project: null, count: null, icon: document.querySelector('link[rel="icon"]'), plainIcon: null, badged: null };
 signals.plainIcon = signals.icon?.getAttribute("href") ?? null;
+
+// How often a tab in the background reads the count of waiting questions; a browser may stretch the timers of a long-hidden tab to about a minute.
+const ATTENTION_WATCH_MS = 15000;
 
 async function updateAttentionSignals(count) {
   const previous = signals.count;
@@ -1157,29 +1160,70 @@ function requireApp() {
   return false;
 }
 
-// The status bar's Appearance menu: its radio items show the theme and density the page applies, and choosing one applies and stores it.
-function startAppearanceMenu() {
-  const menu = document.getElementById("appearance-menu");
-  if (!menu) return;
-  const root = document.documentElement;
-  const showChoice = () => {
-    for (const item of menu.querySelectorAll('prism-menu-item[type="radio"]')) {
-      const value = item.getAttribute("value");
-      item.toggleAttribute("checked", value === root.dataset.themeChoice || value === root.dataset.density);
-    }
+// Settings, from the status bar's gear or Ctrl+,: sections down its start edge for the appearance, the layout, the record store, and About Prism.
+// Each choice applies at once and is kept as the person's preference, as the appearance menu's did.
+const settingsDialog = document.getElementById("settings-dialog");
+
+function startSettings() {
+  const sections = document.getElementById("settings-sections");
+  const showSection = (name) => {
+    for (const section of settingsDialog.querySelectorAll(".settings-section")) section.hidden = section.dataset.section !== name;
+    for (const item of sections.querySelectorAll("prism-tree-item")) item.toggleAttribute("selected", item.getAttribute("value") === name);
   };
-  showChoice();
-  new MutationObserver(showChoice).observe(root, { attributes: true, attributeFilter: ["data-theme-choice", "data-density"] });
-  menu.addEventListener("prism-select", (event) => {
+  sections.addEventListener("prism-select", (event) => {
     const value = event.detail?.value;
-    if (value === "catalog") {
-      window.open(new URL("./kit/catalog", location.href).href, "_blank", "noopener");
-      return;
-    }
-    const change = THEMES.includes(value) ? { theme: value } : DENSITIES.includes(value) ? { density: value } : null;
-    if (!change) return;
-    savePreferences(change).catch(() => showToast("The appearance applies here, but the review app could not store it."));
+    if (value) showSection(value);
   });
+  document.getElementById("settings-button").addEventListener("click", () => openSettings());
+  const root = document.documentElement;
+  const theme = document.getElementById("settings-theme");
+  const density = document.getElementById("settings-density");
+  const sidebarChoice = document.getElementById("settings-sidebar");
+  const showChoices = () => {
+    theme.setAttribute("value", root.dataset.themeChoice || "system");
+    density.setAttribute("value", root.dataset.density || "compact");
+    sidebarChoice.setAttribute("value", shell.classList.contains("sidebar-collapsed") ? "hidden" : "shown");
+    const width = preference("sidebar.width");
+    document.getElementById("settings-sidebar-width").textContent = width ? `${width} pixels wide; drag the sidebar's edge to change it.` : "The default width; drag the sidebar's edge to change it.";
+  };
+  showChoices();
+  new MutationObserver(showChoices).observe(root, { attributes: true, attributeFilter: ["data-theme-choice", "data-density"] });
+  new MutationObserver(showChoices).observe(shell, { attributes: true, attributeFilter: ["class", "style"] });
+  theme.addEventListener("change", (event) => {
+    const value = event.detail?.value;
+    if (THEMES.includes(value)) savePreferences({ theme: value }).catch(() => showToast("The appearance applies here, but the review app could not store it."));
+  });
+  density.addEventListener("change", (event) => {
+    const value = event.detail?.value;
+    if (DENSITIES.includes(value)) savePreferences({ density: value }).catch(() => showToast("The appearance applies here, but the review app could not store it."));
+  });
+  sidebarChoice.addEventListener("change", (event) => setSidebarCollapsed(event.detail?.value === "hidden"));
+  document.getElementById("settings-sidebar-reset").addEventListener("click", () => setSidebarWidth(null, { remember: true }));
+  document.getElementById("settings-store-open").addEventListener("click", () => {
+    settingsDialog.close();
+    document.getElementById("store-status").click();
+  });
+  document.getElementById("about-catalog").addEventListener("click", () => {
+    settingsDialog.close();
+    openCatalog();
+  });
+}
+
+function openSettings() {
+  const store = document.getElementById("store-status");
+  document.getElementById("settings-store-name").textContent = store.hidden ? "No record store" : store.getAttribute("data-name") || "Record store";
+  document.getElementById("settings-store-state").textContent = store.hidden ? "This workspace keeps no records yet." : (store.getAttribute("tip") ?? "").split("\n")[0];
+  document.getElementById("settings-store-open").hidden = store.hidden;
+  settingsDialog.show();
+}
+
+function openCatalog() {
+  window.open(new URL("./kit/catalog", location.href).href, "_blank", "noopener");
+}
+
+function showAboutVersion(version) {
+  const shown = document.getElementById("about-version");
+  if (shown) shown.textContent = typeof version === "string" && version ? version : "not known";
 }
 
 function showToast(message, { tone = "neutral" } = {}) {
@@ -1356,6 +1400,17 @@ function fileName(path) {
   return path.split("/").pop();
 }
 
+// A design view's clause link opens its contract's page at that clause, also when that page is the one showing.
+function openClause(ref, number) {
+  requestClause(ref, number);
+  if (ref !== selectedPath) {
+    openRef(ref);
+    return;
+  }
+  lastSnapshot = "";
+  void showArtifact(ref);
+}
+
 function fileType(path) {
   return path.split(".").pop().toUpperCase();
 }
@@ -1386,10 +1441,10 @@ function pageLabel(path) {
   return parsed.kind === "slice" ? parsed.slug : parsed.id;
 }
 
-// A filtered page of Attention is named by its filter: a kind, Answered in the last 7 days, or an initiative's title.
+// A filtered page of Attention is named by its filter: a kind, Answered in the last 7 days, the roadmap's questions, or an initiative's title.
 function attentionPageLabel(path, page) {
   if (currentContext?.ref === path) return currentContext.value.trail.at(-1)?.label ?? path;
-  const kind = [...ATTENTION_KINDS, ["answered", "Answered in the last 7 days"]].find(([name]) => name === page);
+  const kind = [...ATTENTION_KINDS, ["answered", "Answered in the last 7 days"], ["roadmap-questions", "Roadmap questions"]].find(([name]) => name === page);
   if (kind) return kind[1];
   const id = page.replace(/^work\//, "");
   return navigation.places?.attention?.work?.find((entry) => entry.id === id)?.title ?? navigation.initiatives?.find((item) => item.id === id)?.title ?? id;
@@ -1542,7 +1597,7 @@ function sliceRow(id, node, nodes) {
   if (node.hasChildren) {
     const state = branchState(id, nodes, node.slug);
     stateWord = `Split · ${STATE_WORDS[state]}`;
-    start.push(kitElement("prism-state", { state, label: stateWord }));
+    start.push(kitElement("prism-status", { value: state, label: stateWord, "glyph-only": true }));
   } else {
     stateWord = [phase ? phase[1] : null, status].filter(Boolean).join(" · ");
     start.push(kitElement("prism-phase", { phase: phase?.[0] ?? null, label: stateWord }));
@@ -1570,7 +1625,7 @@ function workInitiativeItem(item, nodes, scope, query) {
   const inScope = scope.kind === "initiative" && scope.id === item.id;
   const leaves = nodes.filter((node) => node.depth > 0 && !node.hasChildren);
   const counts = leafCounts(nodes);
-  const state = item.state === "unlisted" ? "planned" : item.state;
+  const state = item.state;
   const stateWord = STATE_WORDS[item.state] ?? item.state;
   const end = counts.total ? [meta(`${counts.done}/${counts.total}`)] : [];
   const tip = [item.title, stateWord, counts.total ? `${counts.done} of ${counts.total} shipped` : null].filter(Boolean).join(" · ");
@@ -1600,20 +1655,24 @@ function workInitiativeItem(item, nodes, scope, query) {
     const hasWorking = nodes.some((node) => node.depth > 0 && isWorkingSlice(node, sliceRef(node)));
     expanded = children.length > 0 && (treeToggles.get(ref) ?? (inScope || hasWorking));
   }
-  return treeItem(ref, item.title, { selected: selectedPath === ref, expanded, start: [kitElement("prism-state", { state, label: stateWord })], end, children, tip });
+  return treeItem(ref, item.title, { selected: selectedPath === ref, expanded, start: [kitElement("prism-status", { value: state, label: stateWord, "glyph-only": true })], end, children, tip });
 }
 
-// The store tree lists every scope's artifacts together, each scope with its label and count, behind the scope filter; a scope lists its first artifacts and the palette finds the rest.
-const SCOPE_ITEM = "store-scope:";
-const SCOPE_ARTIFACTS_SHOWN = 50;
+// The scope label that a store ref's location names: <repository>/<component>, <repository>, or workspace.
+function scopeOfRef(ref) {
+  const names = ref.slice(STORE_REF.length).split("/");
+  if (names[0] !== "repositories" || names.length < 3) return "workspace";
+  return names[2] === "components" && names.length > 4 ? `${names[1]}/${names[3]}` : names[1];
+}
 
-// A store artifact's location below its scope's folder, such as requirements/billing.md, as the store tree names it.
+// A store artifact's location below its scope's folder, such as requirements/billing.md, as the Jump palette names it.
 function belowScope(ref) {
   const names = ref.slice(STORE_REF.length).split("/");
   const at = names[0] === "repositories" && names.length > 2 ? names[2] === "components" && names.length > 4 ? 4 : 2 : 0;
   return names.slice(at).join("/");
 }
 
+// The scope filter atop Knowledge: one chip per scope with its count of artifacts, and All scopes while it narrows; it narrows every count and list of Knowledge and the Jump palette.
 function scopeFilterChips() {
   const holder = element("div", "nav-scope-filter");
   holder.dataset.scopeFilter = "";
@@ -1636,36 +1695,26 @@ function scopeFilterChips() {
   if (scopeFilter) {
     const all = element("prism-chip", "", "All scopes");
     all.setAttribute("interactive", "");
+    all.setAttribute("tip", "Show every scope again");
     all.addEventListener("click", () => setScopeFilter(null));
     holder.append(all);
   }
   return holder;
 }
 
-function storeNavigation() {
-  if (!storeScopes.length && !storeNotes.length) return [];
-  const parts = [section("Store", refScopes.size)];
-  for (const note of storeNotes) parts.push(element("p", "nav-note", note.message ?? String(note)));
-  if (!storeScopes.length) return parts;
-  parts.push(scopeFilterChips());
-  const byScope = new Map(storeScopes.map((scope) => [scope.label, []]));
-  for (const [ref, label] of refScopes) byScope.get(label)?.push(ref);
-  let cut = false;
-  const items = storeScopes.filter((scope) => scopeShown(scope.label)).map((scope) => {
-    const refs = byScope.get(scope.label) ?? [];
-    const value = `${SCOPE_ITEM}${scope.label}`;
-    const holdsCurrent = refs.includes(selectedPath);
-    const shown = refs.slice(0, SCOPE_ARTIFACTS_SHOWN);
-    if (holdsCurrent && !shown.includes(selectedPath)) shown.push(selectedPath);
-    if (shown.length < refs.length) cut = true;
-    const count = element("span", "nav-count", String(scope.artifacts));
-    const children = shown.map((ref) => treeItem(ref, belowScope(ref), { selected: selectedPath === ref }));
-    return treeItem(value, scope.label, { expanded: treeToggles.get(value) ?? holdsCurrent, end: [count], children });
-  });
-  if (items.length) parts.push(tree("Store artifacts by scope", items));
-  else parts.push(element("p", "nav-note", "No scope matches the filter."));
-  if (cut) parts.push(element("p", "nav-note", `A scope lists its first ${SCOPE_ARTIFACTS_SHOWN} artifacts here; press Ctrl K to find any other.`));
-  return parts;
+// Knowledge's Scopes section: the scope filter while the store holds more than one scope's artifacts, and the store's notes.
+function scopeNavigation() {
+  const notes = storeNotes.map((note) => element("p", "nav-note", note.message ?? String(note)));
+  if (storeScopes.length < 2) return notes;
+  const chosen = storeScopes.filter((scope) => scopeFilter?.has(scope.label)).length;
+  return [section(scopeFilter ? `Scopes · ${chosen} of ${storeScopes.length}` : "Scopes"), scopeFilterChips(), ...notes];
+}
+
+// A kind's count in Knowledge: the workspace's count, or the sum over the chosen scopes while the scope filter narrows.
+function scopedCount(kind, total) {
+  const byScope = navigation.library?.byScope?.[kind];
+  if (!scopeFilter || !byScope) return total;
+  return Object.entries(byScope).reduce((sum, [label, count]) => sum + (scopeShown(label) ? count : 0), 0);
 }
 
 // The current place: the one the person chose last in this browser, or the one a `place=` address names, and Attention when none was stored.
@@ -1688,9 +1737,7 @@ function storePlace(name) {
   }
 }
 
-// The view the Roadmap page shows, which only the Roadmap place's sidebar switches, is the person's preference, so every roadmap opens in the view
-// they last chose; a lane whose heading the next drawn board scrolls into view.
-const roadmapView = () => preference("roadmap.view");
+// A lane whose heading the next drawn board scrolls into view.
 let pendingLane = null;
 {
   const address = new URLSearchParams(location.search);
@@ -1719,7 +1766,7 @@ showPlaceHead();
  */
 function choosePlace(name, { fromRail = false, keep = false } = {}) {
   if (!placeNamed(name)) return;
-  if (wideWindow.matches && shell.classList.contains("sidebar-collapsed")) setSidebarCollapsed(false);
+  if (wideWindow.matches && shell.classList.contains("sidebar-collapsed")) setSidebarFlyout(true);
   if (name === currentPlace) return;
   currentPlace = name;
   storePlace(name);
@@ -1782,8 +1829,9 @@ function attentionNavigation() {
     if (rest.length) {
       const total = rest.reduce((sum, entry) => sum + entry.count, 0);
       const tip = `${attentionMoreOpen ? "Hide" : "Show"} ${rest.length} more ${rest.length === 1 ? "initiative" : "initiatives"}`;
-      rows.push(treeItem(ATTENTION_MORE, `${rest.length} more`, { start: [navIcon("more")], end: count(total), tip, href: null }));
-      if (attentionMoreOpen) rows.push(...rest.map(workRow));
+      // The toggle follows the rows it shows: collapsed it names how many more there are, and expanded it moves after the last one as Show fewer.
+      if (attentionMoreOpen) rows.push(...rest.map(workRow), treeItem(ATTENTION_MORE, "Show fewer", { start: [navIcon("more")], tip, href: null }));
+      else rows.push(treeItem(ATTENTION_MORE, `${rest.length} more`, { start: [navIcon("more")], end: count(total), tip, href: null }));
     }
     parts.push(section("By work"), tree("By work", rows));
   }
@@ -1870,35 +1918,13 @@ function workNavigation({ scope }) {
   return parts;
 }
 
-// The Roadmap place's view switch stays one element across renders, so the arrow keys keep their focus on it while the sidebar redraws.
-let roadmapViewSwitch = null;
 const LANE_VALUE = "roadmap-lane:";
-
-function roadmapViews() {
-  if (!roadmapViewSwitch) {
-    roadmapViewSwitch = kitElement("prism-segmented", { label: "View", class: "nav-views" });
-    roadmapViewSwitch.append(...ROADMAP_VIEWS.map(([value, label]) => kitElement("span", { value }, label)));
-    roadmapViewSwitch.addEventListener("change", (event) => {
-      event.stopPropagation();
-      showRoadmapView(event.detail?.value);
-    });
-  }
-  roadmapViewSwitch.setAttribute("value", roadmapView());
-  return roadmapViewSwitch;
-}
-
-// Switching the view redraws the Roadmap page in it, and opens the page when another one shows, keeping the drawer open as a place's choice does.
-function showRoadmapView(view) {
-  if (!ROADMAP_VIEWS.some(([name]) => name === view)) return;
-  void setPreference("roadmap.view", view).catch(() => showToast("The view changed here, but the review app could not store the choice."));
-  renderNavigation();
-  openRef("roadmap", { keepDrawer: true });
-}
 
 // A lane link opens the Roadmap's board with that lane's heading in view, and scrolls to it again while the board shows.
 function showLane(lane, { keep = false } = {}) {
   if (!LANES.some(([name]) => name === lane)) return;
   void setPreference("roadmap.view", "board").catch(() => {});
+  void setPreference("roadmap.groupBy", "band").catch(() => {});
   pendingLane = { path: "roadmap", lane };
   openRef("roadmap", { keep });
 }
@@ -1911,8 +1937,8 @@ function revealLane() {
 }
 
 /**
- * Roadmap: the choice of the page's view, Board, List, or Graph, marked with the view the page shows, then one entry per lane with its open initiatives;
- * a lane entry is a link to the board at that lane.
+ * Roadmap: Whole roadmap, which opens the Roadmap page, then one entry per lane with its open initiatives; a lane entry is a link to the board at that lane.
+ * The page's views are chosen in its own toolbar, beside what they change.
  */
 function roadmapNavigation() {
   const open = (navigation.initiatives ?? []).filter((item) => item.band && item.state !== "shipped" && item.state !== "superseded" && item.state !== "unlisted");
@@ -1920,7 +1946,8 @@ function roadmapNavigation() {
     const count = open.filter((item) => item.band === band).length;
     return treeItem(`${LANE_VALUE}${lane}`, band, { start: [navIcon("roadmap")], end: [meta(String(count))], tip: `${band} · ${count} open ${count === 1 ? "initiative" : "initiatives"}`, href: `./review?artifact=roadmap&lane=${lane}` });
   });
-  return [section("View"), roadmapViews(), section("Lanes"), tree("Lanes", lanes)];
+  const whole = treeItem("roadmap", "Whole roadmap", { selected: selectedPath === "roadmap" && !pendingLane, start: [navIcon("roadmap")], end: [meta(String(open.length))], tip: `Whole roadmap · ${open.length} open ${open.length === 1 ? "initiative" : "initiatives"}` });
+  return [tree("Roadmap", [whole]), section("Lanes"), tree("Lanes", lanes)];
 }
 
 // Knowledge's search field stays one element across renders, so typing in it keeps its focus and its text while the results below it change.
@@ -1992,7 +2019,9 @@ function knowledgeMatches(query) {
     const group = knowledgeResults.groups.find((entry) => entry.kind === kind);
     if (!group?.results.length) continue;
     // A glossary term opens the Glossary, so it is never marked as the open page.
-    const rows = group.results.map((result) => treeItem(result.ref, result.title, { selected: kind !== "glossary-term" && selectedPath === result.ref, start: [navIcon(icon)], tip: result.title }));
+    const results = group.results.filter((result) => !isStoreRef(result.ref) || scopeShown(scopeOfRef(result.ref)));
+    if (!results.length) continue;
+    const rows = results.map((result) => treeItem(result.ref, result.title, { selected: kind !== "glossary-term" && selectedPath === result.ref, start: [navIcon(icon)], tip: result.title }));
     parts.push(section(label), tree(label, rows));
   }
   return parts;
@@ -2007,7 +2036,8 @@ function knowledgeNavigation() {
   const library = navigation.library ?? {};
   const entries = navigation.places?.knowledge ?? {};
   const count = (value) => Number.isInteger(value) ? [meta(String(value))] : [];
-  const total = ["requirements", "decisions", "terms", "diagrams"].reduce((sum, kind) => sum + (Number.isInteger(library[kind]) ? library[kind] : 0), 0);
+  const shown = (kind) => Number.isInteger(library[kind]) ? scopedCount(kind, library[kind]) : library[kind];
+  const total = ["requirements", "decisions", "terms", "diagrams"].reduce((sum, kind) => sum + (Number.isInteger(shown(kind)) ? shown(kind) : 0), 0);
   const field = knowledgeSearch(total);
   const query = knowledgeQuery();
   const matches = query.length >= KNOWLEDGE_SEARCH_MINIMUM ? knowledgeMatches(query) : null;
@@ -2015,6 +2045,7 @@ function knowledgeNavigation() {
   const row = (ref, label, icon, end) => treeItem(ref, label, { selected: selectedPath === ref, start: [navIcon(icon)], end });
   return [
     field,
+    ...scopeNavigation(),
     section("Start from"),
     tree("Start from", [
       row("knowledge:touched", "Touched by my work", "branch", count(lastSlice ? touchedCount : 0)),
@@ -2022,13 +2053,12 @@ function knowledgeNavigation() {
     ]),
     section("Browse by kind"),
     tree("Browse by kind", [
-      row("requirements", ENTITY_LABELS.requirements, "list", count(library.requirements)),
-      row("decisions", ENTITY_LABELS.decisions, "scale", count(library.decisions)),
-      row("glossary", "Glossary", "book", glossary.exists ? count(library.terms) : [element("span", "nav-state", "missing")]),
-      row("knowledge:diagrams", "Diagrams", "diagram", count(library.diagrams)),
+      row("requirements", ENTITY_LABELS.requirements, "list", count(shown("requirements"))),
+      row("decisions", ENTITY_LABELS.decisions, "scale", count(shown("decisions"))),
+      row("glossary", "Glossary", "book", glossary.exists ? count(shown("terms")) : [element("span", "nav-state", "missing")]),
+      row("knowledge:diagrams", "Diagrams", "diagram", count(shown("diagrams"))),
       ...(codeRepositories.length ? [row("code", ENTITY_LABELS.code, "code", [])] : [])
-    ]),
-    ...storeNavigation()
+    ])
   ];
 }
 
@@ -2050,7 +2080,7 @@ function historyNavigation() {
     const by = superseded && entry.by ? ` by ${titles.get(entry.by) ?? entry.by}` : "";
     const tip = `${entry.title} · ${superseded ? "Superseded" : "Shipped"}${date ? ` ${date}` : ""}${by}`;
     // The glyph names the state only for shipped work, since the Superseded mark already says it.
-    const glyph = kitElement("prism-state", { state: superseded ? "superseded" : "shipped", label: superseded ? null : "Shipped", "aria-hidden": superseded ? "true" : null });
+    const glyph = kitElement("prism-status", { value: superseded ? "superseded" : "shipped", "glyph-only": true, "aria-hidden": superseded ? "true" : null });
     return treeItem(ref, entry.title, { selected: selectedPath === ref, start: [glyph], end, tip });
   }))];
 }
@@ -2066,7 +2096,7 @@ function renderNavigation() {
   for (const rail of [shellRail, drawerRail]) renderRail(rail, attention.gates ?? 0);
   const entity = Boolean(parseEntityRef(selectedPath ?? ""));
   const claims = claimIndex ? [...claimIndex.live(), ...claimIndex.expired()].map((claim) => [claim.ref, claim.expiresAt, claim.label]) : [];
-  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", knowledgeQuery(), knowledgeResults, attentionMoreOpen, roadmapView(), currentPlace === "knowledge" ? [lastSlice, touchedCount] : null, storeSignature, scopeFilter && [...scopeFilter]]);
+  const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", knowledgeQuery(), knowledgeResults, attentionMoreOpen, currentPlace === "knowledge" ? [lastSlice, touchedCount] : null, storeSignature, scopeFilter && [...scopeFilter]]);
   if (key === navigationKey) return;
   navigationKey = key;
   const focused = document.activeElement?.closest?.("prism-tree-item");
@@ -2395,6 +2425,20 @@ async function showError(response) {
   setBusy(false);
 }
 
+// A Markdown or text file's sheet: the file as rendered, and for a store artifact the line above it that shows its changes, on the rendered blocks or as numbered source lines.
+function documentSheet(data, state) {
+  const options = markdownOptions(data.path, data.links);
+  const changes = artifactChangesView(data, state, (content) => renderText(data.path, content, options));
+  return `${changes.row}<section class="document-sheet">${changes.body ?? `<prism-doc class="document-content">${renderText(data.path, data.content, options)}</prism-doc>`}</section>`;
+}
+
+// Showing or hiding a file's changes, or choosing how they show, draws the page again and keeps the choice in the file's view state.
+function bindChanges(root, state, path) {
+  const redraw = () => { lastSnapshot = ""; void showArtifact(path); };
+  root.querySelector("[data-changes-toggle]")?.addEventListener("click", () => { state.changesShown = !state.changesShown; redraw(); });
+  root.querySelector("[data-changes-as]")?.addEventListener("change", (event) => { state.changesAs = event.detail?.value === "source" ? "source" : "rendered"; redraw(); });
+}
+
 // A view's own actions, such as the structured and raw modes of a record, sit at the end of the page bar.
 function modeButtons(state, path) {
   return [["structured", "Structured"], ["raw", "Raw"]].map(([mode, text]) => {
@@ -2423,6 +2467,7 @@ async function showEntity(path) {
     return;
   }
   const entity = await response.json();
+  entity.scopeFilter = scopeFilter ? [...scopeFilter] : null;
   // Touched by my work's records come from the remembered slice rather than from the page's address, so they join the snapshot and a change to them redraws the page.
   if (entity.kind === "touched") entity.touched = await touchedAnswer(lastSlice);
   const snapshot = JSON.stringify(entity);
@@ -2565,16 +2610,18 @@ async function showArtifact(path) {
     ? `<section class="document-sheet source-sheet" data-code-subject><ol class="source-lines">${highlightLines(data.content.replace(/\r\n/g, "\n").replace(/\n$/, ""), languageOf(data.path)).map((line, index) => `<li id="${HEADING_PREFIX}L${index + 1}"><code>${line || " "}</code></li>`).join("")}</ol></section>`
     : structured || data.path.toLowerCase().endsWith(".puml")
       ? ""
-      : `<section class="document-sheet"><prism-doc class="document-content">${renderText(data.path, data.content, markdownOptions(data.path, data.links))}</prism-doc></section>`;
+      : documentSheet(data, state);
   const memory = beginRebuild(path);
   // A repository file is named by its path; a record of Prism's by its title and kind, never its file name.
+  // A declared design view is named by the question it answers, with its kind above it and its note below.
   const named = describe(data.path);
-  const heading = named.code ? fileName(data.path) : named.label === named.kind ? named.kind : named.label;
+  const view = data.view ?? null;
+  const heading = view ? view.question : named.code ? fileName(data.path) : named.label === named.kind ? named.kind : named.label;
   const kind = structured ? KIND_LABELS[data.kind] ?? "JSON" : named.code ? fileType(data.path) : named.kind;
   memory.stage.innerHTML = `
     <header class="artifact-header">
       <div>
-        ${named.code ? "" : `<p class="eyebrow">${escapeHtml(named.kind)}</p>`}
+        ${view ? `<p class="eyebrow">${escapeHtml(viewKind(view))}</p>` : named.code ? "" : `<p class="eyebrow">${escapeHtml(named.kind)}</p>`}
         <h1${named.code ? " data-code-subject" : ""}>${escapeHtml(heading)}</h1>
         ${named.code ? `<p class="artifact-path" data-code-subject>${escapeHtml(data.path)}</p>` : ""}
         ${data.location ? `<p class="artifact-path" data-code-subject>${escapeHtml(data.location)}</p>` : ""}
@@ -2588,12 +2635,15 @@ async function showArtifact(path) {
         ${source ? "<prism-chip>Read-only</prism-chip>" : structured ? "" : `<prism-chip>${diagramLabel}</prism-chip>`}
       </div>
     </header>
+    ${view ? viewNoteHtml(view, "view-note view-header-note") : ""}
     ${artifactReviewHtml(data, state)}
     <div class="document-history" data-shipped-history>${documentHistoryHtml(path)}</div>
     ${documentCard}`;
   // A store artifact shows its review view above its content, and its comment form keeps an unsent comment across the page's live updates.
   // More comments lists further comments in place, so the page takes what the card now lists as what it shows and redraws only when that changes.
+  if (view) bindViewLinks(memory.stage, openClause);
   mountArtifactReview(memory.stage, data, { actionApi, state, readPage, onListed: (listed) => { if (listed.path === selectedPath) lastSnapshot = JSON.stringify(listed); } });
+  bindChanges(memory.stage, state, path);
   pageBar.setActions(structured ? modeButtons(state, path) : []);
   if (structured) {
     const container = document.createElement("div");
@@ -2655,8 +2705,7 @@ function viewContext(path, state) {
   return {
     path,
     state,
-    // The Roadmap page's view as its place's sidebar chose it, and the lane a lane link asks it to show.
-    roadmapView: roadmapView(),
+    // The lane a lane link asks the Roadmap page to show.
     lane: pendingLane?.path === path ? pendingLane.lane : null,
     // Touched by my work reads the slice in the selected tab, or else the one selected last, and passes its answer back for the sidebar's count.
     touchedSlice: () => lastSlice,
@@ -2669,6 +2718,11 @@ function viewContext(path, state) {
     hasArtifact: (artifactPath) => availableArtifacts.has(localTab(artifactPath)) || Boolean(parseEntityRef(artifactPath)),
     // A store artifact's scope label, which the record views show beside it, or null for any other file.
     scopeLabel: (artifactPath) => refScopes.get(localTab(artifactPath)) ?? null,
+    // The scope filter of Knowledge: whether a scope label is shown, the chosen labels or null for every scope, the store's scopes by label, and a way back to every scope.
+    scopeShown,
+    scopeFilter: () => scopeFilter ? [...scopeFilter] : null,
+    storeScopes: () => storeScopes.map((scope) => scope.label),
+    showAllScopes: () => setScopeFilter(null),
     openArtifact(given, options = {}) {
       const artifactPath = localTab(given);
       if (!availableArtifacts.has(artifactPath) && !parseEntityRef(artifactPath)) {
@@ -2692,6 +2746,11 @@ function viewContext(path, state) {
       show: (ref) => sidePanel.showFile(ref),
       close: () => sidePanel.close(),
       isOpen: () => sidePanel.isOpen()
+    },
+    // A design view's card on a slice's Views tab draws its source as a diagram card does.
+    async drawView(section, source) {
+      await renderDiagram(source, section.querySelector(".diagram-output"), section);
+      if (path === selectedPath) decorateMaximize(path);
     },
     // A view embeds a PlantUML file as the same diagram card that opening the file shows.
     async mountDiagram(target, diagramPath) {
@@ -2781,7 +2840,7 @@ function renderStoreSync(data) {
   recordStoreStatus?.update(data.recordStore, data.storeSync, data.sync);
 }
 
-startAppearanceMenu();
+startSettings();
 watchDiagramTheme();
 
 // The drawer holds a rail of its own beside the sidebar, which moves into the drawer while the drawer is open, so one set of trees serves both.
@@ -2810,16 +2869,61 @@ function readSidebarCollapsed() {
 
 function setSidebarCollapsed(collapsed, { remember = true } = {}) {
   shell.classList.toggle("sidebar-collapsed", collapsed);
-  const action = collapsed ? "Expand the sidebar" : "Collapse the sidebar";
-  sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
-  sidebarToggle.setAttribute("label", action);
-  sidebarToggle.setAttribute("tip", `${action} ([)`);
+  setSidebarFlyout(false);
   if (remember) void setPreference("sidebar.collapsed", collapsed).catch(() => showToast("The sidebar changed here, but the review app could not store the choice."));
 }
+
+/**
+ * While the sidebar is hidden, a place chosen on the rail opens its sidebar over the page, as the narrow layout's drawer does, without moving the page;
+ * choosing a page in it, Escape, or a click outside it hides it again, and the button in its head keeps it open.
+ */
+function setSidebarFlyout(open) {
+  const flyout = open && shell.classList.contains("sidebar-collapsed") && wideWindow.matches;
+  shell.classList.toggle("sidebar-flyout", flyout);
+  const collapsed = shell.classList.contains("sidebar-collapsed");
+  const action = collapsed ? "Keep the sidebar open" : "Hide the sidebar";
+  sidebarToggle.setAttribute("aria-expanded", String(!collapsed || flyout));
+  sidebarToggle.setAttribute("label", action);
+  sidebarToggle.setAttribute("tip", `${action} ([)`);
+  // The drawer of a narrow window shows the sidebar whatever the choice, so its head offers no button to hide it.
+  sidebarToggle.hidden = !wideWindow.matches;
+  // A hidden sidebar has no edge to drag, also while it opens over the page.
+  const resizer = document.getElementById("sidebar-resizer");
+  if (resizer) resizer.hidden = collapsed;
+}
+
+const sidebarFlyoutOpen = () => shell.classList.contains("sidebar-flyout");
+// A window crossing 1100px closes the flyout and shows or hides the head's button.
+wideWindow.addEventListener("change", () => setSidebarFlyout(false));
+
+// A click outside the open flyout, other than on the rail that switches its place, hides it.
+document.addEventListener("pointerdown", (event) => {
+  if (!sidebarFlyoutOpen()) return;
+  const path = event.composedPath();
+  if (path.includes(sidebar) || path.includes(railDock) || path.some((node) => node?.tagName === "PRISM-TOOLTIP")) return;
+  setSidebarFlyout(false);
+}, true);
+
+// The sidebar's width is the person's preference, from the edge they drag; without one it takes the density's default width.
+const sidebarResizer = document.getElementById("sidebar-resizer");
+
+function setSidebarWidth(width, { remember = false } = {}) {
+  if (Number.isFinite(width)) shell.style.setProperty("--sidebar-width", `${width}px`);
+  else shell.style.removeProperty("--sidebar-width");
+  // The width is the sidebar's column, the sidebar and the gap after it, as the person sees the edge move.
+  const shown = sidebar.getBoundingClientRect().width;
+  const column = shown ? shown + parseFloat(getComputedStyle(sidebar).marginInlineEnd || "0") : width;
+  sidebarResizer.setAttribute("value", String(Math.round(column || 0) || ""));
+  if (remember) void setPreference("sidebar.width", Number.isFinite(width) ? width : null).catch(() => showToast("The sidebar's width changed here, but the review app could not store it."));
+}
+sidebarResizer.addEventListener("prism-resize", (event) => setSidebarWidth(event.detail.width, { remember: event.detail.done }));
+sidebarResizer.addEventListener("prism-resize-reset", () => setSidebarWidth(null, { remember: true }));
+
 // The sidebar shows as this browser last left it as soon as the page runs, and the review app's stored choice applies once the workspace loads.
 setSidebarCollapsed(readSidebarCollapsed(), { remember: false });
-// The rail's sidebar button works from the first moment too, so a click while the workspace loads is not lost.
-sidebarToggle.addEventListener("prism-select", () => setSidebarCollapsed(!shell.classList.contains("sidebar-collapsed")));
+setSidebarWidth(preference("sidebar.width"));
+// The sidebar's button works from the first moment too, so a click while the workspace loads is not lost; in the flyout it keeps the sidebar open.
+sidebarToggle.addEventListener("click", () => setSidebarCollapsed(!shell.classList.contains("sidebar-collapsed")));
 
 // The drawer places its children in its body a microtask after they arrive, so focus moves once the sidebar sits inside the open drawer.
 // How long the drawer keeps showing a place whose choice also opened a page, so the switch is seen before the drawer closes.
@@ -2930,6 +3034,7 @@ async function initialize() {
   sessionRevision = Number.isInteger(data.revision) ? data.revision : 0;
   sessionInstance = typeof data.instance === "string" ? data.instance : null;
   appVersion = typeof data.appVersion === "string" ? data.appVersion : null;
+  showAboutVersion(data.version ?? appVersion);
   const requestedPath = localTab(selectedPath);
   selectedPath = Object.hasOwn(data, "activeTab") ? data.activeTab : null;
   // A workspace that the app reads through its store's clone alone names no checkout, so the label shows the workspace alone.
@@ -3019,6 +3124,11 @@ async function initialize() {
   });
   sidePanel = createSidePanel({
     shell: appShell,
+    // A view's clause or contract opens on the contract's page, so the panel closes rather than show the view beside it.
+    onOpenClause: (ref, number) => {
+      sidePanel.close();
+      openClause(ref, number);
+    },
     sheet: document.getElementById("side-panel-sheet"),
     describe,
     // A page's Side panel button follows the panel, however it opens or closes.
@@ -3082,14 +3192,6 @@ async function initialize() {
   }, { capture: true });
   navRoot.addEventListener("prism-select", (event) => {
     const ref = event.detail?.value;
-    // A scope of the store tree opens and closes its list of artifacts rather than opening a page.
-    if (ref?.startsWith(SCOPE_ITEM)) {
-      const item = [...navRoot.querySelectorAll("prism-tree-item")].find((node) => node.getAttribute("value") === ref);
-      treeToggles.set(ref, !(item?.hasAttribute("expanded") ?? false));
-      renderNavigation();
-      navKeep = false;
-      return;
-    }
     if (ref && Object.hasOwn(NAVIGATION_ACTIONS, ref)) NAVIGATION_ACTIONS[ref]();
     else if (ref?.startsWith(LANE_VALUE)) showLane(ref.slice(LANE_VALUE.length), { keep: navKeep });
     else if (ref) openRef(ref, { keep: navKeep });
@@ -3116,6 +3218,7 @@ async function initialize() {
   setSidebarCollapsed(readSidebarCollapsed(), { remember: false });
   onPreferencesChange((keys, preferences) => {
     if (keys.includes("sidebar.collapsed") && preferences["sidebar.collapsed"] !== shell.classList.contains("sidebar-collapsed")) setSidebarCollapsed(preferences["sidebar.collapsed"], { remember: false });
+    if (keys.includes("sidebar.width")) setSidebarWidth(preferences["sidebar.width"]);
   });
   navDrawer.addEventListener("prism-close", closeDrawer);
   watchDrawerWidth();
@@ -3168,11 +3271,10 @@ async function initialize() {
       if (palette.isOpen()) palette.hide();
       else palette.show();
     } else if (event.key === "," && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
-      // Ctrl+, or Meta+, opens the Appearance menu on its first choice, as its title row shows.
+      // Ctrl+, or Meta+, opens Settings, as the gear's tooltip says, and closes it again.
       event.preventDefault();
-      const menu = document.getElementById("appearance-menu");
-      if (menu.isOpen) menu.close({ focus: true });
-      else menu.show({ focus: "first" });
+      if (settingsDialog.isOpen) settingsDialog.close();
+      else openSettings();
     } else if (event.key === "[" && !typing && !overlayOpen() && wideWindow.matches && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
       setSidebarCollapsed(!shell.classList.contains("sidebar-collapsed"));
@@ -3186,6 +3288,10 @@ async function initialize() {
       else goForward();
     } else if (event.key === "Escape" && overlayOpen()) {
       // An open dialog, popover, or menu closes on its own Escape.
+    } else if (event.key === "Escape" && sidebarFlyoutOpen()) {
+      // The sidebar over the page closes, and focus returns to the rail's current place.
+      setSidebarFlyout(false);
+      shellRail.querySelector('prism-rail-item[pressed="true"] button')?.focus();
     } else if (event.key === "Escape" && document.getElementById("evidence-drawer").isOpen) {
       // The evidence drawer leaves the page usable, so Escape from the page closes it as well as Escape inside it.
       closeEvidence();
@@ -3272,6 +3378,12 @@ async function initialize() {
   } });
   // The first check waits one interval, since the page has just drawn from a fresh index.
   setTimeout(() => void indexPoller.start(), 1500);
+  // A hidden tab makes none of the checks above, so it reads the count of waiting questions alone, which raises the desktop notification the Attention page offers.
+  void createPoller({ interval: ATTENTION_WATCH_MS, whileHidden: true, run: async () => {
+    const response = await appFetch("./api/attention", { cache: "no-store", deadlineMs: POLL_DEADLINE_MS }).catch(() => null);
+    const answer = response?.ok ? await response.json().catch(() => null) : null;
+    if (Number.isInteger(answer?.gates)) await updateAttentionSignals(answer.gates);
+  } }).start();
 }
 
 initialize().catch((error) => {

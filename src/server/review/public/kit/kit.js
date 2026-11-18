@@ -41,6 +41,7 @@ import { PrismEmptyState } from "./elements/prism-empty-state.js";
 import { PrismBanner } from "./elements/prism-banner.js";
 import { PrismToast } from "./elements/prism-toast.js";
 import { PrismClaim } from "./elements/prism-claim.js";
+import { PrismTime } from "./elements/prism-time.js";
 import { PrismStepper } from "./elements/prism-stepper.js";
 import { PrismStep } from "./elements/prism-step.js";
 import { PrismBreadcrumbs } from "./elements/prism-breadcrumbs.js";
@@ -52,8 +53,10 @@ import { PrismRow } from "./elements/prism-row.js";
 import { PrismPageSub } from "./elements/prism-page-sub.js";
 import { PrismLibTable } from "./elements/prism-lib-table.js";
 import { PrismPhase } from "./elements/prism-phase.js";
-import { PrismPhaseBar } from "./elements/prism-phase-bar.js";
-import { PrismState } from "./elements/prism-state.js";
+import { PrismSliceBar } from "./elements/prism-slice-bar.js";
+import { PrismSeverity } from "./elements/prism-severity.js";
+import { PrismStatus } from "./elements/prism-status.js";
+import { PrismResizer } from "./elements/prism-resizer.js";
 import { PrismKbd } from "./elements/prism-kbd.js";
 import { PrismTable } from "./elements/prism-table.js";
 import { PrismMaximize } from "./elements/prism-maximize.js";
@@ -105,6 +108,7 @@ export const KIT_ELEMENTS = [
   PrismBanner,
   PrismToast,
   PrismClaim,
+  PrismTime,
   PrismStepper,
   PrismStep,
   PrismBreadcrumbs,
@@ -118,8 +122,10 @@ export const KIT_ELEMENTS = [
   PrismPageSub,
   PrismLibTable,
   PrismPhase,
-  PrismPhaseBar,
-  PrismState
+  PrismSliceBar,
+  PrismSeverity,
+  PrismStatus,
+  PrismResizer
 ];
 
 /** Defines each kit element once; a second call, or an element that is already defined, changes nothing. */

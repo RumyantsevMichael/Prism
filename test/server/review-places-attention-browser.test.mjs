@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { skip } from "./fixtures/kit-browser.mjs";
+import { settled } from "./fixtures/wait.mjs";
 import { prepareAttention } from "./fixtures/places-attention.mjs";
 import { choosePlace, comparePlaces, groupHeadings, item, itemNames, open, placesDemo, settledOn, shownRef, sidebar } from "./fixtures/places-browser.mjs";
 
@@ -21,11 +22,15 @@ test("clauses 36, 38: the Attention sidebar lists Everything, each kind with its
   assert.deepEqual(names.slice(7, 11), ["Harden request retries 4", "Alpha search 2", "Beta billing 2", "2 more 3"]);
   assert.equal(names.at(-1), "Answered in the last 7 days 3");
   await item(scope, "2 more").click();
-  await page.waitForTimeout(300);
-  const expanded = await itemNames(scope);
+  const expanded = await settled(() => itemNames(scope), (shown) => shown.includes("Show fewer"));
   assert.ok(expanded.includes("Gamma gateway 2") && expanded.includes("Export activity reports 1"), "choosing the row shows the other initiatives");
   assert.ok(expanded.indexOf("Gamma gateway 2") < expanded.indexOf("Export activity reports 1"), "in the same order");
   assert.ok(expanded.indexOf("Gamma gateway 2") > expanded.indexOf("Beta billing 2"), "below the first three");
+  assert.equal(expanded.includes("2 more 3"), false, "the toggle no longer stands above the rows it showed");
+  assert.equal(expanded.indexOf("Show fewer"), expanded.indexOf("Export activity reports 1") + 1, "it follows the last initiative as Show fewer");
+  await item(scope, "Show fewer").click();
+  const gathered = ["Harden request retries 4", "Alpha search 2", "Beta billing 2", "2 more 3"];
+  assert.deepEqual(await settled(async () => (await itemNames(scope)).slice(7, 11), gathered), gathered, "Show fewer gathers them again");
   assert.deepEqual(page.errors, []);
 });
 
@@ -82,7 +87,7 @@ test("clause 40: with nothing answered this week the page says so", { skip, time
   assert.equal(await page.locator("#artifact").getByText("No question was answered or closed in the last 7 days.", { exact: true }).isVisible(), true);
 });
 
-test("clauses 36, 39, 73: the Attention sidebar and its filtered page match the mockup at three widths in both themes", { skip, timeout: 900000 }, async (context) => {
+test("clauses 36, 39, 73: the Attention sidebar and its filtered page match the mockup at three widths, and in their colors in the dark theme", { skip, timeout: 900000 }, async (context) => {
   const result = await comparePlaces(context, { scenes: "attention,attention-filtered", parts: "sidebar,head,trail,geometry,tokens" });
   assert.equal(result.status, 0, `the comparison found differences:\n${result.stdout}${result.stderr}`);
   for (const pair of result.report.pairs) assert.deepEqual(pair.differences, [], `${pair.scene} ${pair.width} ${pair.theme}`);

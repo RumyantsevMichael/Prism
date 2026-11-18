@@ -5,6 +5,7 @@ import { Base, setAttribute, shadow } from "./base.js";
 const GLYPHS = {
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/>',
   close: '<path d="M18 6 6 18M6 6l12 12"/>',
+  settings: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v2.6M12 18.9v2.6M21.5 12h-2.6M5.1 12H2.5M18.7 5.3l-1.8 1.8M7.1 16.9l-1.8 1.8M18.7 18.7l-1.8-1.8M7.1 7.1 5.3 5.3"/><circle cx="12" cy="12" r="6.6"/>',
   "chevron-right": '<path d="m9 18 6-6-6-6"/>',
   "chevron-left": '<path d="m15 18-6-6 6-6"/>',
   "chevron-down": '<path d="m6 9 6 6 6-6"/>',
@@ -54,8 +55,10 @@ const GLYPHS = {
   book: '<path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z"/><path d="M22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"/>',
   layers: '<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/>',
   branch: '<circle cx="6" cy="5.5" r="2.5"/><circle cx="6" cy="18.5" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8v8M18 10.5a6 6 0 0 1-6 6H8.5"/>',
+  play: '<path d="M7 4.5v15l12.5-7.5z"/>',
   enter: '<path d="M20 5v6a3 3 0 0 1-3 3H5M9 10l-4 4 4 4"/>',
-  grid: '<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/>'
+  needs: '<circle cx="18" cy="12" r="2.6"/><path d="M3.5 12h11.9M11 7.5l4.4 4.5-4.4 4.5"/>',
+  unblocks: '<circle cx="6" cy="12" r="2.6"/><path d="M8.6 12H20M15.5 7.5 20 12l-4.5 4.5"/>'
 };
 
 /** The names of every glyph the icon set draws. */
@@ -70,9 +73,10 @@ export class PrismIcon extends Base {
     options: [
       { name: "name", values: ICON_NAMES, default: "", description: "The glyph to draw." },
       { name: "label", values: ["text"], default: "", description: "Names the icon for assistive technology; without it the icon is decoration." },
-      { name: "size", values: ["md", "sm", "xs"], default: "md", description: "The icon size, from --prism-icon-size, --prism-icon-size-sm, or --prism-icon-size-xs." }
+      { name: "size", values: ["md", "sm", "xs"], default: "md", description: "The icon size, from --prism-icon-size, --prism-icon-size-sm, or --prism-icon-size-xs." },
+      { name: "tone", values: ["", "ok", "warn", "danger"], default: "", description: "Draws the glyph in a state's color instead of the text color, for an icon that also says whether something is well, such as the store's sync state." }
     ],
-    states: ["decorative", "labelled", "sizes"],
+    states: ["decorative", "labelled", "sizes", "tones"],
     keyboard: []
   };
 

@@ -54,6 +54,19 @@ export function newRecord(kind, status = null) {
   return { status: hasStatus(kind) ? status ?? newStatus(kind) : null, acceptedVersion: null, approval: null, pending: [], closed: [], history: [] };
 }
 
+/**
+ * Whether a move records a written status as accepted in the moved bytes: any status of one line but the one a new requirement or ADR starts with, in any letter case,
+ * since a file that reached it before the move did so as an approval gate would have taken it there.
+ */
+export function acceptedWhenMoved(kind, status) {
+  return hasStatus(kind) && typeof status === "string" && status.trim() !== "" && !/[\r\n]/.test(status) && status.toLowerCase() !== newStatus(kind).toLowerCase();
+}
+
+/** Whether a record is one that a move made, before moves kept an accepted version, for a status that counts as accepted: no gate, approval, acceptance, or history has touched it since. */
+export function movedWithoutAcceptance(kind, record) {
+  return acceptedWhenMoved(kind, record.status) && record.acceptedVersion === null && record.approval === null && !record.acceptance && !record.pending.length && !record.closed.length && !record.history.length;
+}
+
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const list = (value) => Array.isArray(value) ? value.filter(isRecord) : [];
 const VERSION = /^sha256:[0-9a-f]{64}$/;
