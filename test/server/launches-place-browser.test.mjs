@@ -92,3 +92,37 @@ test("the initiative page offers both launch actions with their availability", {
   assert.equal(await page.getByText("Launch with Claude Code").count() >= 1, true);
   assert.equal(await page.getByText("Launch with Codex").count() >= 1, true);
 });
+
+test("the initiative page shows how its latest launched run ended, a failed one with the host's error, and links to the place", { skip: skipHere, timeout: 60000 }, async (t) => {
+  const s = await place(t, { claude: [{ isError: true, exit: 1 }] });
+  const id = await s.start(INITIATIVE, "claude-code");
+  await waitFor(async () => (await s.state(id)) === "failed", { what: "the failed session" });
+  const page = await openPage(s.browser, reviewUrl(s.base, `initiative:${INITIATIVE}`));
+  await waitForView(page);
+  const latest = page.locator("#artifact [data-page-end] [data-initiative-last-run]");
+  await latest.waitFor();
+  assert.match(await latest.innerText(), /Last run failed/, "the page head says the latest run failed without opening anything");
+  await latest.click();
+  const launcher = page.getByRole("dialog", { name: "Launch an orchestration" });
+  await launcher.waitFor();
+  const run = launcher.locator("[data-launch-latest]");
+  await run.waitFor();
+  const text = await run.innerText();
+  assert.match(text, /Failed/);
+  assert.match(text, /Claude Code reported an error: The API returned an error\./, "the reason says why the run failed");
+  await run.getByRole("link", { name: "Open in Launched sessions" }).click();
+  await waitForView(page);
+  assert.equal(new URL(page.url()).searchParams.get("artifact"), "launches");
+  await row(page, id).waitFor();
+  assert.deepEqual(page.errors, []);
+});
+
+test("the initiative page head shows nothing about runs while none was launched for it here", { skip: skipHere, timeout: 60000 }, async (t) => {
+  const s = await place(t, { codex: [{ hold: "forever" }] });
+  await s.start("search", "codex");
+  const page = await openPage(s.browser, reviewUrl(s.base, `initiative:${INITIATIVE}`));
+  await waitForView(page);
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator("#artifact [data-initiative-last-run]:visible").count(), 0, "another initiative's run is not this one's");
+  assert.deepEqual(page.errors, []);
+});

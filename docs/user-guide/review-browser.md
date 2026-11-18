@@ -249,6 +249,11 @@ A launch action is unavailable with a reason such as `Claude Code was not found:
 Checkouts whose records live in the same place, such as two checkouts of one shared store, count as one initiative here, so only one launched session of an initiative runs on this computer at a time.
 Like every action, a launch needs a tab that can make changes.
 
+The initiative page also shows how the initiative's latest launched session on this computer stands.
+While that session failed, is blocked, waits for you, or runs, the page head shows `Last run failed`, `Last run blocked`, `Waiting for you`, or `Running` beside **Launch**, and pressing it opens **Launch an orchestration**, or **Launched sessions** in a tab that cannot make changes.
+At the top of **Launch an orchestration**, **Latest run** names the session's host and state, with its reason, such as `Claude Code reported an error:` and the host's own message or `Codex ended with exit code 1.`, and **Open in Launched sessions** opens its row.
+The page reads this every few seconds, so a session that fails moments after it starts shows there without a reload.
+
 Before anything starts, Prism asks you in a dialog of the operating system, outside the browser, so a script that drives the page cannot launch on its own.
 The dialog says `Start a <host> session on this computer that runs Prism's orchestrate skill for the initiative <initiative> in <checkout>? Further launches in the next 30 minutes will start without asking.`, offers **Launch** and **Cancel**, and Cancel is its default answer.
 When you choose **Launch**, the session starts and the launch window opens: for the next 30 minutes, further launches and resumes on this computer start without asking, and the window's end stops no running session.
