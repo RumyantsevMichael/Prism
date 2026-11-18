@@ -20,7 +20,7 @@ test("clauses 7, 8: a write that breaks the format is refused with its rules, an
   const plan = "docs/plans/exports/slice.md";
   const refused = await update(call, [
     { op: "write", path: plan, content: "# Exports\n", expectedVersion: null },
-    { op: "write", path: NEW, content: BROKEN, expectedVersion: null }
+    { op: "write", path: NEW, content: BROKEN, expectedVersion: null, scope: "repository" }
   ]);
   assert.equal(refused.value?.code, "artifact_nonconforming", refused.text);
   assert.deepEqual(refused.value.artifacts.map((artifact) => [artifact.path, labelOf(artifact), artifact.type]), [[NEW, "api", "requirements"]]);
