@@ -151,7 +151,7 @@ test("clauses 77, 79: the slice page shows its lifecycle, claim, and sub-tabs, a
   assert.match(steps[0], /done/i, "requirements are done");
   const tabs = view.getByRole("tablist", { name: "Slice" });
   // A tab may end with its count, such as the review ledger's open findings or the slice folder's files, and the change map's tab says it is deprecated.
-  assert.deepEqual((await tabs.getByRole("tab").allInnerTexts()).map((text) => text.trim().replace(/\s+(\d+|Deprecated)$/, "")), ["Design", "Diagram", "Verification", "Review", "Files", "Change map"]);
+  assert.deepEqual((await tabs.getByRole("tab").allInnerTexts()).map((text) => text.trim().replace(/\s+(\d+|Deprecated)$/, "")), ["Design", "Views", "Verification", "Review", "Files", "Change map"]);
   const bar = page.locator("#page-bar");
   assert.equal(await bar.getByRole("button", { name: "Copy link", exact: true }).count(), 1);
   const side = bar.getByRole("button", { name: "Side panel", exact: true });

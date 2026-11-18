@@ -450,6 +450,67 @@ mark.find-hit {
   margin-top: 0;
 }
 
+/* ---------- Design views: a slice's Views tab, a view's own page, and the side panel ---------- */
+
+.slice-views {
+  display: grid;
+  gap: var(--prism-space-6);
+  min-width: 0;
+}
+
+.slice-views .diagram-view {
+  margin-top: 0;
+}
+
+.slice-views-group {
+  display: grid;
+  gap: var(--prism-space-5);
+  min-width: 0;
+}
+
+.slice-views-group > .prism-panel-body {
+  display: grid;
+  gap: var(--prism-space-5);
+  min-width: 0;
+}
+
+.view-note {
+  margin: 0 0 var(--prism-space-4);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.view-note .clause-ref {
+  white-space: nowrap;
+}
+
+/* An API specification shows as source text that scrolls after about sixteen lines. */
+.view-source {
+  max-height: calc(var(--prism-control-height) * 16);
+  overflow: auto;
+}
+
+.slice-views-none {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+}
+
+.view-header-note {
+  margin: var(--prism-space-3) 0 var(--prism-space-5);
+}
+
+.side-panel-view-note {
+  margin: 0 0 var(--prism-space-4);
+}
+
+/* A clause that a view's link opens on the Design tab blinks as a linked heading does. */
+.served-clauses .design-clause.is-target {
+  border-radius: var(--prism-radius-sm);
+  animation: record-target var(--prism-duration-blink) var(--prism-easing-standard);
+}
+
 .side-panel-diagram + .side-panel-diagram,
 .document-content + .side-panel-diagram {
   margin-top: var(--prism-space-5);

@@ -4,6 +4,7 @@ import { anchorTarget, LINE_RANGE } from "./markdown.js";
 import { escapeHtml, pathName } from "./util.js";
 import { themeDiagram } from "../kit/diagram-theme.js";
 import { shippedHistoryHtml } from "./shipped-history.js";
+import { viewKind } from "./design-views.js";
 
 const SHOW_DELAY_MS = 400;
 const HIDE_DELAY_MS = 200;
@@ -92,7 +93,9 @@ async function diagramSummary(head, source, drawDiagram) {
 }
 
 // A preview names one of Prism's records by title and kind, and a repository file by its path, where code is the subject.
+// A declared design view previews by its kind and the question it answers.
 function previewHead(data, describe) {
+  if (data.view) return `<p class="preview-source">${escapeHtml(viewKind(data.view))}</p><h3>${escapeHtml(data.view.question)}</h3>`;
   const { label, code } = pathName(data.path, { describe });
   return code ? `<p class="preview-source" data-code-subject>${escapeHtml(data.path)}</p>` : `<p class="preview-source">${escapeHtml(label)}</p>`;
 }
