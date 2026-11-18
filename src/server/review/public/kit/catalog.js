@@ -339,6 +339,7 @@ const SPECIMENS = {
     island: `<prism-panel heading="Change map" variant="island"><p>Planned changes.</p></prism-panel>`,
     "tools-and-footer": `<prism-panel heading="Review ledger" level="3"><prism-button slot="tools" size="sm" variant="ghost">Copy link</prism-button><p>Two open findings.</p><span slot="footer"><prism-button size="sm" variant="primary">Answer</prism-button></span></prism-panel>`,
     maximizable: `<prism-panel heading="Diagram" eyebrow="Slice" maximizable><p>Maximize fills the window; Restore or Escape brings it back.</p></prism-panel>`,
+    region: `<prism-panel heading="In what order do the client and the server talk?" eyebrow="Sequence view" region><p>A region landmark named by its heading.</p></prism-panel>`,
     "many-items": `<prism-panel heading="Planned changes"><prism-button slot="tools" size="sm" variant="ghost">Filter</prism-button><prism-button slot="tools" size="sm" variant="ghost">Sort</prism-button><prism-button slot="tools" size="sm" variant="ghost">Copy</prism-button>${repeat(14, (index) => `<p>Change ${index + 1} of the slice.</p>`)}</prism-panel>`,
     "long-text": `<prism-panel heading="${LONG}" eyebrow="${LONG}" maximizable><prism-button slot="tools" size="sm" variant="ghost">${LONG}</prism-button><p>${LONG}</p><p slot="footer">${LONG}</p></prism-panel>`,
     "unbroken-name": `<prism-panel heading="${UNBROKEN}" eyebrow="${UNBROKEN}" variant="island"><prism-button slot="tools" size="sm" variant="ghost">${UNBROKEN}</prism-button><p>${UNBROKEN}</p></prism-panel>`
