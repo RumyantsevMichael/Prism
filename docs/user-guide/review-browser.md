@@ -94,13 +94,13 @@ If you widen the window past that width while the drawer is open, the drawer clo
 The top of the main area holds a tab for each open page.
 A link opens in the preview tab, whose title is italic, and the next link replaces it.
 Ctrl-click or Cmd-click a link, double-click or middle-click a link in a page, press Ctrl+Enter or Cmd+Enter in the Jump palette, or choose Open as tab in the side panel to open a tab that stays open.
-Double-click the preview tab or choose its Keep button to keep it open.
+Double-click the preview tab, or press Ctrl+Enter or Cmd+Enter while it has the focus, to keep it open.
 A new tab opens right after the selected tab.
 Close a tab with its close button or a middle click, and when you close the last tab the page says that nothing is open.
 Tabs that an agent presents carry the agent mark and stay open until you close them, and a presentation of several artifacts opens a tab for each of them and shows the first.
 The open tabs belong to the session, so every browser window of the session shows the same tabs, and a reload or a later visit restores them.
 When tabs do not fit, the strip scrolls sideways and keeps the selected tab in view, and a long title ends with an ellipsis whose full text shows on hover or focus.
-With the focus on a tab, the arrow keys, Home, and End move between tabs, Enter opens one, and Tab reaches that tab's Keep and close buttons.
+With the focus on a tab, the arrow keys, Home, and End move between tabs, Enter opens one, and Tab reaches that tab's close button.
 
 The page bar below the tabs holds Back and Forward and the trail of the page's place, initiative, and slice by title.
 Back and Forward, Alt+Left and Alt+Right, and the browser's own buttons move through the pages you visited in that browser tab, and the address names the selected tab.

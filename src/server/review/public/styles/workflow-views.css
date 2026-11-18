@@ -450,6 +450,7 @@
 }
 
 .attention-detail {
+  container: attention-detail / size;
   display: flex;
   flex-direction: column;
   gap: var(--prism-space-5);
@@ -478,7 +479,8 @@
   min-width: 0;
   max-width: calc(var(--prism-measure) * 1.5);
   padding: var(--prism-space-7);
-  overflow: hidden;
+  /* Clip, not hidden: a hidden overflow would make the sheet a scroll container and stop the answer from sticking. */
+  overflow: clip;
   border: var(--prism-stroke) solid var(--prism-color-line);
   border-radius: var(--prism-radius-lg);
   background: var(--prism-color-raised);
@@ -593,6 +595,15 @@
 @container gate (min-width: 660px) {
   .gate-body {
     grid-template-columns: minmax(0, 1fr) minmax(calc(var(--prism-sidebar-width) - var(--prism-space-4)), 36%);
+  }
+
+  /* Beside a long question the answer stays in view while the question scrolls, and scrolls inside itself when it is taller than the detail. */
+  .gate-answer {
+    position: sticky;
+    top: var(--prism-space-5);
+    max-height: calc(100cqh - 2 * var(--prism-space-5));
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 }
 
