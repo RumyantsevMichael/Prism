@@ -524,6 +524,7 @@ export async function readSavedConflict(base, savedAs) {
  * and a file at the store's root, such as a README, that the other machine changed too carries bothChanged true, while any other such file is one whose local version this machine's sync withheld.
  * Ahead of each stamp's copies come the local changes its merge undid and no copy names: { store, undoneRemoval, folder, at } for a removal that gave way, naming the location that holds the artifact again,
  * { store, undoneFile, folder, at } for a removal of a file at the store's root that gave way, naming its path there,
+ * { store, undoneRecord, folder, at } for a removal of a record, such as an initiative's or the roadmap's, that gave way, naming it as .prism/<path> as a saved record is named,
  * and { store, undoneMove, movedTo, folder, at } for a move sent elsewhere, naming the location that keeps the artifact and the one this machine moved it to, with folder the store's conflicts folder.
  * A tool result that carries them confirms them with confirmSavedConflicts, which clears their pending notices.
  */
@@ -554,7 +555,7 @@ export async function takeSavedConflicts() {
         return { store: base, file, savedAs, at: when, ...whose };
       });
       // The local changes that the stamp's merge undid come first, as the result names them first.
-      items.unshift(...about.undone.map((change) => ({ store: base, ...("removal" in change ? { undoneRemoval: change.removal } : "file" in change ? { undoneFile: change.file } : { undoneMove: change.move, movedTo: change.movedTo }), folder: directory, at: when })));
+      items.unshift(...about.undone.map((change) => ({ store: base, ...("removal" in change ? { undoneRemoval: change.removal } : "file" in change ? { undoneFile: change.file } : "record" in change ? { undoneRecord: `.prism/${change.record}` } : { undoneMove: change.move, movedTo: change.movedTo }), folder: directory, at: when })));
       // A stamp that holds only claims and registrations, which other results report, has nothing to carry.
       if (notice && !items.length) await rm(notice, { force: true });
       for (const item of items) { if (notice) notices.set(item, notice); reportKeys.set(item, key); found.push(item); }
@@ -565,13 +566,13 @@ export async function takeSavedConflicts() {
 
 // A location as the sync folder's own notes name one: a store path below artifacts/ that leads nowhere else.
 const noteLocation = (location) => typeof location === "string" && location.length > 0 && location.split("/").every((part) => part && part !== "." && part !== "..");
-const undoneForm = (change) => change !== null && typeof change === "object" && (noteLocation(change.removal) || noteLocation(change.file) || (noteLocation(change.move) && noteLocation(change.movedTo)));
+const undoneForm = (change) => change !== null && typeof change === "object" && (noteLocation(change.removal) || noteLocation(change.file) || (noteLocation(change.record) && isRecordFile(change.record)) || (noteLocation(change.move) && noteLocation(change.movedTo)));
 
 // What a conflict stamp's copies are and which local changes its merge undid, from the note beside it, or nothing for a stamp without one or with a note of any other form.
 async function readAbout(base, stamp) {
   const value = await readFile(aboutPath(base, stamp), "utf8").then(parseStoreJson).catch(() => null);
   const paths = (list) => new Set(Array.isArray(list) ? list.filter((file) => typeof file === "string") : []);
-  const undone = Array.isArray(value?.undone) ? value.undone.filter(undoneForm).map((change) => noteLocation(change.removal) ? { removal: change.removal } : noteLocation(change.file) ? { file: change.file } : { move: change.move, movedTo: change.movedTo }) : [];
+  const undone = Array.isArray(value?.undone) ? value.undone.filter(undoneForm).map((change) => noteLocation(change.removal) ? { removal: change.removal } : noteLocation(change.file) ? { file: change.file } : noteLocation(change.record) && isRecordFile(change.record) ? { record: change.record } : { move: change.move, movedTo: change.movedTo }) : [];
   const tooLong = new Map(Array.isArray(value?.tooLong) ? value.tooLong.filter((entry) => typeof entry?.path === "string" && noteLocation(entry.location)).map((entry) => [entry.path, entry.location]) : []);
   return { theirs: paths(value?.theirs), tooLong, surplus: paths(value?.surplus), bothChanged: paths(value?.bothChanged), overBound: paths(value?.overBound), undone };
 }
@@ -2035,6 +2036,8 @@ async function merge(base, author, options, run, remote) {
   // A file at the store's root that both sides changed keeps the upstream's version: this machine's copy is saved and named as such, and where this machine removed the file, the removal that gave way is named instead.
   const bothChanged = new Map(copies.filter(([file, entry]) => entry && rootFile(file)));
   const undoneFiles = copies.filter(([file, entry]) => !entry && rootFile(file) && !placed.local.has(file)).map(([file]) => ({ file }));
+  // A record that this machine removed and the other machine changed keeps the other machine's version, so the removal that gave way is named, as an artifact's is; a claim or a registration is its holder's news.
+  const undoneRecords = copies.filter(([file, entry]) => !entry && isRecordFile(file) && !isQuietConflict(file) && !placed.local.has(file)).map(([file]) => ({ record: file }));
   for (const [file, entry] of [...stranded, ...surplus]) if (!copies.some(([candidate]) => candidate === file)) copies.push([file, entry]);
   // A file that the merge took out of a place, as the other artifact where two met at one location or one whose placed path a store cannot hold, is saved as a conflict's local version is.
   for (const [file, entry] of placed.saved) {
@@ -2055,7 +2058,7 @@ async function merge(base, author, options, run, remote) {
   // A saved copy of such a file is named as a change that both machines made, unless it holds the version that this machine's sync withheld, which is named as withheld.
   const bothSaved = new Set(copies.filter(([file, entry]) => entry && bothChanged.get(file) === entry).map(([file]) => file));
   // The files on disk hold this machine's side of the merge, which is the commit left unmade where there is one, while the branch moves from where it is.
-  return replaceFiles(base, run, { from: head.text, diskTree: pending ?? head.text, to: commit, copies, theirs: theirsSaved, tooLong: tooLongSaved, surplus: surplusSaved, bothChanged: bothSaved, undone: [...placed.undone, ...undoneFiles] }, options);
+  return replaceFiles(base, run, { from: head.text, diskTree: pending ?? head.text, to: commit, copies, theirs: theirsSaved, tooLong: tooLongSaved, surplus: surplusSaved, bothChanged: bothSaved, undone: [...placed.undone, ...undoneFiles, ...undoneRecords] }, options);
 }
 
 /**
@@ -2612,11 +2615,11 @@ async function publishCopies(base, source, about = null) {
 }
 
 // Beside each conflict stamp that needs it, the sync folder keeps what the stamp's copies are and which local changes its merge undid:
-// { theirs: [path], tooLong: [{ path, location }], surplus: [path], bothChanged: [path], overBound: [path], undone: [{ removal } | { file } | { move, movedTo }] }, with theirs naming the saved paths that hold another machine's change rather than this machine's,
+// { theirs: [path], tooLong: [{ path, location }], surplus: [path], bothChanged: [path], overBound: [path], undone: [{ removal } | { file } | { record } | { move, movedTo }] }, with theirs naming the saved paths that hold another machine's change rather than this machine's,
 // tooLong the saved paths that the merge left out because their path at the location it gave their artifact, named there, would pass a store path's bounds,
 // surplus the saved comments of this machine's that their folder's bound left out of the store, bothChanged the saved files at the store's root that the other machine changed too,
 // overBound the saved files that this machine's sync held back because each was above its kind's bound and that the other machine then changed or removed,
-// and a file in undone a file at the store's root, such as its README, whose removal by this machine gave way to the other machine's change.
+// a file in undone a file at the store's root, such as its README, and a record in undone a record, such as an initiative's, whose removal by this machine gave way to the other machine's change.
 const ABOUT = "conflict-notes";
 const aboutPath = (base, stamp) => syncPath(base, ABOUT, `${stamp}.json`);
 

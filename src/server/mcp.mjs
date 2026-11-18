@@ -1369,6 +1369,7 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
   const saved = taken.filter((item) => item.record && !item.overBound);
   const removals = taken.filter((item) => item.undoneRemoval);
   const fileRemovals = taken.filter((item) => item.undoneFile);
+  const recordRemovals = taken.filter((item) => item.undoneRecord);
   const moves = taken.filter((item) => item.undoneMove);
   // A file of either machine's that a sync took out because its path at its artifact's new location would be too long is named with that location, for that cause alone.
   const tooLong = taken.filter((item) => item.tooLongAt && !item.overBound);
@@ -1391,6 +1392,10 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
   if (fileRemovals.length) {
     const them = fileRemovals.length === 1 ? "it" : "them";
     sections.push({ header: `Store sync undid this machine's removal of ${plural(fileRemovals.length, "store file")} at the store's root, such as its README, because another machine changed ${them} before this machine's removal reached the store; the store holds ${them} again with the other machine's version. Remove ${them} from the store again if the removal still matters.`, items: fileRemovals, line: async (item) => `- ${item.undoneFile} in the record store at ${item.store}` });
+  }
+  if (recordRemovals.length) {
+    const them = recordRemovals.length === 1 ? "it" : "them";
+    sections.push({ header: `Store sync undid this machine's removal of ${plural(recordRemovals.length, "record")}, because another machine changed ${them} before this machine's removal reached the store; the store holds ${them} again with the other machine's version. Read each record again, and redo the removal if it still matters.`, items: recordRemovals, line: async (item) => `- ${item.undoneRecord} in the record store at ${item.store}` });
   }
   if (moves.length) {
     sections.push({ header: `Store sync undid this machine's move of ${plural(moves.length, "artifact")} to another scope, because another machine moved ${moves.length === 1 ? "it" : "them"} elsewhere, or kept its own file at the path this machine moved ${moves.length === 1 ? "it" : "them"} to, before this machine's move reached the store; the store keeps each in the first scope named below, with this machine's other changes to it. Read each one again with get_artifact and move it again with move_scope if the move still matters.`, items: moves, line: (item) => undoneMoveLine(item, argumentsValue) });
