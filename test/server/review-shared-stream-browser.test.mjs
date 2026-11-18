@@ -80,6 +80,7 @@ test("eight tabs of two projects share one event stream, and the last tab still 
   // A tab whose requests queue behind six open streams never navigates, however long it waits, so arriving at all is the check.
   await last.locator("#sidebar").getByRole("treeitem", { name: /^Glossary/ }).click();
   await last.waitForFunction(() => /Glossary/.test(document.querySelector("#artifact h1")?.textContent ?? ""), null, { timeout: WAIT_MS });
+  assert.match(await last.locator("#artifact h1").first().textContent(), /Glossary/, "the eighth tab navigated to the glossary");
 
   // A billing tab follows the stream through the portal tab that holds it.
   const billingTab = pages[2];
