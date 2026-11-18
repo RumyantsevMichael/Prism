@@ -8,6 +8,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
+import { writeOverview } from "./fixtures/overview.mjs";
 import { pause } from "./fixtures/wait.mjs";
 import { INITIATIVE, actionProject, authorOf } from "./fixtures/review-actions.mjs";
 import { defer } from "./fixtures/teardown.mjs";
@@ -269,6 +270,7 @@ async function designProject(context) {
   await mkdir(path.join(root, "test"), { recursive: true });
   for (const name of ["download", "audit"]) await writeFile(path.join(root, "test", `${name}.test.mjs`), `// frozen ${name} test\n`);
   await writeFile(path.join(root, "docs/plans", INITIATIVE, "slice.md"), "# Export reports\n\n## Contract\n1. Downloads write the report.\n");
+  await writeOverview(root, `docs/plans/${INITIATIVE}`, ["download", "audit"]);
   return root;
 }
 

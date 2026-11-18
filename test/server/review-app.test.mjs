@@ -599,7 +599,9 @@ test("addresses the app cannot open show the app's own page or a workspace, neve
   assert.equal((await request(`${origin}/styles/unavailable.css`)).status, 200);
   assert.equal((await request(`${origin}/review.js`)).status, 404);
   assert.equal((await request(`${origin}/kit/%2e%2e/review.html`)).status, 404);
-  assert.equal((await request(`${origin}/session/stale-credential/p/0123456789abcdef/api/index`)).status, 404, "a call from a stale page gets a plain refusal");
+  const staleCall = await request(`${origin}/session/stale-credential/p/0123456789abcdef/api/index`);
+  assert.equal(staleCall.status, 404, "a call from a stale page gets a plain refusal");
+  assert.equal(staleCall.headers["x-prism-link"], "expired", "the refusal tells the stale page that its link expired");
 
   // The app's address opens the workspace used last, and an unknown workspace's or checkout's page opens it with a notice.
   const home = await request(`${origin}${viewer}/`, { headers: page });
@@ -692,6 +694,38 @@ test("an MCP server in a host that names no project starts the app at once and l
     return JSON.parse(response.body).projects.find((entry) => entry.projectRoot === root);
   };
   await eventually(async () => (await listed())?.live === true, 30000);
+});
+
+// The server opens the browser through the platform opener on its PATH, so a stub opener records the URL; Windows opens through rundll32, which no PATH stub replaces.
+test("an MCP server in a host that names no project opens the review browser from its first Prism tool call", { skip: process.platform === "win32" }, async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "codex-open");
+  defer(context, () => shutdownApp(directory));
+  const stubs = await mkdtemp(path.join(os.tmpdir(), "prism-test-opener-"));
+  defer(context, () => rm(stubs, { recursive: true, force: true }));
+  const openedLog = path.join(stubs, "opened.log");
+  for (const name of ["open", "xdg-open"]) {
+    await writeFile(path.join(stubs, name), `#!/bin/sh\nprintf '%s\\n' "$1" >> "${openedLog}"\n`);
+    await chmod(path.join(stubs, name), 0o755);
+  }
+  const env = isolatedEnv({ PRISM_REVIEW_APP_DIR: directory, DISPLAY: ":0", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) });
+  env.PATH = `${stubs}${path.delimiter}${env.PATH}`;
+  for (const name of ["PRISM_REVIEW_APP", "PRISM_REVIEW_BROWSER_ON_START", "CLAUDE_PROJECT_DIR", "CLAUDE_CODE_ENTRYPOINT", "CI"]) delete env[name];
+  const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  defer(context, async () => { child.kill(); await exited; });
+  readline.createInterface({ input: child.stdout }).on("line", () => {});
+  const opened = async () => (await readFile(openedLog, "utf8").catch(() => "")).split("\n").filter(Boolean);
+  await eventually(async () => (await control(await readDiscovery(directory), "health")).proven, 30000);
+  await pause(300, "nothing can be awaited for a browser that never opens");
+  assert.deepEqual(await opened(), [], "the server opens nothing before a tool call names the project");
+  child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "get_roadmap", arguments: { projectRoot: root } } })}\n`);
+  await eventually(async () => (await opened()).length === 1, 30000);
+  const discovery = await readDiscovery(directory);
+  assert.equal(Number(new URL((await opened())[0]).port), discovery.port, "the browser opens on the shared app");
+  child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "get_roadmap", arguments: { projectRoot: root } } })}\n`);
+  await pause(500, "nothing can be awaited for a second window that never opens");
+  assert.equal((await opened()).length, 1, "a later tool call opens no second window");
 });
 
 test("a session whose shared app cannot start stops launching it", async (context) => {

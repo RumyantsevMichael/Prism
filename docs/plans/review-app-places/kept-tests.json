@@ -369,7 +369,7 @@
       "every review app stylesheet's braces balance": 4
     },
     "test/server/review-tabs-browser.test.mjs": {
-      "a link opens in the one italic preview tab that the next link replaces, and Ctrl-click, a double click, and Keep keep a tab": 11,
+      "a link opens in the one italic preview tab that the next link replaces, and Ctrl-click, a double click, and Ctrl+Enter keep a tab": 11,
       "Ctrl+Enter in the palette, a double or middle click on a content link, a Ctrl-click on a crumb, and Open as tab open kept tabs": 6,
       "a tab closes from its close button or a middle click, and closing the last one shows that nothing is open": 9,
       "a tab whose file is gone is dimmed and struck through, says so, and its page offers Close tab": 5,

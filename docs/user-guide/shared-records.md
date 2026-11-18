@@ -402,6 +402,8 @@ In a collision the first push wins.
 The machine whose push lost keeps the upstream version and saves its own version under `.prism-sync/conflicts/<time>/` in the store, so no bytes are lost.
 The next Prism tool result on that machine names the record and the saved file, so the agent that made the change learns of it.
 Compare the saved file with the current record, and redo the change through Prism's tools if it still matters.
+When this machine removed a record, such as an initiative's coordination state or the roadmap, while another machine changed it, the sync keeps the other machine's version and saves nothing, and the next tool result lists the record under a line that begins `Store sync undid this machine's removal of`, as `- .prism/<path> in the record store at <store>`.
+Read the record again, and redo the removal if it still matters.
 Prism never replaces a record that changed while a merge was running: it leaves the branch where it was and resolves the change on the next sync.
 Prism reads every JSON file of the store, whether a record, a status record, a comment, an artifact's identity, a move ledger, or a repository registration, as damaged when it nests arrays and objects more than 64 levels deep, which Prism never writes, so a file that a sync brings in such a form stops no tool call and no review page: each reader leaves it out as it leaves out any file that is not valid JSON, and a merge of such a record collides.
 Two records whose paths differ only in letter case settle the same way on file systems that ignore letter case, as macOS and Windows use by default: a sync removes the spelling that lost before it writes the upstream's, and gives a folder that still holds other files the upstream's spelling.

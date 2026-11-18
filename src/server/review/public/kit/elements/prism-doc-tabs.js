@@ -25,16 +25,16 @@ export class PrismDocTabs extends Base {
     purpose: "The strip of open documents above a page: one tab per open page with one selected, named groups of tabs that collapse, tabs that do not fit scroll inside the strip, and the selected tab stays in view.",
     options: [
       { name: "label", values: ["text"], default: "", description: "The tablist's accessible name." },
-      { name: "setTabs(tabs, { groups })", values: ["method"], default: "", description: "Gives the strip its tabs as [{ value, label, text, tip, selected, preview, agent, missing, code, group }] in order, with a group's tabs side by side, and its groups as [{ name, collapsed, tone }], keeping the element and the focus of each tab that stays." },
+      { name: "setTabs(tabs, { groups })", values: ["method"], default: "", description: "Gives the strip its tabs as [{ value, label, text, tip, selected, preview, agent, missing, code, group }] in order, with a group's tabs side by side, and its groups as [{ name, collapsed, tone }], where a group without a tone takes its name's tone unless an earlier group has it, and then the next free one, keeping the element and the focus of each tab that stays." },
       { name: "prism-select", values: ["event"], default: "", description: "A click, Enter, or Space on a tab; detail.value names its page." },
-      { name: "prism-tab-keep", values: ["event"], default: "", description: "A double click on a tab or its Keep button; detail.value names its page." },
+      { name: "prism-tab-keep", values: ["event"], default: "", description: "A double click on a tab, or Ctrl+Enter or Cmd+Enter on the focused tab; detail.value names its page." },
       { name: "prism-tab-close", values: ["event"], default: "", description: "The close button or a middle click on a tab; detail.value names its page." },
       { name: "prism-tab-move", values: ["event"], default: "", description: "A tab or a group dragged to another place, or moved with Ctrl+Shift+arrows; detail.value names the moved tab, or detail.group the moved group, detail.order gives every tab's value in the new order, and detail.groups gives every group as { name, tabs }." },
       { name: "prism-group-toggle", values: ["event"], default: "", description: "A click, Enter, or Space on a group's head; detail.group names the group and detail.collapsed says whether it should now collapse." },
       { name: "prism-group-close", values: ["event"], default: "", description: "The close button of a group's head or a middle click on it; detail.group names the group and detail.tabs lists its tabs." }
     ],
     states: ["default", "many-tabs", "dragging", "groups", "collapsed-group"],
-    keyboard: ["Tab enters the strip at the selected tab, then reaches that tab's Keep and close buttons, and leaves at the next control.", "ArrowLeft and ArrowRight move focus between tabs and group heads and wrap at the ends.", "Home and End move to the first and last of them.", "Enter or Space opens the focused tab, or collapses or expands the focused group.", "Ctrl+Shift+ArrowLeft and Ctrl+Shift+ArrowRight, or Cmd+Shift on a Mac, move the focused tab one place, into or out of a group at its ends, or the focused group past its neighbor; Escape during a drag puts the tab or group back."]
+    keyboard: ["Tab enters the strip at the selected tab, then reaches that tab's close button, and leaves at the next control.", "ArrowLeft and ArrowRight move focus between tabs and group heads and wrap at the ends.", "Home and End move to the first and last of them.", "Enter or Space opens the focused tab, or collapses or expands the focused group, and Ctrl+Enter or Cmd+Enter keeps the focused tab open.", "Ctrl+Shift+ArrowLeft and Ctrl+Shift+ArrowRight, or Cmd+Shift on a Mac, move the focused tab one place, into or out of a group at its ends, or the focused group past its neighbor; Escape during a drag puts the tab or group back."]
   };
 
   constructor() {
@@ -51,8 +51,7 @@ export class PrismDocTabs extends Base {
       }
       const [item, part] = this.hit(event);
       if (!item) return;
-      if (part === "keep") emit(this, "prism-tab-keep", { value: item.value });
-      else if (part === "close") emit(this, "prism-tab-close", { value: item.value });
+      if (part === "close") emit(this, "prism-tab-close", { value: item.value });
       else if (part === "select") this.choose(item);
       else if (part === "toggle") this.toggle(item);
       else if (part === "close-group") this.closeGroup(item);
@@ -88,11 +87,26 @@ export class PrismDocTabs extends Base {
     this.attributeChangedCallback();
     this.resizes ??= globalThis.ResizeObserver ? new ResizeObserver(() => this.reveal()) : null;
     this.resizes?.observe(this);
+    // Every change of order, group, or what a collapse hides moves where a group ends, so the strip marks the ends whenever its tabs change.
+    this.ends ??= new MutationObserver(() => this.markGroupEnds());
+    this.ends.observe(this, { childList: true, subtree: true, attributes: true, attributeFilter: ["group", "hidden"] });
+    this.markGroupEnds();
     this.sync();
   }
 
   disconnectedCallback() {
     this.resizes?.disconnect();
+    this.ends?.disconnect();
+  }
+
+  // Marks the last shown tab of each group with group-end, which draws the separator that closes the group.
+  markGroupEnds() {
+    const shown = this.tabs.filter((tab) => !tab.hidden);
+    shown.forEach((tab, index) => {
+      const group = tab.getAttribute("group");
+      const end = Boolean(group) && shown[index + 1]?.getAttribute("group") !== group;
+      if (tab.hasAttribute("group-end") !== end) tab.toggleAttribute("group-end", end);
+    });
   }
 
   attributeChangedCallback() {
@@ -163,6 +177,15 @@ export class PrismDocTabs extends Base {
     for (const entry of entries) if (entry.group) counts.set(entry.group, (counts.get(entry.group) ?? 0) + 1);
     const next = [];
     const placed = new Set();
+    // A group without a tone of its own takes its name's tone unless an earlier group of the strip has it, and then the next free one, so groups side by side read apart.
+    const taken = new Set();
+    const toneOf = (group) => {
+      if (GROUP_TONES.includes(String(group.tone))) return String(group.tone);
+      const own = groupToneOf(group.name);
+      const start = GROUP_TONES.indexOf(own);
+      const free = GROUP_TONES.map((_, step) => GROUP_TONES[(start + step) % GROUP_TONES.length]).find((tone) => !taken.has(tone));
+      return free ?? own;
+    };
     for (const entry of entries) {
       const name = entry.group || null;
       const group = name ? known.get(name) ?? { name } : null;
@@ -171,7 +194,9 @@ export class PrismDocTabs extends Base {
         const head = existingHeads.get(name) ?? this.ownerDocument.createElement("prism-doc-tab-group");
         existingHeads.delete(name);
         setAttribute(head, "name", name);
-        setAttribute(head, "tone", GROUP_TONES.includes(String(group.tone)) ? String(group.tone) : groupToneOf(name));
+        const tone = toneOf(group);
+        taken.add(tone);
+        setAttribute(head, "tone", tone);
         setAttribute(head, "count", String(counts.get(name)));
         head.toggleAttribute("collapsed", Boolean(group.collapsed));
         setAttribute(head, "tip", `${name}, ${counts.get(name)} ${counts.get(name) === 1 ? "tab" : "tabs"}`);
@@ -445,6 +470,7 @@ export class PrismDocTabs extends Base {
     else if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       if (isHead(current)) this.toggle(current);
+      else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) emit(this, "prism-tab-keep", { value: current.value });
       else this.choose(current);
       return;
     } else return;

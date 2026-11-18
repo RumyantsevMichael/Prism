@@ -450,6 +450,7 @@
 }
 
 .attention-detail {
+  container: attention-detail / size;
   display: flex;
   flex-direction: column;
   gap: var(--prism-space-5);
@@ -478,7 +479,8 @@
   min-width: 0;
   max-width: calc(var(--prism-measure) * 1.5);
   padding: var(--prism-space-7);
-  overflow: hidden;
+  /* Clip, not hidden: a hidden overflow would make the sheet a scroll container and stop the answer from sticking. */
+  overflow: clip;
   border: var(--prism-stroke) solid var(--prism-color-line);
   border-radius: var(--prism-radius-lg);
   background: var(--prism-color-raised);
@@ -593,6 +595,15 @@
 @container gate (min-width: 660px) {
   .gate-body {
     grid-template-columns: minmax(0, 1fr) minmax(calc(var(--prism-sidebar-width) - var(--prism-space-4)), 36%);
+  }
+
+  /* Beside a long question the answer stays in view while the question scrolls, and scrolls inside itself when it is taller than the detail. */
+  .gate-answer {
+    position: sticky;
+    top: var(--prism-space-5);
+    max-height: calc(100cqh - 2 * var(--prism-space-5));
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 }
 
@@ -1282,6 +1293,42 @@ a.inspect-tile:focus-visible {
 .initiative-frontier-glyph {
   display: inline-flex;
   flex: none;
+}
+
+/* The latest launched run sits above the launch actions, its reason wrapping under its state. */
+.initiative-latest-run {
+  display: grid;
+  gap: var(--prism-space-2);
+  padding-bottom: var(--prism-space-4);
+  margin-bottom: var(--prism-space-3);
+  border-bottom: 1px solid var(--prism-color-line);
+  min-width: 0;
+}
+
+.initiative-latest-run[hidden],
+.initiative-last-run-slot:empty {
+  display: none;
+}
+
+.initiative-latest-run-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2) var(--prism-space-4);
+  min-width: 0;
+}
+
+.initiative-latest-run-title {
+  min-width: 0;
+  font-weight: var(--prism-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.initiative-latest-run-reason {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  overflow-wrap: anywhere;
 }
 
 .initiative-settings-lead {

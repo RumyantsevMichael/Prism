@@ -490,10 +490,13 @@ test("an update that fails keeps the tests that an earlier update staged", async
   assert.equal(await readFile(path.join(root, "test", "acceptance.test.mjs"), "utf8"), "// frozen acceptance test\n");
 });
 
-test("accepting a design refuses a diagram that does not parse or shows too many elements", async (context) => {
+test("accepting a design refuses a view that does not parse or shows too many elements", async (context) => {
   const root = await project(context);
   const folder = path.join(root, "docs", "plans", "reports", "download");
   await mkdir(folder, { recursive: true });
+  // Each view is declared in its folder's slice.md with the clauses it explains.
+  await writeFile(path.join(folder, "slice.md"), "# Download reports\n\n## Contract\n1. Downloads write the report.\n\n## Views\n- `code.puml` code (§1): Which units write the report?\n");
+  await writeFile(path.join(root, "docs", "plans", "reports", "slice.md"), "# Signed reports\n\n## Contract\n1. Reports are downloaded and audited.\n\n## Views\n- `overview.puml` component (§1): How do the download and audit parts fit together?\n", { flag: "a" });
   await writeFile(path.join(folder, "code.puml"), "@startuml\nclass A {\nA -->> B ::\n@enduml\n");
   await assert.rejects(accept(root), /code\.puml line 2 does not parse/);
   await writeFile(path.join(folder, "code.puml"), `@startuml\n${Array.from({ length: 31 }, (_, index) => `class C${index}`).join("\n")}\n@enduml\n`);
@@ -506,9 +509,9 @@ test("accepting a design refuses a diagram that does not parse or shows too many
   await writeFile(path.join(root, "docs", "plans", "reports", "overview.puml"), "@startuml\npackage download {\n[Report]\n}\npackage audit {\n[Log]\n}\n[Log] ..> [Report]\n@enduml\n");
   const operations = [{ op: "set_status", slug: "download", status: "in-progress" }, { op: "accept_design", slug: "download", frozenTests: ["test/acceptance.test.mjs"], review: "none" }];
   const brief = initiativeAcknowledgement(await initiativeUpdate(root, operations), operations);
-  assert.deepEqual(brief.diagrams, [
-    { path: "docs/plans/reports/download/code.puml", elements: 2, relations: 1 },
-    { path: "docs/plans/reports/overview.puml", elements: 4, relations: 1 }
+  assert.deepEqual(brief.views, [
+    { path: "docs/plans/reports/download/code.puml", kind: "code", elements: 2, relations: 1 },
+    { path: "docs/plans/reports/overview.puml", kind: "component", elements: 4, relations: 1 }
   ]);
 });
 

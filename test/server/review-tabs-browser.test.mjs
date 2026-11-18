@@ -51,7 +51,7 @@ async function settled(page, base, ref) {
   await reading(async () => (await session(base)).activeTab, ref);
 }
 
-test("a link opens in the one italic preview tab that the next link replaces, and Ctrl-click, a double click, and Keep keep a tab", { skip, timeout: 60000 }, async (context) => {
+test("a link opens in the one italic preview tab that the next link replaces, and Ctrl-click, a double click, and Ctrl+Enter keep a tab", { skip, timeout: 60000 }, async (context) => {
   const { base, browser } = await demo(context);
   const page = await openPage(browser, reviewUrl(base, "attention"), { viewport: { width: 1440, height: 900 } });
   await waitForView(page);
@@ -73,8 +73,10 @@ test("a link opens in the one italic preview tab that the next link replaces, an
   await openFromSidebar(page, "Glossary");
   await settled(page, base, "glossary");
   assert.deepEqual(await tabs(page), ["requirements", "glossary*(p)", "decisions"], "a new tab goes right after the selected tab, not at the end");
-  await strip(page).getByRole("button", { name: "Keep", exact: true }).click();
-  assert.deepEqual(await reading(() => tabs(page), ["requirements", "glossary*", "decisions"]), ["requirements", "glossary*", "decisions"], "Keep kept the preview tab");
+  assert.equal(await strip(page).getByRole("button", { name: /^Keep/ }).count(), 0, "the preview tab offers no Keep button");
+  await page.getByRole("tab", { name: /^Glossary/ }).focus();
+  await page.keyboard.press("Control+Enter");
+  assert.deepEqual(await reading(() => tabs(page), ["requirements", "glossary*", "decisions"]), ["requirements", "glossary*", "decisions"], "Ctrl+Enter on the focused preview tab kept it");
   assert.equal(await reading(async () => (await session(base)).previewTab, null), null, "the kept tab is saved in the session");
   assert.deepEqual(page.errors, []);
 });
@@ -271,7 +273,7 @@ test("dragging a tab or Ctrl+Shift+arrows move it, Escape puts a dragged tab bac
   const drag = async (ref, target, { cancel = false } = {}) => {
     const from = await tab(page, ref).boundingBox();
     const to = await tab(page, target).boundingBox();
-    // The press lands on the tab's title, away from its Keep and close buttons.
+    // The press lands on the tab's title, away from its close button.
     await page.mouse.move(from.x + 16, from.y + from.height / 2);
     await page.mouse.down();
     await page.mouse.move(from.x + 26, from.y + from.height / 2, { steps: 2 });
