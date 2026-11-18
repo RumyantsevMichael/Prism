@@ -64,7 +64,8 @@ const NO_PROMPT_ENV = { GIT_ASKPASS: "", SSH_ASKPASS: "", SSH_ASKPASS_REQUIRE: "
 const NO_PROMPT_CONFIG = ["-c", "core.askPass=", "-c", "credential.interactive=false"];
 
 // One Git command in a clone, with the sanitized store environment and timeout, and never a password prompt.
-const git = (folder, args) => runGit(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV });
+// A command that reads a blob may fetch it from the remote, so it says it connects, and its SSH command is the person's own in batch mode as a fetch's is.
+const git = (folder, args, { connects = false } = {}) => runGit(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV, connects });
 
 // The branches of a clone, { name, commit } sorted by name.
 async function branchesOf(folder) {
@@ -100,9 +101,9 @@ async function blobAt(folder, commit, file) {
 
 // A blob's bytes, which a blobless clone fetches from its remote now, or null when it is over the size limit or cannot be read.
 async function blobBytes(folder, blob) {
-  const size = await git(folder, ["cat-file", "-s", blob]);
+  const size = await git(folder, ["cat-file", "-s", blob], { connects: true });
   if (!size.ok || Number(size.text) > SOURCE_SIZE_LIMIT) return null;
-  const read = await git(folder, ["cat-file", "blob", blob]);
+  const read = await git(folder, ["cat-file", "blob", blob], { connects: true });
   return read.ok ? read.stdout : null;
 }
 
@@ -297,7 +298,7 @@ export async function createCodeClones({ directory }) {
       // A binary or large file is held but not shown, which the answer says apart from a file the commit does not hold.
       const held = { repository, branch: branch ?? null, commit: at, path: codeFolder(file), blob };
       if (binaryPath(file)) return { ...held, withheld: "binary" };
-      const size = await git(base, ["cat-file", "-s", blob]);
+      const size = await git(base, ["cat-file", "-s", blob], { connects: true });
       if (!size.ok) return null;
       if (Number(size.text) > SOURCE_SIZE_LIMIT) return { ...held, withheld: "too_large" };
       const bytes = await blobBytes(base, blob);
