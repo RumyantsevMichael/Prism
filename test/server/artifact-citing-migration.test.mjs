@@ -86,6 +86,20 @@ test("clause 2: a design whose frozen test is a nonconforming feature file says 
   assert.match(refused.text, /Prism does not migrate feature files, so bring it into its format in a change of its own\./);
 });
 
+test("clause 5: an unknown value refuses work that cites an Approved requirement file, and none that cites a Draft", async (context) => {
+  const approved = "docs/requirements/partial.md";
+  const draft = "docs/requirements/sketch.md";
+  const sketch = REQUIREMENT.replace("# Request retries", "# Sketch").replace("Status: Approved", "Status: Draft").replace("Approved: 2026-09-04", "Approved: n/a").replace("Rationale: A request that retries forever holds a connection that other requests need.", "Rationale: unknown");
+  const { call } = await runCheckout(context, { ...CONFORMING, [approved]: REQUIREMENT.replace("# Request retries", "# Partial retries").replace("Created: 2026-09-02", "Created: unknown"), [draft]: sketch });
+  const refused = await cite(call, "partial.md§1");
+  const artifact = refusedFor(refused, approved);
+  assert.deepEqual([...new Set(artifact.findings.map((finding) => finding.rule))], ["requirements.unknown"]);
+  assert.match(refused.text, /requirements\.unknown/);
+  assert.equal((await call("get_initiative", { initiative: "retries" })).value.exists, false, "nothing changes");
+  const cited = await cite(call, "sketch.md§1");
+  assert.equal(cited.value?.code ?? null, null, cited.text);
+});
+
 test("clause 4: the update_initiative and update_roadmap descriptions name the migration's state and never legacy marks or asking for a migration", async (context) => {
   const { root } = await runCheckout(context, CONFORMING);
   const tools = await listedTools(context, root);

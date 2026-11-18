@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import test from "node:test";
 import { CONFORMING, PATHS, REQUIREMENT } from "./fixtures/artifact-formats.mjs";
 import { labelOf, storeRead } from "./fixtures/artifact-formats-store.mjs";
-import { LOG_ADR, LOG_ADR_SOURCE, logAdrContent, readRun, runFor, runStore } from "./fixtures/format-migration-runs.mjs";
+import { AUDIT, AUDIT_SOURCE, LOG_ADR, LOG_ADR_SOURCE, auditProposal, logAdrContent, readRun, runFor, runStore } from "./fixtures/format-migration-runs.mjs";
 
 // Format migration runs of store artifacts: applied through the store's writes as a commit of their own, keeping recorded statuses,
 // with the migrated text as a decided artifact's accepted version attributed to the run.
@@ -50,6 +50,25 @@ test("clauses 11, 16: a migration of an Accepted ADR that needs values its sourc
   const record = await readRun(call, run);
   assert.equal(record.status, "asking");
   assert.equal((await storeRead(call, LOG_ADR)).content, LOG_ADR_SOURCE, "nothing applies before the answers");
+});
+
+test("clauses 11, 26: an unknown point of an Accepted ADR does not allow unknown, while one of a Draft requirement file does", async (context) => {
+  const { call } = await runStore(context, { ...CONFORMING, [LOG_ADR]: LOG_ADR_SOURCE, [AUDIT]: AUDIT_SOURCE });
+  const run = await runFor(call, LOG_ADR);
+  const base = { run, type: "adr", source: LOG_ADR, target: LOG_ADR, content: logAdrContent(), summary: "Brings the decision into the ADR format.", leftovers: [] };
+  const probe = await call("propose_migration", base);
+  const asked = probe.value.points.map((point) => ({ point, recommendation: "Ask the decision's owner." }));
+  const proposed = await call("propose_migration", { ...base, asked });
+  assert.equal(proposed.refused, false, proposed.text);
+  assert.ok(proposed.value.migration.points.every((point) => point.kind === "unknown" && point.allowsUnknown === false), JSON.stringify(proposed.value.migration.points));
+  await call("finish_migration_run", { run });
+  const record = await readRun(call, run);
+  assert.equal(record.status, "asking");
+  assert.ok(record.question.points.every((point) => point.allowsUnknown === false), JSON.stringify(record.question.points));
+  const draftRun = await runFor(call, AUDIT);
+  const draft = await call("propose_migration", auditProposal(draftRun));
+  assert.equal(draft.value?.code, "migration_unsettled", draft.text);
+  assert.ok(draft.value.points.every((point) => point.kind === "unknown" && point.allowsUnknown === true), JSON.stringify(draft.value.points));
 });
 
 test("clauses 11, 12: a separate source's removal is a point the run must ask about", async (context) => {

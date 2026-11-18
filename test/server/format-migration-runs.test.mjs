@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { CONFORMING, FEATURE, PATHS, REQUIREMENT } from "./fixtures/artifact-formats.mjs";
+import { CONFORMING, FEATURE, GLOSSARY, PATHS, REQUIREMENT } from "./fixtures/artifact-formats.mjs";
 import { AUDIT, AUDIT_SOURCE, auditContent, auditProposal, entryFor, readRun, runCheckout, runFor, waitFor } from "./fixtures/format-migration-runs.mjs";
 
 // Prism starts one format migration run per set of nonconforming artifacts, applies it without a person when nothing is lost or invented,
@@ -156,6 +156,22 @@ test("clause 18: a source that changed since its proposal fails the run and chan
   assert.equal(record.status, "failed");
   assert.ok(record.failure.reason.includes(PATHS.requirements), record.failure.reason);
   assert.equal(await readFile(path.join(root, PATHS.requirements), "utf8"), changed);
+});
+
+test("clauses 18, 25: a checkout target that the write check refuses when the run applies fails the run and changes nothing", async (context) => {
+  const unanchored = GLOSSARY.replace('<a id="attempt-timeout"></a>\n', "");
+  const { root, call } = await runCheckout(context, { ...CONFORMING, [PATHS.glossary]: unanchored });
+  const run = await runFor(call, PATHS.glossary);
+  const proposed = await call("propose_migration", { run, type: "glossary", source: PATHS.glossary, target: PATHS.glossary, content: GLOSSARY, summary: "Adds the anchor of the attempt timeout.", leftovers: [] });
+  assert.equal(proposed.refused, false, proposed.text);
+  assert.deepEqual(proposed.value.migration.points, []);
+  // The glossary's source becomes a Draft after the proposal, so the content the run would write no longer conforms.
+  await writeFile(path.join(root, PATHS.requirements), REQUIREMENT.replace("Status: Approved", "Status: Draft").replace("Approved: 2026-09-04", "Approved: n/a"));
+  await call("finish_migration_run", { run });
+  const record = await readRun(call, run);
+  assert.equal(record.status, "failed");
+  assert.match(record.failure?.reason ?? "", /glossary\.source-decided/);
+  assert.equal(await readFile(path.join(root, PATHS.glossary), "utf8"), unanchored, "the glossary is not written");
 });
 
 test("clause 5: a run is no roadmap entry, initiative, or slice", async (context) => {
