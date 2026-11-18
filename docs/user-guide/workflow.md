@@ -57,6 +57,8 @@ Each format's reference sits beside the skill that writes the artifact:
 | Feature file | `skills/write-feature/references/feature-format.md` | A `Feature:` line, and Rules that each link a requirement and hold examples with Given, one When, and Then steps |
 
 Any required value or section body may be the single word `unknown` when nobody knows it yet, except a title, a status, or an identity.
+Only an undecided artifact may leave a value unknown: a requirement file while its status is Draft and an ADR while its status is Proposed, read as the status Prism recorded in a project with a record store.
+An `unknown` value in any other artifact, such as an Approved requirement file, an Accepted ADR, a glossary, or a feature file, breaks the format's `unknown` rule, such as `requirements.unknown`.
 A glossary term whose sources are a Draft requirement, a Proposed or Declined ADR, or a missing file is reported, and so is a term whose every source was withdrawn or superseded.
 So agents add a term to the glossary once its source is decided: when a person approves the requirement file or amendment that introduces it, and when an ADR that introduces it is accepted.
 
@@ -64,6 +66,7 @@ Agents check artifacts with the `check_artifacts` tool.
 Without paths it checks every `.md` file other than `README.md` up to four folders below the configured Requirements and ADRs paths, every `.feature` file up to four folders below the Feature files path, and the configured Glossary file.
 A path set to `n/a` in `.prism/workflow.md` is not checked.
 For each artifact it reports whether it conforms, each broken rule by its id, such as `requirements.fields`, with its line and a message, and each value written as `unknown`.
+It also lists each finding that an agent reported for the artifact's current version, with the rule `<type>.reported`, such as `requirements.reported`, so the artifact does not conform until its content changes.
 A path that lies under none of the configured paths is refused with `artifact_type_unknown`, and a path that does not exist with `artifact_missing`.
 
 In a project whose `.prism/workflow.md` names a record store, requirement files, ADRs, and glossaries live in the store, and `check_artifacts` reads them from every scope the checkout sees: the workspace, its repository, and that repository's components.
@@ -75,6 +78,22 @@ When the store cannot be used, the check is refused with the store's own refusal
 A glossary source counts by the status Prism recorded for the requirement or ADR, so a `Status:` line that differs from it is no finding.
 Each glossary resolves its sources in its own scope first, then in its repository's scope for a component, then in the workspace, so a glossary has the same findings in every checkout that sees it, and a source that only another scope holds is reported as outside the glossary's scope.
 Each scope's glossary is checked on its own, so one term id in two glossaries is no finding.
+
+### Writes that break a format
+
+In a project with a record store, Prism checks every write it makes to a requirement file, ADR, or glossary against the current format, as `check_artifacts` would check the content it leaves.
+This covers an agent's `update_artifact` write or edit, a person's approval in the review browser, which rewrites the file's `Status:` and `Approved:` lines, a ship that sets ADRs Accepted, and the store target of a format migration.
+A write whose content breaks the format is refused with `artifact_nonconforming`, which names each artifact, its scope, and its broken rule ids, and the refused update, approval, or ship changes nothing.
+A new requirement file is recorded as Draft whatever its `Status:` line says, so it may hold `unknown` values, while approving a file that still holds one is refused and its question stays open.
+Removing a file, moving it to another scope, and the move of a checkout's files into the store keep the bytes as they are and are not checked, so a moved file that breaks its format shows its findings in its new scope.
+Plan files, diagrams, the roadmap view, and files an agent writes in the checkout without Prism are not checked by a write.
+
+### Reported findings
+
+An agent that finds a break of a format that `check_artifacts` does not see reports it with the `report_format_finding` tool, giving the artifact, a plain-text message of at most 500 characters on one line, and optionally the line it is on.
+Prism records the finding against the artifact's current version and never changes the artifact, and a second report of the same version, line, and message returns the first finding.
+`check_artifacts` and Attention list the finding until the artifact's content changes, and the review browser shows its message as plain text.
+Reported findings live under `format-findings/` in the record store, whose sync shares them with every checkout, or under `.prism/format-findings/` in a project without a store.
 
 ### Work that cites a nonconforming artifact
 

@@ -676,7 +676,7 @@ export async function applyMigration({ projectRoot, id }) {
       const storeRemove = removeSource && source.store ? { path: source.path, scope: source.scope, expectedVersion: source.version } : null;
       const status = record.type === "requirements" || record.type === "adr" ? headerValue(content, "Status") : null;
       try {
-        stored.push(...await applyStoreMigration(root, { target: { path: target.path, scope: target.scope, content, expectedVersion: target.version, status }, remove: storeRemove }));
+        stored.push(...await applyStoreMigration(root, { target: { path: target.path, scope: target.scope, content, expectedVersion: target.version, status }, remove: storeRemove, migration: id }));
       } catch (error) {
         if (error?.code === "version_conflict") throw fail("migration_stale", `${label(target)}${storeRemove ? ` or ${label(source)}` : ""} changed in the record store since the format migration ${id} was proposed, so it does not apply; propose it again.`, { paths: [named(target), ...(storeRemove ? [named(source)] : [])] });
         throw error;

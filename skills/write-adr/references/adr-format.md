@@ -5,7 +5,7 @@ Example path: `docs/ADRs/uploads/upload-token.md`
 
 An ADR records one architectural decision or invariant and the Approved requirements it serves.
 The `check_artifacts` tool reports each rule below that an ADR breaks, by its rule id.
-Any required field value or required section body may be the single word `unknown`, except the title and the status.
+Any required field value or required section body may be the single word `unknown` while the status is `Proposed`, except the title and the status.
 
 ## Rules
 
@@ -16,12 +16,26 @@ Any required field value or required section body may be the single word `unknow
 - `adr.dates`: Created is a `YYYY-MM-DD` date.
 - `adr.sections`: `## Requirements`, `## Problem`, `## Decision`, `## Rationale`, `## Alternatives`, `## Consequences`, `## Mechanism`, and `## Decision Log` appear once each in that order, where only the Decision Log may be empty.
 - `adr.requirements`: The Requirements section is `n/a` or paragraphs or list items in which every Markdown link targets a relative `<path>.md` with an optional `#<anchor>`; write one link to `<path>.md#<anchor>` per list item, as the example does.
+- `adr.unknown`: A required value or section body is `unknown` only while the status is `Proposed`, where a project with a record store reads the recorded status.
+- `adr.reported`: No agent has reported, through `report_format_finding`, a break of this format on this version of the ADR that the other rules do not see.
 
 ## Defaults
 
 - Default `Status`: `Proposed`
 - Default `Requirements`: `n/a`
 - Default `Decision Log`: `n/a`
+
+## Corresponding sections
+
+A format migration may move a statement from a source section to the target section that the line names, besides a section of the same heading.
+
+- `## Requirements`: `## Drivers`, `## Decision drivers`
+- `## Problem`: `## Context`, `## Background`
+- `## Decision`: `## Outcome`
+- `## Rationale`: `## Reasons`, `## Justification`
+- `## Alternatives`: `## Options considered`, `## Considered options`
+- `## Consequences`: `## Implications`
+- `## Decision Log`: `## History`, `## Status history`
 
 ## Example
 

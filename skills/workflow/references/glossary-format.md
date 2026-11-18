@@ -5,7 +5,7 @@ Example path: `docs/Glossary.md`
 
 A glossary defines the project's terms, each with a stable identity, a definition whose first sentence stands on its own, and the decided sources that introduced it.
 The `check_artifacts` tool reports each rule below that a glossary breaks, by its rule id.
-A purpose, a definition, or a Source value may be the single word `unknown`, while the title and the term identities may not.
+A purpose, a definition, or a Source value that is the single word `unknown` breaks the `glossary.unknown` rule, since a glossary has no undecided status, and the title and the term identities are never `unknown`.
 
 ## Rules
 
@@ -18,10 +18,18 @@ A purpose, a definition, or a Source value may be the single word `unknown`, whi
 - `glossary.source`: Source is comma-separated sources, each a Markdown link, resolved from the glossary's folder, to a requirement section `<path>.md#<n>` or an ADR file, or `migration <id>`, or in a migration's proposed content `migration` alone, which stands for that migration.
 - `glossary.source-decided`: Each source resolves to a section of an Approved, Withdrawn, or Superseded requirement file, an Accepted or Superseded ADR, or an applied migration.
 - `glossary.source-withdrawn`: At least one source is in force: an Active section of an Approved file, an Accepted ADR, or an applied migration.
+- `glossary.unknown`: No purpose, definition, or Source value is `unknown`.
+- `glossary.reported`: No agent has reported, through `report_format_finding`, a break of this format on this version of the glossary that the other rules do not see.
 
 ## Defaults
 
 - Default `Title`: `Glossary`
+
+## Corresponding sections
+
+A format migration may move a term's statements from any of these sources to the term heading of the same text.
+
+- `## <term>`: `### <term>`, `<term>` as a table row's first cell, `<term>` as a list item's leading name
 
 ## Example
 

@@ -11,9 +11,9 @@ import { ADR, CONFORMING, FEATURE, PATHS, REFERENCES, REQUIREMENT, TYPES, checke
 
 const OWN_TYPES = ["requirements", "adr", "feature"];
 const RULES = {
-  requirements: ["requirements.dates", "requirements.disposition", "requirements.fields", "requirements.header", "requirements.links", "requirements.numbering", "requirements.pattern", "requirements.sections", "requirements.status", "requirements.text", "requirements.title"],
-  adr: ["adr.dates", "adr.header", "adr.requirements", "adr.sections", "adr.status", "adr.text", "adr.title"],
-  feature: ["feature.examples", "feature.header", "feature.requirement", "feature.rules", "feature.steps", "feature.text"]
+  requirements: ["requirements.dates", "requirements.disposition", "requirements.fields", "requirements.header", "requirements.links", "requirements.numbering", "requirements.pattern", "requirements.reported", "requirements.sections", "requirements.status", "requirements.text", "requirements.title", "requirements.unknown"],
+  adr: ["adr.dates", "adr.header", "adr.reported", "adr.requirements", "adr.sections", "adr.status", "adr.text", "adr.title", "adr.unknown"],
+  feature: ["feature.examples", "feature.header", "feature.reported", "feature.requirement", "feature.rules", "feature.steps", "feature.text", "feature.unknown"]
 };
 
 async function single(context, file, text) {
@@ -157,13 +157,17 @@ test("clause 7: a feature reports an example outside a rule, a rule without a re
   assert.deepEqual(rulesOf(header), ["feature.header"]);
 });
 
-test("clause 10: unknown fills a required value and is listed, but never a title, status, or identity", async (context) => {
+test("clause 10: unknown fills a required value and is listed, a finding in an Approved file and none in a Draft, but never a title, status, or identity", async (context) => {
   const withUnknown = REQUIREMENT.replace("Created: 2026-09-02", "Created: unknown").replace("Rationale: A request that retries forever holds a connection that other requests need.", "Rationale: unknown");
   const entry = await single(context, PATHS.requirements, withUnknown);
-  assert.deepEqual(entry.findings, []);
+  assert.deepEqual(rulesOf(entry), ["requirements.unknown"]);
   assert.deepEqual(entry.unknowns.map((item) => item.field).sort(), ["Created", "Rationale"]);
   const lines = withUnknown.split("\n");
   assert.deepEqual(entry.unknowns.map((item) => item.line).sort((a, b) => a - b), [lines.indexOf("Created: unknown") + 1, lines.indexOf("Rationale: unknown") + 1]);
+  assert.deepEqual(entry.findings.map((item) => item.line).sort((a, b) => a - b), entry.unknowns.map((item) => item.line).sort((a, b) => a - b));
+  const draft = await single(context, PATHS.requirements, withUnknown.replace("Status: Approved", "Status: Draft").replace("Approved: 2026-09-04", "Approved: n/a"));
+  assert.deepEqual(draft.findings, []);
+  assert.deepEqual(draft.unknowns.map((item) => item.field).sort(), ["Created", "Rationale"]);
   const status = await single(context, PATHS.requirements, REQUIREMENT.replace("Status: Approved", "Status: unknown"));
   assert.deepEqual(rulesOf(status), ["requirements.status"]);
 });

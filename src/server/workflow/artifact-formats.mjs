@@ -476,29 +476,46 @@ function inspectTerm(section, id, ids, findings, unknowns, context) {
 
 // ---- The formats ----
 
-function format(type, version, reference, rules, defaults, inspect) {
-  const run = (input, context) => {
+// Whether an artifact is undecided, so its unknown values break no rule: a requirement file whose status is Draft or an ADR whose status is Proposed,
+// where the status is the recorded one that context.status gives in a project with a store, else the Status: line.
+function undecided(type, text, context) {
+  if (type === "requirements") return (context.status ?? requirementOutline(text).status) === "Draft";
+  if (type === "adr") return (context.status ?? adrStatusOf(text)) === "Proposed";
+  return false;
+}
+
+// A proposal's content is checked with its unknown values aside, since a format migration lists them for the person.
+function withUnknownRule(type, text, result, context) {
+  if (context.proposal === true || !result.unknowns.length || undecided(type, text, context)) return result;
+  const unknown = result.unknowns.map((item) => finding(`${type}.unknown`, item.line, `${item.field} is unknown, which only a Draft requirement file or a Proposed ADR may leave.`));
+  return { ...result, findings: [...result.findings, ...unknown] };
+}
+
+function format(type, version, reference, rules, defaults, corresponding, inspect) {
+  const run = (input, context = {}) => {
     const decoded = decode(type, input);
     if (decoded.failure) return { findings: [decoded.failure], unknowns: [] };
-    return inspect(decoded.text, context);
+    return withUnknownRule(type, decoded.text, inspect(decoded.text, context), context);
   };
-  return Object.freeze({ type, version, reference, rules: Object.freeze(rules), defaults: Object.freeze(defaults), inspect: run, check: (input) => run(input, {}).findings });
+  return Object.freeze({ type, version, reference, rules: Object.freeze([...rules, `${type}.unknown`, `${type}.reported`]), defaults: Object.freeze(defaults), corresponding: Object.freeze(corresponding), inspect: run, check: (input) => run(input, {}).findings });
 }
 
 /** Prism's own formats, in the order every result lists them, each the newest version of its type. */
 export const ARTIFACT_FORMATS = Object.freeze([
   format("requirements", 1, "skills/write-requirements/references/requirement-format.md",
     ["requirements.text", "requirements.title", "requirements.header", "requirements.status", "requirements.dates", "requirements.sections", "requirements.numbering", "requirements.fields", "requirements.pattern", "requirements.disposition", "requirements.links"],
-    { Status: "Draft", Approved: "n/a", "Design questions": "n/a", Disposition: "Active", Related: "n/a" }, inspectRequirements),
+    { Status: "Draft", Approved: "n/a", "Design questions": "n/a", Disposition: "Active", Related: "n/a" },
+    { Problem: ["Context", "Background", "Motivation"], Goals: ["Objectives"], "Non-goals": ["Out of scope"], "Design questions": ["Open questions", "Questions"] }, inspectRequirements),
   format("adr", 1, "skills/write-adr/references/adr-format.md",
     ["adr.text", "adr.title", "adr.header", "adr.status", "adr.dates", "adr.sections", "adr.requirements"],
-    { Status: "Proposed", Requirements: "n/a", "Decision Log": "n/a" }, inspectAdr),
+    { Status: "Proposed", Requirements: "n/a", "Decision Log": "n/a" },
+    { Requirements: ["Drivers", "Decision drivers"], Problem: ["Context", "Background"], Decision: ["Outcome"], Rationale: ["Reasons", "Justification"], Alternatives: ["Options considered", "Considered options"], Consequences: ["Implications"], "Decision Log": ["History", "Status history"] }, inspectAdr),
   format("glossary", 1, "skills/workflow/references/glossary-format.md",
     ["glossary.text", "glossary.title", "glossary.purpose", "glossary.identity", "glossary.definition", "glossary.fields", "glossary.source", "glossary.source-decided", "glossary.source-withdrawn"],
-    { Title: "Glossary" }, inspectGlossary),
+    { Title: "Glossary" }, {}, inspectGlossary),
   format("feature", 1, "skills/write-feature/references/feature-format.md",
     ["feature.text", "feature.header", "feature.rules", "feature.requirement", "feature.examples", "feature.steps"],
-    {}, inspectFeature)
+    {}, {}, inspectFeature)
 ]);
 
 export const ARTIFACT_TYPES = Object.freeze(ARTIFACT_FORMATS.map((entry) => entry.type));
@@ -525,4 +542,28 @@ export function inspectArtifact(type, input, { formats = ARTIFACT_FORMATS, conte
 export function checkArtifactText(type, text, { formats = ARTIFACT_FORMATS } = {}) {
   const { conforms, findings, earlierFormat } = inspectArtifact(type, text, { formats });
   return { conforms, findings, earlierFormat };
+}
+
+// A heading as corresponds compares it: case and runs of whitespace folded.
+const folded = (heading) => heading.trim().replace(/\s+/g, " ").toLowerCase();
+const sectionNumber = (heading) => /^(\d+)(?:\.(?:\s+\S.*)?)?$/.exec(heading.trim())?.[1] ?? null;
+
+/**
+ * Whether a format migration may move a statement from the source section `from` to the target section `to` of an artifact of the type,
+ * each a heading's text without its # marks, or null for the text before the first ## heading:
+ * equal headings after case and whitespace folding, a pair that the format's corresponding sections declare, the same number for numbered requirement sections, and null to null;
+ * a glossary term heading also takes a table row's first cell or a list item's leading name of the same text.
+ */
+export function corresponds(type, from, to) {
+  const entry = formatsOf(type, ARTIFACT_FORMATS).at(-1);
+  if (!entry) throw new Error(`No format of the type ${type}.`);
+  if (from === null || to === null) return from === null && to === null;
+  if (typeof from !== "string" || typeof to !== "string") return false;
+  if (folded(from) === folded(to)) return true;
+  if (type === "requirements") {
+    const [left, right] = [sectionNumber(from), sectionNumber(to)];
+    if (left !== null || right !== null) return left !== null && left === right;
+  }
+  const target = Object.keys(entry.corresponding).find((heading) => folded(heading) === folded(to));
+  return target !== undefined && entry.corresponding[target].some((heading) => folded(heading) === folded(from));
 }

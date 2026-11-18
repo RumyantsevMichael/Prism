@@ -50,6 +50,7 @@ import { managedStoresDirectory } from "./workflow/remote-url.mjs";
 import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs";
 import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
 import { ArtifactCheckError, MAX_CHECK_PATHS, checkArtifacts } from "./workflow/artifact-check.mjs";
+import { reportFormatFinding } from "./workflow/format-findings.mjs";
 import { ArtifactCitationError } from "./workflow/artifact-citations.mjs";
 import { FormatMigrationError, applyMigration, getMigration, proposeMigration } from "./workflow/format-migrations.mjs";
 import { ARTIFACT_TYPES } from "./workflow/artifact-formats.mjs";
@@ -353,7 +354,7 @@ function stateErrorData(error) {
   }
   // A refused artifact read or update names the current version, the scopes that hold a path, the scope that already holds it, the edit that did not apply, the name that breaks the artifact name form, or the declared components.
   if (error?.name === "ArtifactError") {
-    return { code: error.code, ...Object.fromEntries(["version", "scopes", "scope", "edit", "invalidName", "path", "location", "limit", "component", "components", "proposed"].filter(key => error[key] !== undefined).map(key => [key, error[key]])) };
+    return { code: error.code, ...Object.fromEntries(["version", "scopes", "scope", "edit", "invalidName", "path", "location", "limit", "component", "components", "proposed", "artifacts"].filter(key => error[key] !== undefined).map(key => [key, error[key]])) };
   }
   if (error instanceof RepositoryIntelligenceSelectionError) {
     return { code: error.code, provider: error.provider, recoverable: error.recoverable };
@@ -516,7 +517,7 @@ const tools = [
   },
   {
     name: "check_artifacts",
-    description: "Check the project's requirement files, ADRs, glossary, and feature files against Prism's artifact formats. Without paths it checks every .md file other than README.md up to four folders below the configured Requirements and ADRs paths, every .feature file up to four folders below the Feature files path, and the configured Glossary file. In a project whose .prism/workflow.md names a record store, requirements, ADRs, and glossaries are store artifacts, read from every scope this checkout sees (the workspace, its repository, and that repository's components), each listed once per scope that holds it, while feature files are read from the checkout. It returns each format's type, version, and reference file, and for each artifact its path, its scope (the scope object get_artifact returns, or null for a checkout file), whether it conforms, each finding with its rule id, line, and message, each value written as unknown, the newest earlier format version it conforms to, and any legacy mark. A glossary source counts by the requirement's or ADR's recorded status and resolves in the glossary's own scope, else in the nearest scope above it. Each paths entry is a project-relative path or { path, scope, component }, with scope \"workspace\", \"repository\", or \"component\" and component as get_artifact takes them. Refusals: artifact_type_unknown for a path under none of the configured paths, artifact_missing for a path that no checkout file or seen scope holds, artifact_ambiguous with scopes when two seen scopes hold a path until its scope is named, scope_invalid for a scope on a feature file or in a project without a store, component_unknown for an undeclared component, and the store's own refusal, such as store_unavailable, when the store cannot be used; it never falls back to checkout copies. This tool reads files and changes nothing.",
+    description: "Check the project's requirement files, ADRs, glossary, and feature files against Prism's artifact formats. Without paths it checks every .md file other than README.md up to four folders below the configured Requirements and ADRs paths, every .feature file up to four folders below the Feature files path, and the configured Glossary file. In a project whose .prism/workflow.md names a record store, requirements, ADRs, and glossaries are store artifacts, read from every scope this checkout sees (the workspace, its repository, and that repository's components), each listed once per scope that holds it, while feature files are read from the checkout. It returns each format's type, version, and reference file, and for each artifact its path, its scope (the scope object get_artifact returns, or null for a checkout file), whether it conforms, each finding with its rule id, line, and message, each value written as unknown, the newest earlier format version it conforms to, and any legacy mark. A required value written as unknown is listed under unknowns in every artifact, and is also a finding with the rule <type>.unknown unless the artifact is a requirement file whose status is Draft or an ADR whose status is Proposed, read as the recorded status in a project with a store; each finding that report_format_finding recorded for the artifact's current version is listed too, with the rule <type>.reported. update_artifact refuses a write that would leave a requirement file, ADR, or glossary breaking its format. A glossary source counts by the requirement's or ADR's recorded status and resolves in the glossary's own scope, else in the nearest scope above it. Each paths entry is a project-relative path or { path, scope, component }, with scope \"workspace\", \"repository\", or \"component\" and component as get_artifact takes them. Refusals: artifact_type_unknown for a path under none of the configured paths, artifact_missing for a path that no checkout file or seen scope holds, artifact_ambiguous with scopes when two seen scopes hold a path until its scope is named, scope_invalid for a scope on a feature file or in a project without a store, component_unknown for an undeclared component, and the store's own refusal, such as store_unavailable, when the store cannot be used; it never falls back to checkout copies. This tool reads files and changes nothing.",
     inputSchema: {
       type: "object",
       properties: {
@@ -531,6 +532,25 @@ const tools = [
       additionalProperties: false
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  },
+  {
+    name: "report_format_finding",
+    description: "Record a break of an artifact's format that check_artifacts does not see, for an agent that found one in a requirement file, ADR, glossary, or feature file: Prism records it as a finding with the rule <type>.reported against the artifact's current version, and check_artifacts then lists it among that artifact's findings, so the artifact does not conform, until its content changes. It never changes the artifact. Pass artifact, a project-relative path or { path, scope, component } as check_artifacts takes a paths entry; message, plain text of 1 to 500 characters without a line break, which the review app shows as text; and optionally line, a positive whole number. A second report of the same artifact version, line, and message returns the first finding. Findings live under format-findings/ in the record store, whose sync shares them, or under .prism/format-findings/ without a store. Refusals: artifact_type_unknown, artifact_missing, artifact_ambiguous, scope_invalid, and component_unknown as check_artifacts refuses a path, invalid_input for any other malformed input, and the store's own refusal, such as store_unavailable. It returns finding { path, scope, type, rule, line, message, version, reportedAt }.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectRoot: { type: "string", description: "The absolute path to the active project root." },
+        artifact: { oneOf: [
+          { type: "string", minLength: 1, maxLength: 1024 },
+          { type: "object", additionalProperties: false, properties: { path: { type: "string", minLength: 1, maxLength: 1024 }, scope: { type: "string", maxLength: 64 }, component: { type: "string", maxLength: 200 } }, required: ["path"] }
+        ], description: "The artifact whose format breaks: a project-relative path or { path, scope, component }." },
+        message: { type: "string", description: "Plain text of 1 to 500 characters, without a line break, on what breaks the format." },
+        line: { type: "integer", description: "The line the break is on, a positive whole number, when one line holds it." }
+      },
+      required: ["projectRoot", "artifact", "message"],
+      additionalProperties: false
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "propose_migration",
@@ -1297,6 +1317,28 @@ async function callCheckArtifacts(argumentsValue) {
   }
 }
 
+// A reported format finding is refused as check_artifacts refuses its path, naming the path in its text and its structured content.
+async function callReportFormatFinding(argumentsValue) {
+  const projectRoot = await requestedProjectRoot(argumentsValue);
+  try {
+    assertExactToolArguments(argumentsValue, ["projectRoot", "artifact", "message", "line"], ["artifact", "message"], "report_format_finding arguments");
+  } catch (error) {
+    const value = { code: "invalid_input", message: error.message };
+    return { content: [{ type: "text", text: error.message }], structuredContent: value, isError: true };
+  }
+  try {
+    const value = await reportFormatFinding({ projectRoot, artifact: argumentsValue.artifact, message: argumentsValue.message, line: argumentsValue.line });
+    const { finding } = value;
+    const where = finding.scope === null ? finding.path : `${finding.path} in scope ${finding.scope.label}`;
+    return { content: [{ type: "text", text: `Recorded ${finding.rule} on ${where}: check_artifacts lists it until the artifact changes.\n${JSON.stringify(value)}` }], structuredContent: value };
+  } catch (error) {
+    if (!(error instanceof ArtifactCheckError)) throw error;
+    const details = Object.fromEntries(["path", "scopes", "store", "components", "component"].filter((key) => error[key] !== undefined).map((key) => [key, error[key]]));
+    const value = { code: error.code, message: error.message, ...details };
+    return { content: [{ type: "text", text: error.message }], structuredContent: value, isError: true };
+  }
+}
+
 // A refused format migration names what it refuses in its text and its structured content, so an agent sees what to correct.
 async function callMigrationTool(name, argumentsValue) {
   const projectRoot = await requestedProjectRoot(argumentsValue);
@@ -1648,6 +1690,9 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
   }
   if (name === "check_artifacts") {
     return callCheckArtifacts(argumentsValue);
+  }
+  if (name === "report_format_finding") {
+    return callReportFormatFinding(argumentsValue);
   }
   if (["propose_migration", "get_migration", "apply_migration"].includes(name)) {
     return callMigrationTool(name, argumentsValue);

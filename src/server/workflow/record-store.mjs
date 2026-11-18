@@ -30,6 +30,10 @@ const LEGACY_MARK_ID = /^legacy-[0-9a-f]{8,32}$/;
 export const FORMAT_MIGRATIONS = "format-migrations";
 const FORMAT_MIGRATION_ID = /^migration-[0-9a-f]{8,64}$/;
 const FORMAT_MIGRATION_FILE = /^migration-[0-9a-f]{8,64}\.json$/;
+// Reported format findings are workspace records too, one file per finding, named by the hash of what it reports.
+export const FORMAT_FINDINGS = "format-findings";
+const FORMAT_FINDING_ID = /^finding-[0-9a-f]{16,64}$/;
+const FORMAT_FINDING_FILE = /^finding-[0-9a-f]{16,64}\.json$/;
 const HOUSEKEEPING = Object.freeze({
   ".gitattributes": "# Prism writes these records through its MCP tools; hosts collapse them in pull request diffs.\n/roadmap.json linguist-generated=true gitlab-generated\n/initiatives/** linguist-generated=true gitlab-generated\n",
   ".gitignore": "# Transient lock and write files of Prism records, and the store's sync state.\n*.lock\n.*.tmp\n/.prism-sync/\n"
@@ -61,7 +65,7 @@ function requireSlug(value, label) {
   return value;
 }
 
-/** The project-relative location of a record key: { kind: "roadmap" | "legacy-mark" | "format-migration" | "initiative" | "state" | "claim" | "review" | "change-map" | "design-view" | "frozen-tests" | "runs", id?, initiative?, slice? }. */
+/** The project-relative location of a record key: { kind: "roadmap" | "legacy-mark" | "format-migration" | "format-finding" | "initiative" | "state" | "claim" | "review" | "change-map" | "design-view" | "frozen-tests" | "runs", id?, initiative?, slice? }. */
 export function recordPath(key) {
   if (key?.kind === "roadmap") return ROADMAP_RECORD;
   if (key?.kind === "legacy-mark") {
@@ -71,6 +75,10 @@ export function recordPath(key) {
   if (key?.kind === "format-migration") {
     if (typeof key.id !== "string" || !FORMAT_MIGRATION_ID.test(key.id)) throw fail("invalid_path", "A format migration id is migration- and hexadecimal digits.");
     return `${RECORD_DIRECTORY}/${FORMAT_MIGRATIONS}/${key.id}.json`;
+  }
+  if (key?.kind === "format-finding") {
+    if (typeof key.id !== "string" || !FORMAT_FINDING_ID.test(key.id)) throw fail("invalid_path", "A format finding id is finding- and hexadecimal digits.");
+    return `${RECORD_DIRECTORY}/${FORMAT_FINDINGS}/${key.id}.json`;
   }
   const initiative = requireSlug(key?.initiative, "initiative");
   if (key.kind === "initiative" || key.kind === "state") return `${INITIATIVES}/${initiative}/${RECORD_FILES[key.kind]}`;
@@ -102,7 +110,7 @@ export function parseRecordPath(relative) {
 
 /** Whether Prism alone writes this project-relative file, so source snapshots never count it. */
 export function isManagedRecordFile(relative) {
-  if (relative === ROADMAP_RECORD || relative.startsWith(`${INITIATIVES}/`) || relative.startsWith(`${RECORD_DIRECTORY}/${LEGACY_MARKS}/`) || relative.startsWith(`${RECORD_DIRECTORY}/${FORMAT_MIGRATIONS}/`)) return true;
+  if (relative === ROADMAP_RECORD || relative.startsWith(`${INITIATIVES}/`) || relative.startsWith(`${RECORD_DIRECTORY}/${LEGACY_MARKS}/`) || relative.startsWith(`${RECORD_DIRECTORY}/${FORMAT_MIGRATIONS}/`) || relative.startsWith(`${RECORD_DIRECTORY}/${FORMAT_FINDINGS}/`)) return true;
   return relative.startsWith(`${RECORD_DIRECTORY}/`) && Object.hasOwn(HOUSEKEEPING, relative.slice(RECORD_DIRECTORY.length + 1));
 }
 
@@ -134,6 +142,7 @@ export function isStoreFile(relative) {
   if (names[0] === "migrations") return names.length === 2 && MIGRATION_FILE.test(names[1]);
   if (names[0] === ARTIFACT_MIGRATIONS) return names.length === 2 && ARTIFACT_LEDGER_FILE.test(names[1]);
   if (names[0] === FORMAT_MIGRATIONS) return names.length === 2 && FORMAT_MIGRATION_FILE.test(names[1]);
+  if (names[0] === FORMAT_FINDINGS) return names.length === 2 && FORMAT_FINDING_FILE.test(names[1]);
   if (names[0] === REPOSITORIES) return names.length === 2 && names[1].endsWith(".json") && portableRepositoryName(names[1].slice(0, -".json".length));
   // A legacy set is one file of its own below legacy-marks/, named by its id.
   if (names[0] === LEGACY_MARKS) return parseRecordPath(`${RECORD_DIRECTORY}/${relative}`)?.kind === "legacy-mark";
@@ -151,7 +160,7 @@ const KiB = 1024, MiB = 1024 * KiB;
  * root-text is a README or license at the store's root and root-git its .gitattributes or .gitignore, which no reader loads and every sync writes, hashes, merges, and saves.
  */
 export const STORE_FILE_BOUNDS = Object.freeze({
-  artifact: 16 * MiB, accepted: 16 * MiB, status: 16 * MiB, identity: 256, comment: 64 * KiB, ledger: 16 * MiB, migration: 16 * MiB, "format-migration": 16 * MiB, registration: 64 * KiB,
+  artifact: 16 * MiB, accepted: 16 * MiB, status: 16 * MiB, identity: 256, comment: 64 * KiB, ledger: 16 * MiB, migration: 16 * MiB, "format-migration": 16 * MiB, "format-finding": 64 * KiB, registration: 64 * KiB,
   roadmap: MiB, "legacy-mark": 4 * MiB, initiative: MiB, state: MiB, "change-map": MiB, review: 4 * MiB, "design-view": 4 * MiB, "frozen-tests": 4 * MiB, claim: 64 * KiB, runs: 4 * MiB,
   "root-text": MiB, "root-git": 64 * KiB
 });
@@ -178,7 +187,7 @@ export function storeFileBound(relative) {
   if (typeof relative === "string" && Object.hasOwn(HOUSEKEEPING, relative)) return STORE_FILE_BOUNDS["root-git"];
   if (typeof relative !== "string" || !isStoreFile(relative)) return null;
   const top = relative.split("/")[0];
-  const kind = { [ARTIFACTS]: "artifact", [ARTIFACT_ACCEPTED]: "accepted", [ARTIFACT_STATUS]: "status", [ARTIFACT_IDENTITY]: "identity", [ARTIFACT_COMMENTS]: "comment", [ARTIFACT_MIGRATIONS]: "ledger", migrations: "migration", [FORMAT_MIGRATIONS]: "format-migration", [REPOSITORIES]: "registration", [LEGACY_MARKS]: "legacy-mark" }[top]
+  const kind = { [ARTIFACTS]: "artifact", [ARTIFACT_ACCEPTED]: "accepted", [ARTIFACT_STATUS]: "status", [ARTIFACT_IDENTITY]: "identity", [ARTIFACT_COMMENTS]: "comment", [ARTIFACT_MIGRATIONS]: "ledger", migrations: "migration", [FORMAT_MIGRATIONS]: "format-migration", [FORMAT_FINDINGS]: "format-finding", [REPOSITORIES]: "registration", [LEGACY_MARKS]: "legacy-mark" }[top]
     ?? parseRecordPath(`${RECORD_DIRECTORY}/${relative}`)?.kind;
   return STORE_FILE_BOUNDS[kind] ?? null;
 }
@@ -190,7 +199,7 @@ export function storeFileBound(relative) {
 export function isStoreFolder(relative) {
   if (typeof relative !== "string") return false;
   const names = relative.split("/");
-  if (names.length === 1) return ["initiatives", ARTIFACTS, ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, "migrations", FORMAT_MIGRATIONS, REPOSITORIES, LEGACY_MARKS].includes(names[0]);
+  if (names.length === 1) return ["initiatives", ARTIFACTS, ARTIFACT_STATUS, ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRATIONS, "migrations", FORMAT_MIGRATIONS, FORMAT_FINDINGS, REPOSITORIES, LEGACY_MARKS].includes(names[0]);
   if (names[0] === ARTIFACTS || names[0] === ARTIFACT_STATUS || names[0] === ARTIFACT_COMMENTS || names[0] === ARTIFACT_IDENTITY) return names.slice(1).every(wellFormedName);
   if (names[0] !== "initiatives" || !SLUG_PATTERN.test(names[1])) return false;
   if (names.length === 2) return true;
@@ -999,6 +1008,21 @@ export async function listFormatMigrationRecords(projectRootPath) {
   const records = [];
   for (const name of names) {
     const bytes = await readBytes(path.join(folder, name), STORE_FILE_BOUNDS["format-migration"]).catch(() => null);
+    if (bytes !== null) records.push({ id: name.slice(0, -".json".length), bytes });
+  }
+  return records;
+}
+
+/** The reported format finding records of the project, in the record store when one is configured and under .prism otherwise: [{ id, bytes }] in id order. */
+export async function listFormatFindingRecords(projectRootPath) {
+  const { located } = await locate(projectRootPath, { kind: "format-finding", id: "finding-0000000000000000" });
+  const folder = path.dirname(located.target);
+  let names = [];
+  try { names = (await readdir(folder)).filter((name) => FORMAT_FINDING_FILE.test(name)).sort(); }
+  catch (error) { if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error; }
+  const records = [];
+  for (const name of names) {
+    const bytes = await readBytes(path.join(folder, name), STORE_FILE_BOUNDS["format-finding"]).catch(() => null);
     if (bytes !== null) records.push({ id: name.slice(0, -".json".length), bytes });
   }
   return records;

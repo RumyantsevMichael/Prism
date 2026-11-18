@@ -76,7 +76,7 @@ export const ARTIFACT_TOOLS = Object.freeze([
   },
   {
     name: "update_artifact",
-    description: `In a project whose .prism/workflow.md names a record store, change descriptive artifacts in the store, addressed by project-relative path as get_artifact reads them, never by editing files in the checkout. operations holds at most 50 of write (path, content, expectedVersion), edit (path, expectedVersion, edits of oldText and newText, each replacing text that occurs exactly once in the text earlier edits left, else edit_not_applied with data.edit its index), remove (path, expectedVersion), move_scope (path, expectedVersion, and the scope to move it to), and ask_approval (path, optional status, default Approved, optional question, and context, the situation for a person who has not followed the work), which records a pending approval gate on a requirement or ADR at its current version and returns its id as gate, for the person to answer on Attention in the review browser and for wait_for_user_gate with artifact; it is refused with not_a_status_artifact for any other file, status_by_ship for Accepted on an ADR, which only a ship accepts, and nothing_to_approve when the status is already recorded and the bytes are the accepted ones. Leave Status: and Approved: lines to gates: a write whose Status: line differs from the recorded status is kept and its entry carries statusMismatch. expectedVersion is the version last read, or null to create; any other mismatch is refused with version_conflict and data.version holding the current version or null. write, edit, and remove take an optional scope to pick one when two scopes hold the path; ${SCOPE_TEXT}. A new artifact takes the given scope, else the scope that holds its nearest folder, else the workspace scope, and creating a path that another seen scope holds is refused with artifact_exists. A write that creates an artifact, and a move_scope, whose path differs only in letter case from an artifact path a seen scope holds, or from another write of the update, is refused with artifact_name_conflict and data.path holding that path, so change only the letter case by a remove and then a write in a later update. Such a write or move_scope whose location in the store, the path below artifacts/ in the scope it would take, holds more than 120 characters is refused with artifact_path_too_long and data.location, so choose a shorter path or a scope with a shorter folder. Such a write or move_scope in a component scope whose component name is a Windows device name, such as aux, nul, or com1, is refused with component_name_invalid and data.component, so rename the component under ## Components in .prism/workflow.md or choose another scope. move_scope of a path that several scopes hold moves the one copy whose version is expectedVersion. Content is UTF-8 text of at most 1 MiB, else artifact_too_large. Prism checks every operation before it changes any file, so a refused update changes nothing. The result lists, for each operation, the artifact's path, scope, and new version, or removed true. An artifact's comments from the review browser belong to it: move_scope moves them with it, remove removes them, and a write that creates an artifact removes the comments that a removed or moved artifact left at its path, and such an entry carries removedComments, the number of comments removed, when there were any, so read a file's comments with get_artifact before you remove it. A name that breaks the artifact name form that get_artifact describes is refused with artifact_name_invalid and data.invalidName, so choose another name. Paths outside the artifact paths are refused with not_an_artifact and stay in the checkout; without a store it refuses with store_not_configured.`,
+    description: `In a project whose .prism/workflow.md names a record store, change descriptive artifacts in the store, addressed by project-relative path as get_artifact reads them, never by editing files in the checkout. operations holds at most 50 of write (path, content, expectedVersion), edit (path, expectedVersion, edits of oldText and newText, each replacing text that occurs exactly once in the text earlier edits left, else edit_not_applied with data.edit its index), remove (path, expectedVersion), move_scope (path, expectedVersion, and the scope to move it to), and ask_approval (path, optional status, default Approved, optional question, and context, the situation for a person who has not followed the work), which records a pending approval gate on a requirement or ADR at its current version and returns its id as gate, for the person to answer on Attention in the review browser and for wait_for_user_gate with artifact; it is refused with not_a_status_artifact for any other file, status_by_ship for Accepted on an ADR, which only a ship accepts, and nothing_to_approve when the status is already recorded and the bytes are the accepted ones. Leave Status: and Approved: lines to gates: a write whose Status: line differs from the recorded status is kept and its entry carries statusMismatch. expectedVersion is the version last read, or null to create; any other mismatch is refused with version_conflict and data.version holding the current version or null. write, edit, and remove take an optional scope to pick one when two scopes hold the path; ${SCOPE_TEXT}. A new artifact takes the given scope, else the scope that holds its nearest folder, else the workspace scope, and creating a path that another seen scope holds is refused with artifact_exists. A write that creates an artifact, and a move_scope, whose path differs only in letter case from an artifact path a seen scope holds, or from another write of the update, is refused with artifact_name_conflict and data.path holding that path, so change only the letter case by a remove and then a write in a later update. Such a write or move_scope whose location in the store, the path below artifacts/ in the scope it would take, holds more than 120 characters is refused with artifact_path_too_long and data.location, so choose a shorter path or a scope with a shorter folder. Such a write or move_scope in a component scope whose component name is a Windows device name, such as aux, nul, or com1, is refused with component_name_invalid and data.component, so rename the component under ## Components in .prism/workflow.md or choose another scope. move_scope of a path that several scopes hold moves the one copy whose version is expectedVersion. Content is UTF-8 text of at most 1 MiB, else artifact_too_large. Prism checks every operation before it changes any file, so a refused update changes nothing. A write or edit of a requirement file, ADR, or glossary is checked against its current format as check_artifacts checks it, with the recorded statuses and glossary sources as the whole update leaves them, and content that breaks the format is refused with artifact_nonconforming and data.artifacts [{ path, scope, type, findings }], whose message names each artifact in its scope and its rule ids; a required value written as unknown passes only while the recorded status is Draft for a requirement, which a new requirement always is, or Proposed for an ADR, so an approval answer that would make a file with an unknown value Approved is refused the same way and its gate stays pending. remove, move_scope, plan files, and the roadmap view are not checked, and a break the check does not see is reported with report_format_finding. The result lists, for each operation, the artifact's path, scope, and new version, or removed true. An artifact's comments from the review browser belong to it: move_scope moves them with it, remove removes them, and a write that creates an artifact removes the comments that a removed or moved artifact left at its path, and such an entry carries removedComments, the number of comments removed, when there were any, so read a file's comments with get_artifact before you remove it. A name that breaks the artifact name form that get_artifact describes is refused with artifact_name_invalid and data.invalidName, so choose another name. Paths outside the artifact paths are refused with not_an_artifact and stay in the checkout; without a store it refuses with store_not_configured.`,
     inputSchema: UPDATE_ARTIFACT_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }
   }
@@ -579,7 +579,7 @@ export async function updateArtifact(input) {
  * Apply checked operations while the store's artifact lock is held: every operation is checked against the store before any file changes.
  * Every change to a store artifact, an agent's update and Prism's own plan files and views alike, goes through here.
  */
-async function applyOperations(seenStore, checked, { held = null, noteWrites = false } = {}) {
+async function applyOperations(seenStore, checked, { held = null, noteWrites = false, formatCheck = { unknownAside: false, migration: null } } = {}) {
   // The update checks each folder above the files it reads and writes once, and every file again right before it is written; nothing changes the store before the writes, so each folder's names are listed once too.
   const seen = { ...seenStore, folderChecks: folderChecks() };
   const listed = new Map();
@@ -678,6 +678,9 @@ async function applyOperations(seenStore, checked, { held = null, noteWrites = f
   const counted = (entry, removed) => removed.length ? Object.assign(entry, { removedComments: removed.length }) : entry;
   // A requirement's or ADR's entry reports a written status that differs from the recorded one once every operation has run.
   const mismatches = [];
+  // Each requirement, ADR, and glossary that a write, edit, approval answer, or ship changes is checked against its format as the whole update leaves it.
+  const formatted = [];
+  const noteFormatted = (file, scope, address) => { if (FORMAT_KINDS.has(address.kind)) formatted.push({ file, scope, address }); };
   const artifacts = [];
   for (const item of checked) {
     const { operation, file, address, given } = item;
@@ -719,6 +722,8 @@ async function applyOperations(seenStore, checked, { held = null, noteWrites = f
       names.set(target, file);
       artifacts.push(counted({ path: file, scope, version: artifactVersion(next) }, removed));
       if (hasStatus(address.kind)) mismatches.push({ entry: artifacts.at(-1), file, scope, address, text: operation.content });
+      // The move of a checkout's files keeps their bytes as they are, so only a write that brings content of its own is checked.
+      if (operation.bytes === undefined) noteFormatted(file, scope, address);
       continue;
     }
     // A ship names the scope of each ADR it accepts, which may be another repository's, so the ADR is found there alone.
@@ -738,6 +743,7 @@ async function applyOperations(seenStore, checked, { held = null, noteWrites = f
       names.set(source.target, file);
       artifacts.push({ path: file, scope: source.scope, version: artifactVersion(next) });
       if (hasStatus(address.kind)) mismatches.push({ entry: artifacts.at(-1), file, scope: source.scope, address, text });
+      noteFormatted(file, source.scope, address);
     } else if (operation.op === "remove") {
       state.set(source.target, null);
       const status = await statusOf(source.scope, address);
@@ -766,6 +772,7 @@ async function applyOperations(seenStore, checked, { held = null, noteWrites = f
       }
       setStatus(status.target, file, record);
       artifacts.push({ path: file, scope: source.scope, version, gate: answered.gate });
+      if (answered.text !== null) noteFormatted(file, source.scope, address);
     } else if (operation.op === "accept_at_ship") {
       const status = await statusOf(source.scope, address);
       const accepted = acceptAtShip(status.record, decode(contentOf(file, source.record), file), { ...operation.ship, versionOf: (text) => artifactVersion(Buffer.from(text, "utf8")) });
@@ -776,6 +783,7 @@ async function applyOperations(seenStore, checked, { held = null, noteWrites = f
       await keepAccepted(file, next);
       setStatus(status.target, file, accepted.record);
       artifacts.push({ path: file, scope: source.scope, version: accepted.record.acceptedVersion });
+      noteFormatted(file, source.scope, address);
     } else if (operation.op === "accept_version") {
       const status = await statusOf(source.scope, address);
       if (status.record.acceptedVersion !== source.record.version) {
@@ -811,6 +819,7 @@ async function applyOperations(seenStore, checked, { held = null, noteWrites = f
       artifacts.push(counted({ path: file, scope, version: source.record.version }, removed));
     }
   }
+  await checkFormats(seen, formatted, { read, statusOf, formatCheck });
   for (const { entry, scope, address, file, text } of mismatches) {
     if (state.get(await resolveArtifactFile(seen, artifactLocation(scope, address)))?.version !== entry.version) continue;
     const mismatch = statusMismatch(address.kind, file, text, (await statusOf(scope, address)).record);
@@ -843,6 +852,57 @@ async function applyOperations(seenStore, checked, { held = null, noteWrites = f
   // A change syncs as a record write does, so it is committed and pushed without a further call; the sync stages artifacts only once this update releases the artifact lock.
   if ((changed.length || clearing.length) && seen.store.sync) scheduleRecordSync(seen.store.base);
   return { artifacts };
+}
+
+const FORMAT_TYPES = Object.freeze({ requirements: "requirements", adrs: "adr", glossary: "glossary" });
+const scopeText = (scope) => `${scope.label}`;
+
+/**
+ * Refuse an update whose writes leave a requirement, ADR, or glossary that breaks its current format, before anything changes:
+ * each is checked as check_artifacts would check it, with the recorded status the update leaves and glossary sources read as the update leaves them.
+ * A format migration's apply checks its content with unknown values aside and its own migration as applied, as its proposal was checked.
+ */
+async function checkFormats(seen, formatted, { read, statusOf, formatCheck }) {
+  if (!formatted.length) return;
+  const { checkArtifactContent, storeSourceLookup } = await import("./artifact-check.mjs");
+  let applied = null;
+  let everyScope = null;
+  const recordedStatus = async (scope, address) => hasStatus(address.kind) ? (await statusOf(scope, address)).record?.status ?? null : null;
+  // The copies of a glossary source in every scope of the store, as this update leaves them.
+  const copiesOf = async (file) => {
+    const address = normalizeArtifactPath(file) === file ? artifactAddress(seen.kinds, file) : null;
+    if (!address || !hasStatus(address.kind) || address.rest === "" || malformedArtifactName(address) !== null) return [];
+    everyScope ??= storeScopes(seen);
+    const found = [];
+    for (const { scope, record } of await holders(seen, address, (await everyScope).filter((scope) => kindInScope(address.kind, scope)), read)) {
+      found.push({ scope, bytes: record.bytes, status: await recordedStatus(scope, address) });
+    }
+    return found;
+  };
+  const refused = [];
+  const seenKeys = new Set();
+  for (const { file, scope, address } of formatted) {
+    const key = `${scope.label}\0${file}`;
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    const record = await read(await resolveArtifactFile(seen, artifactLocation(scope, address)));
+    if (record === null || record.bytes === null) continue;
+    const type = FORMAT_TYPES[address.kind];
+    if (type === "glossary" && applied === null) {
+      const { appliedMigrationIds } = await import("./format-migrations.mjs");
+      applied = await appliedMigrationIds(seen.root);
+    }
+    const result = await checkArtifactContent({
+      path: file, type, bytes: record.bytes, status: await recordedStatus(scope, address),
+      lookup: type === "glossary" ? storeSourceLookup(scope, copiesOf) : null,
+      appliedMigration: (id) => id === formatCheck.migration || applied?.has(id) === true,
+      unknownAside: formatCheck.unknownAside === true
+    });
+    if (!result.conforms) refused.push({ path: file, scope, type, findings: result.findings });
+  }
+  if (!refused.length) return;
+  const lines = refused.map((artifact) => `${artifact.path} in scope ${scopeText(artifact.scope)} breaks ${[...new Set(artifact.findings.map((finding) => finding.rule))].join(", ")}: ${artifact.findings.map((finding) => finding.message).join(" ")}`);
+  throw fail("artifact_nonconforming", `The update would leave ${refused.length === 1 ? "an artifact that breaks its format" : "artifacts that break their formats"}, so nothing changed: ${lines.join(" ")} Write content that follows the format reference, or report a break the check does not see with report_format_finding.`, { artifacts: refused });
 }
 
 /**
@@ -1743,9 +1803,10 @@ export async function storeArtifactCopy(projectRoot, file, input = {}) {
  * Apply a format migration's store changes in one checked update under the store's artifact lock: write the target, { path, scope, content, expectedVersion, status },
  * where a new requirement or ADR is recorded with status, and remove the store source, { path, scope, expectedVersion }, when one is given.
  * The update keeps identities, comments, status records, accepted versions, and sync as update_artifact does, and a version that changed is refused with version_conflict.
+ * The target is checked against its format as the proposal was, with unknown values aside and migration, the applied migration's id, counting as applied.
  * Returns the update's entries: [{ path, scope, version } | { path, scope, removed, removedComments? }].
  */
-export async function applyStoreMigration(projectRoot, { target, remove = null }) {
+export async function applyStoreMigration(projectRoot, { target, remove = null, migration = null }) {
   return refusing(async () => {
     const { config, kinds } = await configuration(projectRoot);
     const seen = await seenScopes(projectRoot);
@@ -1755,6 +1816,6 @@ export async function applyStoreMigration(projectRoot, { target, remove = null }
       const { writtenStatus, ...plain } = operation;
       return { ...checkOperation(config, kinds, plain), operation };
     });
-    return withArtifactStoreLock(seen, async () => (await applyOperations(seen, checked, { noteWrites: true })).artifacts);
+    return withArtifactStoreLock(seen, async () => (await applyOperations(seen, checked, { noteWrites: true, formatCheck: { unknownAside: true, migration } })).artifacts);
   });
 }

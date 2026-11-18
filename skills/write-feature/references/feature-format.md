@@ -5,7 +5,7 @@ Example path: `docs/Features/F-resumable-uploads.feature`
 
 A feature file states observable behavior as Gherkin rules, each linked to the Approved requirements it checks, with examples.
 The `check_artifacts` tool reports each rule below that a feature file breaks, by its rule id.
-A step text may be the single word `unknown`.
+A step text that is the single word `unknown` breaks the `feature.unknown` rule, since a feature file has no undecided status.
 
 ## Rules
 
@@ -15,10 +15,18 @@ A step text may be the single word `unknown`.
 - `feature.requirement`: Each Rule has, before its first example, at least one `# Requirement: [<title>](<path>.md#<anchor>)` comment, and may add `# ADR: [<title>](<path>.md)` comments.
 - `feature.examples`: Each Rule has at least one example.
 - `feature.steps`: Each example has at least one `Given`, exactly one `When`, and at least one `Then`, in that order, where `And` and `But` continue the step before them.
+- `feature.unknown`: No step text is `unknown`.
+- `feature.reported`: No agent has reported, through `report_format_finding`, a break of this format on this version of the feature file that the other rules do not see.
 
 ## Defaults
 
 This format has no default values.
+
+## Corresponding sections
+
+Prism migrates no feature file, so no section corresponds to another.
+
+- n/a
 
 ## Example
 

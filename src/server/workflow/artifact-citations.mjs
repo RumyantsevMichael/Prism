@@ -87,9 +87,12 @@ export async function citedArtifacts(projectRoot, { references = [], documents =
   return checkTargets(root, store, [...targets.values()], { refusing: storeOwn });
 }
 
+// An unknown value does not refuse work that cites its artifact, so an artifact whose only findings are unknown values counts as conforming here.
+const citedBreak = (artifact) => !artifact.conforms && artifact.findings.some((finding) => !finding.rule.endsWith(".unknown"));
+
 /** The artifact_nonconforming refusal of the cited artifacts that break their formats, legacy or not, or null when every one conforms. */
 export function refuseNonconforming(artifacts) {
-  const broken = artifacts.filter((artifact) => !artifact.conforms).map((artifact) => ({ path: artifact.path, scope: artifact.scope, type: artifact.type, findings: artifact.findings, legacy: artifact.legacy !== null }));
+  const broken = artifacts.filter(citedBreak).map((artifact) => ({ path: artifact.path, scope: artifact.scope, type: artifact.type, findings: artifact.findings, legacy: artifact.legacy !== null }));
   return broken.length ? new ArtifactCitationError(broken) : null;
 }
 
