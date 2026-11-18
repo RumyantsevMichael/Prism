@@ -207,11 +207,12 @@ export async function createCodeClones({ directory }) {
     heldCommits.delete(folderOf(entry));
   }
 
-  // A repository's code state: off, on with its branches, or unreachable with Git's reason.
+  // A repository's code state: off, on with its branches, or unreachable with Git's reason and the branches of the clone it fetched last, none when it never cloned.
   async function stateOf(entry) {
     if (!entry) return { state: "off" };
-    if (entry.state === "unreachable") return { state: "unreachable", message: entry.message, fetchedAt: entry.fetchedAt };
-    return { state: "on", branches: await exists(folderOf(entry)) ? await branchesOf(folderOf(entry)) : [], fetchedAt: entry.fetchedAt };
+    const branches = await exists(folderOf(entry)) ? await branchesOf(folderOf(entry)) : [];
+    if (entry.state === "unreachable") return { state: "unreachable", message: entry.message, branches, fetchedAt: entry.fetchedAt };
+    return { state: "on", branches, fetchedAt: entry.fetchedAt };
   }
 
   // The folder of a repository's clone while its code content is on and the clone exists, else null.
