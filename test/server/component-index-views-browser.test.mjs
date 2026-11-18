@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { FILES, fakeRuntime, manifestPath, project, settled } from "./fixtures/component-indexes.mjs";
+import { FILES, fakeRuntime, manifestPath, project, settled, oncePrepared } from "./fixtures/component-indexes.mjs";
 
 // The review browser in a repository with components: its automatic rebuild, its index panel and chip, and the status of an invalid declaration.
 process.env.PLUGIN_DATA ||= mkdtempSync(path.join(os.tmpdir(), "prism-component-views-browser-data-"));
@@ -15,7 +15,7 @@ const { readIndexingStatus } = await import("../../dist/server/repository-intell
 const { createProjectReview } = await import("../../dist/server/review/review-server.mjs");
 const { chipState, panelHtml } = await import("../../dist/server/review/public/views/indexing.js");
 
-const search = (root, runtime, input = {}) => searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...input }, { runtime, waitMs: 30000 });
+const search = (root, runtime, input = {}) => oncePrepared(() => searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...input }, { runtime, waitMs: 30000 }));
 
 async function serve(t, review) {
   const server = http.createServer((request, response) => {

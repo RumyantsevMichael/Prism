@@ -4,8 +4,9 @@ import { mkdtempSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { FILES, manifestPath, project } from "./fixtures/component-indexes.mjs";
+import { FILES, manifestPath, project, oncePrepared } from "./fixtures/component-indexes.mjs";
 import { stagedRuntime, until } from "./fixtures/staged-runtime.mjs";
+import { READY_WAIT_MS, settled } from "./fixtures/wait.mjs";
 
 // Retention of structure-only indexes once their complete index is saved, and the component entry of a structure-only search that fails.
 process.env.PLUGIN_DATA ||= mkdtempSync(path.join(os.tmpdir(), "prism-index-retention-data-"));
@@ -22,10 +23,13 @@ test("a complete index removes the structure-only index it replaced, so earlier 
   const completed = [];
   for (let build = 0; build < 6; build++) {
     if (build) await write(HELD, `${FILES[HELD]}// change ${build}\n`);
-    const found = await until(async () => { const value = await searchRepositoryConcepts({ projectRoot: root, query: "retry" }, { runtime, waitMs: 2000 }); return value.status === "ready" && value; }, "The build did not finish.");
-    assert.ok(found);
-    const current = await readJson(path.join(directory, "current.json"));
-    assert.equal(current.stage, "complete");
+    // A ready answer can come from the structure-only index, so the build is done once the pointer names a new complete index.
+    const current = await settled(async () => {
+      await searchRepositoryConcepts({ projectRoot: root, query: "retry" }, { runtime, waitMs: 2000 });
+      return readJson(path.join(directory, "current.json"));
+    }, (value) => value.stage === "complete" && !completed.includes(value.revision), { timeout: READY_WAIT_MS });
+    assert.equal(current.stage, "complete", "the build did not finish");
+    assert.ok(!completed.includes(current.revision), "each change makes a new complete index");
     completed.push(current.revision);
   }
   const entries = await readdir(directory);
@@ -38,7 +42,7 @@ test("a complete index removes the structure-only index it replaced, so earlier 
 test("a component whose structure-only search failed carries no embeddings mark", async (t) => {
   const { root, storage, write } = await project(t);
   const { runtime, control } = await stagedRuntime(storage);
-  assert.equal((await searchRepositoryConcepts({ projectRoot: root, query: "retry" }, { runtime, waitMs: 30000 })).status, "ready");
+  assert.equal((await oncePrepared(() => searchRepositoryConcepts({ projectRoot: root, query: "retry" }, { runtime, waitMs: 30000 }))).status, "ready");
   await write(HELD, `${FILES[HELD]}// changed\n`);
   control.hold(HELD);
   t.after(() => control.release(HELD));

@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { FILES, manifestPath, project } from "./fixtures/component-indexes.mjs";
+import { FILES, manifestPath, project, oncePrepared } from "./fixtures/component-indexes.mjs";
 import { stagedRuntime, until } from "./fixtures/staged-runtime.mjs";
 
 // Acceptance tests of index-preparation.md §1 and §5 for the index-preparation contract, clauses 1, 5, and 15-19.
@@ -156,7 +156,7 @@ test("clauses 5 and 18: a search of a structure-only index answers lexically and
 test("clause 18: in a repository with components only the structure-only component is marked pending, after components_missing", async (t) => {
   const { root, storage, write } = await project(t, { files: REPORT_FILES });
   const { runtime, control } = await stagedRuntime(storage);
-  assert.equal((await searchRepositoryConcepts({ projectRoot: root, query: "retry" }, { runtime, waitMs: 30000 })).status, "ready");
+  assert.equal((await oncePrepared(() => searchRepositoryConcepts({ projectRoot: root, query: "retry" }, { runtime, waitMs: 30000 }))).status, "ready");
   await write(HELD, `${FILES[HELD]}// changed\n`);
   await write("packages/app/client.ts", `${FILES["packages/app/client.ts"]}// changed\n`);
   control.hold(HELD);

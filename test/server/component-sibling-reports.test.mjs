@@ -4,8 +4,9 @@ import { mkdtempSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { FILES, manifestPath, project } from "./fixtures/component-indexes.mjs";
+import { FILES, manifestPath, project, oncePrepared } from "./fixtures/component-indexes.mjs";
 import { stagedRuntime, until } from "./fixtures/staged-runtime.mjs";
+import { settled } from "./fixtures/wait.mjs";
 
 // Acceptance tests of index-preparation.md §9 for the index-preparation contract, clauses 25-27.
 process.env.PLUGIN_DATA ||= mkdtempSync(path.join(os.tmpdir(), "prism-sibling-reports-data-"));
@@ -33,7 +34,7 @@ const APP = { name: "app", identity: "root/app", folder: "packages/app" };
 test("clauses 25 and 26: a scoped same-name report keeps a group's members in sibling components, which it prepares with structure only", async (t) => {
   const { root, storage } = await project(t, { files: REPORT_FILES });
   const { runtime, control } = await stagedRuntime(storage);
-  const found = await provider.findSameNameUnits({ projectRoot: root, ...scoped }, { runtime, waitMs: 30000 });
+  const found = await oncePrepared(() => provider.findSameNameUnits({ projectRoot: root, ...scoped }, { runtime, waitMs: 30000 }));
   assert.equal(found.status, "ready");
   assert.deepEqual(groupFiles(found), [["packages/app/is.ts", "packages/net/is.ts"]]);
   assert.deepEqual(states(found), [["root/root", "included"], ["root/net", "included"], ["root/app", "included"]]);
@@ -48,7 +49,7 @@ test("clauses 25 and 26: a scoped same-name report keeps a group's members in si
 test("clause 25: a scoped module report counts importers in sibling components", async (t) => {
   const { root, storage } = await project(t, { files: REPORT_FILES });
   const { runtime } = await stagedRuntime(storage);
-  const modules = await provider.reportModuleInterfaces({ projectRoot: root, allModules: true, ...scoped }, { runtime, waitMs: 30000 });
+  const modules = await oncePrepared(() => provider.reportModuleInterfaces({ projectRoot: root, allModules: true, ...scoped }, { runtime, waitMs: 30000 }));
   assert.equal(modules.status, "ready");
   const retry = modules.modules.find((module) => module.file === "packages/net/retry.ts");
   assert.equal(retry?.importers, 1, "the importer in packages/app counts");
@@ -59,7 +60,7 @@ test("clause 25: scoped shared-literal and shared-dependency reports read every 
   const { root, storage } = await project(t, { files: REPORT_FILES });
   const { runtime } = await stagedRuntime(storage);
   for (const report of [provider.findSharedLiterals, provider.findSharedDependencies]) {
-    const found = await report({ projectRoot: root, ...scoped }, { runtime, waitMs: 30000 });
+    const found = await oncePrepared(() => report({ projectRoot: root, ...scoped }, { runtime, waitMs: 30000 }));
     assert.equal(found.status, "ready");
     assert.deepEqual(states(found), [["root/root", "included"], ["root/net", "included"], ["root/app", "included"]]);
   }
@@ -69,7 +70,9 @@ test("clause 26: a sibling that is not yet included is named by components_missi
   const { root, storage } = await project(t, { files: REPORT_FILES });
   const { runtime, control } = await stagedRuntime(storage);
   control.hold("packages/app/is.ts", "structure");
-  const found = await provider.findSameNameUnits({ projectRoot: root, ...scoped }, { runtime, waitMs: 500 });
+  // Each call returns after its short wait; the scoped component is ready once a call reports it included.
+  const report = () => provider.findSameNameUnits({ projectRoot: root, ...scoped }, { runtime, waitMs: 200 });
+  const found = await settled(report, (value) => states(value).find(([component]) => component === "root/net")?.[1] === "included");
   assert.equal(found.status, "partial");
   assert.equal(states(found).find(([component]) => component === "root/net")[1], "included");
   assert.notEqual(states(found).find(([component]) => component === "root/app")[1], "included");
@@ -82,7 +85,7 @@ test("clause 27: scoped cohesion and complex-unit reports read only the componen
   const { root, storage } = await project(t, { files: REPORT_FILES });
   const { runtime, control } = await stagedRuntime(storage);
   for (const report of [provider.reportCohesionClusters, provider.reportComplexUnits]) {
-    const found = await report({ projectRoot: root, ...scoped }, { runtime, waitMs: 30000 });
+    const found = await oncePrepared(() => report({ projectRoot: root, ...scoped }, { runtime, waitMs: 30000 }));
     assert.deepEqual(states(found), [["root/net", "included"]]);
   }
   assert.deepEqual(control.builds.map((build) => build.files), [NET_FILES]);
@@ -91,8 +94,8 @@ test("clause 27: scoped cohesion and complex-unit reports read only the componen
 test("clause 26: a search that needs a sibling's embeddings prepares it in full after its structure-only preparation", async (t) => {
   const { root, storage } = await project(t, { files: REPORT_FILES });
   const { runtime, control } = await stagedRuntime(storage);
-  await provider.findSameNameUnits({ projectRoot: root, ...scoped }, { runtime, waitMs: 30000 });
-  const found = await provider.searchRepositoryConcepts({ projectRoot: root, query: "is object", filters: { paths: ["packages/app"] } }, { runtime, waitMs: 30000 });
+  await oncePrepared(() => provider.findSameNameUnits({ projectRoot: root, ...scoped }, { runtime, waitMs: 30000 }));
+  const found = await oncePrepared(() => provider.searchRepositoryConcepts({ projectRoot: root, query: "is object", filters: { paths: ["packages/app"] } }, { runtime, waitMs: 30000 }));
   await until(async () => (await pointer(runtime, root, APP)).stage === "complete", "The app component was not prepared in full.");
   assert.ok(control.builds.filter((build) => JSON.stringify(build.files) === JSON.stringify(APP_FILES)).some((build) => !build.fragmentsOnly));
   assert.ok(found);
@@ -103,8 +106,8 @@ test("clause 25: a scoped report of a retained baseline reads the baseline's sib
   const { runtime } = await stagedRuntime(storage);
   const { snapshotId } = await conservationStore.capture(root);
   await write("packages/app/is.ts", "export const gone = 1;\n");
-  let found = await provider.findSameNameUnits({ projectRoot: root, snapshotId, ...scoped }, { runtime, waitMs: 30000 });
-  if (found.status !== "ready") found = await provider.findSameNameUnits({ projectRoot: root, snapshotId, ...scoped }, { runtime, waitMs: 30000 });
+  let found = await oncePrepared(() => provider.findSameNameUnits({ projectRoot: root, snapshotId, ...scoped }, { runtime, waitMs: 30000 }));
+  if (found.status !== "ready") found = await oncePrepared(() => provider.findSameNameUnits({ projectRoot: root, snapshotId, ...scoped }, { runtime, waitMs: 30000 }));
   assert.equal(found.snapshotId, snapshotId);
   assert.deepEqual(groupFiles(found), [["packages/app/is.ts", "packages/net/is.ts"]]);
 });

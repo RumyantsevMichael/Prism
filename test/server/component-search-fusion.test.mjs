@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fakeRuntime, manifestPath, project } from "./fixtures/component-indexes.mjs";
+import { fakeRuntime, manifestPath, project, oncePrepared } from "./fixtures/component-indexes.mjs";
 
 // Acceptance tests of index-preparation.md §11 for the index-preparation contract, clause 30.
 process.env.PLUGIN_DATA ||= mkdtempSync(path.join(os.tmpdir(), "prism-search-fusion-data-"));
@@ -29,7 +29,7 @@ async function searchWith(t, input) {
   const { runtime, control } = await fakeRuntime(storage);
   Object.assign(control.cosine, COSINE);
   Object.assign(control.lexical, LEXICAL);
-  const found = await searchRepositoryConcepts({ projectRoot: root, ...input }, { runtime, waitMs: 30000 });
+  const found = await oncePrepared(() => searchRepositoryConcepts({ projectRoot: root, ...input }, { runtime, waitMs: 30000 }));
   assert.equal(found.status, "ready");
   return found.results;
 }

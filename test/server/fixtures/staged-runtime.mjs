@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { manifestPath } from "./component-indexes.mjs";
+import { READY_WAIT_MS } from "./wait.mjs";
 
 // A NativeSemanticRuntime whose helper builds in stages as the index-preparation contract's runtime protocol describes, for its acceptance tests.
 // A test file sets PLUGIN_DATA and PRISM_NATIVE_ASSET_MANIFEST before it uses these helpers, because Prism modules read their data folder when they load.
@@ -11,7 +12,7 @@ import { manifestPath } from "./component-indexes.mjs";
 // that has no previous embedding, in path order. control.builds lists each build's arguments as { files, mirror, changedFiles, removedFiles, previousEmbeddings,
 // fragmentsOnly }, with previousEmbeddings as the sorted keys it received; control.hold(file, point) stops a build that holds the file before it
 // reports structure (point "structure") or before it embeds the file (point "embedding", the default) until control.release(file);
-// control.reached(file) settles once a build stopped there, and fails after five seconds; while control.heartbeat is set, a stopped build repeats its latest progress value every
+// control.reached(file) settles once a build stopped there, and fails after READY_WAIT_MS; while control.heartbeat is set, a stopped build repeats its latest progress value every
 // 20 ms; control.delayMs makes each embedding take that long; control.fail(file) makes a build fail when it is about to embed the file.
 // control.stops counts calls of the helper's stop(), which rejects every build request that has not answered.
 // A search answers each function unit with control.cosine[file] (0.5 by default) and control.lexical[file] (1 by default) as its scores, ordered by
@@ -38,7 +39,7 @@ export async function stagedRuntime(storage, { stallMs } = {}) {
     hold(file, point = "embedding") { let release; const promise = new Promise((resolve) => { release = resolve; }); holds.set(file, { point, promise, release }); },
     release(file) { holds.get(file)?.release(); holds.delete(file); },
     // A build that never reaches the hold fails the waiting test after a bound, instead of leaving the event loop with nothing to do.
-    reached(file, ms = 5000) {
+    reached(file, ms = READY_WAIT_MS) {
       let timer;
       const bound = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`No build stopped at ${file} within ${ms} ms.`)), ms); });
       return Promise.race([arrival(file).promise, bound]).finally(() => clearTimeout(timer));
@@ -129,11 +130,11 @@ export async function stagedRuntime(storage, { stallMs } = {}) {
   return { runtime, control };
 }
 
-/** Polls until `check` returns a truthy value, or fails after about four seconds. */
-export async function until(check, message = "The expected state did not arrive.", { timeoutMs = null } = {}) {
-  // Without a timeout the check runs 200 times; a wait that outlasts a stall period names its own timeout instead.
-  const deadline = timeoutMs === null ? null : Date.now() + timeoutMs;
-  for (let attempt = 0; deadline === null ? attempt < 200 : Date.now() < deadline; attempt += 1) {
+/** Polls until `check` returns a truthy value, or fails after `timeoutMs`, which is READY_WAIT_MS unless a wait that outlasts a stall period names its own. */
+export async function until(check, message = "The expected state did not arrive.", { timeoutMs = READY_WAIT_MS } = {}) {
+  // A bound by time, not by a count of checks, so a slow machine whose checks each take longer still gets the whole budget.
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     const value = await check();
     if (value) return value;
     await delay(20);
