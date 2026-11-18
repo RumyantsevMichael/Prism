@@ -599,7 +599,9 @@ test("addresses the app cannot open show the app's own page or a workspace, neve
   assert.equal((await request(`${origin}/styles/unavailable.css`)).status, 200);
   assert.equal((await request(`${origin}/review.js`)).status, 404);
   assert.equal((await request(`${origin}/kit/%2e%2e/review.html`)).status, 404);
-  assert.equal((await request(`${origin}/session/stale-credential/p/0123456789abcdef/api/index`)).status, 404, "a call from a stale page gets a plain refusal");
+  const staleCall = await request(`${origin}/session/stale-credential/p/0123456789abcdef/api/index`);
+  assert.equal(staleCall.status, 404, "a call from a stale page gets a plain refusal");
+  assert.equal(staleCall.headers["x-prism-link"], "expired", "the refusal tells the stale page that its link expired");
 
   // The app's address opens the workspace used last, and an unknown workspace's or checkout's page opens it with a notice.
   const home = await request(`${origin}${viewer}/`, { headers: page });
