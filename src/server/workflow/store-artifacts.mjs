@@ -1761,6 +1761,49 @@ async function proposedVersions(linked) {
 }
 
 /**
+ * The Proposed ADRs that cite an initiative's requirements but that no slice.md links, so its ship would leave them Proposed: [{ path, scope, requirements }], sorted by path and then scope label.
+ * requirements are the initiative's requirement references, such as docs/requirements/reports.md#1, and an ADR cites one when a Markdown link in it names that requirement file.
+ * The ADRs are those of the workspace scope and of the scopes of every repository of the plan; an ADR that a slice.md of the plan links, or that a slice.md of any other plan links, as the ADR of another initiative, is not listed.
+ */
+export async function unlinkedAdrs(projectRoot, plan, requirements) {
+  return refusing(async () => {
+    const { kinds } = await configuration(projectRoot);
+    const folderOf = (kind) => kinds.kinds.find((entry) => entry.kind === kind)?.path ?? null;
+    const adrFolder = folderOf("adrs");
+    const cited = new Set(requirements.filter((item) => typeof item === "string").map((item) => item.replace(/#.*$/, "")));
+    if (plan === null || adrFolder === null || !cited.size) return [];
+    const seen = await seenScopes(projectRoot);
+    const wide = await planSeen(seen, plan);
+    const resolve = manyReads(seen);
+    const { linked } = await planLinkedAdrs(seen, wide, kinds, await readPlanSlices(wide, plan), { strict: false, resolve });
+    const own = new Set(linked.map((adr) => `${adr.scope.label}\0${adr.path}`));
+    // A link from another plan's slice.md marks the ADR as that initiative's, whichever scope it resolves in.
+    const elsewhere = new Set();
+    const plansFolder = folderOf("plans");
+    if (plansFolder !== null) {
+      for (const entry of await holdings(wide, plansFolder, null)) {
+        if (entry.kind !== "plans" || path.posix.basename(entry.path) !== "slice.md" || below(plan.folder, entry.path)) continue;
+        const held = await readStored(entry.target, null, null, CONTENT_MAX);
+        const text = held?.bytes ? artifactText(held.bytes) : null;
+        for (const file of (text === null ? null : linkedPaths(text, entry.path)) ?? []) elsewhere.add(file);
+      }
+    }
+    const allowed = (scope) => scope.kind === "workspace" || plan.repositories.includes(scope.repository);
+    const found = [];
+    for (const entry of await holdings(wide, adrFolder, null)) {
+      if (entry.kind !== "adrs" || !allowed(entry.scope) || own.has(`${entry.scope.label}\0${entry.path}`) || elsewhere.has(entry.path)) continue;
+      const record = await statusRecordOf(seen, entry.scope, artifactAddress(kinds, entry.path), resolve);
+      if (record.status !== "Proposed") continue;
+      const held = await readStored(entry.target, null, null, CONTENT_MAX);
+      const text = held?.bytes ? artifactText(held.bytes) : null;
+      const names = [...new Set((text === null ? null : linkedPaths(text, entry.path)) ?? [])].filter((file) => cited.has(file)).sort();
+      if (names.length) found.push({ path: entry.path, scope: entry.scope.label, requirements: names });
+    }
+    return found.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : left.scope < right.scope ? -1 : left.scope > right.scope ? 1 : 0);
+  });
+}
+
+/**
  * What a ship of an initiative would read in the store now, as a correctness gate records it: { slices, repositories, adrs }.
  * slices lists the slice.md files as { scope, path, version }, repositories the repositories that each slice's links resolve in as { folder, repositories },
  * and adrs every ADR that the ship would accept as { scope, path, version }, each list sorted, so a ship compares them with what it accepts.

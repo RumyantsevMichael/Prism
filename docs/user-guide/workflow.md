@@ -274,6 +274,9 @@ A link counts only as Markdown reads it, so a path in a code span, a code block,
 A link in a slice's `slice.md` names an ADR of the workspace scope or of that slice's own repository and its components, whichever repository's checkout ships.
 When two or more of those scopes hold an ADR at the linked path, the one in the scope of that `slice.md` counts, and when none of them is that scope, `ship` refuses with `adr_ambiguous`, naming the path and the scopes, and changes nothing.
 While a linked Proposed ADR waits for your answer to an approval, `ship` refuses with `adr_pending`, naming each such ADR and its question, and changes nothing, so a ship never closes a question you have not answered.
+A Proposed ADR that cites one of the initiative's requirement files in a Markdown link, and that no `slice.md` of the initiative links, would stay Proposed after the ship without you seeing it at the review.
+So `ship` refuses with `adr_unlinked`, naming each such ADR and the requirement files it cites, and `get_roadmap` reports `readyToShip` `false` with an `adr_unlinked` diagnostic, until an agent links the ADR from the `slice.md` that relies on it and asks you a new correctness review.
+An ADR that a `slice.md` of another plan links belongs to that initiative and does not stop this ship.
 A `slice.md` that Prism cannot read for its links, because it holds more than 1 MiB or nests its Markdown deeper than Prism reads, refuses the ship with `artifact_too_large` until an agent shortens it.
 The result lists the accepted ADRs under `acceptedAdrs` with their path, scope, and the verified commits, an ADR with another recorded status stays as it is, and `get_artifact` returns an accepted ADR's acceptance.
 So a ready-to-ship initiative of a project with a record store still waits for your correctness review, and its ship can still be refused for the reasons above.
