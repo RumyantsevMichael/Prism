@@ -6,9 +6,8 @@ import { listStoreArtifacts, readArtifactText } from "./record-store.mjs";
 import { readFrozenTestOf } from "./slice-design.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 import { acceptsDrawn, drawnKind, governingContract, readViews, VIEW_KINDS } from "./view-declarations.mjs";
+import { countApi, countWireframe, limitProblems } from "./view-limits.mjs";
 
-// A design diagram is read by a person at the design gate, so one that shows more than this many elements is split.
-export const DIAGRAM_ELEMENT_LIMIT = 30;
 const MAX_DIAGRAMS = 20;
 const MAX_SOURCE_BYTES = 256 * 1024;
 const CHECK_TIMEOUT_MS = 60000;
@@ -25,14 +24,13 @@ function parse(sources) {
   });
 }
 
-/** Problems a design gate must not pass: a declaration Prism cannot accept, a view that does not parse, or one that shows more elements than a person can read. */
+/** Problems a design gate must not pass: a declaration Prism cannot accept, a view that does not parse, or one beyond a readability limit of its kind. */
 export function viewProblems(results) {
   return results.flatMap((item) => {
     const own = item.problems ?? [];
     if (own.length || !item.checked) return own;
     if (!item.valid) return [`${item.path}${item.line ? ` line ${item.line}` : ""} does not parse: ${item.message}`];
-    if (item.elements > DIAGRAM_ELEMENT_LIMIT) return [`${item.path} shows ${item.elements} elements, more than ${DIAGRAM_ELEMENT_LIMIT}. Split it into views a person can read.`];
-    return [];
+    return item.kind ? limitProblems(item.path, item.kind, item) : [];
   });
 }
 
@@ -94,18 +92,24 @@ export async function checkFolderViews(projectRoot, folder, { top = folder, init
     results.push(result);
     if (own.length || source === null) continue;
     if (!view.path.endsWith(".puml")) {
-      try { parseStoreJson(source); Object.assign(result, { checked: true, valid: true, elements: 0, relations: 0 }); }
-      catch (error) { Object.assign(result, { checked: true, valid: false, line: null, message: error.message }); }
+      let document;
+      try { document = parseStoreJson(source); }
+      catch (error) { Object.assign(result, { checked: true, valid: false, line: null, message: error.message }); continue; }
+      const operations = countApi(document);
+      if (operations === null) own.push(`${view.path} is not an OpenAPI 3 or AsyncAPI 2 or 3 document: it holds an OpenAPI 3.0 or 3.1 document with info and paths, or an AsyncAPI 2 or 3 document with info and channels.`);
+      else Object.assign(result, { checked: true, valid: true, elements: operations, relations: 0 });
       continue;
     }
     if (sources.length >= MAX_DIAGRAMS) { Object.assign(result, { checked: false, message: `Prism checks at most ${MAX_DIAGRAMS} views of one folder.` }); continue; }
-    sources.push({ path: view.path, source: source.length > MAX_SOURCE_BYTES ? source.slice(0, MAX_SOURCE_BYTES) : source, result });
+    sources.push({ path: view.path, kind: drawnKind(view.path, source), source: source.length > MAX_SOURCE_BYTES ? source.slice(0, MAX_SOURCE_BYTES) : source, text: source, result });
   }
   if (sources.length) {
-    const parsed = await parse(sources.map(({ path: file, source }) => ({ path: file, source })));
+    const parsed = await parse(sources.map(({ path: file, kind, source }) => ({ path: file, kind, source })));
     for (const [index, item] of sources.entries()) {
       const { path: _file, ...outcome } = parsed[index] ?? { checked: false, message: "The diagram check returned no result." };
       Object.assign(item.result, outcome);
+      // A wireframe's widgets are the non-empty cells of its Salt grids, which its source names one by one.
+      if (item.kind === "wireframe" && outcome.checked && outcome.valid) Object.assign(item.result, { elements: countWireframe(item.text), relations: 0 });
     }
   }
   return results;

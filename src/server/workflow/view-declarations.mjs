@@ -81,7 +81,22 @@ export function readViews(source, folder, { plans = null } = {}) {
   return { views, problems };
 }
 
-const C4_ELEMENT = /^\s*(?:Person|System|SystemDb|SystemQueue|Container|ContainerDb|ContainerQueue|Component|ComponentDb|ComponentQueue|Boundary|Enterprise_Boundary|System_Boundary|Container_Boundary)(?:_Ext)?\s*\(/m;
+/**
+ * The views that a folder's slice.md assesses in its Split assessment section, one top-level item each: `` `<file>`: <why the slice stays whole> ``.
+ * Returns a Map from each assessed view's path to the reason, leaving out an item that is not of that form or gives no reason.
+ */
+export function readSplitAssessment(source, folder) {
+  const text = section(source ?? "", "Split assessment");
+  const assessed = new Map();
+  if (text === null) return assessed;
+  for (const line of listItems(text)) {
+    const parsed = /^`([^`/]+)`\s*:\s*(.*)$/.exec(line);
+    if (parsed && parsed[2].trim()) assessed.set(`${folder}/${parsed[1].trim()}`, parsed[2].trim());
+  }
+  return assessed;
+}
+
+const C4_ELEMENT =/^\s*(?:Person|System|SystemDb|SystemQueue|Container|ContainerDb|ContainerQueue|Component|ComponentDb|ComponentQueue|Boundary|Enterprise_Boundary|System_Boundary|Container_Boundary)(?:_Ext)?\s*\(/m;
 
 /** The kind a view draws, read from its source by the first drawn-kind rule that matches. */
 export function drawnKind(file, source) {
