@@ -53,6 +53,14 @@ async function openTab(context, url) {
   return page;
 }
 
+// A browser window shows only its front tab, and a hidden tab makes no checks. A headless browser shows every tab, so eight tabs would all check their
+// project every 1.5 s; the test hides each tab once it opens a later one, as a window does.
+const shown = (page, visible) => page.evaluate((value) => {
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => value ? "visible" : "hidden" });
+  Object.defineProperty(document, "hidden", { configurable: true, get: () => !value });
+  document.dispatchEvent(new Event("visibilitychange"));
+}, visible);
+
 const tabValues = (page) => page.evaluate(() => [...document.querySelectorAll("#open-tabs prism-doc-tab")].map((tab) => tab.getAttribute("value")));
 
 async function eventually(check, timeout = WAIT_MS) {
@@ -70,7 +78,10 @@ test("eight tabs of two projects share one event stream, and the last tab still 
   const browserContext = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const opened = streamCounter(browserContext);
   const pages = [];
-  for (let index = 0; index < 8; index += 1) pages.push(await openTab(browserContext, index === 0 ? granted : index % 3 === 2 ? billingUrl : portalUrl));
+  for (let index = 0; index < 8; index += 1) {
+    await (pages.at(-1) && shown(pages.at(-1), false));
+    pages.push(await openTab(browserContext, index === 0 ? granted : index % 3 === 2 ? billingUrl : portalUrl));
+  }
   assert.equal(opened.shared, 1, "only the first tab opened the shared stream");
   assert.equal(opened.own, 0, "no tab opened a stream of its own");
 
