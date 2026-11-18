@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -171,3 +171,44 @@ test("the page says a binary code file is not shown, not that it was moved or de
   assert.match(text, /binary file/);
   assert.doesNotMatch(text, /moved or deleted/);
 });
+
+// A program at folder/name that records the arguments of each call to a log in logs, one call per line, and fails as an unreachable SSH host does.
+async function recordingProgram(folder, name, logs) {
+  const log = path.join(logs, `${name}.log`);
+  const program = path.join(folder, name);
+  await writeFile(program, `#!/bin/sh\necho "$*" >> '${log}'\nexit 255\n`);
+  await chmod(program, 0o755);
+  return { program, calls: async () => (await readFile(log, "utf8").catch(() => "")).split("\n").filter(Boolean) };
+}
+
+// Set the SSH variables of the process for one test, and put the person's own values back after it.
+function sshVariables(context, values) {
+  const names = ["GIT_SSH_COMMAND", "GIT_SSH", "GIT_SSH_VARIANT"];
+  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  for (const name of names) if (values[name] === undefined) delete process.env[name]; else process.env[name] = values[name];
+  context.after(() => { for (const [name, value] of Object.entries(saved)) if (value === undefined) delete process.env[name]; else process.env[name] = value; });
+}
+
+// What a code clone of an SSH remote passes to each SSH program the person may have set: the variant's batch option after their own options, or nothing it might not take.
+const SSH_CASES = [
+  { title: "a GIT_SSH_COMMAND naming ssh", name: "ssh", set: (program) => ({ GIT_SSH_COMMAND: `${program} -o ConnectTimeout=5` }), expect: /^-o ConnectTimeout=5 -o BatchMode=yes .*git@ssh\.invalid/ },
+  { title: "a GIT_SSH naming ssh in a folder with a space and a quote", name: "ssh", folder: "it's here", set: (program) => ({ GIT_SSH: program }), expect: /^-o BatchMode=yes .*git@ssh\.invalid/ },
+  { title: "a GIT_SSH naming plink", name: "plink", set: (program) => ({ GIT_SSH: program }), expect: /^-batch .*git@ssh\.invalid/ },
+  { title: "a wrapper that GIT_SSH_VARIANT names as ssh", name: "wrapper", set: (program) => ({ GIT_SSH_COMMAND: program, GIT_SSH_VARIANT: "ssh" }), expect: /^-o BatchMode=yes .*git@ssh\.invalid/ },
+  { title: "a simple wrapper", name: "wrapper", set: (program) => ({ GIT_SSH_COMMAND: program, GIT_SSH_VARIANT: "simple" }), expect: /^git@ssh\.invalid git-upload-pack/ }
+];
+
+for (const { title, name, folder, set, expect } of SSH_CASES) {
+  test(`a code clone keeps SSH from asking with ${title}`, { skip: process.platform === "win32" }, async (context) => {
+    const parent = await folders(context);
+    const where = path.join(parent, folder ?? "bin");
+    await mkdir(where);
+    const ssh = await recordingProgram(where, name, parent);
+    sshVariables(context, set(ssh.program));
+    const code = await createCodeClones({ directory: path.join(parent, "app") });
+    assert.equal((await code.enable("w1", "api", "ssh://git@ssh.invalid/repo.git")).state, "unreachable");
+    const calls = (await ssh.calls()).filter((call) => !/(^| )-G( |$)/.test(call));
+    assert.notEqual(calls.length, 0, "Git ran the person's SSH program");
+    for (const call of calls) assert.match(call, expect);
+  });
+}
