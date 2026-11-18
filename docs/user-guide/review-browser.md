@@ -277,6 +277,7 @@ The host's own permission handling and the project's own host settings apply: Pr
 A session keeps running when the review app exits, idles out, restarts, or is replaced by a newer release, because a supervisor process of its own starts and watches the host.
 Each launched session keeps its record in `launches/<launch id>/` in the review app folder, readable only by you, and Prism removes it 14 days after the session's last run ended.
 The host's session id stays in that record on this computer: no shared record, history entry, or log holds it, and only this computer's page shows it, in the command that continues the session in a terminal.
+Each run also keeps the model its host reports as soon as the host names it, from Claude Code's first `init` event or from the result of Codex's thread start or resume, and a launched session names the model of its latest run; a run whose host names no model, or a value longer than 128 characters or holding a control character, keeps none.
 
 ### The Launched sessions place
 
