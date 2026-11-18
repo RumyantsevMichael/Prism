@@ -10,6 +10,7 @@ import { mountInitiativeSettings } from "./actions.js";
 import { mountSliceFiles, presenceChips } from "./slice-files.js";
 import { mountLedger } from "./review-ledger.js";
 import { shippedHistoryHtml } from "./shipped-history.js";
+import { bindViewLinks, markViewFiles, requestClause, takeClause, viewCardHtml } from "./design-views.js";
 
 function sliceChip(data, slug, ctx) {
   return artifactChip(`slice:${data.id}/${slug}`, ctx, data.titles[slug] ?? slug);
@@ -282,29 +283,34 @@ function fileLabel(file, folder) {
   return { label: `${where}${kind}` };
 }
 
-function diagramsCard(diagrams, ctx) {
-  if (!diagrams.length) return emptyState("No diagram yet", "The slice folder holds no diagram.");
-  const selected = diagrams.includes(ctx.state.diagram) ? ctx.state.diagram : diagrams[0];
-  const tabs = diagrams.length > 1 ? `<prism-tabs class="diagram-switch" label="Diagrams" data-diagram-tabs>${diagrams.map((file) => `<prism-tab value="${escapeHtml(file)}"${file === selected ? " selected" : ""}>${escapeHtml(diagramLabel(file))}</prism-tab>`).join("")}</prism-tabs>` : "";
-  return `<section class="slice-diagrams" data-diagrams aria-label="Diagram">${tabs}<div class="diagram-slot" data-diagram-slot="${escapeHtml(selected)}"></div></section>`;
+// The Views tab: each view of the slice folder as a card named by its question, and on a scope's page each planned slice's views under its title.
+function viewCount(views) {
+  return (views?.own.length ?? 0) + (views?.slices ?? []).reduce((sum, group) => sum + group.views.length, 0);
 }
 
-async function mountDiagrams(container, ctx) {
-  const area = container.querySelector("[data-diagrams]");
+function viewsPanel(views, ctx) {
+  if (!viewCount(views)) {
+    const none = views?.without?.length ? `<p class="slice-views-none">${escapeHtml(views.without.map((entry) => entry.title).join(", "))} ${views.without.length === 1 ? "declares" : "declare"} no views.</p>` : "";
+    return emptyState("No views", "This design declares no views. Its contract and Changes are on the Design tab.") + none;
+  }
+  const group = (entry) => `<prism-panel class="slice-views-group" variant="plain" level="2" region heading="${escapeHtml(entry.title)}" eyebrow="Planned slice"><div slot="tools">${artifactChip(`slice:${ctx.sliceId}/${entry.slug}`, ctx, "Open slice")}</div>${entry.views.map((view) => viewCardHtml(view, 3)).join("")}</prism-panel>`;
+  const none = views.without.length ? `<p class="slice-views-none">${escapeHtml(views.without.map((entry) => entry.title).join(", "))} ${views.without.length === 1 ? "declares" : "declare"} no views.</p>` : "";
+  return `<section class="slice-views" data-views aria-label="Views">${views.own.map((view) => viewCardHtml(view)).join("")}${views.slices.map(group).join("")}${none}</section>`;
+}
+
+// The drawings are made when the tab first shows, one view at a time, as the PlantUML runtime draws them.
+async function mountViews(container, views, ctx) {
+  const area = container.querySelector("[data-views]");
   if (!area || area.dataset.mounted) return;
   area.dataset.mounted = "true";
-  const show = async (file) => {
-    ctx.state.diagram = file;
-    const slot = area.querySelector("[data-diagram-slot]");
-    slot.dataset.diagramSlot = file;
-    slot.innerHTML = "";
-    try { await ctx.mountDiagram(slot, file); }
-    catch (error) { slot.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`; }
-  };
-  area.querySelector("[data-diagram-tabs]")?.addEventListener("prism-select", (event) => {
-    if (event.detail?.value) void show(event.detail.value);
-  });
-  await show(area.querySelector("[data-diagram-slot]").dataset.diagramSlot);
+  markViewFiles(area);
+  const all = [...views.own, ...views.slices.flatMap((group) => group.views)];
+  for (const card of area.querySelectorAll(".view-region")) {
+    const view = all.find((item) => item.path === card.dataset.view);
+    if (!view || view.kind === "api" || view.source === null) continue;
+    try { await ctx.drawView(card, view.source); }
+    catch (error) { card.querySelector(".diagram-output").innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`; }
+  }
 }
 
 const PHASES = [["requirements", "Requirements"], ["design", "Design"], ["frozen", "Frozen"], ["build", "Build"], ["review", "Review"], ["shipped", "Shipped"]];
@@ -334,19 +340,20 @@ function stepper(slice, data) {
   return `<prism-stepper class="slice-lifecycle" label="Lifecycle">${PHASES.map(([phase, label], index) => `<prism-step phase="${phase}" state="${index < current ? "done" : index === current ? "current" : "upcoming"}">${label}</prism-step>`).join("")}</prism-stepper>`;
 }
 
-const TABS = [["design", "Design", "document"], ["diagram", "Diagram", "diagram"], ["verification", "Verification", "flask"], ["review", "Review", "eye"], ["files", "Files", "file"], ["change-map", "Change map", "grid"]];
+const TABS = [["design", "Design", "document"], ["views", "Views", "diagram"], ["verification", "Verification", "flask"], ["review", "Review", "eye"], ["files", "Files", "file"], ["change-map", "Change map", "grid"]];
 // The Files tab and the verified result replace the change map, so its tab is last and says it is deprecated.
 const DEPRECATED = { "change-map": "Replaced by the Files tab and the verified result; kept until existing slices no longer need it." };
 
-// The count a sub-tab carries: the review ledger's open findings and the slice folder's files.
-function tabCount(value, artifacts) {
+// The count a sub-tab carries: the views, the review ledger's open findings, and the slice folder's files.
+function tabCount(value, artifacts, views) {
+  if (value === "views") return viewCount(views);
   if (value === "review" && artifacts.review && !artifacts.review.invalid && artifacts.review.unresolved) return artifacts.review.unresolved;
   if (value === "files" && artifacts.files.length) return artifacts.files.length;
   return 0;
 }
 
-function tabHtml([value, label, icon], selected, artifacts) {
-  const count = tabCount(value, artifacts);
+function tabHtml([value, label, icon], selected, artifacts, views) {
+  const count = tabCount(value, artifacts, views);
   const deprecated = DEPRECATED[value];
   const end = count ? ` <prism-badge slot="end" variant="count">${count}</prism-badge>` : deprecated ? ' <prism-badge slot="end" tone="neutral" variant="status">Deprecated</prism-badge>' : "";
   return `<prism-tab value="${value}"${selected ? " selected" : ""}${deprecated ? ` tip="${escapeHtml(deprecated)}"` : ""}><prism-icon slot="start" name="${icon}" size="sm"></prism-icon>${label}${end}</prism-tab>`;
@@ -428,12 +435,17 @@ export async function render(container, entity, ctx) {
   // Diagrams directly in the slice folder, such as the code view, are the design's picture.
   const diagrams = artifacts.files.filter((file) => file.endsWith(".puml") && file.slice(artifacts.folder.length + 1).indexOf("/") === -1).sort((left, right) => Number(right.endsWith("/code.puml")) - Number(left.endsWith("/code.puml")) || left.localeCompare(right));
   const held = slice.claim || slice.expiredClaim ? { claim: slice.claim ?? slice.expiredClaim, scope: null } : data.coveringClaim ? { claim: data.coveringClaim.claim, scope: { slug: data.coveringClaim.slug, title: data.coveringClaim.title } } : null;
+  const views = data.views ?? { own: [], slices: [], without: [] };
+  // A clause link from another page opens the Design tab at that clause; a page last left on the Diagram tab opens on Views.
+  const clause = takeClause(`slice:${data.id}/${data.slug}`);
+  if (clause) ctx.state.tab = "design";
+  else if (ctx.state.tab === "diagram") ctx.state.tab = "views";
   const tab = TABS.some(([value]) => value === ctx.state.tab) ? ctx.state.tab : "design";
   const panels = {
     design: artifacts.narrative
       ? `<section class="view-section design-document" aria-label="Design">${designNotices(view)}${servedClauses(view, ctx, data.titles)}<prism-doc class="document-content" data-narrative><prism-spinner label="Loading the design"></prism-spinner></prism-doc></section>${unplannedCard(view, ctx)}`
       : `${emptyState("No design yet", "The slice has no design document yet.")}${unplannedCard(view, ctx)}`,
-    diagram: diagramsCard(diagrams, ctx),
+    views: viewsPanel(views, { ...ctx, sliceId: data.id }),
     verification: verificationCard(slice.design, data.verification, data.code) + sliceRunTotalsHtml(data.runTotals, data.children.length > 0) || emptyState("No verification yet", "The slice has no accepted design or verification run yet."),
     review: reviewPanel(artifacts.review, ctx),
     "change-map": changeMapPanel(slice, artifacts, data, ctx),
@@ -443,7 +455,7 @@ export async function render(container, entity, ctx) {
   container.innerHTML = `${shippedHistoryHtml(data.shippedHistory)}
     <div class="slice-head-tags"><span class="chip-row">${phaseTag(slice, data)}${requirementLinks(slice.requirements, ctx, { icon: "list" })}${componentChip(slice.component)}${data.complete && slice.status === "split" ? badge("all descendants done", "success") : ""}</span>${held ? `<span class="slice-head-claim">${claimChip(held, "inline")}</span>` : ""}</div>
     ${stepper(slice, data)}
-    <prism-tabs class="slice-tabs" label="Slice" data-slice-tabs>${TABS.map((entry) => tabHtml(entry, entry[0] === tab, artifacts)).join("")}</prism-tabs>
+    <prism-tabs class="slice-tabs" label="Slice" data-slice-tabs>${TABS.map((entry) => tabHtml(entry, entry[0] === tab, artifacts, views)).join("")}</prism-tabs>
     ${TABS.map(([value, label]) => `<div class="slice-tab-pane" role="tabpanel" aria-label="${label}" data-tab-panel="${value}"${value === tab ? "" : " hidden"}>${panels[value]}</div>`).join("")}
     <prism-dialog class="slice-details" heading="Details and settings" size="lg" data-slice-details>
       <section class="slice-details-facts" aria-label="Details">
@@ -471,22 +483,52 @@ export async function render(container, entity, ctx) {
     if (event.target.closest?.("prism-chip[data-artifact], a[data-artifact]")) details.close();
   });
   bindLinks(container, ctx);
-  pageActions(diagrams, ctx, details);
+  // The side panel opens on the slice's first declared drawing, and else on the folder's first diagram.
+  const drawings = [...new Set([...views.own.filter((item) => item.path.endsWith(".puml")).map((item) => item.path), ...diagrams])];
+  pageActions(drawings, ctx, details);
   void mountSliceFiles(container.querySelector("[data-slice-files]"), data);
   const showTab = (value) => {
     ctx.state.tab = value;
     for (const panel of container.querySelectorAll("[data-tab-panel]")) panel.hidden = panel.dataset.tabPanel !== value;
-    if (value === "diagram") void mountDiagrams(container, ctx);
+    if (value === "views") void mountViews(container, views, ctx);
   };
   container.querySelector("[data-slice-tabs]")?.addEventListener("prism-select", (event) => {
     if (event.target === event.currentTarget && event.detail?.value) showTab(event.detail.value);
   });
+  const highlightClause = (number) => {
+    const target = container.querySelector(`[data-tab-panel="design"] .design-clause[data-clause-number="${CSS.escape(String(number))}"]`);
+    if (!target) return false;
+    if (ctx.state.tab !== "design") {
+      showTab("design");
+      container.querySelector("[data-slice-tabs]").value = "design";
+    }
+    target.scrollIntoView({ block: "center" });
+    target.classList.remove("is-target");
+    void target.offsetWidth;
+    target.classList.add("is-target");
+    return true;
+  };
+  // A view's clause opens the Design tab at that clause when the page lists it, and else the contract's page; its contract chip opens the contract's page.
+  bindViewLinks(container, (ref, number) => {
+    if (number && highlightClause(number)) return;
+    requestClause(ref, number);
+    ctx.openArtifact(ref);
+  });
+  container.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-action]");
+    const card = action?.closest(".view-region");
+    if (!card || !container.contains(card)) return;
+    if (action.dataset.action === "open") ctx.openArtifact(card.dataset.view);
+    else if (action.dataset.action === "copy-view") {
+      const view = [...views.own, ...views.slices.flatMap((group) => group.views)].find((item) => item.path === card.dataset.view);
+      navigator.clipboard.writeText(view?.source ?? "").then(() => ctx.showToast("API specification copied."), () => ctx.showToast("The browser could not copy the specification."));
+    }
+  });
   container.addEventListener("click", (event) => {
     const link = event.target.closest("[data-clause]");
-    if (!link || !container.contains(link)) return;
+    if (!link || !container.contains(link) || link.dataset.viewClause) return;
     event.preventDefault();
-    const target = container.querySelector(`.design-clause[data-clause-number="${CSS.escape(link.dataset.clause)}"]`);
-    if (target) { target.scrollIntoView({ block: "center" }); target.classList.remove("is-target"); void target.offsetWidth; target.classList.add("is-target"); }
+    highlightClause(link.dataset.clause);
   });
   const narrativeTarget = container.querySelector("[data-narrative]");
   if (narrativeTarget) {
@@ -502,7 +544,8 @@ export async function render(container, entity, ctx) {
     }
   }
   if (artifacts.review && !artifacts.review.invalid) await mountReviewLedger(container, artifacts.review, ctx);
-  if (tab === "diagram") await mountDiagrams(container, ctx);
+  if (tab === "views") await mountViews(container, views, ctx);
+  if (clause) highlightClause(clause);
   // While the cards wait for unit locations, the notice follows the index chip, and a finished build redraws the page with the lines.
   if (container.querySelector("[data-index-notice]")) {
     const builtAt = (status) => status?.state === "ready" ? status.index?.builtAt ?? "" : null;

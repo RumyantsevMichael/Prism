@@ -10,7 +10,7 @@ sdm: "0.3"
 Design does the quality work of the [workflow](../workflow/SKILL.md).
 It designs one contract scope: the root slice of an initiative, or a part that an earlier design split off.
 Implementers later work from its output in fresh sessions, and they are judged on correct behavior, not on passing its tests, so a contract or suite that is easy to pass but misses required behavior is a design defect.
-Every slug, folder, test, probe, and diagram that design creates has a [portable name](../workflow/SKILL.md#common-terms), and in a project with a store, design reads requirements, ADRs, and `slice.md` files through `get_artifact` and writes each `slice.md` and diagram through `update_artifact`, as [store artifacts](../workflow/SKILL.md#common-terms), while its tests stay in the checkout.
+Every slug, folder, test, probe, and view that design creates has a [portable name](../workflow/SKILL.md#common-terms), and in a project with a store, design reads requirements, ADRs, and `slice.md` files through `get_artifact` and writes each `slice.md` and each view in a plan folder through `update_artifact`, as [store artifacts](../workflow/SKILL.md#common-terms), while its tests stay in the checkout.
 
 ## 1. Prepare
 
@@ -42,7 +42,7 @@ Every slug, folder, test, probe, and diagram that design creates has a [portable
 9. For each slice, write `slice.md` in its slice folder, the folder named by its slug in the initiative's plans folder, with the sections in the [slice example](#slice-example).
    In **Changes**, list each file you expect to add, change, or remove, starting with `add`, `change`, or `remove` and one or more comma-separated paths in backticks, then a colon, the functions, types, or modules it adds or whose interface it changes, a few words on why, and, in parentheses, the Contract clauses it serves, such as `(§1, §3)`, unless it supports every clause.
    Include the files the project's own instructions require the change to update, such as docs, glossaries, or term lists, and keep every path inside the slice's component or under a shared path.
-10. Write the [diagrams](#4-diagrams).
+10. Write the [views](#4-views).
 11. Recommend review `required` for a slice when an independent implementation review pays off, such as for authentication, authorization, secrets, untrusted input, or data loss risk, and `none` otherwise.
 12. When the project keeps Gherkin feature files, use `write-feature` for the scenarios and list them as frozen tests.
 13. When production code, generated code, or verification consumes a changed boundary, use `write-contracts` after reusing governing types or schemas.
@@ -77,6 +77,9 @@ A done scope, which holds reported defects, is designed as one fix slice whose o
 | --- | --- | --- | --- | --- | --- | --- |
 | `download` | Users download a report by id. | `reports` | `reports.md§1` | | `tests/report_download.rs` | none |
 | `audit` | Operators list downloads. | `reports` | `reports.md§2` | `download` | `tests/report_audit.rs` | required: exposes user names |
+
+## Views
+- `overview.puml` component (§1, §3): In what order do `download` and `audit` land, and which interface do they share?
 ```
 
 ### Slice example
@@ -90,16 +93,12 @@ A done scope, which holds reported defects, is designed as one fix slice whose o
 - change `src/cli/report.rs`: `download` subcommand (§1, §3).
 ```
 
-## 4. Diagrams
+## 4. Views
 
-Diagrams are for the person at the design gate.
-Write PlantUML source only: Prism parses each `.puml` file when the design is accepted and reports a syntax error or a view with more than 30 elements as text.
-
-1. In the scope folder, write `overview.puml`: the slices as packages, the interfaces they share, and their dependency order.
-2. In each slice folder, write `code.puml`: the units that **Changes** names and how they depend on each other.
-   A one-slice plan writes `code.puml` in the scope folder and no `overview.puml`.
-3. When a view exceeds 30 elements, split it into views a person can read.
-4. When `update_design_view` or acceptance reports a diagram problem, fix the source.
+1. For each question that the person at the design gate will ask and no clause answers at a glance, such as the order of calls, the states a record moves through, or what a screen shows, write a [view](../workflow/SKILL.md#common-terms) of the kind that answers it, never a `code` view by habit: a diagram with `write-diagram`, a screen with `write-mockup`, or an API specification with `write-contracts`.
+2. Write PlantUML source only, or JSON for an `api` view, and declare each view in the **Views** section of its folder's `slice.md`.
+3. When the plan has more than one slice, write `overview.puml` in the scope folder as a `component` view that names each slice by its slug, the interfaces they share, and their dependency order.
+4. When a view of a slice is dense, split the slice, or keep it whole with a **Split assessment** item, as `write-diagram` shows.
 
 ## 5. Write a split
 

@@ -1,13 +1,13 @@
 // prism-panel: a region with an eyebrow, a heading, tools in its header, a body, and a footer, drawn as a card, a plain block, an inset, or an island.
 // It renders in light DOM, so the page's content stays in the document: children with slot="tools" go to the header, slot="footer" after the body,
 // and every other child, also one added later, into the body.
-import { Base, distribute, emit, make, setAttribute, toggleAttribute } from "./base.js";
+import { Base, distribute, emit, make, setAttribute, toggleAttribute, uniqueId } from "./base.js";
 
 const VARIANTS = ["card", "plain", "inset", "island"];
 
 export class PrismPanel extends Base {
   static tag = "prism-panel";
-  static observedAttributes = ["heading", "level", "eyebrow", "maximizable", "maximized"];
+  static observedAttributes = ["heading", "level", "eyebrow", "maximizable", "maximized", "region"];
   static catalog = {
     purpose: "A region with a heading, tools in its header, a body, and a footer, drawn as a card, a plain block, an inset, or an island on the canvas.",
     options: [
@@ -16,10 +16,11 @@ export class PrismPanel extends Base {
       { name: "eyebrow", values: ["text"], default: "", description: "A small line above the heading, such as the kind of record." },
       { name: "variant", values: VARIANTS, default: "card", description: "card is a bordered surface, plain has no frame, inset is sunken, and island floats on the canvas with --prism-radius-island, --prism-shadow-island, and --prism-color-island-edge." },
       { name: "flush", values: ["boolean"], default: "false", description: "The body has no padding, for content that draws its own edges, such as a page bar." },
+      { name: "region", values: ["boolean"], default: "false", description: "The panel is a region landmark named by its heading, so a page of several panels lists each by its heading." },
       { name: "maximizable", values: ["boolean"], default: "false", description: "Adds a prism-maximize button, named Maximize or Restore, that toggles maximized and sends prism-maximize with detail.maximized." },
       { name: "maximized", values: ["boolean"], default: "false", description: "The panel fills the window." }
     ],
-    states: ["card", "plain", "inset", "island", "tools-and-footer", "maximizable"],
+    states: ["card", "plain", "inset", "island", "tools-and-footer", "maximizable", "region"],
     keyboard: ["The Maximize button takes Enter and Space.", "Escape restores a maximized panel while focus is inside it."]
   };
 
@@ -74,6 +75,14 @@ export class PrismPanel extends Base {
     }
     this.headingElement.textContent = heading;
     this.headingElement.hidden = !heading;
+    // A region panel is a landmark named by its heading.
+    const region = this.hasAttribute("region") && Boolean(heading);
+    if (region && !this.headingElement.id) this.headingElement.id = uniqueId("prism-panel-heading");
+    if (region || this.isRegion) {
+      setAttribute(this, "role", region ? "region" : null);
+      setAttribute(this, "aria-labelledby", region ? this.headingElement.id : null);
+      this.isRegion = region;
+    }
     const eyebrow = this.getAttribute("eyebrow") ?? "";
     this.eyebrowElement.textContent = eyebrow;
     this.eyebrowElement.hidden = !eyebrow;
