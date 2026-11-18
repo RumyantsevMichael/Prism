@@ -1,6 +1,6 @@
 // Generated from src/server/log.mts by scripts/native-build/compile.mjs.
 import path from "node:path";
-import os from "node:os";
+import { reviewAppDirectory } from "./review/review-app-discovery.mjs";
 import { appendFile, mkdir, rename, stat } from "node:fs/promises";
 import { isMainThread, threadId } from "node:worker_threads";
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40, off: 100 };
@@ -9,8 +9,7 @@ const LOG_BYTES = 5 * 1024 * 1024;
 const STALL_MS = 1e3;
 function logDirectory(env = process.env) {
   if (env.PRISM_LOG_DIR) return path.resolve(env.PRISM_LOG_DIR);
-  const app = env.PRISM_REVIEW_APP_DIR ? path.resolve(env.PRISM_REVIEW_APP_DIR) : process.platform === "darwin" ? path.join(os.homedir(), "Library", "Application Support", "Prism") : process.platform === "win32" ? path.join(env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "Prism") : path.join(env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"), "prism");
-  return path.join(app, "logs");
+  return path.join(reviewAppDirectory(env), "logs");
 }
 function threshold(env = process.env) {
   const value = (env.PRISM_LOG_LEVEL || "info").toLowerCase();

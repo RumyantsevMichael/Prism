@@ -80,19 +80,9 @@ body {
   min-width: 0;
 }
 
-.project-workspace,
-.project-repository {
+.project-workspace {
   color: var(--prism-color-ink);
   font-weight: var(--prism-font-weight-semibold);
-}
-
-.project-separator {
-  margin: 0 var(--prism-space-2);
-  color: var(--prism-color-ink-muted);
-}
-
-.project-worktree {
-  color: var(--prism-color-ink-muted);
 }
 
 .topbar-search {
@@ -271,6 +261,17 @@ body {
 
 .shell-body.side-panel-open {
   grid-template-columns: auto var(--sidebar-width, var(--prism-sidebar-width)) minmax(0, 1fr) var(--side-panel-width, var(--prism-panel-width));
+}
+
+/* The resize handles stand beside their panels, in the shell, each placed by both lines of its grid area, since an absolute item's missing line is the shell's edge, so a panel that scrolls or clips its contents never cuts one off or overflows because of it.
+   Each spans its panel's row and shows only while its panel stands beside the main island. */
+.shell-body > :is(.sidebar-resizer, .side-panel-resizer) {
+  grid-row: 1 / 2;
+}
+
+.shell-body > .sidebar-resizer,
+.shell-body:not(.side-panel-open) > .side-panel-resizer {
+  display: none;
 }
 
 .rail-dock {
@@ -1081,6 +1082,18 @@ body {
     margin-inline-start: var(--prism-island-gap);
   }
 
+  /* A handle stands centered in the island gap between its panel and the main island: the gap ends the sidebar's column and starts the side panel's. */
+  .shell-body > .sidebar-resizer:not([hidden]) {
+    display: block;
+    grid-column: 2 / 3;
+    right: calc((var(--prism-island-gap) - var(--prism-space-2)) / 2);
+  }
+
+  .shell-body > .side-panel-resizer {
+    grid-column: -2 / -1;
+    left: calc((var(--prism-island-gap) - var(--prism-space-2)) / 2);
+  }
+
   /* The top bar and the status bar start with the rail's column, so the mark, the places, and the gear share one vertical axis. */
   .topbar,
   .statusbar {
@@ -1146,14 +1159,26 @@ body {
     white-space: nowrap;
   }
 
+  .shell-body {
+    --side-panel-floating-width: min(var(--side-panel-width, var(--prism-panel-width)), calc(100% - 2 * var(--prism-space-7)));
+  }
+
   .shell-body > .side {
     position: absolute;
     top: 0;
     right: var(--prism-island-gap);
     bottom: 0;
     z-index: var(--prism-layer-panel);
-    width: min(var(--side-panel-width, var(--prism-panel-width)), calc(100% - 2 * var(--prism-space-7)));
+    width: var(--side-panel-floating-width);
     box-shadow: var(--prism-shadow-dialog);
+  }
+
+  /* The floating panel lies over the main island with no gap beside it, so its handle stands on its edge, above it, placed in the same box as the panel. */
+  .shell-body > .side-panel-resizer {
+    grid-area: auto;
+    left: auto;
+    right: calc(var(--prism-island-gap) + var(--side-panel-floating-width) - var(--prism-space-2) / 2);
+    z-index: var(--prism-layer-panel);
   }
 }
 

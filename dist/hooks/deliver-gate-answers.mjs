@@ -97,19 +97,63 @@ async function approvalGates(projectRoot, environment) {
 }
 
 const scopeName = (scope) => scope?.label ?? scope?.kind ?? "workspace";
-const approvalLine = ({ artifact, gate }) => `- Approval gate ${gate.id} (${artifact.path}, scope ${scopeName(artifact.scope)}, status ${gate.status}): "${gate.question}"`;
-const approvalAnswer = (item) => `${approvalLine(item)} Answer: ${choiceText(item.gate)}.${item.gate.answer.note ? ` Note: ${item.gate.answer.note}${/[.!?]$/.test(item.gate.answer.note) ? "" : "."}` : ""}${item.gate.answer.choice === "approve" ? ` Prism recorded ${item.gate.status} and rewrote its status lines in the store.` : " Its recorded status stays as it was."}`;
+const noteText = (note) => (note ? ` Note: ${note}${/[.!?]$/.test(note) ? "" : "."}` : "");
+// A gate line takes the question text to show, so that the bound can shorten the question and keep the rest of the line whole.
+const approvalLine = ({ artifact, gate }, question = `"${gate.question}"`) => `- Approval gate ${gate.id} (${artifact.path}, scope ${scopeName(artifact.scope)}, status ${gate.status}): ${question}`;
+const approvalAnswer = (item, question) => `${approvalLine(item, question)} Answer: ${choiceText(item.gate)}.${noteText(item.gate.answer.note)}${item.gate.answer.choice === "approve" ? ` Prism recorded ${item.gate.status} and rewrote its status lines in the store.` : " Its recorded status stays as it was."}`;
 const APPROVAL_ACT = "Act on each approval answer; an approval gate needs no resolve, since Prism recorded the answer in the artifact's status record, and get_artifact returns it as latestAnswer.";
 
-const gateLine = ({ initiative, gate }) => `- Gate ${gate.id} (${gate.kind}, initiative ${initiative}${gate.slice ? `, slice ${gate.slice}` : ""}): "${gate.question}"`;
+const gateLine = ({ initiative, gate }, question = `"${gate.question}"`) => `- Gate ${gate.id} (${gate.kind}, initiative ${initiative}${gate.slice ? `, slice ${gate.slice}` : ""}): ${question}`;
+const gateAnswer = (item, question) => `${gateLine(item, question)} Answer: ${choiceText(item.gate)}.${noteText(item.gate.answer.note)}`;
 
-function bounded(lines) {
-  const text = lines.join("\n");
-  return text.length > MAX_CONTEXT_CHARACTERS ? `${text.slice(0, MAX_CONTEXT_CHARACTERS - 120)}\n… More gates are recorded; read them with get_coordination_state.` : text;
+// The context is a heading and sections, each an instruction, its gates, and an optional closing line.
+// A gate entry renders its line with the question text that the bound allows.
+const userSection = (instruction, items, line) => ({ instruction, gates: items.map((item) => ({ item, line, read: "get_coordination_state" })) });
+const approvalSection = (instruction, items, line, closing) => ({ instruction, closing, gates: items.map((item) => ({ item, line, read: `get_artifact for ${item.artifact.path}` })) });
+
+const MIN_QUESTION_CHARACTERS = 80;
+const MORE_GATES = "… More gates are open; read them with get_coordination_state, and the approval gates with get_artifact.";
+
+const question = ({ item, read }, limit) => {
+  const text = item.gate.question;
+  if (text.length <= limit) return `"${text}"`;
+  return `"${text.slice(0, limit).trimEnd()}…" (question shortened; read the whole gate with ${read})`;
+};
+
+function render(heading, sections, limit, more) {
+  const lines = [heading];
+  for (const section of sections) {
+    lines.push(section.instruction, ...section.gates.map((gate) => gate.line(gate.item, question(gate, limit))));
+    if (section.closing) lines.push(section.closing);
+  }
+  if (more) lines.push(MORE_GATES);
+  return lines.join("\n");
 }
 
-// The answers whose whole line the bounded text kept, which are the ones the agent received.
-const kept = (text, answers) => answers.filter((item) => text.includes(approvalAnswer(item)));
+// The context stays within the bound by shortening question text only, so every gate line it lists keeps its id and its whole answer.
+// When even short questions do not fit, the last gates are left out, with their section once it has none left, and a closing line says more are open.
+// The first gate always stays, so a gate whose answer alone fills the bound still reaches the agent.
+function bounded(heading, sections) {
+  let shown = sections.filter((section) => section.gates.length);
+  const count = () => shown.reduce((total, section) => total + section.gates.length, 0);
+  const longest = Math.max(0, ...shown.flatMap((section) => section.gates.map((gate) => gate.item.gate.question.length)));
+  const fits = (limit, more) => render(heading, shown, limit, more).length <= MAX_CONTEXT_CHARACTERS;
+  const shortest = Math.min(longest, MIN_QUESTION_CHARACTERS);
+  let more = false;
+  while (!fits(shortest, more) && count() > 1) {
+    const last = shown[shown.length - 1];
+    const gates = last.gates.slice(0, -1);
+    shown = gates.length ? [...shown.slice(0, -1), { ...last, gates }] : shown.slice(0, -1);
+    more = true;
+  }
+  let low = shortest, high = longest;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (fits(middle, more)) low = middle;
+    else high = middle - 1;
+  }
+  return { text: render(heading, shown, low, more), shown: shown.flatMap((section) => section.gates.map((gate) => gate.item)) };
+}
 
 // A resumed session no longer waits on the gates it asked before, so it learns which of them are open and waits on them again.
 // A session that starts or resumes in a checkout also learns the approval gates that checkout asked: the unanswered ones to wait on, and the answers it has not received.
@@ -122,13 +166,14 @@ async function startedGates(projectRoot, environment, own, resumed) {
   }
   const waiting = gates.filter(({ gate }) => !gate.answer), answered = gates.filter(({ gate }) => gate.answer);
   const asked = approvals.items.filter(({ gate }) => !gate.answer), approved = approvals.items.filter(({ gate }) => gate.answer);
-  const lines = [gates.length ? "This session resumed while Prism user gates that it asked are open, and nothing waits on them now." : "This session started while Prism approval gates that this checkout asked are open, and nothing waits on them now."];
-  if (waiting.length) lines.push("For these unanswered gates, call wait_for_user_gate with their ids once you have handled the user's message, so a browser answer reaches you without another message.", ...waiting.map(gateLine));
-  if (asked.length) lines.push("This checkout asked these approval gates, which the user has not answered; call wait_for_user_gate with each id and the artifact's path as artifact once you have handled the user's message.", ...asked.map(approvalLine));
-  if (answered.length) lines.push("The user already answered these gates in the review browser; act on each answer, then remove the gate with an update_coordination_state resolve operation for its id.", ...answered.map((item) => `${gateLine(item)} Answer: ${choiceText(item.gate)}${item.gate.answer.note ? `. Note: ${item.gate.answer.note}` : ""}.`));
-  if (approved.length) lines.push("The user already answered these approval gates that this checkout asked, in the review browser.", ...approved.map(approvalAnswer), APPROVAL_ACT);
-  const text = bounded(lines);
-  await approvals.receive(kept(text, approved));
+  const heading = gates.length ? "This session resumed while Prism user gates that it asked are open, and nothing waits on them now." : "This session started while Prism approval gates that this checkout asked are open, and nothing waits on them now.";
+  const { text, shown } = bounded(heading, [
+    userSection("For these unanswered gates, call wait_for_user_gate with their ids once you have handled the user's message, so a browser answer reaches you without another message.", waiting, gateLine),
+    approvalSection("This checkout asked these approval gates, which the user has not answered; call wait_for_user_gate with each id and the artifact's path as artifact once you have handled the user's message.", asked, approvalLine),
+    userSection("The user already answered these gates in the review browser; act on each answer, then remove the gate with an update_coordination_state resolve operation for its id.", answered, gateAnswer),
+    approvalSection("The user already answered these approval gates that this checkout asked, in the review browser.", approved, approvalAnswer, APPROVAL_ACT)
+  ]);
+  await approvals.receive(approved.filter((item) => shown.includes(item)));
   return { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: text } };
 }
 
@@ -156,16 +201,11 @@ export async function deliverGateAnswers({ input = process.stdin, environment = 
     await approvals.receive([]);
     return null;
   }
-  const lines = ["The user answered these Prism user gates in the review browser."];
-  if (gates.length) {
-    lines.push("Treat each answer as the user's reply to that question, act on it, then remove the gate with an update_coordination_state resolve operation for its id.");
-    for (const item of gates) {
-      lines.push(`${gateLine(item)} Answer: ${choiceText(item.gate)}${item.gate.answer.note ? `. Note: ${item.gate.answer.note}` : ""}.`);
-    }
-  }
-  if (approved.length) lines.push("This checkout asked these approval gates.", ...approved.map(approvalAnswer), APPROVAL_ACT);
-  const text = bounded(lines);
-  await approvals.receive(kept(text, approved));
+  const { text, shown } = bounded("The user answered these Prism user gates in the review browser.", [
+    userSection("Treat each answer as the user's reply to that question, act on it, then remove the gate with an update_coordination_state resolve operation for its id.", gates, gateAnswer),
+    approvalSection("This checkout asked these approval gates.", approved, approvalAnswer, APPROVAL_ACT)
+  ]);
+  await approvals.receive(approved.filter((item) => shown.includes(item)));
   return { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: text } };
 }
 

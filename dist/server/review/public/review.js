@@ -819,15 +819,9 @@ function workspaceName(identity) {
   return identity.worktree;
 }
 
-// A checkout of a workspace leads with the workspace's name, because the records it shows belong to the whole workspace.
-function projectLabel(identity, workspace = null) {
-  const label = element("span", "project-label-text");
-  if (workspace) label.append(element("span", "project-workspace", workspace), element("span", "project-separator is-workspace", "·"));
-  label.append(element("span", "project-repository", identity.repository));
-  const name = workspaceName(identity);
-  if (name) label.append(element("span", "project-separator", "/"), element("span", "project-worktree", name));
-  return label;
-}
+// The switcher names what its menu has checked: the workspace, whose records the page shows whichever checkout serves it, or the project without one.
+// The checkout's repository, branch, and folder say nothing about those records, so only the tip names them.
+const projectName = (identity, projectRoot, workspace = null) => workspace ?? identity.repository ?? folderName(projectRoot);
 
 function projectTitle(identity, projectRoot) {
   return [projectRoot, identity.branch ? `${identity.detached ? "Detached at" : "Branch:"} ${identity.branch}` : "", identity.worktree ? `Worktree: ${identity.worktree}` : ""].filter(Boolean).join("\n");
@@ -993,10 +987,12 @@ function noWorkspaceItem() {
 
 // A checkout of a workspace leads with the workspace's name, because the records it shows belong to the whole workspace.
 function setProjectLabel(identity, projectRoot, workspace = null) {
-  project.replaceChildren(projectLabel(identity, workspace));
-  projectTile.setAttribute("name", workspace ?? identity.repository ?? folderName(projectRoot));
-  projectButton.setAttribute("tip", [workspace ? `Workspace: ${workspace}` : "", projectTitle(identity, projectRoot)].filter(Boolean).join("\n"));
-  signals.project = [workspace, [identity.repository ?? folderName(projectRoot), workspaceName(identity)].filter(Boolean).join("/")].filter(Boolean).join(" · ");
+  const name = projectName(identity, projectRoot, workspace);
+  project.replaceChildren(element("span", "project-label-text project-workspace", name));
+  projectTile.setAttribute("name", name);
+  const repository = workspace && identity.repository && identity.repository !== workspace ? `Repository: ${identity.repository}` : "";
+  projectButton.setAttribute("tip", [workspace ? `Workspace: ${workspace}` : "", repository, projectTitle(identity, projectRoot)].filter(Boolean).join("\n"));
+  signals.project = name;
   document.title = signalTitle(baseTitle(), signals.count ?? 0);
 }
 
@@ -1013,6 +1009,9 @@ const baseTitle = () => signals.project ? `${signals.project} · Prism` : "Prism
 // The tab title, the tab icon, and an installed app's badge count the recorded questions, so a waiting question shows in a background tab.
 const signals = { project: null, count: null, icon: document.querySelector('link[rel="icon"]'), plainIcon: null, badged: null };
 signals.plainIcon = signals.icon?.getAttribute("href") ?? null;
+
+// How often a tab in the background reads the count of waiting questions; a browser may stretch the timers of a long-hidden tab to about a minute.
+const ATTENTION_WATCH_MS = 15000;
 
 async function updateAttentionSignals(count) {
   const previous = signals.count;
@@ -3353,6 +3352,12 @@ async function initialize() {
   } });
   // The first check waits one interval, since the page has just drawn from a fresh index.
   setTimeout(() => void indexPoller.start(), 1500);
+  // A hidden tab makes none of the checks above, so it reads the count of waiting questions alone, which raises the desktop notification the Attention page offers.
+  void createPoller({ interval: ATTENTION_WATCH_MS, whileHidden: true, run: async () => {
+    const response = await appFetch("./api/attention", { cache: "no-store", deadlineMs: POLL_DEADLINE_MS }).catch(() => null);
+    const answer = response?.ok ? await response.json().catch(() => null) : null;
+    if (Number.isInteger(answer?.gates)) await updateAttentionSignals(answer.gates);
+  } }).start();
 }
 
 initialize().catch((error) => {

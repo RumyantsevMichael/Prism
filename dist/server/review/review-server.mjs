@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { arrangeGroups, GROUP_LIMIT, groupNameOf, joinGroup } from "./public/views/tab-groups.js";
 import { randomBytes } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { readFile, readdir, realpath, stat } from "node:fs/promises";
+import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,7 +21,7 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, loadClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
+import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, loadAttention, loadClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
 import { shippedCommit, sliceFiles } from "./slice-files.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
@@ -59,6 +59,11 @@ function isInside(root, target) {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+// A resolved file is served only inside its root and never from a Git folder there, so a tracked symlink cannot show what the checkout's .git holds.
+function servableFrom(root, resolved) {
+  return isInside(root, resolved) && !path.relative(root, resolved).split(path.sep).some((segment) => segment.toLowerCase() === ".git");
+}
+
 async function resolveProjectFile(projectRoot, requestedPath) {
   if (!requestedPath || path.isAbsolute(requestedPath)) {
     throw new Error("The artifact path must be relative to the project root.");
@@ -69,8 +74,8 @@ async function resolveProjectFile(projectRoot, requestedPath) {
     throw new Error("The artifact path leaves the project root.");
   }
   const resolved = await realpath(candidate);
-  if (!isInside(root, resolved)) {
-    throw new Error("The artifact resolves outside the project root.");
+  if (!servableFrom(root, resolved)) {
+    throw new Error("The artifact resolves outside the project root or into its Git folder.");
   }
   return resolved;
 }
@@ -144,12 +149,16 @@ export async function listSourceFiles(projectRoot) {
     return !SECRET_NAME.test(name) && !BINARY_EXTENSION.test(name);
   });
   const files = [];
+  const root = await realpath(projectRoot).catch(() => path.resolve(projectRoot));
   let next = 0;
   const check = async () => {
     while (next < candidates.length) {
       const file = candidates[next++];
       try {
-        const metadata = await stat(path.join(projectRoot, file));
+        const absolute = path.join(projectRoot, file);
+        // A symlink is listed only when it resolves to a file the review would serve, never into .git or out of the checkout.
+        if ((await lstat(absolute)).isSymbolicLink() && !servableFrom(root, await realpath(absolute))) continue;
+        const metadata = await stat(absolute);
         if (metadata.isFile() && metadata.size <= SOURCE_SIZE_LIMIT) files.push(file);
       } catch {
         // A file deleted after git listed it is skipped.
@@ -1564,6 +1573,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         entity.presence = await slicePresence(projectRoot, entity.data.id, entity.data.slug, { reachable: code ? code.reachable : undefined, shipped: await shippedCommit(projectRoot, entity.data.id, entity.data.slug) });
       }
       send(response, 200, JSON.stringify(entity), "application/json; charset=utf-8");
+    } else if (route === "/api/attention" && request.method === "GET") {
+      // The count of waiting questions alone, which a page in a background tab reads to raise its desktop notification.
+      send(response, 200, JSON.stringify({ gates: (await loadAttention(projectRoot)).gateCount }), "application/json; charset=utf-8");
     } else if (route === "/api/claims" && request.method === "GET") {
       send(response, 200, JSON.stringify(await loadClaims(projectRoot)), "application/json; charset=utf-8");
     } else if (route === "/api/evidence") {

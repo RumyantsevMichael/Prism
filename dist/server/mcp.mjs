@@ -128,7 +128,7 @@ async function requestedProjectRoot(argumentsValue) {
   ) {
     throw projectRootRefusal("The projectRoot argument must be an absolute path.");
   }
-  const projectRoot = hostProjectRoot ?? argumentsValue.projectRoot;
+  const projectRoot = hasSuppliedProjectRoot ? argumentsValue.projectRoot : hostProjectRoot;
   if (!projectRoot) {
     throw projectRootRefusal("The projectRoot argument is required when the host does not provide a project root.");
   }
@@ -136,10 +136,13 @@ async function requestedProjectRoot(argumentsValue) {
     throw projectRootRefusal("The projectRoot argument must be an absolute path.");
   }
   const resolvedRoot = await realpath(projectRoot);
+  // A session that starts in a folder holding several checkouts side by side names the checkout it works in, so a project root below the start folder is served,
+  // and one outside it is refused, so a session reaches only the folders it started over.
   if (hostProjectRoot && hasSuppliedProjectRoot) {
-    const suppliedRoot = await realpath(argumentsValue.projectRoot);
-    if (suppliedRoot !== resolvedRoot) {
-      throw projectRootRefusal(`The projectRoot argument does not match the host project root ${resolvedRoot}. Pass that path, which is the directory where the session started.`);
+    const hostRoot = await realpath(hostProjectRoot);
+    const relative = path.relative(hostRoot, resolvedRoot);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      throw projectRootRefusal(`The projectRoot argument ${resolvedRoot} is not the folder where the session started, or a folder below it. Pass ${hostRoot} or a checkout below it.`);
     }
   }
   // The tool call's project root is the checkout whose first store access in this call may move its existing artifacts into the store, since this call's result reports the move.
@@ -365,7 +368,7 @@ function stateErrorData(error) {
   }
   // A refused artifact read or update names the current version, the scopes that hold a path, the scope that already holds it, the edit that did not apply, the name that breaks the artifact name form, or the declared components.
   if (error?.name === "ArtifactError") {
-    return { code: error.code, ...Object.fromEntries(["version", "scopes", "scope", "edit", "invalidName", "path", "location", "limit", "component", "components", "proposed"].filter(key => error[key] !== undefined).map(key => [key, error[key]])) };
+    return { code: error.code, ...Object.fromEntries(["version", "scopes", "scope", "edit", "invalidName", "path", "location", "limit", "nameLimit", "component", "components", "proposed"].filter(key => error[key] !== undefined).map(key => [key, error[key]])) };
   }
   if (error instanceof RepositoryIntelligenceSelectionError) {
     return { code: error.code, provider: error.provider, recoverable: error.recoverable };
@@ -1444,7 +1447,7 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
   // A decided move, the call's own or one that a refused, cancelled, or background call left, removes the checkout's files only here, right before a result of a tool call of the checkout is written,
   // so the result that follows names every file it removed; a refused or cancelled call never gets here and removes nothing.
   await finishUnfinishedMoves(call.roots, { proceed, writes: call.writes }).catch(() => {});
-  const reports = takeMigrationReports(call.roots);
+  const reports = await takeMigrationReports(call.roots);
   if (!reports.length && !taken.length) return none;
   const lines = [];
   // Each move of a checkout's artifacts is a text item of its own, after the other notes, so its bound and its closing line are its own.
