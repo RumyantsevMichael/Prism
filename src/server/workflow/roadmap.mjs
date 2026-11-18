@@ -20,7 +20,7 @@ import { mergeHistory, mergeKeyed, mergeOrder, mergeScalars, MergeConflict, pars
 import { ComponentError, listComponents, listsComponents, readComponents } from "./components.mjs";
 import { latestDependentsRun, verifiedAt } from "./slice-design.mjs";
 import { initiativePlan } from "./ship-standing.mjs";
-import { acceptLinkedAdrs } from "./store-artifacts.mjs";
+import { acceptLinkedAdrs, unlinkedAdrs } from "./store-artifacts.mjs";
 import { proposeComponents } from "./workspace-manifests.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 import { documentDigests, entryShippedDecision, hasOpenWork, openWork, openWorkMessage, readSliceDocuments, recordEarlierShips, ShippedHistoryError, writeHistoryMarks } from "./shipped-history.mjs";
@@ -288,28 +288,21 @@ async function defaultBranchHistory(root) {
   return [];
 }
 
+const COMMIT_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+
 /**
- * The oldest of the commits, given newest first along the first-parent history, whose tree holds every recorded file at its blob and no removed path, or null when none does.
- * It reads the files of the oldest commit and then only the first-parent changes to those files of each newer commit, so one Git command answers for all of them.
+ * The changes to the paths that each of the commits makes, as a Map from commit to [{ path, blob }], blob null for a removed path, or null when Git cannot answer:
+ * with firstParent each commit is compared with its first parent only, else with each of its parents, so a merge names the files as it leaves them.
  */
-async function shipCommit(root, commits, files) {
-  if (!commits.length || !files.length) return null;
-  const paths = files.map((file) => file.path);
-  const wanted = new Map(files.map((file) => [file.path, file.blob]));
-  const oldest = commits.at(-1);
-  const held = await objectsAt(root, oldest, paths);
-  if (held === null) return null;
-  const matches = () => paths.every((file) => held.get(file) === wanted.get(file));
-  if (matches()) return oldest;
-  const newer = commits.slice(0, -1).reverse();
-  if (!newer.length) return null;
-  const running = execute("git", ["--literal-pathspecs", "diff-tree", "--stdin", "-r", "-m", "--first-parent", "--raw", "-z", "--no-abbrev", "--no-renames", "--relative", "--", ...paths], { cwd: root, env: gitEnv(), maxBuffer: 256 * 1024 * 1024, windowsHide: true });
-  running.child.stdin.end(`${newer.join("\n")}\n`);
+async function changesOf(root, commits, paths, firstParent) {
+  const changes = new Map();
+  if (!commits.length || !paths.length) return changes;
+  const running = execute("git", ["--literal-pathspecs", "diff-tree", "--stdin", "-r", "-m", ...(firstParent ? ["--first-parent"] : []), "--raw", "-z", "--no-abbrev", "--no-renames", "--relative", "--", ...paths], { cwd: root, env: gitEnv(), maxBuffer: 256 * 1024 * 1024, windowsHide: true });
+  running.child.stdin.end(`${commits.join("\n")}\n`);
   let output;
   try { output = (await running).stdout; }
   catch { return null; }
-  // The output names each commit that changes one of the files, followed by its changes, each a raw line and a path.
-  const changes = new Map();
+  // The output names each commit that changes one of the files, followed by its changes, each a raw line and a path; a merge names its commit once for each parent.
   let current = null;
   const fields = output.split("\0");
   for (let at = 0; at < fields.length; at += 1) {
@@ -320,10 +313,29 @@ async function shipCommit(root, commits, files) {
       changes.get(current)?.push({ path: fields[at + 1], blob: /^0+$/.test(object ?? "") ? null : object });
       at += 1;
     } else {
-      current = field.trim();
-      changes.set(current, []);
+      current = field.trim().split(" ")[0];
+      if (!changes.has(current)) changes.set(current, []);
     }
   }
+  return changes;
+}
+
+/**
+ * The oldest of the commits, given newest first along the first-parent history, whose tree holds each recorded path at a blob that accepted allows for it, or null when none does.
+ * It reads the files of the oldest commit and then only the first-parent changes to those files of each newer commit, so one Git command answers for all of them.
+ */
+async function shipCommit(root, commits, accepted) {
+  const paths = [...accepted.keys()];
+  if (!commits.length || !paths.length) return null;
+  const oldest = commits.at(-1);
+  const held = await objectsAt(root, oldest, paths);
+  if (held === null) return null;
+  const matches = () => paths.every((file) => accepted.get(file).has(held.get(file)));
+  if (matches()) return oldest;
+  const newer = commits.slice(0, -1).reverse();
+  if (!newer.length) return null;
+  const changes = await changesOf(root, newer, paths, true);
+  if (changes === null) return null;
   for (const commit of newer) {
     for (const change of changes.get(commit) ?? []) if (held.has(change.path)) held.set(change.path, change.blob);
     if (matches()) return commit;
@@ -332,9 +344,37 @@ async function shipCommit(root, commits, files) {
 }
 
 /**
+ * The blobs that each path takes in the commits that descend from the verified commit and that a ref of the checkout holds, such as later commits of the branch it was verified on,
+ * blob null where such a commit removes the path, so a squash of that branch, which holds its latest files, counts as holding the verified work.
+ */
+async function descendantBlobs(root, verified, paths) {
+  const found = new Map(paths.map((file) => [file, new Set()]));
+  const tips = [...new Set(((await gitOutput(root, ["for-each-ref", "--contains", verified, "--format=%(objectname)"])) ?? "").split("\n").filter((line) => COMMIT_PATTERN.test(line)))];
+  if (!tips.length) return found;
+  const commits = ((await gitOutput(root, ["rev-list", "--ancestry-path", `--max-count=${SHIP_HISTORY_MAX}`, ...tips, "--not", verified])) ?? "").split("\n").filter(Boolean);
+  const changes = await changesOf(root, commits, paths, false);
+  for (const list of changes?.values() ?? []) for (const change of list) found.get(change.path)?.add(change.blob);
+  return found;
+}
+
+/**
+ * The newest commits of the default branch history, given newest first, that the verified commit does not already contain, the verified commit itself included,
+ * or all of them when Git cannot tell, so the commit a slice ships in is never one it was built on.
+ */
+async function commitsAfter(root, commits, verified) {
+  if (!commits.length) return commits;
+  const output = await gitOutput(root, ["rev-list", "--first-parent", `--max-count=${commits.length}`, commits[0], "--not", `${verified}^@`]);
+  if (output === null) return commits;
+  const count = output.split("\n").filter(Boolean).length;
+  return commits.slice(0, count);
+}
+
+/**
  * What a ship records about each done leaf slice with a passing verification run: { <slug>: { repository, verified, shipped } },
- * verified the latest passing run's checkout head and shipped the oldest commit of the default branch that holds every file that run recorded,
+ * verified the latest passing run's checkout head and shipped the oldest commit of the default branch, after those the verified commit contains, that holds the slice's verified work,
  * or null when the run's repository is not the shipping checkout's, the run recorded no files, or no commit qualifies.
+ * A commit holds the work when it holds each file the run recorded at the recorded blob or at a later one that a commit descending from the verified commit gives the file,
+ * as later slices and fixes on a squash-merged branch do, so the ship needs a ref of the checkout, such as that branch, to still hold the verified commit.
  */
 async function shippedSlices(root, initiative) {
   let loaded;
@@ -352,14 +392,23 @@ async function shippedSlices(root, initiative) {
     slices[slug] = { repository: run.checkout?.repository ?? null, verified: run.checkout?.head ?? null, shipped: null };
   }
   const own = Object.keys(slices).length ? await repositoryOf(root).catch(() => null) : null;
-  const looked = Object.keys(slices).filter((slug) => own && slices[slug].repository === own && slices[slug].verified && Array.isArray(runs[slug].files) && runs[slug].files.length);
+  const filesOf = (run) => Array.isArray(run.files) ? run.files.filter((file) => typeof file?.path === "string" && (file.blob === null || typeof file.blob === "string")) : [];
+  const looked = Object.keys(slices).filter((slug) => own && slices[slug].repository === own && COMMIT_PATTERN.test(slices[slug].verified ?? "") && filesOf(runs[slug]).length);
   if (!looked.length) return slices;
   const commits = await defaultBranchHistory(root);
-  for (const slug of looked) slices[slug].shipped = await shipCommit(root, commits, runs[slug].files.filter((file) => typeof file?.path === "string"));
+  for (const slug of looked) {
+    const files = filesOf(runs[slug]);
+    const paths = files.map((file) => file.path);
+    const accepted = new Map(files.map((file) => [file.path, new Set([file.blob])]));
+    for (const [file, blobs] of await descendantBlobs(root, slices[slug].verified, paths)) for (const blob of blobs) accepted.get(file).add(blob);
+    slices[slug].shipped = await shipCommit(root, await commitsAfter(root, commits, slices[slug].verified), accepted);
+  }
   return slices;
 }
 
 const dependentsMessage = (scopes) => `The initiative cannot ship while the dependents of a finished scope are red or have not run: ${scopes.map((item) => `${item.scope} (${item.reason === "stale" ? `the run ${item.run} predates the scope's latest verified change` : item.reason === "failed" ? "failed or declined" : "not run"}: ${item.blocked.join(", ")})`).join("; ")}. Run verify_slice with dependents for each scope, and fix or allow what it reports.`;
+
+const unlinkedMessage = (adrs) => `The initiative cannot ship while a Proposed ADR cites its requirements and no slice.md links it, since the ship would leave that ADR Proposed: ${adrs.map((adr) => `${adr.path} in scope ${adr.scope} (cites ${adr.requirements.join(", ")})`).join("; ")}. Link each ADR that the initiative's contract relies on from the slice.md that relies on it with update_artifact, so the person sees it at the correctness gate and the ship accepts it, then ask a new correctness gate and ship; an ADR of another initiative is linked from that initiative's slice.md.`;
 
 const withoutGates = (work, exempt) => exempt.size ? { ...work, gates: work.gates.filter((gate) => !exempt.has(gate.id)) } : work;
 
@@ -385,7 +434,7 @@ function confirmingGates(config, state, ship) {
   return new Set(newest ? [newest.id] : []);
 }
 
-// The facts of an initiative and what keeps it from shipping: blocker is null, { leaves: true } while a leaf is not done, { open } for open work, { fixes } for unfinished fixes, { problem } for an invalid declaration, or { scopes } for blocked dependents.
+// The facts of an initiative and what keeps it from shipping: blocker is null, { leaves: true } while a leaf is not done, { open } for open work, { fixes } for unfinished fixes, { problem } for an invalid declaration, { scopes } for blocked dependents, or { unlinked } for Proposed ADRs that cite its requirements and that no slice.md links.
 // ship is { afterGate } when a ship asks, so the gate it names is the one pending gate that is not open work, with or without a record store.
 async function deriveItem(projectRoot, config, item, ship = null) {
   const base = { id: item.id, band: item.band, state: "envisioned", readyToShip: false, progress: null, active: [], diagnostics: [] };
@@ -433,6 +482,12 @@ async function deriveItem(projectRoot, config, item, ship = null) {
   const found = await dependentsBlockers(projectRoot, config, item.id, loaded.record);
   if (found.problem) return { derived: { ...derived, readyToShip: false, diagnostics: [...derived.diagnostics, { code: found.problem.code, message: found.problem.message }] }, blocker: { problem: found.problem } };
   if (found.scopes.length) return { derived: { ...derived, readyToShip: false, diagnostics: [...derived.diagnostics, { code: "dependents_blocked", message: dependentsMessage(found.scopes), scopes: found.scopes }] }, blocker: { scopes: found.scopes } };
+  // With a store, a ship accepts only the ADRs its slice.md files link, so a Proposed ADR that cites the initiative's requirements and that no slice.md links would stay Proposed unseen.
+  if (hasStore(config)) {
+    const { plan } = await initiativePlan(projectRoot, item.id);
+    const adrs = await unlinkedAdrs(projectRoot, plan, Array.isArray(item.requirements) ? item.requirements : []);
+    if (adrs.length) return { derived: { ...derived, readyToShip: false, diagnostics: [...derived.diagnostics, { code: "adr_unlinked", message: unlinkedMessage(adrs), adrs }] }, blocker: { unlinked: adrs } };
+  }
   return { derived, blocker: null };
 }
 
@@ -757,6 +812,7 @@ async function applyOperation(resolved, record, operation, actor, at, marks, shi
       // Shipping reads the components after the leaf check: an invalid declaration refuses with its own code and fields, and a red or unproven dependent blocks it.
       if (blocker?.problem) throw blocker.problem;
       if (blocker?.scopes) throw fail("dependents_blocked", dependentsMessage(blocker.scopes), { scopes: blocker.scopes });
+      if (blocker?.unlinked) throw fail("adr_unlinked", unlinkedMessage(blocker.unlinked), { adrs: blocker.unlinked });
       // With a store, a ship accepts ADRs, so it waits for a person's approval of a correctness gate; a given gate is checked without a store too.
       if (hasStore(resolved.config)) {
         const { plan, runs } = await initiativePlan(resolved.root, item.id);
@@ -866,7 +922,7 @@ export const ROADMAP_TOOLS = [
   },
   {
     name: "update_roadmap",
-    description: "Apply revision-checked roadmap operations: set what the roadmap serves, set the workspace name that every checkout sharing the record store shows (one line of at most 64 characters, an empty name clears it), add or update initiatives, place them in Now, Next, Later, or Parked, set required initiatives, record ship or supersede decisions, and set open questions. add_initiative and update_initiative take corrects ({ initiative, slices }) for a fix to shipped work: the entry names the shipped initiative and each of its recorded slices whose work it corrects, the roadmap Markdown shows it, and the shipped initiative's shippedHistory lists the entry under laterFixes; corrects refuses with validation_failed an initiative that has not shipped (fix its done work inside it with update_initiative report_defect), an unknown initiative, the entry's own id, an empty slices list, and a slice the shipped initiative's record does not hold. A shipped initiative's entry keeps its title, intent, requirements, and required initiatives: update_initiative and set_requires naming it refuse with initiative_shipped, with its initiative and shippedAt. Ship refuses an existing decision with validation_failed, then refuses with ship_unconfirmed an afterGate that is not a correctness gate of the initiative that the person answered approve in the review browser, then refuses with open_work, listing gates ({ id, slice, question, answered }), claims ({ slice, label, activity, expiresAt }), and proposals (scope slugs), while the initiative has a pending user gate, answered or not, other than the correctness gate that the ship names in afterGate, a live slice claim, or a pending design proposal. Ship then refuses with fixes_unfinished, listing fixes ({ slice, defect, fix, status }), while a defect reported on a done slice has no fix slice or its fix slice is not done. Ship then requires every leaf slice to be done, refusing with gate_blocked first; it then reads the ## Components declaration, refusing an invalid one with its own code, and refuses with dependents_blocked, listing each scope with its blocked dependents and reason failed or not_run, while a finished scope has dependents without a passing dependents' run of every one of them, or reason stale with run naming the dependents' run's record path while that latest run started before a leaf of the scope last passed verification, as when a fix slice changed the scope after it. With a record store, ship takes afterGate, the id of a correctness gate of the initiative that the person answered approve in the review browser and that was asked after each leaf slice's latest passing verification run and while every slice.md of the initiative, the repositories its links resolve in, and every ADR that ship would accept read as they do at ship, and is refused with ship_unconfirmed without one, naming what changed after an earlier gate was asked; it is refused with adr_ambiguous, naming the path and the scopes and changing nothing, where a link could name ADRs at the same path in two or more scopes none of which holds its slice.md, and with adr_pending, naming each ADR and its gate and changing nothing, while a linked Proposed ADR has an open approval; it then sets each ADR whose recorded status is Proposed and that a Markdown link in any slice.md of the initiative names, as CommonMark reads it, to Accepted, a link in a slice's slice.md naming an ADR of the workspace scope or of that slice's own repository and its components, whichever checkout ships, rewriting its Status: line and recording acceptance with the gate and verifiedBy, the slice, repository, and commit of each leaf slice's latest passing verification run, which get_artifact returns, and the result lists them under acceptedAdrs with path, scope, and verifiedBy, while a cited ADR with another recorded status stays as it is, and the ship closes the correctness gate it names. readyToShip in get_roadmap is true only when ship would succeed, except that with a record store the newest pending correctness gate, which the ship then names in afterGate, and an open approval of a linked ADR leave it true, while every other pending gate, an older correctness gate included, is open work, with a diagnostic saying why otherwise; asking a correctness gate closes each earlier one that the person answered. Ship records each slice document of the initiative in its decision as documents ({ path, sha256 } of its content without the history mark), with documentsRecordedAt and documentsFrom ship, writes the history mark into each, and lists the marked paths under historyMarks and each document it could not read or write under historyMarkProblems ({ path, reason }) without failing; with a record store the marked documents are store artifacts that its sync shares, so they need no commit. A ship fetches origin and records in the decision slices, { <slug>: { repository, verified, shipped } } for each done leaf slice with a passing verification run, verified that run's head commit and shipped the oldest of the 1000 newest first-parent commits of origin's default branch whose tree holds every file the run recorded at its blob, or null, and the result lists the slugs whose shipped is null under noShipCommit. Every write regenerates the roadmap Markdown without overwriting a hand-written file.",
+    description: "Apply revision-checked roadmap operations: set what the roadmap serves, set the workspace name that every checkout sharing the record store shows (one line of at most 64 characters, an empty name clears it), add or update initiatives, place them in Now, Next, Later, or Parked, set required initiatives, record ship or supersede decisions, and set open questions. add_initiative and update_initiative take corrects ({ initiative, slices }) for a fix to shipped work: the entry names the shipped initiative and each of its recorded slices whose work it corrects, the roadmap Markdown shows it, and the shipped initiative's shippedHistory lists the entry under laterFixes; corrects refuses with validation_failed an initiative that has not shipped (fix its done work inside it with update_initiative report_defect), an unknown initiative, the entry's own id, an empty slices list, and a slice the shipped initiative's record does not hold. A shipped initiative's entry keeps its title, intent, requirements, and required initiatives: update_initiative and set_requires naming it refuse with initiative_shipped, with its initiative and shippedAt. Ship refuses an existing decision with validation_failed, then refuses with ship_unconfirmed an afterGate that is not a correctness gate of the initiative that the person answered approve in the review browser, then refuses with open_work, listing gates ({ id, slice, question, answered }), claims ({ slice, label, activity, expiresAt }), and proposals (scope slugs), while the initiative has a pending user gate, answered or not, other than the correctness gate that the ship names in afterGate, a live slice claim, or a pending design proposal. Ship then refuses with fixes_unfinished, listing fixes ({ slice, defect, fix, status }), while a defect reported on a done slice has no fix slice or its fix slice is not done. Ship then requires every leaf slice to be done, refusing with gate_blocked first; it then reads the ## Components declaration, refusing an invalid one with its own code, and refuses with dependents_blocked, listing each scope with its blocked dependents and reason failed or not_run, while a finished scope has dependents without a passing dependents' run of every one of them, or reason stale with run naming the dependents' run's record path while that latest run started before a leaf of the scope last passed verification, as when a fix slice changed the scope after it. With a record store, ship then refuses with adr_unlinked, listing adrs ({ path, scope, requirements }), while a Proposed ADR of the workspace scope or of a repository of the initiative names one of the initiative's requirement files in a Markdown link and no slice.md of the initiative, nor of any other plan, links it, since the ship would leave it Proposed. With a record store, ship takes afterGate, the id of a correctness gate of the initiative that the person answered approve in the review browser and that was asked after each leaf slice's latest passing verification run and while every slice.md of the initiative, the repositories its links resolve in, and every ADR that ship would accept read as they do at ship, and is refused with ship_unconfirmed without one, naming what changed after an earlier gate was asked; it is refused with adr_ambiguous, naming the path and the scopes and changing nothing, where a link could name ADRs at the same path in two or more scopes none of which holds its slice.md, and with adr_pending, naming each ADR and its gate and changing nothing, while a linked Proposed ADR has an open approval; it then sets each ADR whose recorded status is Proposed and that a Markdown link in any slice.md of the initiative names, as CommonMark reads it, to Accepted, a link in a slice's slice.md naming an ADR of the workspace scope or of that slice's own repository and its components, whichever checkout ships, rewriting its Status: line and recording acceptance with the gate and verifiedBy, the slice, repository, and commit of each leaf slice's latest passing verification run, which get_artifact returns, and the result lists them under acceptedAdrs with path, scope, and verifiedBy, while a cited ADR with another recorded status stays as it is, and the ship closes the correctness gate it names. readyToShip in get_roadmap is true only when ship would succeed, except that with a record store the newest pending correctness gate, which the ship then names in afterGate, and an open approval of a linked ADR leave it true, while every other pending gate, an older correctness gate included, is open work, with a diagnostic saying why otherwise; asking a correctness gate closes each earlier one that the person answered. Ship records each slice document of the initiative in its decision as documents ({ path, sha256 } of its content without the history mark), with documentsRecordedAt and documentsFrom ship, writes the history mark into each, and lists the marked paths under historyMarks and each document it could not read or write under historyMarkProblems ({ path, reason }) without failing; with a record store the marked documents are store artifacts that its sync shares, so they need no commit. A ship fetches origin and records in the decision slices, { <slug>: { repository, verified, shipped } } for each done leaf slice with a passing verification run, verified that run's head commit and shipped the oldest of the 1000 newest first-parent commits of origin's default branch, after those the verified commit was built on, whose tree holds every file the run recorded at its blob or at a later blob that a commit of a checkout ref descending from the verified commit gives it, as a squash merge of a branch whose later commits changed the file leaves it, or null, and the result lists the slugs whose shipped is null under noShipCommit. Every write regenerates the roadmap Markdown without overwriting a hand-written file.",
     inputSchema: UPDATE_ROADMAP_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }
