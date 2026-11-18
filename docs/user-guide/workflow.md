@@ -144,7 +144,9 @@ A run lists at most 2000 files and sets `filesTruncated` to `true` when more cha
 The run's `checkout` names the repository, `origin` remote, branch, head commit, whether the work tree was dirty, and `host`, this machine's host name up to its first `.`.
 
 When you `ship` an initiative, Prism first fetches `origin` in the shipping checkout, and goes on with what it has when the fetch fails.
-The decision then records `slices` with `{ repository, verified, shipped }` for each done leaf slice that has a passing run: `verified` is the head commit of the slice's latest passing run, and `shipped` is the oldest of the 1000 newest commits on the first-parent history of the default branch whose tree holds every file the run listed at its blob and none of its removed paths.
+The decision then records `slices` with `{ repository, verified, shipped }` for each done leaf slice that has a passing run: `verified` is the head commit of the slice's latest passing run, and `shipped` is the oldest of the 1000 newest commits on the first-parent history of the default branch, leaving out those the verified commit was built on, whose tree holds every file the run listed and none of its removed paths.
+A file counts as held at the blob the run listed or at a later version that a commit descending from the verified commit gives it, so a squash merge of a branch whose later slices or fixes changed the file still records the squash commit.
+Those later versions come from the refs of the shipping checkout, such as the slice's branch, so ship from a checkout that still has that branch, locally or on origin.
 The default branch is `origin/HEAD`, else `origin/main`, else `origin/master`, so a squash merge or a force push that keeps the verified files still leads to them.
 `shipped` is null when the run was in another repository, when the run listed no files, or when no commit qualifies, as when you ship before the slice's branch merges, and the `ship` result lists those slices under `noShipCommit`.
 `get_roadmap` lists `initiatives` with each one's `id` and `decision`, so a shipped initiative's `slices` read without the whole record.
