@@ -717,14 +717,14 @@ test("an MCP server in a host that names no project opens the review browser fro
   readline.createInterface({ input: child.stdout }).on("line", () => {});
   const opened = async () => (await readFile(openedLog, "utf8").catch(() => "")).split("\n").filter(Boolean);
   await eventually(async () => (await control(await readDiscovery(directory), "health")).proven, 30000);
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  await pause(300, "nothing can be awaited for a browser that never opens");
   assert.deepEqual(await opened(), [], "the server opens nothing before a tool call names the project");
   child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "get_roadmap", arguments: { projectRoot: root } } })}\n`);
   await eventually(async () => (await opened()).length === 1, 30000);
   const discovery = await readDiscovery(directory);
   assert.equal(Number(new URL((await opened())[0]).port), discovery.port, "the browser opens on the shared app");
   child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "get_roadmap", arguments: { projectRoot: root } } })}\n`);
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  await pause(500, "nothing can be awaited for a second window that never opens");
   assert.equal((await opened()).length, 1, "a later tool call opens no second window");
 });
 
