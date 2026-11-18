@@ -32,6 +32,7 @@ Final contracts do not belong in slice folders.
 2. When the format permits, link requirements for obligations and ADRs for decisions.
 3. Bind the contract through an import, generator, validator, or compatibility test.
 4. Run the exact verification command.
+5. When design asks for an `api` view of an HTTP or message API, write or declare its OpenAPI or AsyncAPI specification as the [API view](references/api-view.md) shows.
 
 Production behavior must not be added merely to create a contract.
 A design's failing acceptance tests can leave behavior missing, but the contract must have an executable consumer.
