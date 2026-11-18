@@ -28,7 +28,7 @@ A screen is a `wireframe` view, written with `write-mockup`, and an API specific
 
 ## 2. Declare the view
 
-Put the file directly in the folder of the `slice.md` whose contract it explains, and declare it in that file's **Views** section, one item per view:
+Put a view of one planned slice directly in that slice's own folder, and a view of the whole contract, such as the overview, in the contract's folder, and declare it in that folder's `slice.md` **Views** section, one item per view:
 
 ```markdown
 ## Views

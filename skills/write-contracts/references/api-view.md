@@ -3,8 +3,8 @@
 An `api` view shows the person at the design gate an HTTP or message API that the contract fixes, as an OpenAPI `3.0` or `3.1` document with `info` and `paths`, or an AsyncAPI `2` or `3` document with `info` and `channels`, written in JSON.
 
 - When the specification is the boundary's executable contract, declare its canonical path, such as `api/reports.json`, rather than a copy.
-- Otherwise put the file directly in the folder of the `slice.md` whose contract it explains.
-- Declare it in that file's **Views** section with kind `api`, the clauses it explains, and its question:
+- Otherwise put the file directly in the own folder of the planned slice it explains, or in the contract's folder for a view of the whole contract.
+- Declare it in the **Views** section of that slice's or contract's `slice.md` with kind `api`, the clauses it explains, and its question:
 
   ```markdown
   - `api/reports.json` api (§1, §2): Which calls does the report API take, and what does each return?
