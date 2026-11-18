@@ -473,7 +473,11 @@ Work on a slice needs the claim of the session doing it: proposing or accepting 
 The refusal says whether the session's claim expired or it never had one, and the agent claims the slice with `update_initiative` `claim`, which takes an implementation claim on a slice in progress and a design claim on any other slice, then carries on.
 A dependents' run of a finished scope needs no claim.
 A claim names its holder by the store's Git `user.name` and the host name, such as `Michael Rumyantsev on MacBookPro`, or by the host name alone when the store has no `user.name`.
-`get_initiative` lists each live claim under `claims`.
+A claim also records the harness its agent runs in, as `host`, by the title the MCP client gives Prism, such as `Claude Code`, or else by its name, such as `codex-mcp-client`, and records none when the client names itself in neither.
+A claim records the model of its agent, as `model`, only when the session's main agent took it and Prism's session-facts hook observed that agent's model, such as `claude-opus-5-5`.
+A sub-agent's claim records no model, and nor does a call that Prism cannot attribute to the main agent, such as a Claude Code call whose tool use Prism's hook did not record or a Codex call whose metadata names no thread.
+Each renewal of a main agent's claim writes the session's model as it is then, so a change of model reaches the claim within one renewal.
+`get_initiative` lists each live claim under `claims`, with its `host` and `model` when the claim records them.
 The review browser shows each claim's holder, activity, and time left on the slice board, the slice list, and the slice page, and marks the slices inside a scope that a design claim covers.
 A claim that lapsed without a release shows as expired until someone claims or releases the slice.
 

@@ -7,7 +7,7 @@ import { claimHolder } from "./slice-claims.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 
 // Which agent of a host session made a Prism tool call.
-// Codex names the calling thread in each call's turn metadata; Claude Code sends only the tool use id, so its PreToolUse hook records the sub-agent of each tool use here first.
+// Codex names the calling thread in each call's turn metadata; Claude Code sends only the tool use id, so its PreToolUse hook records each tool use, and the sub-agent that made it, here first.
 // The records live in Prism's private app directory, which every server process and hook of the session reads.
 const DIRECTORY = "call-agents";
 export const CALL_AGENT_TTL_MS = 24 * 60 * 60000;
@@ -29,9 +29,9 @@ async function removeExpired(directory, now) {
   }
 }
 
-/** Record the sub-agent of one Claude Code tool use, by session and tool use id; a main agent's tool use, which names no agent, records nothing. */
+/** Record one Claude Code tool use by session and tool use id, with the sub-agent that made it, or with none for the main agent's. */
 export async function recordCallAgent({ session, toolUseId, agentId, directory = callAgentDirectory(), now = Date.now() }) {
-  if (!text(session) || !text(toolUseId) || !text(agentId)) return false;
+  if (!text(session) || !text(toolUseId)) return false;
   await prepareDirectory(directory);
   await removeExpired(directory, now);
   const file = recordFile(directory, session, text(toolUseId));
@@ -41,12 +41,14 @@ export async function recordCallAgent({ session, toolUseId, agentId, directory =
   return true;
 }
 
-async function recordedAgent(session, toolUseId, directory, now) {
+// The hook's record of one tool use, { agentId } with null for the main agent's, or null when no hook recorded it.
+async function recordedUse(session, toolUseId, directory, now) {
   try {
     const file = recordFile(directory, session, toolUseId);
     const info = await stat(file);
     if (now - info.mtimeMs > CALL_AGENT_TTL_MS) return null;
-    return text(parseStoreJson(await readFile(file, "utf8"))?.agentId);
+    const record = parseStoreJson(await readFile(file, "utf8"));
+    return record && typeof record === "object" ? { agentId: text(record.agentId) } : null;
   } catch {
     return null;
   }
@@ -73,8 +75,26 @@ export async function callAgent(meta, { session = claimHolder(), directory = cal
   if (turn && thread && (text(turn.parent_thread_id) || turn.thread_source === "subagent")) return `thread:${thread}`;
   if (turn || text(meta?.threadId)) return MAIN_AGENT;
   const toolUseId = text(meta?.["claudecode/toolUseId"]);
-  const agentId = toolUseId ? await recordedAgent(session, toolUseId, directory, now) : null;
+  const agentId = toolUseId ? (await recordedUse(session, toolUseId, directory, now))?.agentId : null;
   return agentId ? `agent:${agentId}` : MAIN_AGENT;
+}
+
+/**
+ * Whether a call is positively the session's main agent's: main, subagent, or unknown.
+ * A Codex call is the main agent's when its turn metadata names a thread with no parent and a source other than subagent; a Claude Code call when the hook recorded its tool use without an agent.
+ * Every other call, such as one whose tool use no hook recorded, is unknown, while callAgent still counts it as the main agent's for run attribution.
+ */
+export async function callAgentRole(meta, { session = claimHolder(), directory = callAgentDirectory(), now = Date.now() } = {}) {
+  const turn = turnMetadata(meta);
+  if (turn) {
+    if (text(turn.parent_thread_id) || turn.thread_source === "subagent") return "subagent";
+    return text(turn.thread_id) ? "main" : "unknown";
+  }
+  if (text(meta?.threadId)) return "unknown";
+  const toolUseId = text(meta?.["claudecode/toolUseId"]);
+  const use = toolUseId ? await recordedUse(session, toolUseId, directory, now) : null;
+  if (!use) return "unknown";
+  return use.agentId ? "subagent" : "main";
 }
 
 /** Run one tool call as its agent, so every step of the call reads the same agent. */
