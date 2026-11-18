@@ -116,6 +116,9 @@ function taskId(metadata = {}) {
   return metadata["x-codex-turn-metadata"]?.thread_id ?? metadata.threadId ?? "mcp-process";
 }
 
+// The project roots that tool calls named in a host that names no project at start; only the first call for a root asks whether to open the browser.
+const namedRoots = new Set();
+
 async function requestedProjectRoot(argumentsValue) {
   const hostProjectRoot = process.env.CLAUDE_PROJECT_DIR;
   const hasSuppliedProjectRoot = Object.hasOwn(argumentsValue, "projectRoot");
@@ -141,8 +144,13 @@ async function requestedProjectRoot(argumentsValue) {
   }
   // The tool call's project root is the checkout whose first store access in this call may move its existing artifacts into the store, since this call's result reports the move.
   nameToolCallRoot(resolvedRoot);
-  // A host that names no project at start, such as Codex, lists its project in the review app from its first Prism tool call.
-  outsideToolCall(() => reviewServers.register(resolvedRoot));
+  // A host that names no project at start, such as Codex, lists its project in the review app from its first Prism tool call,
+  // and that call opens the review browser as a session start does, since it is the first moment the session knows its project.
+  if (hostProjectRoot) outsideToolCall(() => reviewServers.register(resolvedRoot));
+  else if (!namedRoots.has(resolvedRoot)) {
+    namedRoots.add(resolvedRoot);
+    void outsideToolCall(() => opensAtStart(resolvedRoot).then((open) => reviewServers.register(resolvedRoot, { open }), () => reviewServers.register(resolvedRoot)));
+  }
   // The native index starts building once the project is known, so a later search finds it ready; this never waits for the build, and the build moves no artifact.
   void outsideToolCall(() => startBackgroundPreparation(resolvedRoot));
   return resolvedRoot;

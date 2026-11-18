@@ -562,6 +562,7 @@ A session of a newer Prism release replaces an app of an older release on the sa
 A session never replaces a newer app.
 
 A new session opens the review browser on its project when no review tab of any project that can make changes is open.
+Codex does not name the project when a session starts, so a Codex session opens the review browser at its first Prism tool call.
 Starting several sessions at once opens at most one window.
 Cloud, CI, print-mode, and display-less sessions open nothing.
 Add `- Review browser on start: off` under `## Interaction` in `.prism/workflow.md` to turn this off for a project, or set `PRISM_REVIEW_BROWSER_ON_START=off` to turn it off for every project you work on.
