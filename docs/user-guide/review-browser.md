@@ -278,6 +278,17 @@ A session keeps running when the review app exits, idles out, restarts, or is re
 Each launched session keeps its record in `launches/<launch id>/` in the review app folder, readable only by you, and Prism removes it 14 days after the session's last run ended.
 The host's session id stays in that record on this computer: no shared record, history entry, or log holds it, and only this computer's page shows it, in the command that continues the session in a terminal.
 
+### How the review app reads a host's models
+
+The review app offers only the models, providers, and effort levels that a host on this computer reports, so it asks the host itself, and only for a tab that can make changes.
+Claude Code is asked as `claude -p --verbose --no-session-persistence --settings {"disableAllHooks":true} --strict-mcp-config --mcp-config {"mcpServers":{}} --input-format stream-json --output-format stream-json` with one `initialize` request and no prompt.
+Codex is asked through `codex app-server` for its providers and its visible models, without opening a thread.
+Either way, the host runs in the checkout's folder without the variables of an agent session, starts no model turn, so it spends no usage, keeps no session in its history, and runs none of your hooks or MCP servers.
+The review app closes the host's input once it has the answer, and ends a host that still runs 5 seconds later.
+A host that gives no answer within 20 seconds is ended and reported as `<host> did not report its run options: it gave no answer within 20 seconds.`; set `PRISM_RUN_OPTIONS_TIMEOUT_MS` for the review app to wait from 200 to 60000 milliseconds instead.
+A host's answer is kept for 10 minutes per checkout, and per provider for Codex, while an answer that failed is asked for again next time.
+The review app leaves out every option that it does not know or that changes how the host grants permissions, so those stay at the host's own values.
+
 ### The Launched sessions place
 
 Open **Launched sessions** from the Jump palette, where its detail reads `Headless sessions on this computer`, or at the address `review?artifact=launches`.

@@ -26,6 +26,7 @@ import { shippedCommit, sliceFiles } from "./slice-files.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
 import { listLaunches } from "../session/launched-sessions.mjs";
+import { readRunOptions, runOptionsQuery } from "../session/run-options.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 import { readStoredPreferences, writePreferences } from "./review-preferences.mjs";
 import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
@@ -1517,6 +1518,18 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     } else if (route === "/api/launches" && request.method === "GET") {
       // Every launched session of this machine that shares this checkout's record store; reading needs no write session.
       sendJson(response, 200, await listLaunches({ projectRoot, env: process.env }));
+    } else if (route === "/api/run-options" && request.method === "GET") {
+      // A read starts a host process, so only the page's write session may ask, and a refused query starts nothing.
+      if (!writableRequest(request)) {
+        sendJson(response, 403, { code: "write_forbidden", message: READ_ONLY_NOTICE });
+        return;
+      }
+      try {
+        sendJson(response, 200, await readRunOptions({ ...runOptionsQuery(url.searchParams), checkout: projectRoot, env: process.env }));
+      } catch (error) {
+        if (error?.name !== "RunOptionsError") throw error;
+        sendJson(response, error.status, { code: error.code, message: error.message, ...(error.field ? { field: error.field } : {}) });
+      }
     } else if (route === "/api/actions/targets" && request.method === "GET") {
       try {
         sendJson(response, 200, await listActionTargets({ projectRoot, kind: url.searchParams.get("kind"), checkouts: await checkoutRoots() }));

@@ -5,9 +5,28 @@ import path from "node:path";
 // The hosts that a launched session runs, the commands Prism runs for them, and the readers of their output streams.
 // Nothing here takes a value from the review page except the initiative identifier, checked by the caller, and the host.
 
+// HOSTS is also the order of every list of hosts. Each host's optionsRead is how Prism reads its run options without a turn or a
+// kept session: Claude Code answers one initialize control request in a print-mode session that keeps no session and runs no
+// hooks or servers, and Codex's app server lists its providers and models for a client that opens no thread.
 export const HOSTS = Object.freeze([
-  Object.freeze({ host: "claude-code", label: "Claude Code", executable: "claude" }),
-  Object.freeze({ host: "codex", label: "Codex", executable: "codex" })
+  Object.freeze({
+    host: "claude-code",
+    label: "Claude Code",
+    executable: "claude",
+    optionsRead: Object.freeze({
+      args: Object.freeze(["-p", "--verbose", "--no-session-persistence", "--settings", "{\"disableAllHooks\":true}", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", "--input-format", "stream-json", "--output-format", "stream-json"]),
+      request: Object.freeze({ type: "control_request", request_id: "prism-options", request: Object.freeze({ subtype: "initialize" }) })
+    })
+  }),
+  Object.freeze({
+    host: "codex",
+    label: "Codex",
+    executable: "codex",
+    optionsRead: Object.freeze({
+      args: Object.freeze(["app-server"]),
+      client: Object.freeze({ clientInfo: Object.freeze({ name: "prism-options", version: "1" }), capabilities: Object.freeze({ experimentalApi: true }) })
+    })
+  })
 ]);
 
 // The host session variables that a review app started by an agent session inherits; a launched host sees none of them.
@@ -167,21 +186,25 @@ export function resumeCommandOf(host, hostSessionId) {
   return host === "claude-code" ? `claude --resume ${hostSessionId}` : `codex resume ${hostSessionId}`;
 }
 
-/** The environment of a run: the starter's own, without the host session variables, and with PRISM_LAUNCH naming the launch. */
-export function hostEnvironment(env, launchId) {
+/** The starter's environment without the host session variables, as a launched run and a read of run options see it. */
+export function strippedEnvironment(env) {
   const result = { ...env };
   for (const name of STRIPPED_VARIABLES) delete result[name];
-  result.PRISM_LAUNCH = launchId;
   return result;
 }
 
-/** Splits a byte stream into lines, dropping every line longer than MAX_LINE_BYTES. */
-export function lineSplitter(onLine) {
+/** The environment of a run: the starter's own, without the host session variables, and with PRISM_LAUNCH naming the launch. */
+export function hostEnvironment(env, launchId) {
+  return { ...strippedEnvironment(env), PRISM_LAUNCH: launchId };
+}
+
+/** Splits a byte stream into lines, dropping every line longer than maxBytes, MAX_LINE_BYTES unless given. */
+export function lineSplitter(onLine, maxBytes = MAX_LINE_BYTES) {
   let pending = [];
   let pendingBytes = 0;
   let discarding = false;
   const emit = (buffer) => {
-    if (!discarding && buffer.length <= MAX_LINE_BYTES) onLine(buffer.toString("utf8").replace(/\r$/, ""));
+    if (!discarding && buffer.length <= maxBytes) onLine(buffer.toString("utf8").replace(/\r$/, ""));
   };
   return {
     push(chunk) {
@@ -199,7 +222,7 @@ export function lineSplitter(onLine) {
       if (start < chunk.length && !discarding) {
         const rest = chunk.subarray(start);
         pendingBytes += rest.length;
-        if (pendingBytes > MAX_LINE_BYTES) {
+        if (pendingBytes > maxBytes) {
           pending = [];
           pendingBytes = 0;
           discarding = true;
