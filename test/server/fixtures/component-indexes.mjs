@@ -139,9 +139,18 @@ export async function fakeRuntime(storage) {
   return { runtime, control };
 }
 
+const busy = (value) => value?.status === "preparing" || (value?.components ?? []).some((entry) => ["waiting", "preparing"].includes(entry.status));
+
+/**
+ * Repeats an index report or search until none of its components waits or prepares, and returns its last answer after READY_WAIT_MS.
+ * The runtime answers each call after at most 10 seconds, so a call's own waitMs cannot cover a slow machine's preparation.
+ */
+export async function oncePrepared(call) {
+  return settledValue(call, (value) => !busy(value), { timeout: READY_WAIT_MS });
+}
+
 /** Waits until no component of the project is waiting or preparing, reading only the runtime's status. */
 export async function settled(runtime, root) {
-  const busy = (status) => (status.components ?? []).some((entry) => ["waiting", "preparing"].includes(entry.status)) || status.status === "preparing";
   const status = await settledValue(() => runtime.status(root, 200), (value) => !busy(value), { timeout: READY_WAIT_MS, every: 20 });
   if (busy(status)) throw new Error("The component preparations did not settle.");
   return status;
