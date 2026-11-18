@@ -639,8 +639,15 @@ export async function serveOutsideSession(request, response, pathname) {
   const asset = request.method === "GET" || request.method === "HEAD" ? publicAsset(pathname) : null;
   if (asset) await serveFile(response, asset.file, asset.type);
   else if (wantsPage(request)) await sendUnavailable(response, "expired");
-  else send(response, 404, "Not found");
+  else {
+    // A call from a page loaded before the app restarted says that its link expired, so the page reloads into the page that tells the person so.
+    response.setHeader(EXPIRED_LINK_HEADER, "expired");
+    send(response, 404, "Not found");
+  }
 }
+
+/** The header on a refusal of a call whose link carries no current viewer credential. */
+export const EXPIRED_LINK_HEADER = "X-Prism-Link";
 
 // The file and type of a route under kit/ or styles/, or null for a path that leaves its folder, is not a known type, or is not a styles/<name>.css.
 export function publicAsset(route) {
