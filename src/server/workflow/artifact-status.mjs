@@ -72,8 +72,19 @@ const list = (value) => Array.isArray(value) ? value.filter(isRecord) : [];
 const VERSION = /^sha256:[0-9a-f]{64}$/;
 
 /** Whether a status is one that an approval gate may ask for: one line of 1 to 200 characters without surrounding spaces, and never Accepted on an ADR, which only a ship records. */
-export function askableStatus(kind, status) {
-  return typeof status === "string" && status.length > 0 && status.length <= STATUS_MAX && status === status.trim() && !/[\r\n]/.test(status) && !(kind === "adrs" && /^accepted$/i.test(status));
+export function askableStatus(kind, status, shipped = undefined) {
+  if (!(typeof status === "string" && status.length > 0 && status.length <= STATUS_MAX && status === status.trim() && !/[\r\n]/.test(status))) return false;
+  if (shipped !== undefined) return kind === "adrs" && status === SHIP_STATUS && shippedAcceptance(shipped);
+  return !(kind === "adrs" && /^accepted$/i.test(status));
+}
+
+/**
+ * Whether a value names what an approval that accepts an ADR after its initiative shipped records: { initiative, verifiedBy },
+ * the shipped initiative and the slice, repository, and commit of each slice its ship recorded.
+ */
+export function shippedAcceptance(value) {
+  return isRecord(value) && typeof value.initiative === "string" && value.initiative.length > 0 && value.initiative.length <= 200 && Array.isArray(value.verifiedBy) && value.verifiedBy.length <= 1000
+    && value.verifiedBy.every((item) => isRecord(item) && typeof item.slice === "string" && (item.repository === null || typeof item.repository === "string") && (item.commit === null || typeof item.commit === "string"));
 }
 
 const boundedText = (value, max) => typeof value === "string" && value.length <= max;
@@ -86,7 +97,7 @@ const optionalPerson = (value) => value === undefined || value === null || (isRe
  * A gate that a damaged file or another writer placed in a synced record otherwise could decide what an approval writes, or what Attention shows.
  */
 function wellFormedGate(kind, gate) {
-  if (typeof gate.id !== "string" || !gate.id || gate.id.length > 200 || !askableStatus(kind, gate.status) || !VERSION.test(gate.version ?? "")) return false;
+  if (typeof gate.id !== "string" || !gate.id || gate.id.length > 200 || !askableStatus(kind, gate.status, gate.shipped) || !VERSION.test(gate.version ?? "")) return false;
   if (!boundedText(gate.question, GATE_TEXT_MAX) || !gate.question || !optionalText(gate.context, GATE_TEXT_MAX)) return false;
   if (!optionalText(gate.askedAt, 64) || !optionalText(gate.closedAt, 64) || !optionalText(gate.closed, 64) || !optionalText(gate.supersededBy, 200)) return false;
   if (gate.answer === undefined) return true;
@@ -162,12 +173,16 @@ export function statusMismatch(kind, file, text, record) {
  * Record a pending approval gate on a requirement or ADR at its current version: { record, gate }.
  * A new question replaces the artifact's earlier pending ones, which close as superseded, so one artifact waits on one approval at a time.
  */
-export function askApproval(kind, file, record, { status = "Approved", question, context, version, now = new Date() }) {
+export function askApproval(kind, file, record, { status, question, context, version, shipped, now = new Date() }) {
   if (!hasStatus(kind)) throw notAStatusArtifact(file);
-  const wanted = typeof status === "string" ? status.trim() : "";
+  const wanted = typeof status === "string" ? status.trim() : shipped ? SHIP_STATUS : "Approved";
   if (!wanted || wanted.length > STATUS_MAX || /[\r\n]/.test(wanted)) throw fail("validation_failed", `The status of an approval gate is one line of 1 to ${STATUS_MAX} characters, such as Approved.`);
-  if (kind === "adrs" && /^accepted$/i.test(wanted)) {
-    throw fail("status_by_ship", `${file} is an ADR, which becomes Accepted only when a person confirms that an initiative whose slice.md links it ships; no approval gate accepts it. Ask approval for another status, such as Superseded, or ship the initiative after its correctness gate.`);
+  if (shipped) {
+    // An approval that names a shipped initiative accepts a Proposed ADR that its ship left Proposed, and nothing else.
+    if (kind !== "adrs" || wanted !== SHIP_STATUS) throw fail("validation_failed", `An approval that names the shipped initiative ${shipped.initiative} accepts an ADR, so its status is Accepted and its file is an ADR.`);
+    if (record.status !== "Proposed") throw fail("validation_failed", `${file} is ${record.status}, and an approval after a ship accepts only a Proposed ADR.`);
+  } else if (kind === "adrs" && /^accepted$/i.test(wanted)) {
+    throw fail("status_by_ship", `${file} is an ADR, which becomes Accepted when a person confirms that an initiative whose slice.md links it ships, or approves it afterwards for the shipped initiative that realized it; ask approval with shipped naming that initiative, or for another status, such as Superseded, or ship the initiative after its correctness gate.`);
   }
   if (wanted === record.status && version === record.acceptedVersion) {
     throw fail("nothing_to_approve", `${file} is already ${record.status}, and its bytes are the version a person accepted, so there is nothing to approve; change the artifact first, or ask for another status.`);
@@ -179,7 +194,8 @@ export function askApproval(kind, file, record, { status = "Approved", question,
     version,
     question: typeof question === "string" && question.trim() ? question.trim() : `Approve ${file} as ${wanted}?`,
     context: typeof context === "string" && context.trim() ? context.trim() : null,
-    askedAt: at
+    askedAt: at,
+    ...(shipped ? { shipped: { initiative: shipped.initiative, verifiedBy: shipped.verifiedBy } } : {})
   };
   const superseded = record.pending.map((earlier) => ({ ...earlier, closedAt: at, closed: "superseded", supersededBy: gate.id }));
   return { record: { ...record, pending: [gate], closed: keep([...record.closed, ...superseded], CLOSED_KEPT) }, gate };
@@ -260,7 +276,7 @@ export function answerApproval(kind, file, record, { id, choice, note = null, by
     if (closed?.closed === "shipped") throw fail("unknown_gate", `An initiative whose slice.md links ${file} shipped and accepted it, which ended this question; the agent asks again if another status still applies.`);
     throw fail("unknown_gate", closed ? "The agent asked again since this question, so it no longer applies." : "The question is no longer open; the agent resolved or withdrew it.");
   }
-  if (!askableStatus(kind, gate.status) || !VERSION.test(gate.version ?? "")) {
+  if (!askableStatus(kind, gate.status, gate.shipped) || !VERSION.test(gate.version ?? "")) {
     throw fail("gate_invalid", `The approval gate on ${file} holds a status or version that no ask_approval records, so answering it would change ${file} in a way nobody asked; nothing changed. The agent asks again.`);
   }
   if (!APPROVAL_CHOICES.includes(choice)) throw fail("invalid_answer", "The answer is invalid: choice must be approve or request-changes.");
@@ -280,7 +296,12 @@ export function answerApproval(kind, file, record, { id, choice, note = null, by
   }
   const next = rewriteStatusLines(text, gate.status, at.slice(0, 10));
   return {
-    record: { ...record, status: gate.status, pending, closed, approval: { gate: gate.id, status: gate.status, at, by }, history: keep([...record.history, { event: "approved", gate: gate.id, status: gate.status, at, by, ...applied }], HISTORY_KEPT) },
+    // An approval after a ship records the acceptance as a ship does, naming the shipped initiative and its verified commits, so the ADR reads as accepted by that initiative.
+    record: {
+      ...record, status: gate.status, pending, closed, approval: { gate: gate.id, status: gate.status, at, by },
+      ...(gate.shipped ? { acceptance: { gate: gate.id, initiative: gate.shipped.initiative, at, verifiedBy: gate.shipped.verifiedBy, afterShip: true } } : {}),
+      history: keep([...record.history, { event: "approved", gate: gate.id, status: gate.status, at, by, ...(gate.shipped ? { initiative: gate.shipped.initiative } : {}), ...applied }], HISTORY_KEPT)
+    },
     text: next,
     gate: { ...gate, answer }
   };

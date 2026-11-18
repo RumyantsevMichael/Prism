@@ -81,3 +81,29 @@ test("an ADR that cites other requirements, or that another plan's slice.md link
   assert.equal(await statusOf(prism, OTHER), "Proposed");
   assert.equal(await statusOf(prism, UNRELATED), "Proposed");
 });
+
+test("a person's approval accepts a Proposed ADR that a shipped initiative realized, and the shipped decision stays as it is", async (context) => {
+  const { prism, review } = await finished(context, {});
+  ok(await ship(prism, await approved(prism, review)));
+  const decision = (await roadmap(prism)).initiatives.find((item) => item.id === "reports").decision;
+  // The ADR was written after the ship, as one an older ship left Proposed.
+  await writeArtifact(prism, OWN, citing("Own"));
+  const LOOSE = "docs/ADRs/billing/loose.md";
+  await writeArtifact(prism, LOOSE, adrFile("Loose"));
+  refused(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: OWN, status: "Accepted", context: "No initiative named." }] }), "status_by_ship");
+  refused(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: OWN, shipped: "billing", context: "Not a shipped initiative." }] }), "validation_failed");
+  refused(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: LOOSE, shipped: "reports", context: "An ADR the initiative never cited." }] }), "validation_failed");
+  refused(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: OWN, shipped: "reports", status: "Superseded", context: "Another status." }] }), "validation_failed");
+
+  const gate = ok(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: OWN, shipped: "reports", context: "The reports initiative shipped while this ADR stayed Proposed." }] })).artifacts[0].gate;
+  assert.equal((await answerGate(review, { id: gate, choice: "approve" })).status, 200);
+  const read = ok(await prism.call("get_artifact", { path: OWN }));
+  assert.equal(read.status, "Accepted");
+  assert.match(read.content, /^Status: Accepted$/m);
+  assert.equal(read.acceptance.initiative, "reports");
+  assert.equal(read.acceptance.gate, gate);
+  assert.equal(read.acceptance.afterShip, true);
+  assert.deepEqual(read.acceptance.verifiedBy, Object.keys(decision.slices).map((slice) => ({ slice, repository: decision.slices[slice].repository, commit: decision.slices[slice].verified })));
+  assert.deepEqual((await roadmap(prism)).initiatives.find((item) => item.id === "reports").decision, decision, "the shipped decision is unchanged");
+  refused(await prism.call("update_artifact", { operations: [{ op: "ask_approval", path: OWN, shipped: "reports", context: "Again." }] }), "validation_failed");
+});
