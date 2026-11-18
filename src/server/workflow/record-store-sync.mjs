@@ -147,10 +147,10 @@ const NOTICES = "notices";
 // Git already passes -batch to TortoisePlink, and a program whose variant Git only finds by probing it may take no options at all, so neither gets one.
 const NO_PROMPT_OPTION = { ssh: "-o BatchMode=yes", plink: "-batch", putty: "-batch" };
 
-// The variant Git gives an SSH program, from GIT_SSH_VARIANT or else from the program's name, as Git's connect.c decides it.
-function sshVariant(env, program) {
-  const named = env.GIT_SSH_VARIANT?.toLowerCase();
-  if (named) return named;
+// The variant Git gives an SSH program, from GIT_SSH_VARIANT, else from ssh.variant, else from the program's name, as Git's connect.c decides it.
+// Git takes a named variant as written and treats a name it does not know as ssh.
+function sshVariant(named, program) {
+  if (named) return ["auto", "plink", "putty", "tortoiseplink", "simple"].includes(named) ? named : "ssh";
   const name = program.split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, "");
   return ["ssh", "plink", "tortoiseplink"].includes(name) ? name : "auto";
 }
@@ -174,24 +174,51 @@ function firstWord(command) {
 }
 
 // An SSH password, passphrase, or host-key prompt would hang a sync that holds the store lock, or a background fetch nobody watches,
-// so the SSH command Git runs is the person's own GIT_SSH_COMMAND or GIT_SSH with its variant's batch option added, or plain SSH in batch mode.
-function sshEnvironment(env) {
-  const command = env.GIT_SSH_COMMAND;
+// so the SSH command Git runs is the one the person set, with its variant's batch option added, or plain SSH in batch mode.
+// Git takes the command from GIT_SSH_COMMAND, else core.sshCommand, else GIT_SSH, and settings holds the person's core.sshCommand and ssh.variant, if any.
+function sshEnvironment(env, settings = {}) {
+  const command = env.GIT_SSH_COMMAND || settings.sshCommand;
   // GIT_SSH names a program that Git runs without a shell, so it becomes a quoted command line that the option can follow.
   const line = command || (env.GIT_SSH ? `'${env.GIT_SSH.replaceAll("'", "'\\''")}'` : "");
   if (!line) return { GIT_SSH_COMMAND: `ssh ${NO_PROMPT_OPTION.ssh}` };
-  const option = NO_PROMPT_OPTION[sshVariant(env, command ? firstWord(command) : env.GIT_SSH)];
+  const option = NO_PROMPT_OPTION[sshVariant(env.GIT_SSH_VARIANT || settings.variant, command ? firstWord(command) : env.GIT_SSH)];
   return option ? { GIT_SSH_COMMAND: `${line} ${option}` } : {};
 }
 
-function gitEnvironment(extra = {}) {
+function gitEnvironment(extra = {}, settings = {}) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !INHERITED_OUT.test(name)));
-  const ssh = sshEnvironment(env);
+  const ssh = sshEnvironment(env, settings);
   // The system attributes file, like the person's own and the store's, never decides which bytes a store command hands over.
   // A replace ref, which pack-objects and push ignore, would make the checks read other objects than the push sends, and a grafts file other parents than every other machine reads,
   // so every store command reads the real objects and parents instead: /dev/null, which Git for Windows also opens, holds no graft,
   // and FIXED_CONFIG turns off the advice Git gives about any grafts file it opens.
   return { ...env, ...ssh, GIT_TERMINAL_PROMPT: "0", GIT_MERGE_AUTOEDIT: "no", GIT_ATTR_NOSYSTEM: "1", GIT_NO_REPLACE_OBJECTS: "1", GIT_GRAFT_FILE: "/dev/null", LC_ALL: "C", ...extra };
+}
+
+// The Git commands that reach a remote, and so may run SSH.
+const REMOTE_COMMANDS = new Set(["clone", "fetch", "pull", "push", "ls-remote", "archive"]);
+
+// The leading -c settings of a command's arguments, and its Git command after them.
+function commandOf(args) {
+  const settings = [];
+  let index = 0;
+  for (; args[index]?.startsWith("-"); index += 1) if (args[index] === "-c" || args[index] === "-C") { if (args[index] === "-c") settings.push("-c", args[index + 1]); index += 1; }
+  return { settings, command: args[index] };
+}
+
+// The environment of one Git command in base, whose SSH command, when the command may reach a remote, is the person's core.sshCommand with the batch option added, if they set one.
+// Git reads core.sshCommand and ssh.variant from every configuration that applies in base, so the command reads them there, with its own -c settings, unless GIT_SSH_COMMAND and GIT_SSH_VARIANT already decide both.
+async function commandEnvironment(base, args, extra, connects) {
+  const { settings, command } = commandOf(args);
+  if (!(connects || REMOTE_COMMANDS.has(command)) || (process.env.GIT_SSH_COMMAND && process.env.GIT_SSH_VARIANT)) return gitEnvironment(extra);
+  const listed = await git(base, [...settings, "config", "-z", "--get-regexp", "^(core\\.sshcommand|ssh\\.variant)$"], { env: extra });
+  const found = {};
+  // Each entry is the key, a newline, and the value, and the last value of a key is the one Git uses.
+  for (const entry of listed.ok ? listed.stdout.toString("utf8").split("\0").filter(Boolean) : []) {
+    const at = entry.indexOf("\n");
+    if (at > 0) found[entry.slice(0, at)] = entry.slice(at + 1);
+  }
+  return gitEnvironment(extra, { sshCommand: found["core.sshcommand"], variant: found["ssh.variant"] });
 }
 
 // The sync uses Git only as an object store: it hashes a file's bytes with no filters, writes a blob's bytes as they are, and never runs add, checkout, reset, or status, so no ignore or attributes rule applies.
@@ -212,7 +239,7 @@ export function markManagedStore(base) {
   managed.add(base);
 }
 
-/** Run Git in a folder with the sanitized store environment and timeout: { ok, code, missing, stdout, text, stderr }. */
+/** Run Git in a folder with the sanitized store environment and timeout: { ok, code, missing, stdout, text, stderr }; connects says a command that Git would not otherwise name as reaching a remote may still reach one, as a blobless clone does to read a blob. */
 export function runGit(base, args, options) {
   return git(base, args, options);
 }
@@ -223,9 +250,10 @@ const GIT_OUTPUT_MAX = 64 * 1024 * 1024;
 // The most bytes of Git's error output that a sync keeps, which a remote's messages could otherwise grow without end.
 const GIT_ERRORS_MAX = 64 * 1024;
 
-function git(base, args, { env = {}, input } = {}) {
+async function git(base, args, { env = {}, input, connects = false } = {}) {
+  const environment = await commandEnvironment(base, args, env, connects);
   return new Promise((resolve) => {
-    const child = execFile("git", [...FIXED_CONFIG, "-C", base, ...args], { env: gitEnvironment(env), timeout: SETTINGS.gitTimeoutMs, maxBuffer: GIT_OUTPUT_MAX, encoding: "buffer", windowsHide: true }, (error, stdout, stderr) => {
+    const child = execFile("git", [...FIXED_CONFIG, "-C", base, ...args], { env: environment, timeout: SETTINGS.gitTimeoutMs, maxBuffer: GIT_OUTPUT_MAX, encoding: "buffer", windowsHide: true }, (error, stdout, stderr) => {
       // Nothing here may throw, since a throw in this callback would end the process rather than the sync.
       try {
         const over = error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
@@ -248,9 +276,10 @@ function git(base, args, { env = {}, input } = {}) {
  * take may return a promise, and the output waits for it, so a reader can act on a batch of records before more arrive; take returning false stops the listing.
  * Returns { ok, over, long, stopped, stderr }: over is "count" or "bytes" when a bound on all records was passed, long holds the first bytes of a record above maxRecord, and stopped says take stopped it.
  */
-function gitRecords(base, args, { separator, limit = Infinity, maxBytes = Infinity, maxRecord = Infinity, take, input, env = {} }) {
+async function gitRecords(base, args, { separator, limit = Infinity, maxBytes = Infinity, maxRecord = Infinity, take, input, env = {} }) {
+  const environment = await commandEnvironment(base, args, env, false);
   return new Promise((resolve) => {
-    const child = spawn("git", [...FIXED_CONFIG, "-C", base, ...args], { env: gitEnvironment(env), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    const child = spawn("git", [...FIXED_CONFIG, "-C", base, ...args], { env: environment, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     let count = 0, bytes = 0, over = null, long = null, stopped = false, failure = null, done = false;
     const errors = [];
     let errorBytes = 0;
