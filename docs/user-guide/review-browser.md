@@ -249,6 +249,11 @@ A launch action is unavailable with a reason such as `Claude Code was not found:
 Checkouts whose records live in the same place, such as two checkouts of one shared store, count as one initiative here, so only one launched session of an initiative runs on this computer at a time.
 Like every action, a launch needs a tab that can make changes.
 
+The initiative page also shows how the initiative's latest launched session on this computer stands.
+While that session failed, is blocked, waits for you, or runs, the page head shows `Last run failed`, `Last run blocked`, `Waiting for you`, or `Running` beside **Launch**, and pressing it opens **Launch an orchestration**, or **Launched sessions** in a tab that cannot make changes.
+At the top of **Launch an orchestration**, **Latest run** names the session's host and state, with its reason, such as `Claude Code reported an error:` and the host's own message or `Codex ended with exit code 1.`, and **Open in Launched sessions** opens its row.
+The page reads this every few seconds, so a session that fails moments after it starts shows there without a reload.
+
 Before anything starts, Prism asks you in a dialog of the operating system, outside the browser, so a script that drives the page cannot launch on its own.
 The dialog says `Start a <host> session on this computer that runs Prism's orchestrate skill for the initiative <initiative> in <checkout>? Further launches in the next 30 minutes will start without asking.`, offers **Launch** and **Cancel**, and Cancel is its default answer.
 When you choose **Launch**, the session starts and the launch window opens: for the next 30 minutes, further launches and resumes on this computer start without asking, and the window's end stops no running session.
@@ -335,11 +340,11 @@ A slice whose design waits for your answer at its design gate shows as in design
 The list shows the slice tree, and the graph orders leaf slices by execution order.
 A slice that records a [component](workflow.md#components) carries a small label with its `<repository>/<component>` identity in the slice tree, on its board card, and on its slice page, and a slice without one, such as a split scope or a slice accepted before components existed, has no label.
 Beside the view choice, a line lists the unstarted leaves that can be designed next, leaving out those in design review, and those that can start once their prerequisites finish.
-A slice page shows the slice's diagrams, its design from `slice.md`, the verification run, the review ledger, its [verified files](#a-slices-files-after-verification), and every file in the slice folder.
+A slice page shows the slice's design views, its design from `slice.md`, the verification run, the review ledger, its [verified files](#a-slices-files-after-verification), and every file in the slice folder.
 It is the page to read at a design gate.
 Under its title a tag line names the slice's phase with its gate or status, such as `Design · design gate open`, beside its requirements, and ends with who holds the slice, the activity, and the time left, with the exact times on hover or focus.
-The tabs are Design, Diagram, Verification, Review, Files, and Change map.
-The Review tab counts the open findings and the Files tab the slice folder's files.
+The tabs are Design, Views, Verification, Review, Files, and Change map.
+The Views tab counts the views, the Review tab the open findings, and the Files tab the slice folder's files.
 The Change map tab is last and marked Deprecated, because the Files tab and the verified result replace it; it stays until existing slices no longer need it.
 The Review tab holds the slice's review ledger, which the review record's own page shows too.
 Its summary line names the current wave and whether it is open or accepted, counts the unresolved findings, those that block shipping until verified, the deferred ones, and open conflicts, and shows each reviewer with the result of their lane.
@@ -352,7 +357,13 @@ Folds below hold the waves, with their reviewers, what each compared, its findin
 On Attention, the review loop decision shows its summary with the findings of each wave as a table.
 **Details and settings** at the end of the page bar shows the slice's outcome, slug, parent, children, dependencies, and active work, and the initiative's settings.
 
-Every PlantUML file directly in the slice folder gets a tab above the design, with `code.puml` first when it exists.
+The Views tab shows each view that the `## Views` section of the slice's `slice.md` declares, in the declared order, as one card named by the question the view answers.
+The line above the question names the view's kind and file, such as `Sequence view · flow.puml`.
+The line under it reads `This view explains §1 and §2 of the contract in <contract>; where the view and the contract differ, the contract decides.`
+Each `§n` opens the Design tab at that clause and highlights it, or opens the contract's page at that clause when this page does not list it, and the contract opens the design that holds the contract.
+A diagram or wireframe view is drawn, with the zoom, source, and Maximize controls of a diagram card, and an API view shows its JSON source, which scrolls after about sixteen lines and has a Copy button.
+Open shows the view on its own page.
+A scope whose design planned slices shows its own views first, then each planned slice that declares views under the slice's title, with Open slice beside it, and one line names the planned slices that declare no views.
 A diagram sits on a sheet that follows the light or dark theme.
 
 The design is `slice.md` itself, with Prism's checks placed in it.
@@ -421,6 +432,7 @@ An open preview stays while the pointer crosses other links on its way to the pr
 An initiative preview shows its state, band, intent, and progress, and a slice preview shows its status and outcome.
 A link to a document section previews that section.
 A link to a PlantUML file previews the diagram drawn small enough to fit.
+A declared design view opened on its own page, or in the side panel, takes its question as its title with its kind above it, and the same line with its clause links under the title.
 A file's preview has a Show in side panel button, and Alt+click on a link does the same: the whole file opens in a panel beside the current page, at the linked heading or lines.
 The panel draws a PlantUML file, and the diagrams a document links, as its page does, fitted to the panel's width, with the same zoom and source controls.
 The side panel holds one file at a time, so opening another replaces it, and a link inside the panel opens its target in the panel.

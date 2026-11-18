@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { writeOverview } from "./overview.mjs";
 import { writePlanFile } from "./plan-files.mjs";
 import { defer } from "./teardown.mjs";
 
@@ -129,9 +130,15 @@ export function slicePlan(slices) {
   ];
 }
 
-/** Propose a slice plan for the root scope and accept it, writing each planned slice's slice.md first. */
-export async function planAndAccept(root, slices) {
+/** Write each planned slice's slice.md, and for a plan of several slices the overview that names them. */
+export async function plannedSlices(root, slices) {
   for (const slice of slices) await plannedSlice(root, slice.slug, slice.changes);
+  if (slices.length > 1) await writeOverview(root, PLANS, slices.map((slice) => slice.slug));
+}
+
+/** Propose a slice plan for the root scope and accept it, writing each planned slice's slice.md and the plan's overview first. */
+export async function planAndAccept(root, slices) {
+  await plannedSlices(root, slices);
   await update(root, [{ op: "propose_design", slug: INITIATIVE, operations: slicePlan(slices) }]);
   return update(root, [{ op: "accept_proposal", slug: INITIATIVE, reviewRequired: [] }]);
 }

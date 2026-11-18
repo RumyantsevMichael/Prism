@@ -32,7 +32,7 @@ const colorsOf = (svg) => [...svg.matchAll(/\b(?:fill|stroke)="(#[0-9a-fA-F]{3,8
 
 test("clause 63: the PlantUML default color table names the vendored runtime and maps each default to a diagram role or keeps it", async () => {
   const { PLANTUML_DEFAULTS, PLANTUML_RUNTIME } = await import(pathToFileURL(path.join(ROOT, "dist/server/review/public/kit/plantuml-defaults.js")).href);
-  assert.equal(PLANTUML_RUNTIME, "1.2026.8");
+  assert.equal(PLANTUML_RUNTIME, "1.2026.9");
   assert.ok(Object.isFrozen(PLANTUML_DEFAULTS), "the table is frozen");
   for (const [color, role] of Object.entries(PLANTUML_DEFAULTS)) {
     assert.match(color, /^#[0-9A-F]{6}(?:[0-9A-F]{2})?$/, `${color} is upper-case hex`);

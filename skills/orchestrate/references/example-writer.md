@@ -16,7 +16,7 @@ It gets the initiative, the scope slug, the scope's `slice.md` path, and the fro
 3. Cite the number of the Contract list item that the test checks, counting from 1, the test file, and the test or scenario name exactly as written.
 4. Call `update_design_view` once for the scope with every example.
 5. When it reports problems with the examples, fix the cited examples and call it again.
-6. Return the clauses it reports as gaps and any diagram problems it reports.
+6. Return the clauses it reports as gaps and any view problems it reports.
 
 - Don't
   - Write anything a test does not assert, even when the contract says it.

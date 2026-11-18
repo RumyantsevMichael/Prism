@@ -1284,6 +1284,42 @@ a.inspect-tile:focus-visible {
   flex: none;
 }
 
+/* The latest launched run sits above the launch actions, its reason wrapping under its state. */
+.initiative-latest-run {
+  display: grid;
+  gap: var(--prism-space-2);
+  padding-bottom: var(--prism-space-4);
+  margin-bottom: var(--prism-space-3);
+  border-bottom: 1px solid var(--prism-color-line);
+  min-width: 0;
+}
+
+.initiative-latest-run[hidden],
+.initiative-last-run-slot:empty {
+  display: none;
+}
+
+.initiative-latest-run-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2) var(--prism-space-4);
+  min-width: 0;
+}
+
+.initiative-latest-run-title {
+  min-width: 0;
+  font-weight: var(--prism-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.initiative-latest-run-reason {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
 .initiative-settings-lead {
   margin: 0 0 var(--prism-space-4);
   color: var(--prism-color-ink-muted);

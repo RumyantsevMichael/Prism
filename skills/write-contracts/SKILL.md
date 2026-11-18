@@ -1,6 +1,6 @@
 ---
 name: write-contracts
-description: "Create or update an executable boundary contract only when production code, generated code, or verification consumes it."
+description: "Create or update an executable boundary contract only when production code, generated code, or verification consumes it, and write an API specification view when design asks for one for the design gate."
 argument-hint: '[boundary]'
 sdm: "0.3"
 ---
@@ -16,15 +16,16 @@ Prose and duplicate representations of implementation details are not contracts.
 1. If `.prism/workflow.md` exists, read it first.
 2. Read applicable Approved requirements, ADRs, and the boundary's consuming code and tests, through `get_artifact` for [store artifacts](../workflow/SKILL.md#common-terms).
 3. Check existing and required production, generation, and verification consumers.
-4. If no consumer needs the contract:
+4. When design asks for an `api` view of an HTTP or message API, write or declare its OpenAPI or AsyncAPI specification as the [API view](references/api-view.md) shows, also when no consumer needs a contract.
+5. If no consumer needs the contract:
    1. Remove any obsolete contract.
    2. After removal, run affected verification.
    3. Return through [Return the decision](#3-return-the-decision).
-5. Otherwise:
+6. Otherwise:
    1. Reuse an existing governing type or schema.
    2. When none exists, select the canonical source, API, schema, or test path using existing ownership and generation conventions, giving a new file a [portable name](../workflow/SKILL.md#common-terms).
 
-Final contracts do not belong in slice folders.
+Final contracts do not belong in slice folders, but an API view that is not the contract does, and it needs no consumer.
 
 ## 2. Bind and verify
 
@@ -52,5 +53,5 @@ A design's failing acceptance tests can leave behavior missing, but the contract
    Contract: NO CONTRACT NEEDED
    Reason: <specific reason>
    ```
-3. After the block, report verification results and any removed path.
+3. After the block, report verification results, any API view path, and any removed path.
 4. Return to the calling phase.

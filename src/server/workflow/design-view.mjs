@@ -4,7 +4,8 @@ import path from "node:path";
 import { assertInput } from "./artifact-schema.mjs";
 import { inArtifactStore, listStoreArtifacts, locateRecord, readArtifactBytes, readArtifactText, readRecord, readStoreFileBytes, sliceDocumentFolder, STORE_FILE_BOUNDS, withRecordLock, writeRecord } from "./record-store.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
-import { checkFolderDiagrams, diagramProblems } from "./diagram-check.mjs";
+import { checkFolderViews, listedViews, viewProblems } from "./diagram-check.mjs";
+import { contractClauses, listItems as items, section } from "./view-declarations.mjs";
 import { acceptedDesign, readFrozenTestOf } from "./slice-design.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 import { refuseShipped } from "./shipped-history.mjs";
@@ -53,31 +54,7 @@ export const UPDATE_DESIGN_VIEW_SCHEMA = {
   }
 };
 
-// A level-two section of slice.md, without its heading, or null when the design has none.
-function section(source, title) {
-  const match = new RegExp(`^## ${title}[ \\t]*$`, "m").exec(source);
-  if (!match) return null;
-  const rest = source.slice(match.index + match[0].length);
-  const next = /^#{1,2} /m.exec(rest);
-  return next ? rest.slice(0, next.index) : rest;
-}
-
-// Top-level list items of a section; an indented or wrapped line belongs to the item above it.
-function items(text) {
-  const result = [];
-  for (const line of text.split(/\r?\n/)) {
-    const item = /^(?:[-*+]|\d+[.)])\s+(.*)$/.exec(line);
-    if (item) result.push(item[1].trim());
-    else if (line.trim() && result.length && /^\s/.test(line)) result[result.length - 1] += ` ${line.trim()}`;
-  }
-  return result;
-}
-
-/** The numbered clauses of a design's Contract section. */
-export function contractClauses(source) {
-  const text = section(source, "Contract");
-  return text === null ? [] : items(text);
-}
+export { contractClauses };
 
 /**
  * The planned changes of a design's Changes section: `- <add|change|remove> \`path\`[, \`path\`]: units and why (§clause, …)`.
@@ -194,8 +171,8 @@ export async function updateDesignView(input) {
   }, fail);
   const cited = new Set(document.examples.map((item) => item.clause));
   const gaps = clauses.map((text, index) => ({ clause: index + 1, text })).filter((item) => !cited.has(item.clause));
-  // The designer learns about a diagram the design gate would refuse here, before anyone accepts the design.
-  // The root scope's folder holds every slice folder, so its slices' code views are checked with it.
+  // The designer learns about a view the design gate would refuse here, before anyone accepts the design.
+  // The root scope's folder holds every slice folder, so its slices' views are checked with it.
   const folder = path.posix.dirname(own.path);
   const folders = [folder];
   if (initiativeDirectory(await readWorkflowConfig(root), initiative) === folder) {
@@ -206,16 +183,19 @@ export async function updateDesignView(input) {
       folders.push(...entries.filter((entry) => entry.isDirectory()).map((entry) => `${folder}/${entry.name}`).sort());
     }
   }
-  const diagrams = [];
-  for (const item of folders) diagrams.push(...await checkFolderDiagrams(root, item));
-  const refused = diagramProblems(diagrams);
+  const config = await readWorkflowConfig(root);
+  const scope = { top: initiativeDirectory(config, initiative) ?? folder, initiative, plans: config.paths?.plans ?? null };
+  const results = [];
+  for (const item of folders) results.push(...await checkFolderViews(root, item, scope));
+  const refused = viewProblems(results);
+  const views = listedViews(results);
   return {
     status: "written",
     clauses: clauses.length,
     examples: document.examples.length,
     gaps,
-    ...(diagrams.length ? { diagrams: diagrams.filter((item) => item.checked && item.valid).map(({ path: file, elements, relations }) => ({ path: file, elements, relations })) } : {}),
-    ...(refused.length ? { diagramProblems: refused } : {})
+    ...(views.length ? { views } : {}),
+    ...(refused.length ? { viewProblems: refused } : {})
   };
 }
 

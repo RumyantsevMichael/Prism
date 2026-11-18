@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import http from "node:http";
-import { rm } from "node:fs/promises";
+import { rename, rm } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { alias, artifactConfig, bareRemote, blobOf, commitFiles, eventually, exists, git, isolateGit, networkStore, ok, place, server, sha16, startApp, storeCheckout, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
@@ -116,6 +116,25 @@ test("clauses 44 and 45: a repository whose code cannot be fetched is named, whi
   const index = await prism.get(`/w/${id}/api/index`);
   assert.equal(index.status, 200);
   assert.deepEqual(index.json.repositories.map((entry) => [entry.name, entry.code.state]), [["api", "on"], ["web", "unreachable"]]);
+});
+
+test("clause 44: a repository whose fetch fails after a clone keeps showing the branches and files it fetched last", async (context) => {
+  const { code, prism, id } = await codeWorkspace(context);
+  assert.equal((await enable(prism, id, "api")).status, 200);
+  // A blobless clone holds the contents of the files someone opened, so a file opened before the fetch failed still reads.
+  const route = `/w/${id}/api/code/file?repository=api&branch=main&path=packages/billing/total.js`;
+  assert.equal((await prism.get(route)).status, 200);
+  await rename(code, `${code}.gone`);
+  const repositories = async () => (await prism.get(`/w/${id}/api/index`)).json.repositories;
+  const stream = http.get(`${prism.viewer}/w/${id}/api/events`);
+  context.after(() => stream.destroy());
+  const failed = await eventually(async () => (await repositories()).find((entry) => entry.name === "api" && entry.code.state === "unreachable"), 10000, "the failed fetch");
+  assert.match(failed.code.message, /shows what it fetched last/);
+  assert.equal(typeof failed.code.fetchedAt, "string");
+  assert.deepEqual(failed.code.branches.map((branch) => branch.name), ["feature-x", "main"]);
+  const file = await prism.get(route);
+  assert.equal(file.status, 200, file.body);
+  assert.equal(file.json.content, TOTAL);
 });
 
 test("clause 46: a folder lists each entry of every branch with the branches and blobs that hold it", async (context) => {

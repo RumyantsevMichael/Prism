@@ -469,7 +469,7 @@ const tools = [
   },
   {
     name: "update_design_view",
-    description: "Replace a designed slice's design view, which the review browser shows at the design gate: one example per acceptance test, each a single line under the number of the slice.md Contract clause it checks, restating only what the test asserts. Prism checks that each cited test name occurs in its test file and each clause number exists, lists clauses without examples as gaps, and marks the view stale when the contract or a test file changes. It also parses the PlantUML files beside slice.md and reports any that accept_design would refuse.",
+    description: "Replace a designed slice's design view, which the review browser shows at the design gate: one example per acceptance test, each a single line under the number of the slice.md Contract clause it checks, restating only what the test asserts. Prism checks that each cited test name occurs in its test file and each clause number exists, lists clauses without examples as gaps, and marks the view stale when the contract or a test file changes. It also checks the declared views of the folders that accept_design checks, by the same rules, and returns views ({ path, kind, elements, relations }) and viewProblems, each problem that accept_design would refuse.",
     inputSchema: UPDATE_DESIGN_VIEW_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
@@ -1369,6 +1369,7 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
   const saved = taken.filter((item) => item.record && !item.overBound);
   const removals = taken.filter((item) => item.undoneRemoval);
   const fileRemovals = taken.filter((item) => item.undoneFile);
+  const recordRemovals = taken.filter((item) => item.undoneRecord);
   const moves = taken.filter((item) => item.undoneMove);
   // A file of either machine's that a sync took out because its path at its artifact's new location would be too long is named with that location, for that cause alone.
   const tooLong = taken.filter((item) => item.tooLongAt && !item.overBound);
@@ -1391,6 +1392,10 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
   if (fileRemovals.length) {
     const them = fileRemovals.length === 1 ? "it" : "them";
     sections.push({ header: `Store sync undid this machine's removal of ${plural(fileRemovals.length, "store file")} at the store's root, such as its README, because another machine changed ${them} before this machine's removal reached the store; the store holds ${them} again with the other machine's version. Remove ${them} from the store again if the removal still matters.`, items: fileRemovals, line: async (item) => `- ${item.undoneFile} in the record store at ${item.store}` });
+  }
+  if (recordRemovals.length) {
+    const them = recordRemovals.length === 1 ? "it" : "them";
+    sections.push({ header: `Store sync undid this machine's removal of ${plural(recordRemovals.length, "record")}, because another machine changed ${them} before this machine's removal reached the store; the store holds ${them} again with the other machine's version. Read each record again, and redo the removal if it still matters.`, items: recordRemovals, line: async (item) => `- ${item.undoneRecord} in the record store at ${item.store}` });
   }
   if (moves.length) {
     sections.push({ header: `Store sync undid this machine's move of ${plural(moves.length, "artifact")} to another scope, because another machine moved ${moves.length === 1 ? "it" : "them"} elsewhere, or kept its own file at the path this machine moved ${moves.length === 1 ? "it" : "them"} to, before this machine's move reached the store; the store keeps each in the first scope named below, with this machine's other changes to it. Read each one again with get_artifact and move it again with move_scope if the move still matters.`, items: moves, line: (item) => undoneMoveLine(item, argumentsValue) });
