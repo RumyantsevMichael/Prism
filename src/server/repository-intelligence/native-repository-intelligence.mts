@@ -4,7 +4,12 @@ import { lstat, readFile, readdir, readlink, realpath, stat } from "node:fs/prom
 import path from "node:path";
 import { normalizeRepositorySourcePath, normalizeRepositorySourceRange } from "./repository-source-path.mjs";
 import { domainFor } from "../../native-runtime/domains.mjs";
+import type { SourceFile } from "./repository-unit-types.mjs";
 
+type NativeFile = SourceFile & { bytes: number; kind: string; mode: number; lineCount: number; size: number; mtimeMs: number };
+type Identity = { kind: string; file: string; bytes: number; hash: string; mode?: number; target?: string; absolutePath?: string };
+type SourceRecord = { status: "source"; file: NativeFile; identity?: undefined } | { status: "identity"; identity: Identity; file?: undefined } | { status: string; file?: undefined; identity?: undefined };
+type ScanOptions = { gitCommand: string; gitTimeoutMs: number; gitOutputBytes: number; maxFiles: number; maxBytes: number; maxFileBytes: number; retainOpaque?: boolean; filter?: ((file: string) => boolean) | null; scan?: RepositoryScan | null; [option: string]: any };
 const DEFAULT_MAX_FILES = 20000;
 const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024;
@@ -54,7 +59,7 @@ const STOP_WORDS = new Set([
   "with"
 ]);
 
-function positiveInteger(value, fallback, name) {
+function positiveInteger(value: any, fallback: number, name: string): number {
   if (value === undefined) return fallback;
   if (!Number.isSafeInteger(value) || value < 1) {
     throw new TypeError(`${name} must be a positive safe integer.`);
@@ -62,15 +67,15 @@ function positiveInteger(value, fallback, name) {
   return value;
 }
 
-function sha256(value) {
+function sha256(value: string | Buffer) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function unique(values) {
+function unique<T>(values: T[]): T[] {
   return [...new Set(values.filter(Boolean))];
 }
 
-function normalizedRepositoryPath(value) {
+function normalizedRepositoryPath(value: string) {
   try {
     return normalizeRepositorySourcePath(value);
   } catch {
@@ -78,22 +83,22 @@ function normalizedRepositoryPath(value) {
   }
 }
 
-function isContained(root, absolutePath) {
+function isContained(root: string, absolutePath: string) {
   const relative = path.relative(root, absolutePath);
   return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
 }
 
-function lineSegments(content) {
+function lineSegments(content: string) {
   if (content.length === 0) return [""];
   return content.match(/[^\n]*\n|[^\n]+$/g) || [""];
 }
 
-function isBinary(buffer) {
+function isBinary(buffer: Buffer) {
   const sample = buffer.subarray(0, Math.min(buffer.length, 8192));
   return sample.includes(0);
 }
 
-function decodeUtf8(buffer) {
+function decodeUtf8(buffer: Buffer) {
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
   } catch {
@@ -101,28 +106,28 @@ function decodeUtf8(buffer) {
   }
 }
 
-function escapedRegex(value) {
+function escapedRegex(value: unknown) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function exactLexicalPattern(value, flags = "m") {
+function exactLexicalPattern(value: string, flags = "m") {
   const unicodeFlags = flags.includes("u") ? flags : `${flags}u`;
   return new RegExp(`(?<![\\p{L}\\p{N}_$])${escapedRegex(value)}(?![\\p{L}\\p{N}_$])`, unicodeFlags);
 }
 
-function queryTokens(values) {
+function queryTokens(values: string) {
   const tokens = String(values).toLowerCase().match(/[\p{L}\p{N}_$-]+/gu) || [];
   return unique(tokens.filter((token) => token.length > 1 && !STOP_WORDS.has(token)));
 }
 
-function countMatches(content, token) {
+function countMatches(content: string, token: string) {
   const pattern = exactLexicalPattern(token, "gim");
   let count = 0;
   while (pattern.exec(content) && count < 20) count += 1;
   return count;
 }
 
-function nodeFor(file, name = file.file) {
+function nodeFor(file: Pick<NativeFile, "file" | "lineCount">, name = file.file) {
   return {
     id: `native:file:${file.file}`,
     file: file.file,
@@ -133,23 +138,23 @@ function nodeFor(file, name = file.file) {
   };
 }
 
-function diagnostic(code, message, details) {
+function diagnostic(code: string, message: string, details?: Record<string, unknown>) {
   return { code, message, ...(details ? { details } : {}) };
 }
 
-function commandFailure(code, message, cause) {
-  const error = new Error(message, { cause });
+function commandFailure(code: string, message: string, cause?: unknown) {
+  const error = new Error(message, { cause }) as Error & { code: string };
   error.code = code;
   return error;
 }
 
-function runCommand(command, args, { cwd, timeoutMs, maxOutputBytes }) {
-  return new Promise((resolve, reject) => {
+function runCommand(command: string, args: string[], { cwd, timeoutMs, maxOutputBytes }: { cwd: string; timeoutMs: number; maxOutputBytes: number }) {
+  return new Promise<Buffer>((resolve, reject) => {
     const child = spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
-    const stdout = [];
+    const stdout: Buffer[] = [];
     let stdoutBytes = 0;
     let settled = false;
-    const finish = (action) => {
+    const finish = (action: () => void) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
@@ -159,7 +164,7 @@ function runCommand(command, args, { cwd, timeoutMs, maxOutputBytes }) {
       child.kill();
       finish(() => reject(commandFailure("command_timeout", "Git source discovery timed out.")));
     }, timeoutMs);
-    child.stdout.on("data", (chunk) => {
+    child.stdout.on("data", (chunk: Buffer) => {
       stdoutBytes += chunk.length;
       if (stdoutBytes > maxOutputBytes) {
         child.kill();
@@ -180,15 +185,15 @@ function runCommand(command, args, { cwd, timeoutMs, maxOutputBytes }) {
   });
 }
 
-async function gitFiles(root, options) {
+async function gitFiles(root: string, options: ScanOptions) {
   const output = await runCommand(
     options.gitCommand,
     ["ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "."],
     { cwd: root, timeoutMs: options.gitTimeoutMs, maxOutputBytes: options.gitOutputBytes }
   );
   const rawPaths = output.toString("utf8").split("\0").filter(Boolean);
-  const rejectedPaths = [];
-  const normalizedGroups = new Map();
+  const rejectedPaths: string[] = [];
+  const normalizedGroups = new Map<string, string[]>();
   for (const rawPath of rawPaths) {
     if ([".codegraph", ".codenib"].includes(rawPath.split("/")[0])) continue;
     const normalized = normalizedRepositoryPath(rawPath);
@@ -200,7 +205,7 @@ async function gitFiles(root, options) {
     group.push(rawPath);
     normalizedGroups.set(normalized, group);
   }
-  const files = [];
+  const files: string[] = [];
   let aliasedPaths = 0;
   let collidingPaths = 0;
   for (const [normalized, group] of normalizedGroups) {
@@ -218,7 +223,7 @@ async function gitFiles(root, options) {
   return { files, rejectedPaths: rejectedPaths.length, aliasedPaths, collidingPaths };
 }
 
-async function gitCommit(root, options) {
+async function gitCommit(root: string, options: ScanOptions) {
   try {
     const output = await runCommand(
       options.gitCommand,
@@ -233,11 +238,11 @@ async function gitCommit(root, options) {
 }
 
 // A filter keeps only the files it accepts, and only those count toward maxFiles, so a component's scan never stops in another component's files.
-async function filesystemFiles(root, maxFiles, filter = null) {
-  const files = [];
+async function filesystemFiles(root: string, maxFiles: number, filter: ((file: string) => boolean) | null = null) {
+  const files: string[] = [];
   let unreadableDirectories = 0;
   let truncated = false;
-  const visit = async (directory, relativeDirectory = "") => {
+  const visit = async (directory: string, relativeDirectory = "") => {
     let entries;
     try {
       entries = await readdir(directory, { withFileTypes: true });
@@ -269,7 +274,7 @@ async function filesystemFiles(root, maxFiles, filter = null) {
   return { files, unreadableDirectories, truncated };
 }
 
-async function enumerateFiles(root, options) {
+async function enumerateFiles(root: string, options: ScanOptions): Promise<{ files: string[]; enumerator: string; diagnostics: any[]; rejectedPaths: number; aliasedPaths: number; collidingPaths: number; truncated?: boolean; unreadableDirectories?: number }> {
   try {
     return { ...(await gitFiles(root, options)), enumerator: "git", diagnostics: [] };
   } catch {
@@ -285,7 +290,7 @@ async function enumerateFiles(root, options) {
   }
 }
 
-async function sourceRecord(root, relativePath, limits) {
+async function sourceRecord(root: string, relativePath: string, limits: ScanOptions): Promise<SourceRecord> {
   const normalized = normalizedRepositoryPath(relativePath);
   if (!normalized) return { status: "unsafe" };
   const absolutePath = path.resolve(root, ...normalized.split("/"));
@@ -351,7 +356,7 @@ async function sourceRecord(root, relativePath, limits) {
   };
 }
 
-async function evidenceOutputsOf(root) {
+async function evidenceOutputsOf(root: string) {
   // Evidence paths are registered by server mutations, never supplied as caller exclusion patterns.
   const { conservationStore } = await import("../conservation/conservation-store.mjs");
   return new Set(await conservationStore.outputs(root));
@@ -363,8 +368,9 @@ async function evidenceOutputsOf(root) {
  * repository has no Git listing falls back to its own bounded filesystem scan.
  */
 export class RepositoryScan {
+  declare pass: Promise<{ listed: Awaited<ReturnType<typeof gitFiles>> & { enumerator: string; diagnostics: any[] } | null; evidenceOutputs: Set<string>; head: string | null }> | null;
   constructor() { this.pass = null; }
-  enumeration(root, options) {
+  enumeration(root: string, options: ScanOptions) {
     if (!this.pass) {
       this.pass = (async () => {
         const listed = await gitFiles(root, options).then((value) => ({ ...value, enumerator: "git", diagnostics: [] }), () => null);
@@ -376,19 +382,19 @@ export class RepositoryScan {
   refresh() { this.pass = null; }
 }
 
-async function buildSnapshot(projectRoot, options) {
+async function buildSnapshot(projectRoot: string, options: ScanOptions) {
   const root = await realpath(projectRoot);
   const rootMetadata = await stat(root);
   if (!rootMetadata.isDirectory()) throw new TypeError("The native repository root must be a directory.");
   const shared = options.scan ? await options.scan.enumeration(root, options) : null;
-  const enumeration = shared?.listed ? { ...shared.listed, files: [...shared.listed.files] } : await enumerateFiles(root, options);
+  const enumeration: Awaited<ReturnType<typeof enumerateFiles>> = shared?.listed ? { ...shared.listed, files: [...shared.listed.files] } : await enumerateFiles(root, options);
   const { isManagedRecordFile } = await import("../workflow/record-store.mjs");
   const evidenceOutputs = shared ? shared.evidenceOutputs : await evidenceOutputsOf(root);
-  enumeration.files = enumeration.files.filter(file => !evidenceOutputs.has(file) && !isManagedRecordFile(file));
+  enumeration.files = enumeration.files.filter((file: string) => !evidenceOutputs.has(file) && !isManagedRecordFile(file));
   // A component's source scans only the files of its component, so the native limits apply to each component on its own.
   if (options.filter) enumeration.files = enumeration.files.filter(options.filter);
   const diagnostics = [...enumeration.diagnostics];
-  const counters = {
+  const counters: Record<string, number> = {
     binary: 0,
     notFile: 0,
     oversized: 0,
@@ -404,14 +410,14 @@ async function buildSnapshot(projectRoot, options) {
     && enumeration.collidingPaths === 0;
   let candidates = enumeration.files;
   const unknownOmissions = !complete;
-  const omissions = [];
+  const omissions: { file: string; reason: string }[] = [];
   if (candidates.length > options.maxFiles) {
-    omissions.push(...candidates.slice(options.maxFiles).map(file => ({ file, reason: "file-count-limit" })));
+    omissions.push(...candidates.slice(options.maxFiles).map((file: string) => ({ file, reason: "file-count-limit" })));
     candidates = candidates.slice(0, options.maxFiles);
     complete = false;
   }
-  const files = [];
-  const identities = [];
+  const files: NativeFile[] = [];
+  const identities: Identity[] = [];
   let totalBytes = 0;
   let snapshotBytes = 0;
   for (const relativePath of candidates) {
@@ -424,19 +430,19 @@ async function buildSnapshot(projectRoot, options) {
       if (["not-file", "oversized", "oversized-symlink", "unreadable", "unsafe"].includes(record.status)) complete = false;
       continue;
     }
-    const identity = record.status === "source"
-      ? { kind: record.file.kind, file: record.file.file, bytes: record.file.bytes, hash: record.file.hash, ...(options.retainOpaque ? { mode: record.file.mode, absolutePath: record.file.absolutePath } : {}) }
-      : record.identity;
+    const identity: Identity = record.status === "source"
+      ? { kind: record.file!.kind, file: record.file!.file, bytes: record.file!.bytes, hash: record.file!.hash, ...(options.retainOpaque ? { mode: record.file!.mode, absolutePath: record.file!.absolutePath } : {}) }
+      : record.identity!;
     if (snapshotBytes + identity.bytes > options.maxBytes) {
       complete = false;
-      omissions.push(...candidates.slice(candidates.indexOf(relativePath)).map(file => ({ file, reason: "total-byte-limit" })));
+      omissions.push(...candidates.slice(candidates.indexOf(relativePath)).map((file: string) => ({ file, reason: "total-byte-limit" })));
       break;
     }
     identities.push(identity);
     snapshotBytes += identity.bytes;
     if (record.status === "source") {
-      files.push(record.file);
-      totalBytes += record.file.bytes;
+      files.push(record.file!);
+      totalBytes += record.file!.bytes;
     } else if (identity.kind === "symlink") {
       counters.symlink += 1;
     }
@@ -483,12 +489,12 @@ async function buildSnapshot(projectRoot, options) {
 }
 
 /** The SHA-256 of the lines `<path> <sha256>\n` of the given source files, sorted by path in code point order. */
-export function contentFingerprint(files) {
+export function contentFingerprint(files: Pick<SourceFile, "file" | "hash">[]) {
   const lines = files.map(({ file, hash }) => [file, hash]).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
   return sha256(lines.map(([file, hash]) => `${file} ${hash}\n`).join(""));
 }
 
-function scoreFile(file, tokens, task) {
+function scoreFile(file: NativeFile, tokens: string[], task: string) {
   const lowerPath = file.file.toLowerCase();
   const lowerContent = file.content.toLowerCase();
   const basename = path.posix.basename(lowerPath).replace(/\.[^.]+$/, "");
@@ -503,12 +509,17 @@ function scoreFile(file, tokens, task) {
   return score;
 }
 
-function hintValues(hints, name) {
+function hintValues(hints: any, name: string): string[] {
   return unique(Array.isArray(hints?.[name]) ? hints[name].map(String).filter(Boolean) : []);
 }
 
+export type NativeOptions = Partial<Omit<ScanOptions, "scan">> & { scan?: unknown };
+
 export class NativeRepositoryIntelligence {
-  constructor(projectRoot, options = {}) {
+  declare projectRoot: string;
+  declare options: ScanOptions;
+  declare snapshotPromise: ReturnType<typeof buildSnapshot> | null;
+  constructor(projectRoot: string, options: NativeOptions = {}) {
     if (typeof projectRoot !== "string" || !path.isAbsolute(projectRoot)) {
       throw new TypeError("The native repository root must be an absolute path.");
     }
@@ -529,7 +540,7 @@ export class NativeRepositoryIntelligence {
 
   snapshot() {
     if (!this.snapshotPromise) {
-      this.snapshotPromise = buildSnapshot(this.projectRoot, this.options).catch((error) => {
+      this.snapshotPromise = buildSnapshot(this.projectRoot, this.options).catch((error: unknown) => {
         this.snapshotPromise = null;
         throw error;
       });
@@ -558,20 +569,20 @@ export class NativeRepositoryIntelligence {
     };
   }
 
-  async search(task, hints = {}, options = {}) {
+  async search(task: string, hints: Record<string, unknown> = {}, options: { topK?: number; filters?: { domains?: string[]; kinds?: string[]; paths?: string[] }; budget?: string } = {}) {
     if (typeof task !== "string" || !task.trim()) throw new TypeError("The native search task must be a non-empty string.");
     const snapshot = await this.snapshot();
     const topK = Math.min(MAX_SEARCH_RESULTS, positiveInteger(options.topK, 12, "topK"));
     const filters = options.filters;
-    const eligible = file => (!filters?.domains?.length || filters.domains.includes(domainFor(file.file)))
+    const eligible = (file: NativeFile) => (!filters?.domains?.length || filters.domains.includes(domainFor(file.file)))
       && (!filters?.kinds?.length || filters.kinds.includes(nodeFor(file).kind))
-      && (!filters?.paths?.length || filters.paths.some(prefix => file.file === prefix || file.file.startsWith(prefix + "/")));
+      && (!filters?.paths?.length || filters.paths.some((prefix: string) => file.file === prefix || file.file.startsWith(prefix + "/")));
     const files = snapshot.files.filter(eligible);
     const requiredReasons = new Map();
     const requiredNames = new Map();
     const unresolvedRequired = [];
     const diagnostics = [...snapshot.diagnostics];
-    const addRequired = (file, reason, name) => {
+    const addRequired = (file: NativeFile, reason: string, name?: string) => {
       const reasons = requiredReasons.get(file.file) || new Set();
       reasons.add(reason);
       requiredReasons.set(file.file, reasons);
@@ -594,15 +605,15 @@ export class NativeRepositoryIntelligence {
     }
     let requiredEvidenceComplete = true;
     for (const symbol of hintValues(hints, "symbols")) {
-      const matches = files.filter((file) => exactLexicalPattern(symbol).test(file.content));
+      const matches = files.filter((file: NativeFile) => exactLexicalPattern(symbol).test(file.content));
       if (matches.length === 0) {
         unresolvedRequired.push({ kind: "symbol", value: symbol });
         diagnostics.push(diagnostic("explicit_symbol_unresolved", `The native provider could not resolve the explicit symbol ${symbol}.`));
       } else {
         const available = Math.max(0, topK - requiredReasons.size);
-        const newMatches = matches.filter((file) => !requiredReasons.has(file.file));
+        const newMatches = matches.filter((file: NativeFile) => !requiredReasons.has(file.file));
         for (const file of newMatches.slice(0, available)) addRequired(file, "explicit-design-reference", symbol);
-        for (const file of matches.filter((file) => requiredReasons.has(file.file))) addRequired(file, "explicit-design-reference", symbol);
+        for (const file of matches.filter((file: NativeFile) => requiredReasons.has(file.file))) addRequired(file, "explicit-design-reference", symbol);
         if (newMatches.length > available) {
           requiredEvidenceComplete = false;
           diagnostics.push(diagnostic("explicit_symbol_matches_truncated", `The native provider bounded matches for the explicit symbol ${symbol}.`, {
@@ -616,13 +627,13 @@ export class NativeRepositoryIntelligence {
     if (!snapshot.complete) unresolvedRequired.push({ kind: "repository-scan", value: "incomplete" });
     const concepts = hintValues(hints, "concepts");
     const tokens = queryTokens([task, ...concepts].join(" "));
-    const scored = files.map((file) => ({ file, score: scoreFile(file, tokens, task) }));
+    const scored = files.map((file: NativeFile) => ({ file, score: scoreFile(file, tokens, task) }));
     scored.sort((left, right) => right.score - left.score || left.file.file.localeCompare(right.file.file));
     const requiredHits = [...requiredReasons.entries()].map(([filePath, reasons]) => {
       const file = snapshot.filesByPath.get(filePath);
       const score = scored.find((item) => item.file.file === filePath)?.score || 0;
       return {
-        node: nodeFor(file, requiredNames.get(filePath)),
+        node: nodeFor(file!, requiredNames.get(filePath)),
         score: 1000000 + score,
         reasons: unique([...reasons, ...(score > 0 ? ["lexical-match"] : [])])
       };
@@ -634,7 +645,7 @@ export class NativeRepositoryIntelligence {
       .map(({ file, score }) => ({ node: nodeFor(file), score, reasons: ["provider-ranked-match", "lexical-match"] }));
     const unresolvedConcepts = concepts.filter((concept) => {
       const lower = concept.toLowerCase();
-      return !files.some((file) => file.file.toLowerCase().includes(lower) || file.content.toLowerCase().includes(lower));
+      return !files.some((file: NativeFile) => file.file.toLowerCase().includes(lower) || file.content.toLowerCase().includes(lower));
     });
     diagnostics.push(diagnostic("semantic_unavailable", "The native provider supplies lexical retrieval without semantic search."));
     return {
@@ -669,7 +680,7 @@ export class NativeRepositoryIntelligence {
     };
   }
 
-  async read(sourceRange) {
+  async read(sourceRange: any) {
     const snapshot = await this.snapshot();
     const validated = await this.validateSourceRange(sourceRange);
     const normalized = validated.file;
@@ -703,7 +714,7 @@ export class NativeRepositoryIntelligence {
     };
   }
 
-  async validateSourceRange(sourceRange) {
+  async validateSourceRange(sourceRange: any) {
     const snapshot = await this.snapshot();
     const validated = normalizeRepositorySourceRange(sourceRange, { projectRoot: snapshot.root });
     if (!snapshot.filesByPath.has(validated.file)) {
@@ -712,16 +723,16 @@ export class NativeRepositoryIntelligence {
     return validated;
   }
 
-  async verifySnapshot(options = {}) {
+  async verifySnapshot(options: { requireComplete?: boolean } = {}) {
     const snapshot = await this.snapshot();
     if (options.requireComplete === true && !snapshot.complete) {
-      const error = new Error("The native source snapshot is incomplete.");
+      const error = new Error("The native source snapshot is incomplete.") as Error & { code?: string };
       error.code = "snapshot-changed";
       throw error;
     }
     const current = await buildSnapshot(this.projectRoot, this.options);
     if (current.complete !== snapshot.complete || current.commit !== snapshot.commit || current.sourceFingerprint !== snapshot.sourceFingerprint) {
-      const error = new Error("The native source snapshot changed.");
+      const error = new Error("The native source snapshot changed.") as Error & { code?: string };
       error.code = "snapshot-changed";
       throw error;
     }
@@ -735,14 +746,14 @@ export class NativeRepositoryIntelligence {
   }
 }
 
-export async function openNativeRepositoryIntelligence(projectRoot, options = {}) {
+export async function openNativeRepositoryIntelligence(projectRoot: string, options: NativeOptions = {}) {
   const root = await realpath(projectRoot);
   const metadata = await stat(root);
   if (!metadata.isDirectory()) throw new TypeError("The native repository root must be a directory.");
   return new NativeRepositoryIntelligence(root, options);
 }
 
-export async function withNativeRepositoryIntelligence(projectRoot, action, options = {}) {
+export async function withNativeRepositoryIntelligence<T>(projectRoot: string, action: (provider: NativeRepositoryIntelligence) => T, options: NativeOptions = {}) {
   if (typeof action !== "function") throw new TypeError("The native repository action must be a function.");
   const provider = await openNativeRepositoryIntelligence(projectRoot, options);
   return action(provider);

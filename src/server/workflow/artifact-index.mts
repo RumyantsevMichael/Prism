@@ -1,7 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, readFile, writeFile } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
+import type { Stats } from "node:fs";
 import path from "node:path";
+import type { Scope } from "./artifact-paths.mjs";
 import { ARTIFACT_STATUS, artifactLocation, scopeFolder, STATUS_RECORD_NAME, wellFormedName } from "./artifact-paths.mjs";
 import { hasStatus, parseRecord } from "./artifact-status.mjs";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
@@ -18,19 +21,26 @@ const READS_AT_ONCE = 32;
 // Every process that writes artifacts in a store leaves a new token in a file of the Prism application folder named for the store, so another process's index on this machine sees the write.
 const STAMPS = "artifact-index";
 
-// Each index is kept by its store and the labels of the scopes it holds, so checkouts that read different scope sets of one store keep one index each.
-const indexes = new Map();
-const refreshes = new Map();
-const generations = new Map();
+/** A store as a listing sees it: the folder that holds its artifacts, and the store folder itself. */
+export interface SeenStore { base: string; store: { base: string } }
+/** One listed artifact of an index. */
+export interface IndexEntry { location: string; scope: Scope; kind: string; rest: string | null; stamp: string; version: string | null; bytes: number; status: string | null }
+interface ArtifactIndex { token: string; generation: number; builtAt: number; folders: Map<string, string>; files: Map<string, IndexEntry>; statuses: Map<string, { stamp: string; status: string | undefined }>; list: IndexEntry[] }
+interface Found { location: string; rest: string | null; info: Stats }
 
-const stampOf = (base) => path.join(reviewAppDirectory(), STAMPS, createHash("sha256").update(base).digest("hex").slice(0, 16));
-const fileStamp = (info) => `${info.size}:${info.mtimeMs}:${info.ctimeMs}:${info.ino}`;
+// Each index is kept by its store and the labels of the scopes it holds, so checkouts that read different scope sets of one store keep one index each.
+const indexes = new Map<string, ArtifactIndex>();
+const refreshes = new Map<string, Promise<ArtifactIndex>>();
+const generations = new Map<string, number>();
+
+const stampOf = (base: string) => path.join(reviewAppDirectory(), STAMPS, createHash("sha256").update(base).digest("hex").slice(0, 16));
+const fileStamp = (info: Stats) => `${info.size}:${info.mtimeMs}:${info.ctimeMs}:${info.ino}`;
 
 /**
  * Note that a store's artifacts changed, so the next listing in any process on this machine refreshes its index first.
  * It never fails: an index that cannot see the note still refreshes once it is a minute old.
  */
-export async function markArtifactIndexStale(storeBase) {
+export async function markArtifactIndexStale(storeBase: string) {
   generations.set(storeBase, (generations.get(storeBase) ?? 0) + 1);
   try {
     await mkdir(path.dirname(stampOf(storeBase)), { recursive: true });
@@ -43,9 +53,9 @@ export async function markArtifactIndexStale(storeBase) {
  * each entry is { location, scope, kind, rest, version, bytes, status }, with status the recorded status of a requirement or ADR and null for every other kind.
  * Links, special files, and names that break the artifact name form are left out, as listings leave them out.
  */
-export async function artifactIndex(seen, scopes) {
+export async function artifactIndex(seen: SeenStore, scopes: Scope[]): Promise<{ indexedAt: string; entries: IndexEntry[] }> {
   const storeBase = seen.store.base;
-  const key = [storeBase, ...scopes.map((scope) => scope.label)].join("\0");
+  const key = [storeBase, ...scopes.map((scope: Scope) => scope.label)].join("\0");
   const token = await readFile(stampOf(storeBase), "utf8").catch(() => "");
   const generation = generations.get(storeBase) ?? 0;
   let index = indexes.get(key);
@@ -59,18 +69,18 @@ export async function artifactIndex(seen, scopes) {
     }
     index = await pending;
   }
-  return { indexedAt: new Date(index.builtAt).toISOString(), entries: index.list };
+  return { indexedAt: new Date(index!.builtAt).toISOString(), entries: index!.list };
 }
 
-async function refresh(seen, scopes, previous, { token, generation, key }) {
+async function refresh(seen: SeenStore, scopes: Scope[], previous: ArtifactIndex | undefined, { token, generation, key }: { token: string; generation: number; key: string }): Promise<ArtifactIndex> {
   const builtAt = Date.now();
   const files = previous?.files ?? new Map();
   const statuses = previous?.statuses ?? new Map();
-  const next = new Map();
-  const nextStatuses = new Map();
+  const next = new Map<string, IndexEntry>();
+  const nextStatuses = new Map<string, { stamp: string; status: string | undefined }>();
   const reads = limiter(READS_AT_ONCE);
-  const jobs = [];
-  const folders = new Map();
+  const jobs: Promise<unknown>[] = [];
+  const folders = new Map<string, string>();
   await noteFolder(folders, seen.base);
   for (const scope of scopes) {
     await noteFolder(folders, path.join(seen.base, ...scopeFolder(scope).split("/").filter(Boolean)));
@@ -78,7 +88,7 @@ async function refresh(seen, scopes, previous, { token, generation, key }) {
       if (kind === "roadmap" && scope.kind !== "workspace") continue;
       const location = artifactLocation(scope, { kind, rest: kind === "glossary" || kind === "roadmap" ? null : "" });
       const folder = kind === "glossary" || kind === "roadmap" ? null : location;
-      const found = [];
+      const found: Found[] = [];
       // A file system that ignores letter case opens a stored Requirements folder for requirements, so only a kind folder or file whose name matches exactly is read.
       if (!(await exactName(seen.base, location))) continue;
       if (folder === null) {
@@ -88,18 +98,18 @@ async function refresh(seen, scopes, previous, { token, generation, key }) {
       for (const file of found) {
         const stamp = fileStamp(file.info);
         const held = files.get(file.location);
-        const entry = { location: file.location, scope, kind, rest: file.rest, stamp, version: held?.stamp === stamp ? held.version : null, bytes: file.info.size, status: null };
+        const entry: IndexEntry = { location: file.location, scope, kind, rest: file.rest, stamp, version: held?.stamp === stamp ? held.version : null, bytes: file.info.size, status: null };
         next.set(file.location, entry);
         if (entry.version === null) jobs.push(reads(async () => { entry.version = await versionOf(path.join(seen.base, ...file.location.split("/"))); }));
       }
       if (hasStatus(kind)) {
-        const records = [];
+        const records: Found[] = [];
         await walk(path.join(seen.store.base, ARTIFACT_STATUS, ...location.split("/")), location, "", records, STATUS_RECORD_NAME);
         for (const record of records) {
           const at = record.location.slice(0, -(STATUS_RECORD_NAME.length + 1));
           const stamp = fileStamp(record.info);
           const held = statuses.get(at);
-          const status = { stamp, status: held?.stamp === stamp ? held.status : undefined };
+          const status: { stamp: string; status: string | undefined } = { stamp, status: held?.stamp === stamp ? held.status : undefined };
           nextStatuses.set(at, status);
           if (status.status === undefined) jobs.push(reads(async () => { status.status = parseRecord(kind, await readFile(path.join(seen.store.base, ARTIFACT_STATUS, ...record.location.split("/"))).catch(() => null)).status; }));
         }
@@ -107,39 +117,39 @@ async function refresh(seen, scopes, previous, { token, generation, key }) {
     }
   }
   await Promise.all(jobs);
-  const list = [];
+  const list: IndexEntry[] = [];
   for (const entry of next.values()) {
     if (entry.version === null) continue;
     if (hasStatus(entry.kind)) entry.status = nextStatuses.get(entry.location)?.status ?? parseRecord(entry.kind, null).status;
     list.push(entry);
   }
-  const index = { token, generation, builtAt, folders, files: next, statuses: nextStatuses, list };
+  const index: ArtifactIndex = { token, generation, builtAt, folders, files: next, statuses: nextStatuses, list };
   indexes.set(key, index);
   return index;
 }
 
 // A folder's times, or none when it is missing, which a listing compares to tell whether files were added or removed there.
-const folderStamp = (info) => info ? `${info.mtimeMs}:${info.ctimeMs}:${info.ino}` : "missing";
-async function noteFolder(folders, folder) {
+const folderStamp = (info: Stats | null) => info ? `${info.mtimeMs}:${info.ctimeMs}:${info.ino}` : "missing";
+async function noteFolder(folders: Map<string, string>, folder: string) {
   folders.set(folder, folderStamp(await lstat(folder).catch(() => null)));
 }
 
-async function foldersUnchanged(folders) {
+async function foldersUnchanged(folders: Map<string, string>) {
   const checks = await Promise.all([...folders].map(async ([folder, stamp]) => folderStamp(await lstat(folder).catch(() => null)) === stamp));
   return checks.every(Boolean);
 }
 
 // Whether the last name of a location below a folder is the exact name of an entry of the folder above it.
-async function exactName(base, location) {
+async function exactName(base: string, location: string) {
   const names = location.split("/");
   const parent = path.join(base, ...names.slice(0, -1));
-  try { return (await readdir(parent)).includes(names.at(-1)); }
+  try { return (await readdir(parent)).includes(names.at(-1)!); }
   catch { return false; }
 }
 
 // Every regular file below a folder whose names follow the artifact name form, as { location, rest, info }, without following a link; with only, just the files of that name.
 // With folders, a Map, each folder walked is noted with its times.
-async function walk(directory, location, prefix, found, only = null, folders = null) {
+async function walk(directory: string, location: string, prefix: string, found: Found[], only: string | null = null, folders: Map<string, string> | null = null): Promise<void> {
   if (folders) await noteFolder(folders, directory);
   let entries;
   try { entries = await readdir(directory, { withFileTypes: true }); }
@@ -156,8 +166,8 @@ async function walk(directory, location, prefix, found, only = null, folders = n
 }
 
 // The version of a stored file, sha256 of its bytes read in chunks without following a link or blocking on a special file, or null when it is gone or no regular file.
-async function versionOf(target) {
-  let handle;
+async function versionOf(target: string) {
+  let handle: FileHandle;
   try { handle = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0)); }
   catch { return null; }
   try {
@@ -170,11 +180,11 @@ async function versionOf(target) {
   finally { await handle.close(); }
 }
 
-function limiter(count) {
+function limiter(count: number) {
   let active = 0;
-  const waiting = [];
-  const next = () => { if (active < count && waiting.length) { active += 1; waiting.shift()(); } };
-  return (job) => new Promise((resolve, reject) => {
+  const waiting: (() => void)[] = [];
+  const next = () => { if (active < count && waiting.length) { active += 1; waiting.shift()!(); } };
+  return (job: () => Promise<unknown>) => new Promise((resolve, reject) => {
     waiting.push(() => job().then(resolve, reject).finally(() => { active -= 1; next(); }));
     next();
   });

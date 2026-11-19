@@ -17,8 +17,8 @@ export const CHANGE_MAP_FILES = [CHANGE_MAP_FILE, LEGACY_CHANGE_MAP_FILE];
 export const CHANGE_MAP_LIMITS = Object.freeze({ operations: 100, bytes: 1024 * 1024, page: 100, defaultPage: 50 });
 export const CHANGE_ACTIONS = ["KEEP", "MODIFY", "REPLACE", "DELETE", "ADD"];
 const string = { type: "string", minLength: 1 };
-const object = (properties, required = Object.keys(properties)) => ({ type: "object", properties, required, additionalProperties: false });
-const array = (items, extra = {}) => ({ type: "array", items, ...extra });
+const object = (properties: Record<string, any>, required = Object.keys(properties)) => ({ type: "object", properties, required, additionalProperties: false });
+const array = (items: any, extra = {}) => ({ type: "array", items, ...extra });
 const evidenceSchema = object({
   method: string,
   receiptIds: array({ type: "string", pattern: "^[a-f0-9]{64}$" }),
@@ -50,58 +50,61 @@ const derivedSchema = object({ runId: string, baselineId: { type: "string", patt
 const documentSchema = object({ schemaVersion: { enum: [1, 2] }, scope: scopeSchema, concepts: array(entrySchema), derived: derivedSchema, ...deltaMetadata }, ["schemaVersion", "scope", "concepts"]);
 
 export class ChangeMapError extends Error {
-  constructor(code, message, details = {}) {
+  declare code: string;
+  [detail: string]: unknown;
+  constructor(code: string, message: string, details: Record<string, unknown> = {}) {
     super(message);
     this.name = "ChangeMapError";
     this.code = code;
     Object.assign(this, details);
   }
 }
-const failure = (code, message, details) => new ChangeMapError(code, message, details);
-const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
-const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+type ChangeMapKey = { initiative: string; slice: string; [key: string]: unknown };
+const failure = (code: string, message: string, details?: Record<string, unknown>) => new ChangeMapError(code, message, details);
+const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
+const isObject = (value: unknown): value is Record<string, any> => value !== null && typeof value === "object" && !Array.isArray(value);
 
-function safePath(value) {
+function safePath(value: string) {
   try { return normalizeRepositorySourcePath(value); }
   catch { throw failure("invalid_path", "Use a safe project-relative path."); }
 }
-const referenceKey = (ref) => JSON.stringify([ref.path, ref.selector ?? null]);
-function canonicalReference(ref) {
+const referenceKey = (ref: any) => JSON.stringify([ref.path, ref.selector ?? null]);
+function canonicalReference(ref: any) {
   const selector = ref.selector && typeof ref.selector === "object" ? Object.fromEntries(Object.entries(ref.selector).sort(([a], [b]) => compare(a, b))) : ref.selector;
   return { path: safePath(ref.path), ...(selector === undefined ? {} : { selector }) };
 }
-function canonicalDocument(doc) {
+function canonicalDocument(doc: any): any {
   return {
     schemaVersion: doc.schemaVersion,
     ...(doc.derived === undefined ? {} : { derived: { ...doc.derived } }),
     ...Object.fromEntries(Object.keys(deltaMetadata).filter(key => doc[key] !== undefined).map(key => [key, doc[key]])),
     ...(doc.requirements === undefined ? {} : { requirements: doc.requirements.map(canonicalReference) }),
-    ...(doc.growthJustifications === undefined ? {} : { growthJustifications: doc.growthJustifications.map(item => ({ ...item, requirements: item.requirements.map(canonicalReference) })) }),
+    ...(doc.growthJustifications === undefined ? {} : { growthJustifications: doc.growthJustifications.map((item: any) => ({ ...item, requirements: item.requirements.map(canonicalReference) })) }),
     scope: doc.scope.map(safePath).sort(compare),
-    concepts: doc.concepts.map((entry) => ({
+    concepts: doc.concepts.map((entry: any) => ({
       id: entry.id, kind: entry.kind, label: entry.label, action: entry.action,
-      before: entry.before.map(canonicalReference).sort((a, b) => compare(referenceKey(a), referenceKey(b))),
-      after: entry.after.map(canonicalReference).sort((a, b) => compare(referenceKey(a), referenceKey(b))),
+      before: entry.before.map(canonicalReference).sort((a: any, b: any) => compare(referenceKey(a), referenceKey(b))),
+      after: entry.after.map(canonicalReference).sort((a: any, b: any) => compare(referenceKey(a), referenceKey(b))),
       reason: entry.reason,
       ...(entry.requirements === undefined ? {} : { requirements: entry.requirements.map(canonicalReference) }),
       ...(entry.reuseEvidence === undefined ? {} : { reuseEvidence: {
         ...(entry.reuseEvidence.method === undefined ? {} : { method: entry.reuseEvidence.method }),
         ...(entry.reuseEvidence.receiptIds === undefined ? {} : { receiptIds: [...new Set(entry.reuseEvidence.receiptIds)].sort() }),
         ...(entry.reuseEvidence.emptyResultReason === undefined ? {} : { emptyResultReason: entry.reuseEvidence.emptyResultReason }),
-        candidates: entry.reuseEvidence.candidates.map((candidate) => ({ ...(candidate.candidateId === undefined ? {} : { candidateId: candidate.candidateId }), ...(candidate.receiptId === undefined ? {} : { receiptId: candidate.receiptId }), reference: canonicalReference(candidate.reference), disposition: candidate.disposition, reason: candidate.reason })),
+        candidates: entry.reuseEvidence.candidates.map((candidate: any) => ({ ...(candidate.candidateId === undefined ? {} : { candidateId: candidate.candidateId }), ...(candidate.receiptId === undefined ? {} : { receiptId: candidate.receiptId }), reference: canonicalReference(candidate.reference), disposition: candidate.disposition, reason: candidate.reason })),
         justification: entry.reuseEvidence.justification
       } })
-    })).sort((a, b) => compare(a.id, b.id))
+    })).sort((a: any, b: any) => compare(a.id, b.id))
   };
 }
-function validateDocument(raw) {
-  const errors = [];
-  const diagnostics = [];
+function validateDocument(raw: unknown): { valid: boolean; ready: boolean; errors: string[]; diagnostics: any[]; document: any } {
+  const errors: string[] = [];
+  const diagnostics: any[] = [];
   checkSchema(documentSchema, raw, "delta", errors);
   if (errors.length) return { valid: false, ready: false, errors, diagnostics, document: null };
-  let document;
+  let document: any;
   try { document = canonicalDocument(raw); }
-  catch (error) { return { valid: false, ready: false, errors: [error.message], diagnostics, document: null }; }
+  catch (error: any) { return { valid: false, ready: false, errors: [error.message], diagnostics, document: null }; }
   if (new Set(document.scope).size !== document.scope.length) errors.push("delta.scope: contains duplicate paths");
   const ids = new Set();
   const owners = new Map();
@@ -127,7 +130,7 @@ function validateDocument(raw) {
     if (entry.action === "ADD" && (before || !after)) errors.push(`${field}: ADD requires empty before and nonempty after`);
     if (entry.action === "DELETE" && (!before || after)) errors.push(`${field}: DELETE requires nonempty before and empty after`);
     if (entry.action === "REPLACE" && (!before || !after)) errors.push(`${field}: REPLACE requires nonempty before and after`);
-    const identityRefs = refs => refs.map(ref => ({ path: ref.path, selector: typeof ref.selector === "object" && ref.selector.type === "span" ? { type: "span" } : ref.selector }));
+    const identityRefs = (refs: any) => refs.map((ref: any) => ({ path: ref.path, selector: typeof ref.selector === "object" && ref.selector.type === "span" ? { type: "span" } : ref.selector }));
     const sameIdentity = entry.action === "MODIFY" ? JSON.stringify(identityRefs(entry.before)) === JSON.stringify(identityRefs(entry.after)) : JSON.stringify(entry.before) === JSON.stringify(entry.after);
     if (["KEEP", "MODIFY"].includes(entry.action) && (!before || !sameIdentity)) {
       errors.push(`${field}: ${entry.action} requires the same nonempty before and after references`);
@@ -139,11 +142,11 @@ function validateDocument(raw) {
   return { valid: !errors.length, ready: !errors.length && !diagnostics.length, errors, diagnostics, document };
 }
 
-function isInside(root, target) {
+function isInside(root: string, target: string) {
   const relative = path.relative(root, target);
   return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
-async function existingSibling(root, relative) {
+async function existingSibling(root: string, relative: string) {
   for (const name of [path.posix.basename(relative), ...CHANGE_MAP_FILES]) {
     const candidate = path.posix.join(path.posix.dirname(relative), name);
     try {
@@ -154,10 +157,10 @@ async function existingSibling(root, relative) {
   return relative;
 }
 // One slice folder holds one change map, so two paths name the same change map when they share a folder and a change-map file name.
-export function sameChangeMap(left, right) {
+export function sameChangeMap(left: string, right: string) {
   return path.posix.dirname(left) === path.posix.dirname(right) && CHANGE_MAP_FILES.includes(path.posix.basename(left)) && CHANGE_MAP_FILES.includes(path.posix.basename(right));
 }
-export async function resolveArtifactPath(projectRoot, deltaPath, createParent = false, artifactName = CHANGE_MAP_FILE) {
+export async function resolveArtifactPath(projectRoot: string, deltaPath: string, createParent = false, artifactName = CHANGE_MAP_FILE) {
   if (!path.isAbsolute(projectRoot)) throw failure("invalid_path", "The project root must be absolute.");
   const root = await realpath(projectRoot);
   const changeMap = artifactName === CHANGE_MAP_FILE;
@@ -173,7 +176,7 @@ export async function resolveArtifactPath(projectRoot, deltaPath, createParent =
     try {
       if (!isInside(root, await realpath(ancestor))) throw failure("invalid_path", "The artifact parent resolves outside the project root.");
       break;
-    } catch (error) {
+    } catch (error: any) {
       if (error.code !== "ENOENT") throw error;
       ancestor = path.dirname(ancestor);
     }
@@ -182,17 +185,19 @@ export async function resolveArtifactPath(projectRoot, deltaPath, createParent =
   try {
     const info = await lstat(target);
     if (!info.isFile() || info.isSymbolicLink()) throw failure("invalid_path", "The change map must be a regular file.");
-  } catch (error) { if (error.code !== "ENOENT") throw error; }
+  } catch (error: any) { if (error.code !== "ENOENT") throw error; }
   return { root, target, deltaPath: relative };
 }
-async function loadDelta(resolved) {
+type Resolved = { root: string; target: string; deltaPath: string };
+type Loaded = { exists: boolean; revision: string | null; document: any; valid: boolean; ready: boolean; errors: string[]; diagnostics: any[] };
+async function loadDelta(resolved: Resolved): Promise<Loaded> {
   let handle;
   try { handle = await open(resolved.target, constants.O_RDONLY | constants.O_NOFOLLOW); }
-  catch (error) {
+  catch (error: any) {
     if (error.code === "ENOENT") return { exists: false, revision: null, document: null, valid: true, ready: false, errors: [], diagnostics: [{ code: "delta_missing", blocking: false, message: "No change map exists yet. Prism derives the change map of a slice with an accepted design after its first passing verify_slice run, so a missing map never blocks implementation. Only a slice designed before verification runs needs an agent-written change map before its FIT review." }] };
     throw error;
   }
-  let contents;
+  let contents: Buffer;
   try {
     const info = await handle.stat();
     if (!info.isFile()) throw failure("invalid_path", "The change map must be a regular file.");
@@ -207,13 +212,13 @@ async function loadDelta(resolved) {
     if (length > CHANGE_MAP_LIMITS.bytes) throw failure("artifact_too_large", "The change map exceeds 1 MiB.");
     contents = buffer.subarray(0, length);
   } finally { await handle.close(); }
-  const revision = createHash("sha256").update(contents).digest("hex");
-  let raw;
-  try { raw = parseStoreJson(contents.toString("utf8")); }
+  const revision = createHash("sha256").update(contents!).digest("hex");
+  let raw: unknown;
+  try { raw = parseStoreJson(contents!.toString("utf8")); }
   catch { return { exists: true, revision, document: null, valid: false, ready: false, errors: ["The change map must contain valid JSON."], diagnostics: [] }; }
   return { exists: true, revision, ...validateDocument(raw) };
 }
-async function assess(resolved, loaded) {
+async function assess<T extends { document: any; valid: boolean; ready: boolean; diagnostics: any[] }>(resolved: Resolved, loaded: T): Promise<T> {
   if (!loaded.document || !loaded.valid) return loaded;
   if (loaded.document.derived) return loaded;
   if (loaded.document.schemaVersion === 1) return { ...loaded, ready: false, diagnostics: [...loaded.diagnostics, { code: "legacy_evidence", message: "Migrate the change map with a retained baseline before a new audit." }] };
@@ -221,8 +226,8 @@ async function assess(resolved, loaded) {
   const diagnostics = await assessDeltaReadiness(resolved.root, loaded.document);
   return { ...loaded, ready: loaded.ready && diagnostics.every(item => item.blocking === false), diagnostics: [...loaded.diagnostics, ...diagnostics] };
 }
-function summary(resolved, loaded) {
-  const counts = Object.fromEntries(CHANGE_ACTIONS.map((action) => [action, 0]));
+function summary(resolved: Resolved, loaded: Loaded) {
+  const counts: Record<string, number> = Object.fromEntries(CHANGE_ACTIONS.map((action) => [action, 0]));
   for (const entry of loaded.document?.concepts ?? []) counts[entry.action]++;
   return { deltaPath: resolved.deltaPath, exists: loaded.exists, revision: loaded.revision, schemaVersion: loaded.document?.schemaVersion ?? null,
     ...(loaded.document?.derived ? { derived: loaded.document.derived } : {}),
@@ -230,26 +235,26 @@ function summary(resolved, loaded) {
     scope: loaded.document?.scope ?? [], totalCount: loaded.document?.concepts.length ?? 0, counts,
     valid: loaded.valid, ready: loaded.ready, errors: loaded.errors.slice(0, 50), diagnostics: loaded.diagnostics.slice(0, 50), totalDiagnostics: loaded.diagnostics.length };
 }
-function checkRevision(expected, loaded) {
+function checkRevision(expected: string | null | undefined, loaded: Loaded) {
   if (expected !== loaded.revision) throw failure("revision_conflict", "The change map changed. Read it again before retrying.", { currentRevision: loaded.revision });
 }
 // A slice's change map is its record under .prism; a stored path from before the move resolves to the same record.
-async function resolveChangeMap(projectRoot, key) {
+async function resolveChangeMap(projectRoot: string, key: ChangeMapKey) {
   const located = await locateRecord(projectRoot, { kind: "change-map", initiative: key.initiative, slice: key.slice });
   return { root: located.root, target: located.target, deltaPath: located.path, initiative: key.initiative, slice: key.slice };
 }
-export async function getChangeMap(input) {
+export async function getChangeMap(input: any) {
   assertInput(GET_CHANGE_MAP_SCHEMA, input);
   const resolved = await resolveChangeMap(input.projectRoot, input);
   const loaded = await assess(resolved, await loadDelta(resolved));
   if (Object.hasOwn(input, "expectedRevision")) checkRevision(input.expectedRevision, loaded);
-  const selected = (loaded.document?.concepts ?? []).filter((entry) => input.ids === undefined || input.ids.includes(entry.id));
+  const selected = (loaded.document?.concepts ?? []).filter((entry: any) => input.ids === undefined || input.ids.includes(entry.id));
   const offset = input.offset ?? 0;
   const limit = input.limit ?? CHANGE_MAP_LIMITS.defaultPage;
   return { ...summary(resolved, loaded), concepts: selected.slice(offset, offset + limit), selectedCount: selected.length,
     nextOffset: offset + limit < selected.length ? offset + limit : null };
 }
-export async function updateChangeMap(input) {
+export async function updateChangeMap(input: any) {
   assertInput(UPDATE_CHANGE_MAP_SCHEMA, input);
   // A shipped initiative's change maps are history, so a change to one is refused after argument validation and before any other check.
   const { refuseShipped } = await import("../workflow/shipped-history.mjs");
@@ -268,7 +273,7 @@ export async function updateChangeMap(input) {
     if (current.document?.derived) throw failure("validation_failed", "This change map is derived from the slice's verified result and updates itself after the next passing verify_slice run.");
     if (current.document?.schemaVersion === 1 && input.migrate !== true) throw failure("validation_failed", "Use migrate with a retained baseline before changing a legacy change map.");
     if (current.document?.baselineId && input.baselineId && current.document.baselineId !== input.baselineId) throw failure("validation_failed", "Corrections must preserve the original baseline.");
-    const entries = new Map((current.document?.concepts ?? []).map((entry) => [entry.id, entry]));
+    const entries = new Map<string, any>((current.document?.concepts ?? []).map((entry: any) => [entry.id, entry]));
     for (const [index, operation] of input.operations.entries()) {
       const field = `operations[${index}]`;
       if (operation.op === "insert") {
@@ -284,19 +289,19 @@ export async function updateChangeMap(input) {
     if (!candidate.valid) throw failure("validation_failed", "The proposed change map is invalid and was not written.", { errors: candidate.errors });
     const { conservationStore } = await import("./conservation-store.mjs");
     const outputs = [...await conservationStore.outputs(resolved.root), ...await conservationStore.sliceOutputs(resolved.root, input.initiative, input.slice)];
-    if (candidate.document.concepts.some(entry => [...entry.before, ...entry.after].some(ref => outputs.includes(ref.path) || isManagedRecordFile(ref.path)))) throw failure("invalid_path", "Managed evidence outputs cannot be change targets.");
+    if (candidate.document.concepts.some((entry: any) => [...entry.before, ...entry.after].some(ref => outputs.includes(ref.path) || isManagedRecordFile(ref.path)))) throw failure("invalid_path", "Managed evidence outputs cannot be change targets.");
     const assessed = await assess(resolved, candidate);
     const contents = `${JSON.stringify(candidate.document, null, 2)}\n`;
     if (Buffer.byteLength(contents) > CHANGE_MAP_LIMITS.bytes) throw failure("artifact_too_large", "The change map exceeds 1 MiB.");
-    let migrationEvidenceId;
+    let migrationEvidenceId: string | undefined;
     if (input.migrate && current.document?.schemaVersion === 1) {
       const { regularBytes } = await import("../repository-intelligence/native-semantic-runtime.mjs");
       const bytes = await regularBytes(resolved.target, CHANGE_MAP_LIMITS.bytes);
-      migrationEvidenceId = await conservationStore.put(resolved.root, { kind: "migration", schemaVersion: 1, project: resolved.root, artifactPath: resolved.deltaPath, revision: current.revision, lines: bytes.toString().split("\n") });
+      migrationEvidenceId = await conservationStore.put(resolved.root, { kind: "migration", schemaVersion: 1, project: resolved.root, artifactPath: resolved.deltaPath, revision: current.revision!, lines: bytes.toString().split("\n") });
     }
     await conservationStore.registerSlice(resolved.root, input.initiative, input.slice);
-    const changedIds = [...new Set([...entries.keys(), ...(current.document?.concepts ?? []).map((entry) => entry.id)])]
-      .filter((id) => JSON.stringify(current.document?.concepts.find((entry) => entry.id === id)) !== JSON.stringify(candidate.document.concepts.find((entry) => entry.id === id))).sort(compare);
+    const changedIds = [...new Set([...entries.keys(), ...(current.document?.concepts ?? []).map((entry: any) => entry.id)])]
+      .filter((id) => JSON.stringify(current.document?.concepts.find((entry: any) => entry.id === id)) !== JSON.stringify(candidate.document.concepts.find((entry: any) => entry.id === id))).sort(compare);
     const changed = !current.exists || JSON.stringify(current.document) !== JSON.stringify(candidate.document);
     if (changed) await writeRecord(resolved.root, { kind: "change-map", initiative: input.initiative, slice: input.slice }, contents);
     const updated = { ...assessed, exists: true, revision: changed ? createHash("sha256").update(contents).digest("hex") : current.revision };
@@ -308,7 +313,7 @@ export async function updateChangeMap(input) {
  * Write a slice's derived change map. A change map that an agent wrote stays, so the derived one only creates or replaces a derived document.
  * Returns whether it wrote, and the reason when it did not.
  */
-export async function writeDerivedChangeMap(projectRoot, key, document) {
+export async function writeDerivedChangeMap(projectRoot: string, key: ChangeMapKey, document: unknown) {
   const resolved = await resolveChangeMap(projectRoot, key);
   await mkdir(path.dirname(resolved.target), { recursive: true });
   return withArtifactLock(resolved.target, () => withFileLock(resolved.target, async () => {
@@ -325,8 +330,8 @@ export async function writeDerivedChangeMap(projectRoot, key, document) {
 }
 
 /** Read a change map named by a slice key or by a stored path, current or from before the move to .prism. */
-export async function readChangeMapDocument(projectRoot, reference, expectedRevision) {
-  const key = typeof reference === "string" ? await keyOfPath(projectRoot, reference) : { kind: "change-map", ...reference };
+export async function readChangeMapDocument(projectRoot: string, reference: string | { initiative: string; slice: string }, expectedRevision?: string | null) {
+  const key: any = typeof reference === "string" ? await keyOfPath(projectRoot, reference) : { kind: "change-map", ...reference };
   if (key?.kind !== "change-map") throw failure("invalid_path", `${typeof reference === "string" ? reference : "The reference"} does not name a slice change map.`);
   const resolved = await resolveChangeMap(projectRoot, key);
   const loaded = await loadDelta(resolved);

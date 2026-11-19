@@ -2,10 +2,10 @@ import path from "node:path";
 import { readArtifactText } from "./record-store.mjs";
 
 // A design view explains contract clauses to the person at the design gate, and its slice.md declares it in a Views section by kind, question, and the clauses it explains.
-export const VIEW_KINDS = Object.freeze(["sequence", "activity", "state", "component", "data-model", "deployment", "wireframe", "code", "api"]);
+export const VIEW_KINDS: readonly string[] = Object.freeze(["sequence", "activity", "state", "component", "data-model", "deployment", "wireframe", "code", "api"]);
 
 // The drawn kinds that each declared kind accepts.
-const ACCEPTS = Object.freeze({
+const ACCEPTS: Readonly<Record<string, string[]>> = Object.freeze({
   sequence: ["sequence"],
   activity: ["activity"],
   state: ["state"],
@@ -18,7 +18,7 @@ const ACCEPTS = Object.freeze({
 });
 
 /** A level-two section of a Markdown design, without its heading, or null when the design has none. */
-export function section(source, title) {
+export function section(source: string, title: string) {
   const match = new RegExp(`^## ${title}[ \\t]*$`, "m").exec(source);
   if (!match) return null;
   const rest = source.slice(match.index + match[0].length);
@@ -27,8 +27,8 @@ export function section(source, title) {
 }
 
 /** Top-level list items of a section; an indented or wrapped line belongs to the item above it. */
-export function listItems(text) {
-  const result = [];
+export function listItems(text: string) {
+  const result: string[] = [];
   for (const line of text.split(/\r?\n/)) {
     const item = /^(?:[-*+]|\d+[.)])\s+(.*)$/.exec(line);
     if (item) result.push(item[1].trim());
@@ -38,7 +38,7 @@ export function listItems(text) {
 }
 
 /** The numbered clauses of a design's Contract section. */
-export function contractClauses(source) {
+export function contractClauses(source: string) {
   const text = section(source, "Contract");
   return text === null ? [] : listItems(text);
 }
@@ -50,9 +50,11 @@ const VIEW_LINE = /^`([^`]+)`\s+([A-Za-z][\w-]*)(?:\s*\(([^)]*)\))?\s*:\s*(.*)$/
  * Each view's path is the file in the folder, or for an api view a project-relative path with a `/`; problems name every declaration that breaks the form.
  * Returns { views: [{ path, file, kind, clauses, question }], problems: string[] }.
  */
-export function readViews(source, folder, { plans = null } = {}) {
+export interface DeclaredView { path: string; file: string; kind: string; clauses: number[]; question: string; valid: boolean }
+
+export function readViews(source: string | null | undefined, folder: string, { plans = null }: { plans?: string | null } = {}) {
   const text = section(source ?? "", "Views");
-  const views = [], problems = [];
+  const views: DeclaredView[] = [], problems: string[] = [];
   if (text === null) return { views, problems };
   for (const line of listItems(text)) {
     const parsed = VIEW_LINE.exec(line);
@@ -64,7 +66,7 @@ export function readViews(source, folder, { plans = null } = {}) {
     const file = raw.trim();
     const outside = file.includes("/");
     const viewPath = outside ? file : `${folder}/${file}`;
-    const own = [];
+    const own: string[] = [];
     if (!VIEW_KINDS.includes(kind)) own.push(`${viewPath} declares the kind ${kind}, which is none of ${VIEW_KINDS.join(", ")}.`);
     if (!question.trim() || !question.trim().endsWith("?")) own.push(`${viewPath} states no question: its Views line ends with the question it answers for the person at the design gate, ending in "?".`);
     const clauses = [...new Set([...(cited ?? "").matchAll(/§\s*(\d+)/g)].map((match) => Number(match[1])))];
@@ -85,9 +87,9 @@ export function readViews(source, folder, { plans = null } = {}) {
  * The views that a folder's slice.md assesses in its Split assessment section, one top-level item each: `` `<file>`: <why the slice stays whole> ``.
  * Returns a Map from each assessed view's path to the reason, leaving out an item that is not of that form or gives no reason.
  */
-export function readSplitAssessment(source, folder) {
+export function readSplitAssessment(source: string | null | undefined, folder: string) {
   const text = section(source ?? "", "Split assessment");
-  const assessed = new Map();
+  const assessed = new Map<string, string>();
   if (text === null) return assessed;
   for (const line of listItems(text)) {
     const parsed = /^`([^`/]+)`\s*:\s*(.*)$/.exec(line);
@@ -99,7 +101,7 @@ export function readSplitAssessment(source, folder) {
 const C4_ELEMENT =/^\s*(?:Person|System|SystemDb|SystemQueue|Container|ContainerDb|ContainerQueue|Component|ComponentDb|ComponentQueue|Boundary|Enterprise_Boundary|System_Boundary|Container_Boundary)(?:_Ext)?\s*\(/m;
 
 /** The kind a view draws, read from its source by the first drawn-kind rule that matches. */
-export function drawnKind(file, source) {
+export function drawnKind(file: string, source: string | null | undefined) {
   if (!file.endsWith(".puml")) return "api";
   const text = source ?? "";
   const start = /^\s*@start([a-z]+)/im.exec(text)?.[1]?.toLowerCase();
@@ -115,16 +117,16 @@ export function drawnKind(file, source) {
 }
 
 /** Whether a view of the declared kind may draw the drawn kind. */
-export const acceptsDrawn = (declared, drawn) => (ACCEPTS[declared] ?? []).includes(drawn);
+export const acceptsDrawn = (declared: string, drawn: string) => (ACCEPTS[declared] ?? []).includes(drawn);
 
-const clauseList = (clauses) => {
-  const named = clauses.map((number) => `§${number}`);
+const clauseList = (clauses: number[]) => {
+  const named = clauses.map((number: number) => `§${number}`);
   if (named.length < 3) return named.join(" and ");
   return `${named.slice(0, -1).join(", ")}, and ${named.at(-1)}`;
 };
 
 /** The sentence that tells a reader of a view that the contract decides. */
-export function viewNote(clauses, contract) {
+export function viewNote(clauses: number[], contract: string) {
   return `This view explains ${clauseList(clauses)} of the contract in ${contract}; where the view and the contract differ, the contract decides.`;
 }
 
@@ -132,7 +134,7 @@ export function viewNote(clauses, contract) {
  * The governing contract of a folder: the nearest slice.md with a Contract in the folder or a folder above it, up to and including top.
  * Returns { path, clauses } or null.
  */
-export async function governingContract(root, folder, top) {
+export async function governingContract(root: string, folder: string, top: string | null | undefined): Promise<{ path: string; clauses: number } | null> {
   for (let current = folder; ; current = path.posix.dirname(current)) {
     const file = `${current}/slice.md`;
     const text = await readArtifactText(root, file).catch(() => null);
@@ -143,7 +145,7 @@ export async function governingContract(root, folder, top) {
 }
 
 /** The view that a file's folder declares for it, with the governing contract and the note, or null when the folder declares none. */
-export async function declaredView(root, file, { plans }) {
+export async function declaredView(root: string, file: string, { plans }: { plans: string | null }) {
   if (!plans || !file.startsWith(`${plans}/`) || path.posix.basename(file) === "slice.md") return null;
   const folder = path.posix.dirname(file);
   const design = await readArtifactText(root, `${folder}/slice.md`).catch(() => null);

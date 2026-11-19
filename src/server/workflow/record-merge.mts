@@ -6,21 +6,21 @@ export { JSON_DEPTH_MAX, nestedDeeperThan };
 // Each entry names the module that owns the kind and is imported only when a merge needs it, so this module imports no record module
 // and the record store, its sync, and the record modules form no import cycle.
 const MERGES = [
-  { matches: (relative) => relative === "roadmap.json", load: async () => (await import("./roadmap.mjs")).mergeRoadmapRecord },
-  { matches: (relative) => /^initiatives\/[A-Za-z0-9_-]+\/initiative\.json$/.test(relative), load: async () => (await import("./initiative.mjs")).mergeInitiativeRecord },
-  { matches: (relative) => /^initiatives\/[A-Za-z0-9_-]+\/state\.json$/.test(relative), load: async () => (await import("./state.mjs")).mergeCoordinationState },
+  { matches: (relative: string) => relative === "roadmap.json", load: async () => (await import("./roadmap.mjs")).mergeRoadmapRecord },
+  { matches: (relative: string) => /^initiatives\/[A-Za-z0-9_-]+\/initiative\.json$/.test(relative), load: async () => (await import("./initiative.mjs")).mergeInitiativeRecord },
+  { matches: (relative: string) => /^initiatives\/[A-Za-z0-9_-]+\/state\.json$/.test(relative), load: async () => (await import("./state.mjs")).mergeCoordinationState },
   // A status record merges by what its versions say, so a ship's acceptance on one machine and an approval asked on another leave the ADR's file and recorded status agreeing.
-  { matches: (relative) => /^artifact-status\/.+\/status\.json$/.test(relative), load: async () => (await import("./artifact-status.mjs")).mergeStatusRecord }
+  { matches: (relative: string) => /^artifact-status\/.+\/status\.json$/.test(relative), load: async () => (await import("./artifact-status.mjs")).mergeStatusRecord }
 ];
 
 /** Whether a store-relative record path has a structural merge. */
-export const hasRecordMerge = (relative) => MERGES.some((entry) => entry.matches(relative));
+export const hasRecordMerge = (relative: string) => MERGES.some((entry) => entry.matches(relative));
 
 /**
  * The structural merge of a store-relative record path, or null when its kind has none.
  * The merge takes { path, base, local, upstream } as UTF-8 text, base null when the file is new, and returns { contents } or { conflict }.
  */
-export async function recordMergeFor(relative) {
+export async function recordMergeFor(relative: string) {
   const entry = MERGES.find((candidate) => candidate.matches(relative));
   return entry ? entry.load() : null;
 }
@@ -29,9 +29,9 @@ export async function recordMergeFor(relative) {
  * JSON with object keys sorted, so two values compare equal exactly when they hold the same content.
  * It walks the value with a stack of its own rather than by recursion, so a value that a synced file nests however deep never exhausts the call stack.
  */
-export function canonicalJson(value) {
-  const parts = [];
-  const pending = [value];
+export function canonicalJson(value: unknown) {
+  const parts: string[] = [];
+  const pending: unknown[] = [value];
   while (pending.length) {
     const item = pending.pop();
     if (item instanceof Text) { parts.push(item.text); continue; }
@@ -47,7 +47,7 @@ export function canonicalJson(value) {
       pending.push(new Text("}"));
       const keys = Object.keys(item).sort();
       for (let index = keys.length - 1; index >= 0; index -= 1) {
-        pending.push(item[keys[index]], new Text(`${index > 0 ? "," : ""}${JSON.stringify(keys[index])}:`));
+        pending.push((item as Record<string, unknown>)[keys[index]], new Text(`${index > 0 ? "," : ""}${JSON.stringify(keys[index])}:`));
       }
     } else parts.push(JSON.stringify(item ?? null));
   }
@@ -55,14 +55,14 @@ export function canonicalJson(value) {
 }
 
 // A piece of canonicalJson's output that its walk places between values.
-class Text { constructor(text) { this.text = text; } }
+class Text { declare text: string; constructor(text: string) { this.text = text; } }
 
 export class MergeConflict extends Error {}
 
 const ABSENT = Symbol("absent");
 
 /** The three-way rule for one unit: unchanged on one side takes the other side; changed the same way on both takes it; otherwise a conflict. ABSENT means removed. */
-export function mergeUnit(label, base, local, upstream) {
+export function mergeUnit(label: string, base: unknown, local: unknown, upstream: unknown) {
   const [b, l, u] = [base, local, upstream].map((value) => value === ABSENT ? "\0absent" : canonicalJson(value));
   if (l === u || u === b) return local;
   if (l === b) return upstream;
@@ -70,10 +70,10 @@ export function mergeUnit(label, base, local, upstream) {
 }
 
 /** Merge maps of units keyed by id; the result holds each surviving key with its merged value. */
-export function mergeKeyed(label, base, local, upstream) {
+export function mergeKeyed(label: string, base: any, local: any, upstream: any) {
   const keys = [...new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(upstream)])];
-  const merged = {};
-  const value = (map, key) => Object.hasOwn(map, key) ? map[key] : ABSENT;
+  const merged: Record<string, unknown> = {};
+  const value = (map: any, key: string) => Object.hasOwn(map, key) ? map[key] : ABSENT;
   for (const key of keys) {
     const result = mergeUnit(`${label} ${key}`, value(base, key), value(local, key), value(upstream, key));
     if (result !== ABSENT) merged[key] = result;
@@ -82,10 +82,10 @@ export function mergeKeyed(label, base, local, upstream) {
 }
 
 /** Merge the top-level scalars of a record other than the named structured parts, in the upstream's key order. */
-export function mergeScalars(base, local, upstream, structured) {
+export function mergeScalars(base: any, local: any, upstream: any, structured: string[]) {
   const keys = [...new Set([...Object.keys(upstream), ...Object.keys(local), ...Object.keys(base)])].filter((key) => !structured.includes(key));
-  const merged = {};
-  const value = (record, key) => Object.hasOwn(record, key) ? record[key] : ABSENT;
+  const merged: Record<string, unknown> = {};
+  const value = (record: any, key: string) => Object.hasOwn(record, key) ? record[key] : ABSENT;
   for (const key of keys) {
     const result = mergeUnit(key, value(base, key), value(local, key), value(upstream, key));
     if (result !== ABSENT) merged[key] = result;
@@ -97,24 +97,24 @@ export function mergeScalars(base, local, upstream, structured) {
  * Keep every base entry that both sides still hold, in base order, then every entry only one side added, by `at` with local first on a tie,
  * and keep the last `limit` entries as the writers do.
  */
-export function mergeHistory(base, local, upstream, limit) {
-  const counts = (entries) => entries.reduce((map, entry) => map.set(canonicalJson(entry), (map.get(canonicalJson(entry)) ?? 0) + 1), new Map());
-  const take = (map, key) => { const left = map.get(key) ?? 0; if (left > 0) map.set(key, left - 1); return left > 0; };
+export function mergeHistory(base: any, local: any, upstream: any, limit: number) {
+  const counts = (entries: unknown[]): Map<string, number> => entries.reduce((map: Map<string, number>, entry) => map.set(canonicalJson(entry), (map.get(canonicalJson(entry)) ?? 0) + 1), new Map<string, number>());
+  const take = (map: any, key: string) => { const left = map.get(key) ?? 0; if (left > 0) map.set(key, left - 1); return left > 0; };
   const inLocal = counts(local);
   const inUpstream = counts(upstream);
-  const kept = [];
+  const kept: unknown[] = [];
   for (const entry of base) {
     const key = canonicalJson(entry);
     const held = [take(inLocal, key), take(inUpstream, key)];
     if (held[0] && held[1]) kept.push(entry);
   }
   // What remains in each count is what that side added; an entry both sides added the same way is kept once.
-  const added = (entries, left) => entries.filter((entry) => take(left, canonicalJson(entry)));
+  const added = (entries: unknown[], left: Map<string, number>) => entries.filter((entry: any) => take(left, canonicalJson(entry)));
   const localAdded = added(local, inLocal);
   const shared = counts(localAdded);
-  const upstreamAdded = added(upstream, inUpstream).filter((entry) => !take(shared, canonicalJson(entry)));
-  const at = (entry) => typeof entry?.at === "string" ? entry.at : "";
-  const appended = [...localAdded.map((entry) => [entry, 0]), ...upstreamAdded.map((entry) => [entry, 1])]
+  const upstreamAdded = added(upstream, inUpstream).filter((entry: any) => !take(shared, canonicalJson(entry)));
+  const at = (entry: any) => typeof entry?.at === "string" ? entry.at : "";
+  const appended = [...localAdded.map((entry: any): [any, number] => [entry, 0]), ...upstreamAdded.map((entry: any): [any, number] => [entry, 1])]
     .sort((left, right) => at(left[0]) < at(right[0]) ? -1 : at(left[0]) > at(right[0]) ? 1 : left[1] - right[1])
     .map(([entry]) => entry);
   return [...kept, ...appended].slice(-limit);
@@ -125,17 +125,17 @@ export function mergeHistory(base, local, upstream, limit) {
  * and an id that one side added goes right after its nearest preceding id in that side's list, or first.
  * Where both sides added after the same id, the local addition comes first unless `upstreamFirst` is set.
  */
-export function mergeOrder(label, base, local, upstream, survivors, { upstreamFirst = false } = {}) {
-  const everywhere = base.filter((id) => local.includes(id) && upstream.includes(id));
-  const relative = (list) => list.filter((id) => everywhere.includes(id)).join("\0");
+export function mergeOrder(label: string, base: string[], local: string[], upstream: string[], survivors: Set<string>, { upstreamFirst = false } = {}) {
+  const everywhere = base.filter((id: string) => local.includes(id) && upstream.includes(id));
+  const relative = (list: string[]) => list.filter((id: string) => everywhere.includes(id)).join("\0");
   const [b, l, u] = [base, local, upstream].map(relative);
   if (l !== b && u !== b && l !== u) throw new MergeConflict(`${label} was reordered differently on both sides.`);
-  const order = (l !== b ? local : upstream).filter((id) => everywhere.includes(id) && survivors.has(id));
+  const order = (l !== b ? local : upstream).filter((id: string) => everywhere.includes(id) && survivors.has(id));
   // The side placed first ends up last after a shared predecessor, because the other side's addition is spliced in right after that predecessor.
   for (const side of upstreamFirst ? [local, upstream] : [upstream, local]) {
     for (const [index, id] of side.entries()) {
       if (order.includes(id) || !survivors.has(id)) continue;
-      const before = side.slice(0, index).reverse().find((candidate) => order.includes(candidate));
+      const before = side.slice(0, index).reverse().find((candidate: string) => order.includes(candidate));
       order.splice(before === undefined ? 0 : order.indexOf(before) + 1, 0, id);
     }
   }
@@ -143,7 +143,7 @@ export function mergeOrder(label, base, local, upstream, survivors, { upstreamFi
 }
 
 /** Parse the three versions of a record, or throw a conflict; a file new on both sides merges against the kind's empty record. */
-export function parseVersions({ base, local, upstream }, empty) {
+export function parseVersions<T = any>({ base, local, upstream }: { base: string | null; local: string; upstream: string }, empty: () => T): { base: T; local: T; upstream: T } {
   let versions;
   try {
     versions = { base: base === null ? empty() : parseStoreJson(base), local: parseStoreJson(local), upstream: parseStoreJson(upstream) };

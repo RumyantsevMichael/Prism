@@ -14,7 +14,10 @@ import { readWorkflowConfig } from "./workflow-config.mjs";
 
 /** The refusal of a change to a shipped initiative, with the initiative and its ship time. */
 export class ShippedHistoryError extends Error {
-  constructor(initiative, shippedAt) {
+  declare code: string;
+  declare initiative: string;
+  declare shippedAt: any;
+  constructor(initiative: string, shippedAt: any) {
     super(`Initiative ${initiative} shipped at ${shippedAt}, so its state is history and this change was not applied; start new work as a new initiative that references it.`);
     this.name = "ShippedHistoryError";
     this.code = "initiative_shipped";
@@ -25,7 +28,9 @@ export class ShippedHistoryError extends Error {
 
 /** The refusal of a change while the roadmap record exists but cannot be read or parsed, so whether the initiative shipped is unknown. */
 export class UnreadableRoadmapError extends Error {
-  constructor(initiative, reason) {
+  declare code: string;
+  declare initiative: string;
+  constructor(initiative: string, reason: string) {
     super(`The roadmap record cannot be read (${reason}), so Prism cannot tell whether initiative ${initiative} shipped and this change was not applied; repair the roadmap record and try again.`);
     this.name = "UnreadableRoadmapError";
     this.code = "invalid_roadmap";
@@ -34,14 +39,14 @@ export class UnreadableRoadmapError extends Error {
 }
 
 /** The ship date of a shipped decision: the first ten characters of its time. */
-export const shipDate = (decision) => String(decision.at).slice(0, 10);
+export const shipDate = (decision: any) => String(decision.at).slice(0, 10);
 
 /** The shipped decision of a roadmap entry, or null when the entry has none. */
-export const entryShippedDecision = (entry) => entry?.decision?.kind === "shipped" && typeof entry.decision.at === "string" ? entry.decision : null;
+export const entryShippedDecision = (entry: any) => entry?.decision?.kind === "shipped" && typeof entry.decision.at === "string" ? entry.decision : null;
 
 // The roadmap entry of an initiative: { entry } read from the roadmap record, with entry undefined when the record or the entry is absent,
 // or { problem, error } with why a record that exists cannot be read or parsed.
-async function roadmapEntry(projectRoot, initiative) {
+async function roadmapEntry(projectRoot: string, initiative: string) {
   let record;
   try {
     const { bytes } = await readRecord(projectRoot, { kind: "roadmap" });
@@ -51,7 +56,7 @@ async function roadmapEntry(projectRoot, initiative) {
     return { problem: error instanceof SyntaxError ? "it is not valid JSON" : error.message, error };
   }
   const entries = Array.isArray(record?.initiatives) ? record.initiatives : [];
-  return { entry: entries.find((entry) => entry?.id === initiative) };
+  return { entry: entries.find((entry: any) => entry?.id === initiative) };
 }
 
 /**
@@ -59,7 +64,7 @@ async function roadmapEntry(projectRoot, initiative) {
  * the roadmap has no entry for it, or the record cannot be read.
  * It reads the record directly, so modules that the roadmap module imports can use it.
  */
-export async function shippedDecision(projectRoot, initiative) {
+export async function shippedDecision(projectRoot: string, initiative: string) {
   const { entry } = await roadmapEntry(projectRoot, initiative);
   return entryShippedDecision(entry);
 }
@@ -73,7 +78,7 @@ const SYSTEM_CODE = /^(E[A-Z0-9]+|ERR_[A-Z0-9_]+)$/;
  * Every writer of an initiative's state calls it after argument validation and before its other checks, and again inside the lock it writes under,
  * so a ship that lands between the two still refuses the change and a refused change writes nothing.
  */
-export async function refuseShipped(projectRoot, initiative) {
+export async function refuseShipped(projectRoot: string, initiative: string) {
   const { entry, problem, error } = await roadmapEntry(projectRoot, initiative);
   // A refusal of the record store itself, such as an unnamed checkout or a path outside the project, already refuses the change and names its own fix.
   if (error && typeof error.code === "string" && !SYSTEM_CODE.test(error.code)) throw error;
@@ -82,7 +87,7 @@ export async function refuseShipped(projectRoot, initiative) {
   if (decision) throw new ShippedHistoryError(initiative, decision.at);
 }
 
-async function pendingProposals(projectRoot, initiative, record) {
+async function pendingProposals(projectRoot: string, initiative: string, record: any) {
   if (record === undefined) {
     const { bytes } = await readRecord(projectRoot, { kind: "initiative", initiative });
     record = bytes ? parseStoreJson(bytes.toString("utf8")) : null;
@@ -97,12 +102,12 @@ async function pendingProposals(projectRoot, initiative, record) {
  * and proposals lists the scopes with a pending design proposal in slug order.
  * Pass record (the initiative record, or null) or state (a coordination state read) when the caller has already read them.
  */
-export async function openWork(projectRoot, initiative, { record, state, now = Date.now() } = {}) {
+export async function openWork(projectRoot: string, initiative: string, { record, state, now = Date.now() }: { record?: any; state?: any; now?: number } = {}) {
   const coordination = state === undefined ? await readCoordinationState({ projectRoot, initiative }) : state;
   const pending = Array.isArray(coordination?.state?.pending) ? coordination.state.pending : [];
   const gates = pending
-    .filter((gate) => gate && typeof gate === "object" && typeof gate.id === "string")
-    .map((gate) => ({ id: gate.id, slice: gate.slice ?? null, question: gate.question ?? null, answered: Boolean(gate.answer) }));
+    .filter((gate: any) => gate && typeof gate === "object" && typeof gate.id === "string")
+    .map((gate: any) => ({ id: gate.id, slice: gate.slice ?? null, question: gate.question ?? null, answered: Boolean(gate.answer) }));
   const claims = [];
   for (const { slice, bytes } of await listClaimRecords(projectRoot, initiative)) {
     const { claim } = parseClaim(slice, bytes);
@@ -113,13 +118,13 @@ export async function openWork(projectRoot, initiative, { record, state, now = D
 }
 
 /** Whether open work lists anything. */
-export const hasOpenWork = (work) => work.gates.length > 0 || work.claims.length > 0 || work.proposals.length > 0;
+export const hasOpenWork = (work: any) => work.gates.length > 0 || work.claims.length > 0 || work.proposals.length > 0;
 
 /** The refusal message of shipping an initiative with open work, naming each gate id, claimed slice, and proposal scope. */
-export function openWorkMessage(initiative, work) {
+export function openWorkMessage(initiative: string, work: any) {
   const parts = [];
-  if (work.gates.length) parts.push(`pending user gates ${work.gates.map((gate) => `${gate.id} (${[gate.slice ? `slice ${gate.slice}` : null, gate.answered ? "answered" : "unanswered"].filter(Boolean).join(", ")})`).join(", ")}`);
-  if (work.claims.length) parts.push(`live claims on ${work.claims.map((claim) => `${claim.slice} (${claim.activity} by ${claim.label} until ${claim.expiresAt})`).join(", ")}`);
+  if (work.gates.length) parts.push(`pending user gates ${work.gates.map((gate: any) => `${gate.id} (${[gate.slice ? `slice ${gate.slice}` : null, gate.answered ? "answered" : "unanswered"].filter(Boolean).join(", ")})`).join(", ")}`);
+  if (work.claims.length) parts.push(`live claims on ${work.claims.map((claim: any) => `${claim.slice} (${claim.activity} by ${claim.label} until ${claim.expiresAt})`).join(", ")}`);
   if (work.proposals.length) parts.push(`pending design proposals for ${work.proposals.join(", ")}`);
   return `Initiative ${initiative} cannot ship while work is open: ${parts.join("; ")}. Resolve each gate, finish or release each claim, and accept or replace each proposal first, because no agent can finish this work once the initiative is history.`;
 }
@@ -129,24 +134,24 @@ export function openWorkMessage(initiative, work) {
 
 const MARK_FIRST = /^> Shipped history: initiative `[^`]+` shipped on \d{4}-\d{2}-\d{2}, so this document records finished work\.$/;
 const MARK_SECOND = "> Current intent lives in Approved requirements, Accepted ADRs, the glossary, and feature files.";
-const byPath = (left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
-const sha256 = (text) => createHash("sha256").update(text).digest("hex");
+const byPath = (left: any, right: any) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
+const sha256 = (text: string | Buffer) => createHash("sha256").update(text).digest("hex");
 
 /** The two lines of the history mark of a shipped initiative, each ending in a newline. */
-export const historyMark = (initiative, date) => `> Shipped history: initiative \`${initiative}\` shipped on ${date}, so this document records finished work.\n${MARK_SECOND}\n`;
+export const historyMark = (initiative: string, date: any) => `> Shipped history: initiative \`${initiative}\` shipped on ${date}, so this document records finished work.\n${MARK_SECOND}\n`;
 
 /** The message that a read of a shipped initiative carries. */
-export const shippedHistoryMessage = (initiative, decision) => `Initiative ${initiative} shipped on ${shipDate(decision)} and its state is history: take current intent only from Approved requirements, Accepted ADRs, the glossary, and feature files, and cite this initiative only as history.`;
+export const shippedHistoryMessage = (initiative: string, decision: any) => `Initiative ${initiative} shipped on ${shipDate(decision)} and its state is history: take current intent only from Approved requirements, Accepted ADRs, the glossary, and feature files, and cite this initiative only as history.`;
 
 // Where a document holds the mark: { start, end } as line indexes of the lines to remove, or null when it holds none.
-function markLines(lines) {
+function markLines(lines: string[]) {
   if (/^# /.test(lines[0] ?? "") && lines[1] === "" && MARK_FIRST.test(lines[2] ?? "") && lines[3] === MARK_SECOND) return { start: 1, end: 4 };
   if (MARK_FIRST.test(lines[0] ?? "") && lines[1] === MARK_SECOND && lines[2] === "") return { start: 0, end: 3 };
   return null;
 }
 
 /** A document's content without the history mark: the two mark lines and the blank line inserted with them removed. */
-export function unmarkedContent(content) {
+export function unmarkedContent(content: string) {
   const lines = content.split("\n");
   const found = markLines(lines);
   if (!found) return content;
@@ -155,7 +160,7 @@ export function unmarkedContent(content) {
 }
 
 /** A document with the history mark: under a level-one heading on the first line, otherwise at the top; a document that holds a mark is returned unchanged. */
-export function markDocument(content, initiative, date) {
+export function markDocument(content: string, initiative: string, date: any) {
   if (markLines(content.split("\n"))) return content;
   const mark = historyMark(initiative, date);
   const end = content.indexOf("\n");
@@ -166,7 +171,7 @@ export function markDocument(content, initiative, date) {
 }
 
 // Whether a project-relative path stays inside the initiative's plans folder, so a slug or path from a record never reaches a file outside it.
-function insideInitiativePlans(plans, initiative, relative) {
+function insideInitiativePlans(plans: any, initiative: string, relative: string) {
   if (typeof relative !== "string" || path.posix.isAbsolute(relative) || path.isAbsolute(relative)) return false;
   const folder = path.posix.join(plans, initiative);
   const normalized = path.posix.normalize(relative);
@@ -177,7 +182,7 @@ function insideInitiativePlans(plans, initiative, relative) {
  * The project-relative paths of an initiative's slice documents by its initiative record, in path order; none without a record or a plans path.
  * A slice key outside the slug pattern names no document, so a record never leads a read or a mark outside the plans folder.
  */
-async function sliceDocumentPaths(projectRoot, initiative) {
+async function sliceDocumentPaths(projectRoot: string, initiative: string) {
   if (!SLUG_PATTERN.test(initiative ?? "")) return [];
   let slices;
   try {
@@ -197,7 +202,7 @@ async function sliceDocumentPaths(projectRoot, initiative) {
 
 // A document's state: { content } when it reads, { absent: true } when it does not exist, or { problem } with why it cannot be read.
 // With a record store a slice document is a store artifact, so it is read from the store, never from the checkout.
-async function readDocument(projectRoot, relative) {
+async function readDocument(projectRoot: string, relative: string) {
   try {
     if (await inArtifactStore(projectRoot, relative)) {
       const content = await readArtifactText(projectRoot, relative);
@@ -214,7 +219,7 @@ async function readDocument(projectRoot, relative) {
  * The slice documents of an initiative that exist in this checkout, or in the record store when it holds them: documents lists { path, content, unmarked } for each readable one,
  * and problems { path, reason } for each that exists but cannot be read, both in path order.
  */
-export async function readSliceDocuments(projectRoot, initiative) {
+export async function readSliceDocuments(projectRoot: string, initiative: string) {
   const documents = [];
   const problems = [];
   for (const relative of await sliceDocumentPaths(projectRoot, initiative)) {
@@ -226,14 +231,14 @@ export async function readSliceDocuments(projectRoot, initiative) {
 }
 
 /** The recorded form of documents read by readSliceDocuments: { path, sha256 } of each one's content without the mark. */
-export const documentDigests = (documents) => documents.map((document) => ({ path: document.path, sha256: sha256(document.unmarked) }));
+export const documentDigests = (documents: any) => documents.map((document: any) => ({ path: document.path, sha256: sha256(document.unmarked) }));
 
 /**
  * Write the history mark into documents read by readSliceDocuments; returns marked, the paths written in path order,
  * and problems { path, reason } for each that could not be written. A document that already holds a mark is left as it is,
  * and so is one whose content changed since it was read, which is listed under problems, so the mark never overwrites an edit.
  */
-export async function writeHistoryMarks(projectRoot, initiative, decision, documents) {
+export async function writeHistoryMarks(projectRoot: string, initiative: string, decision: any, documents: any) {
   const marked = [];
   const problems = [];
   for (const document of documents) {
@@ -262,7 +267,7 @@ export async function writeHistoryMarks(projectRoot, initiative, decision, docum
   return { marked, problems };
 }
 
-async function readRoadmapBytes(projectRoot) {
+async function readRoadmapBytes(projectRoot: string) {
   const { bytes } = await readRecord(projectRoot, { kind: "roadmap" });
   return bytes;
 }
@@ -272,12 +277,12 @@ async function readRoadmapBytes(projectRoot) {
  * returns { decision, marked } once recorded, or null when the initiative has not shipped, its decision already records documents,
  * no slice document exists in this checkout, or the roadmap changed meanwhile, so that a later read records them. It never throws.
  */
-export async function recordShipDocuments(projectRoot, initiative) {
+export async function recordShipDocuments(projectRoot: string, initiative: string) {
   try {
     const before = await readRoadmapBytes(projectRoot);
     if (!before) return null;
     const revision = sha256(before);
-    const decision = entryShippedDecision(parseStoreJson(before.toString("utf8"))?.initiatives?.find?.((entry) => entry?.id === initiative));
+    const decision = entryShippedDecision(parseStoreJson(before.toString("utf8"))?.initiatives?.find?.((entry: any) => entry?.id === initiative));
     if (!decision || Array.isArray(decision.documents)) return null;
     const { documents } = await readSliceDocuments(projectRoot, initiative);
     if (!documents.length) return null;
@@ -286,7 +291,7 @@ export async function recordShipDocuments(projectRoot, initiative) {
       const current = await readRoadmapBytes(projectRoot);
       if (!current || sha256(current) !== revision) return false;
       const record = parseStoreJson(current.toString("utf8"));
-      const entry = record.initiatives.find((item) => item?.id === initiative);
+      const entry = record.initiatives.find((item: any) => item?.id === initiative);
       entry.decision = recorded;
       await writeRecord(projectRoot, { kind: "roadmap" }, `${JSON.stringify(record, null, 2)}\n`);
       return true;
@@ -300,7 +305,7 @@ export async function recordShipDocuments(projectRoot, initiative) {
 }
 
 /** Record the slice documents of every shipped roadmap entry whose decision has none; returns { initiative, marked } for each entry this call recorded. */
-export async function recordEarlierShips(projectRoot, entries) {
+export async function recordEarlierShips(projectRoot: string, entries: any) {
   const results = [];
   for (const entry of entries) {
     const decision = entryShippedDecision(entry);
@@ -312,9 +317,9 @@ export async function recordEarlierShips(projectRoot, entries) {
 }
 
 /** Each recorded document whose content differs, ignoring the mark, or that no longer exists, and each slice document in a folder that had none recorded, in path order. */
-async function documentChanges(projectRoot, initiative, recorded) {
+async function documentChanges(projectRoot: string, initiative: string, recorded: any) {
   const changes = [];
-  const known = new Set(recorded.map((item) => item.path));
+  const known = new Set(recorded.map((item: any) => item.path));
   for (const item of recorded) {
     const read = await readDocument(projectRoot, item.path);
     if (read.absent) changes.push({ path: item.path, change: "removed" });
@@ -329,7 +334,7 @@ async function documentChanges(projectRoot, initiative, recorded) {
  * The roadmap entries that correct a shipped initiative, in roadmap order: { initiative, title, state, slices } with each entry's derived lifecycle state.
  * The roadmap module is loaded when this runs, because it imports this one.
  */
-async function laterFixes(projectRoot, initiative) {
+async function laterFixes(projectRoot: string, initiative: string) {
   const bytes = await readRoadmapBytes(projectRoot);
   if (!bytes) return [];
   const entries = parseStoreJson(bytes.toString("utf8"))?.initiatives;
@@ -349,7 +354,7 @@ async function laterFixes(projectRoot, initiative) {
  * What a read of a shipped initiative reports: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where laterFixes lists the roadmap entries that correct it, with marked listing the documents
  * this read marked when it recorded an earlier ship's documents, or null when the initiative has not shipped.
  */
-export async function shippedHistory(projectRoot, initiative) {
+export async function shippedHistory(projectRoot: string, initiative: string) {
   let decision = await shippedDecision(projectRoot, initiative);
   if (!decision) return null;
   let marked = [];
@@ -362,14 +367,14 @@ export async function shippedHistory(projectRoot, initiative) {
   // A recorded path comes from the shared roadmap record, so only one inside the initiative's plans folder is read or reported.
   const plans = Array.isArray(decision.documents) ? await readWorkflowConfig(projectRoot).then((config) => config.paths.plans).catch(() => null) : null;
   const recorded = Array.isArray(decision.documents) && plans && SLUG_PATTERN.test(initiative ?? "")
-    ? decision.documents.filter((item) => insideInitiativePlans(plans, initiative, item?.path)).sort(byPath)
+    ? decision.documents.filter((item: any) => insideInitiativePlans(plans, initiative, item?.path)).sort(byPath)
     : [];
   const changedAfterShip = Array.isArray(decision.documents) ? await documentChanges(projectRoot, initiative, recorded).catch(() => []) : [];
   return {
     initiative,
     shippedAt: decision.at,
     message: shippedHistoryMessage(initiative, decision),
-    documents: recorded.map((item) => item.path),
+    documents: recorded.map((item: any) => item.path),
     changedAfterShip,
     laterFixes: await laterFixes(projectRoot, initiative).catch(() => []),
     ...(marked.length ? { marked } : {})
@@ -377,19 +382,19 @@ export async function shippedHistory(projectRoot, initiative) {
 }
 
 /** The label that the review browser shows on a page of a shipped initiative. */
-export const shippedHistoryLabel = (initiative, decision) => `Shipped history: ${initiative} shipped on ${shipDate(decision)}; this page records finished work.`;
+export const shippedHistoryLabel = (initiative: string, decision: any) => `Shipped history: ${initiative} shipped on ${shipDate(decision)}; this page records finished work.`;
 
 /** The reason that the review browser gives for every action on a shipped initiative, its slices, and its gates. */
-export const shippedActionReason = (decision) => `The initiative shipped on ${shipDate(decision)}, so its state is history.`;
+export const shippedActionReason = (decision: any) => `The initiative shipped on ${shipDate(decision)}, so its state is history.`;
 
 /**
  * The text line of an MCP read that marked slice documents: a document marked in the checkout is to be committed apart from the task's changes,
  * while one marked in the record store is a store artifact that its sync shares, so nothing asks to commit it.
  */
-export async function historyMarksText(projectRoot, initiative, marked) {
+export async function historyMarksText(projectRoot: string, initiative: string, marked: any) {
   const inStore = await artifactPathTest(projectRoot).catch(() => () => false);
-  const shared = marked.filter((file) => inStore(file));
-  const local = marked.filter((file) => !inStore(file));
+  const shared = marked.filter((file: string) => inStore(file));
+  const local = marked.filter((file: string) => !inStore(file));
   return [
     ...(local.length ? [`Prism marked these slice documents of shipped initiative ${initiative} as history: ${local.join(", ")}. Commit them in a commit of their own, apart from this task's changes.`] : []),
     ...(shared.length ? [`Prism marked these slice documents of shipped initiative ${initiative} as history in the record store, which shares them with every checkout, so there is nothing to commit: ${shared.join(", ")}.`] : [])

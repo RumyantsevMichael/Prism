@@ -19,28 +19,28 @@ export const REPOSITORIES = "repositories";
 export const REPOSITORY_NAME = /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/;
 const NAME_MAX = 64;
 // A name also names the store folder of the repository's artifacts and its registration file, so it is no Windows device name, which Git for Windows refuses to check out.
-export const portableRepositoryName = (name) => typeof name === "string" && REPOSITORY_NAME.test(name) && !windowsDeviceName(name);
+export const portableRepositoryName = (name: string) => typeof name === "string" && REPOSITORY_NAME.test(name) && !windowsDeviceName(name);
 const REGISTRATION_MAX_BYTES = 64 * 1024;
 // The refusals of a checkout's repository name, which every record operation reports while the checkout stays refused.
 export const REPOSITORY_REFUSALS = Object.freeze(["repository_name_missing", "repository_name_invalid", "repository_remote_registered", "repository_name_taken", "repository_unconfirmed"]);
 // The sync outcomes after which the store holds the registration that won, or holds it only locally because nothing else shares the store's remote.
 const CONFIRMING = new Set(["ok", "conflicts", "no_upstream", "not_a_repository"]);
 
-const git = (root, args) => new Promise((resolve) => {
+const git = (root: string, args: string[]) => new Promise<string | null>((resolve) => {
   execFile("git", ["-C", root, ...args], { timeout: 10000, windowsHide: true }, (error, stdout) => resolve(error ? null : stdout.trim()));
 });
 
 /** The identity every full clone of one repository shares, its first root commit in sorted order, or null outside Git, before the first commit, or in a shallow clone, whose oldest fetched commits only look like roots. */
 // A root commit never changes once it exists, so each project asks Git only until it has one; a shallow clone asks again, because git fetch --unshallow reveals its root.
 const repositoryIds = new Map();
-async function rootCommit(root, shallow) {
+async function rootCommit(root: string, shallow: any) {
   if (repositoryIds.has(root)) return repositoryIds.get(root);
   if (shallow !== "false") return null;
   const id = ((await git(root, ["rev-list", "--max-parents=0", "HEAD"])) ?? "").split(/\s+/).filter(Boolean).sort()[0] || null;
   if (id) repositoryIds.set(root, id);
   return id;
 }
-export async function repositoryId(root) {
+export async function repositoryId(root: string) {
   if (repositoryIds.has(root)) return repositoryIds.get(root);
   return rootCommit(root, await git(root, ["rev-parse", "--is-shallow-repository"]));
 }
@@ -49,7 +49,7 @@ export async function repositoryId(root) {
  * The identity of a remote as shown in records: its lowercase host without a port and its path without surrounding slashes or a trailing .git.
  * Scheme and user never count, so SSH and HTTPS spellings of one host and path are one remote, while the path keeps its case.
  */
-export function remoteIdentity(shown) {
+export function remoteIdentity(shown: any) {
   if (typeof shown !== "string" || !shown) return null;
   let host, tail;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(shown)) {
@@ -67,13 +67,13 @@ export function remoteIdentity(shown) {
 }
 
 /** Whether two shown remotes are the same remote. */
-export function sameRemote(left, right) {
+export function sameRemote(left: any, right: any) {
   const identity = remoteIdentity(left);
   return identity !== null && identity === remoteIdentity(right);
 }
 
 // What the checkout can prove about itself: its shown remote, or null for no network remote, its root commit, and why history may not prove it.
-async function checkoutFacts(root) {
+async function checkoutFacts(root: string) {
   const [origin, shallow, head] = await Promise.all([
     git(root, ["config", "--get", "remote.origin.url"]),
     git(root, ["rev-parse", "--is-shallow-repository"]),
@@ -82,10 +82,10 @@ async function checkoutFacts(root) {
   return { remote: publicRemote(origin || null), root: await rootCommit(root, shallow), shallow: shallow === "true", commits: Boolean(head), folder: path.basename(root) };
 }
 
-const registrationFile = (base, name) => path.join(base, REPOSITORIES, `${name}.json`);
+const registrationFile = (base: string, name: string) => path.join(base, REPOSITORIES, `${name}.json`);
 
 // The registrations folder, which must be a real folder of the store, never a link out of it, or null while it does not exist.
-async function registrationsFolder(base, fail) {
+async function registrationsFolder(base: string, fail: any) {
   const folder = path.join(base, REPOSITORIES);
   let info;
   try { info = await lstat(folder); }
@@ -99,7 +99,7 @@ async function registrationsFolder(base, fail) {
 }
 
 // A registration's bytes, read without following a link and never past the size limit, or null when it is no regular file or is too large.
-async function registrationBytes(target) {
+async function registrationBytes(target: string) {
   const handle = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0));
   try {
     if (!(await handle.stat()).isFile()) return null;
@@ -115,9 +115,9 @@ async function registrationBytes(target) {
 }
 
 // Every registration in the store, in name order; a file Prism cannot read still holds its name and accepts no checkout.
-async function readRegistrations(base, fail) {
+async function readRegistrations(base: string, fail: any) {
   const folder = await registrationsFolder(base, fail);
-  let names = [];
+  let names: string[] = [];
   if (folder) {
     try { names = (await readdir(folder)).filter((name) => name.endsWith(".json") && REPOSITORY_NAME.test(name.slice(0, -".json".length))).sort(); }
     catch (error) { throw fail("store_unavailable", `The registrations folder ${REPOSITORIES} of the record store cannot be read (${error.code ?? error.message}).`); }
@@ -129,46 +129,46 @@ async function readRegistrations(base, fail) {
     if (!portableRepositoryName(name)) { registrations.push({ name, remotes: [], root: null, unreadable: true }); continue; }
     let parsed = null;
     try {
-      const bytes = await registrationBytes(path.join(folder, file));
+      const bytes = await registrationBytes(path.join(folder!, file));
       if (bytes) parsed = parseStoreJson(bytes.toString("utf8"));
     } catch { /* An unreadable registration keeps its name taken. */ }
     // A registration nested deeper than Prism writes one is unreadable too, so comparing the registrations read never exhausts the call stack.
     const valid = parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) && Array.isArray(parsed.remotes) && !nestedDeeperThan(parsed);
     registrations.push(valid
-      ? { name, remotes: parsed.remotes.filter((remote) => typeof remote === "string"), root: typeof parsed.root === "string" ? parsed.root : null, document: parsed }
+      ? { name, remotes: parsed.remotes.filter((remote: any) => typeof remote === "string"), root: typeof parsed.root === "string" ? parsed.root : null, document: parsed }
       : { name, remotes: [], root: null, unreadable: true });
   }
   return registrations;
 }
 
 // The registration other than the named one that lists the checkout's remote, if any.
-const remoteOwner = (registrations, facts, except) => facts.remote
-  ? registrations.find((item) => item.name !== except && !item.unreadable && item.remotes.some((remote) => sameRemote(remote, facts.remote)))
+const remoteOwner = (registrations: any, facts: any, except: any) => facts.remote
+  ? registrations.find((item: any) => item.name !== except && !item.unreadable && item.remotes.some((remote: any) => sameRemote(remote, facts.remote)))
   : undefined;
 
 // How a registration accepts the checkout: by its remote, by having no network remote as the checkout has none, by its root commit while no other registration lists the checkout's remote, or not at all.
-function acceptance(registration, facts, registrations) {
+function acceptance(registration: any, facts: any, registrations: any) {
   if (registration.unreadable) return null;
-  if (facts.remote ? registration.remotes.some((remote) => sameRemote(remote, facts.remote)) : registration.remotes.length === 0) return "remote";
+  if (facts.remote ? registration.remotes.some((remote: any) => sameRemote(remote, facts.remote)) : registration.remotes.length === 0) return "remote";
   if (facts.root && registration.root === facts.root && !remoteOwner(registrations, facts, registration.name)) return "root";
   return null;
 }
 
-function lastSegment(shown) {
+function lastSegment(shown: any) {
   const identity = remoteIdentity(shown);
   return identity === null ? "" : identity.slice(identity.indexOf("/") + 1).split("/").at(-1);
 }
 
-const trimName = (value) => value.replace(/^[-_]+|[-_]+$/g, "");
+const trimName = (value: any) => value.replace(/^[-_]+|[-_]+$/g, "");
 
 /** A name the store would accept for this checkout: a registration that accepts it, or one derived from its remote or folder that no other repository holds. */
-function proposedName(registrations, facts) {
-  const accepting = registrations.find((registration) => acceptance(registration, facts, registrations));
+function proposedName(registrations: any, facts: any) {
+  const accepting = registrations.find((registration: any) => acceptance(registration, facts, registrations));
   if (accepting) return accepting.name;
   const source = (facts.remote && lastSegment(facts.remote)) || facts.folder;
   const derived = trimName(trimName(source.toLowerCase().replace(/[^a-z0-9_-]+/g, "-")).slice(0, NAME_MAX)) || "repository";
   const base = windowsDeviceName(derived) ? `${derived}-repository` : derived;
-  const taken = new Set(registrations.map((registration) => registration.name));
+  const taken = new Set(registrations.map((registration: any) => registration.name));
   if (!taken.has(base)) return base;
   for (let suffix = 2; ; suffix += 1) {
     const candidate = `${trimName(base.slice(0, NAME_MAX - `-${suffix}`.length))}-${suffix}`;
@@ -176,26 +176,26 @@ function proposedName(registrations, facts) {
   }
 }
 
-const line = (name) => `- Repository: ${name}`;
-const shownRemotes = (remotes) => remotes.length ? remotes.join(", ") : "no network remote";
+const line = (name: string) => `- Repository: ${name}`;
+const shownRemotes = (remotes: any) => remotes.length ? remotes.join(", ") : "no network remote";
 
-function refusal(fail, code, message, proposed) {
+function refusal(fail: any, code: any, message: any, proposed: any) {
   return fail(code, message, { proposed });
 }
 
 // Why the checkout's history could not prove that it is the registered repository, or null when both root commits are known and differ.
-function unproven(registration, facts) {
+function unproven(registration: any, facts: any) {
   if (facts.shallow) return "this checkout is a shallow clone, so its root commit is unknown";
   if (!facts.commits) return "this checkout has no commits yet";
   if (registration.root === null) return "the registration has no root commit to compare";
   return null;
 }
 
-const remoteRegistered = (fail, name, facts, other) => refusal(fail, "repository_remote_registered", `The remote ${facts.remote} of this checkout is registered in the record store as repository ${other.name}, so it cannot also be repository ${name}. Use \`${line(other.name)}\` under \`## Workspace\` in .prism/workflow.md.`, other.name);
+const remoteRegistered = (fail: any, name: string, facts: any, other: any) => refusal(fail, "repository_remote_registered", `The remote ${facts.remote} of this checkout is registered in the record store as repository ${other.name}, so it cannot also be repository ${name}. Use \`${line(other.name)}\` under \`## Workspace\` in .prism/workflow.md.`, other.name);
 
 /** Decide a named checkout against the registrations: { accept, write? } or { register }, or throw a refusal. */
-function decide(name, registrations, facts, fail) {
-  const registration = registrations.find((item) => item.name === name);
+function decide(name: string, registrations: any, facts: any, fail: any) {
+  const registration = registrations.find((item: any) => item.name === name);
   if (!registration) {
     const other = remoteOwner(registrations, facts, name);
     if (other) throw remoteRegistered(fail, name, facts, other);
@@ -217,17 +217,17 @@ function decide(name, registrations, facts, fail) {
   ].join(""), proposed);
 }
 
-const serialize = (registration) => `${JSON.stringify(registration, null, 2)}\n`;
+const serialize = (registration: any) => `${JSON.stringify(registration, null, 2)}\n`;
 
 // A new registration in a synced store stays pending until its confirming sync settles: a marker in the store's sync folder, which sync never commits, says so to every check that sees the store folder.
 // The registering check renews its marker while the sync runs, and a marker that is no longer renewed, or whose process on this host has exited, has expired.
 const PENDING_FOLDER = "registering";
 const PENDING_RENEW_MS = 5000;
 const PENDING_STALE_MS = 30000;
-const pendingFolder = (base) => path.join(base, SYNC_DIRECTORY, PENDING_FOLDER);
+const pendingFolder = (base: string) => path.join(base, SYNC_DIRECTORY, PENDING_FOLDER);
 
 // A marker's owner while it is live, or null once it has expired.
-async function pendingOwner(target) {
+async function pendingOwner(target: string) {
   const info = await lstat(target).catch(() => null);
   if (!info?.isFile() || Date.now() - info.mtimeMs > PENDING_STALE_MS) return null;
   // A marker still being written has no owner yet and counts as live until it is old.
@@ -238,7 +238,7 @@ async function pendingOwner(target) {
 }
 
 // The tokens of the live pending registrations in the store, by name.
-async function readPending(base, fail) {
+async function readPending(base: string, fail: any) {
   let files;
   try { files = await readdir(pendingFolder(base)); }
   catch (error) {
@@ -259,7 +259,7 @@ async function readPending(base, fail) {
  * The registrations and the pending markers, read so that a registration seen settled was settled: a registering check writes its marker before its registration and removes it only after confirming or withdrawing that registration,
  * so registrations that read the same before and after the markers held no unconfirmed registration whose marker was missed.
  */
-async function readView(base, fail) {
+async function readView(base: string, fail: any) {
   let registrations = await readRegistrations(base, fail);
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const pending = await readPending(base, fail);
@@ -270,10 +270,10 @@ async function readView(base, fail) {
   return { registrations, pending: null };
 }
 
-const pendingRefusal = (fail, name) => fail("repository_unconfirmed", `The repository name ${name} cannot be checked yet, because a new registration that decides it is still being confirmed with the record store's remote (sync running), so this operation was not applied. Try again in a moment.`, { proposed: name, pending: true });
+const pendingRefusal = (fail: any, name: string) => fail("repository_unconfirmed", `The repository name ${name} cannot be checked yet, because a new registration that decides it is still being confirmed with the record store's remote (sync running), so this operation was not applied. Try again in a moment.`, { proposed: name, pending: true });
 
 // What a decision is, so a decision with and without the pending registrations can be compared.
-function outcome(name, registrations, facts, fail) {
+function outcome(name: string, registrations: any, facts: any, fail: any) {
   try {
     const decision = decide(name, registrations, facts, fail);
     return { decision, kind: decision.register ? "register" : decision.write ? "write" : "accept" };
@@ -281,17 +281,17 @@ function outcome(name, registrations, facts, fail) {
 }
 
 /** Decide against the registrations as they stand, unless a pending registration other than the caller's own would change the decision; then refuse with repository_unconfirmed. */
-function decideSettled(name, view, facts, fail, own = null) {
+function decideSettled(name: string, view: any, facts: any, fail: any, own: string | null = null): any {
   if (view.pending === null) throw pendingRefusal(fail, name);
   const others = new Set([...view.pending].filter(([, token]) => own === null || token !== own).map(([pendingName]) => pendingName));
   const stands = outcome(name, view.registrations, facts, fail);
-  if (others.size && outcome(name, view.registrations.filter((item) => !others.has(item.name)), facts, fail).kind !== stands.kind) throw pendingRefusal(fail, name);
+  if (others.size && outcome(name, view.registrations.filter((item: any) => !others.has(item.name)), facts, fail).kind !== stands.kind) throw pendingRefusal(fail, name);
   if (stands.error) throw stands.error;
   return stands.decision;
 }
 
 // Mark a registration pending before it is written, and renew the mark until release removes it; release leaves a mark another check has since replaced.
-async function markPending(base, name) {
+async function markPending(base: string, name: string) {
   await mkdir(pendingFolder(base), { recursive: true });
   const target = path.join(pendingFolder(base), `${name}.json`);
   const token = randomBytes(16).toString("hex");
@@ -309,20 +309,20 @@ async function markPending(base, name) {
 }
 
 // Run an action under the store's registration lock, so two checkouts never both register one name; no check holds it across a sync.
-async function withRegistrationLock(base, fail, action) {
+async function withRegistrationLock<T>(base: string, fail: any, action: () => Promise<T>): Promise<T> {
   const lock = path.join(base, REPOSITORIES);
   if (!(await registrationsFolder(base, fail))) await mkdir(lock).catch((error) => { if (error.code !== "EEXIST") throw error; });
   return withArtifactLock(lock, () => withFileLock(lock, action, fail, { timeoutMs: 30000 }));
 }
 
 // Remove the registration this check wrote, if the file still holds its bytes.
-async function withdraw(base, name, contents) {
+async function withdraw(base: string, name: string, contents: any) {
   const target = registrationFile(base, name);
   const bytes = await registrationBytes(target).catch(() => null);
   if (bytes?.equals(Buffer.from(serialize(contents)))) await rm(target, { force: true });
 }
 
-const unconfirmed = (fail, name, status) => {
+const unconfirmed = (fail: any, name: string, status: any) => {
   const reason = String(status.message ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
   return refusal(fail, "repository_unconfirmed", `The registration of the repository name ${name} could not be confirmed with the record store's remote (${status.state}${reason ? `: ${reason}` : ""}), so it was withdrawn and this operation was not applied. Try again once the remote is reachable.`, name);
 };
@@ -331,7 +331,7 @@ const unconfirmed = (fail, name, status) => {
  * Confirm a new pending registration with the store's remote: a sync of its own, holding no lock, then the check again under the registration lock against the registration the store then holds,
  * so another machine's registration that won accepts or refuses this checkout; a sync that cannot confirm, or throws, withdraws the registration and refuses. The pending mark goes last.
  */
-async function confirmRegistration(base, name, facts, fail, contents, mark) {
+async function confirmRegistration(base: string, name: string, facts: any, fail: any, contents: any, mark: any) {
   try {
     let status;
     try { status = await syncRecordStoreNow(base); }
@@ -363,7 +363,7 @@ async function confirmRegistration(base, name, facts, fail, contents, mark) {
  * In a synced store, a new registration is pending until a sync confirms it before the check accepts, and a remote or root added to a registration is synced later.
  * The first acceptance of a checkout in this process records the checkout in this machine's checkout list, never in the store.
  */
-export async function checkRepositoryName(options) {
+export async function checkRepositoryName(options: any) {
   const checked = await checkName(options);
   if (checked.repository) await recordAccepted(options.root, options.base, checked.repository);
   return checked;
@@ -372,7 +372,7 @@ export async function checkRepositoryName(options) {
 // The checkout list never fails the operation and holds it up only briefly, so a recording that takes longer finishes in the background.
 const RECORD_WAIT_MS = 3000;
 const recordedCheckouts = new Set();
-async function recordAccepted(root, base, name) {
+async function recordAccepted(root: string, base: string, name: string) {
   const key = `${root}\0${base}\0${name}`;
   if (recordedCheckouts.has(key)) return;
   recordedCheckouts.add(key);
@@ -382,7 +382,7 @@ async function recordAccepted(root, base, name) {
   clearTimeout(timer);
 }
 
-async function checkName({ root, base, name, fail, beforeWrite = async () => {}, sync = false }) {
+async function checkName({ root, base, name, fail, beforeWrite = async () => {}, sync = false }: { root: string; base: string; name: string; fail: any; beforeWrite?: any; sync?: boolean }) {
   const facts = await checkoutFacts(root);
   // A proposal is advice, so registrations Prism cannot read leave it derived from the remote or folder alone rather than failing the operation.
   const proposal = async () => proposedName(await readRegistrations(base, fail).catch(() => []), facts);

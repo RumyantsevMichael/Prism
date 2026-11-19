@@ -25,42 +25,42 @@ const VERSION_FORM = /^sha256:[0-9a-f]{64}$/;
 const ENTRY_ID = /^[0-9a-f]{32}$/;
 const TIME_FORM = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
-const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-const hasKeys = (value, keys) => isRecord(value) && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
-const textOf = (value, min, max) => typeof value === "string" && value.length >= min && value.length <= max;
+const isRecord = (value: any) => value !== null && typeof value === "object" && !Array.isArray(value);
+const hasKeys = (value: any, keys: any) => isRecord(value) && Object.keys(value).length === keys.length && keys.every((key: string) => Object.hasOwn(value, key));
+const textOf = (value: any, min: any, max: any) => typeof value === "string" && value.length >= min && value.length <= max;
 
 /** Whether a time is in the one form Prism writes, UTC with milliseconds, whose text order is its time order, and names a real moment, as toISOString gives it back. */
-export function storedTime(value) {
+export function storedTime(value: any) {
   if (typeof value !== "string" || !TIME_FORM.test(value)) return false;
   const time = new Date(value);
   return Number.isFinite(time.getTime()) && time.toISOString() === value;
 }
 
 /** Whether a history entry's author is of the form the review app's actions write: { name, email, checkout }, with name 1 to 200 characters, email null or at most 200, and checkout 1 to 400. */
-export function storedAuthor(by) {
+export function storedAuthor(by: any) {
   return hasKeys(by, ["name", "email", "checkout"]) && textOf(by.name, 1, 200) && (by.email === null || textOf(by.email, 0, 200)) && textOf(by.checkout, 1, 400);
 }
 
 /** Whether an entry's time lies more than a few minutes after the reading machine's clock, so Recent changes waits for it. */
-export const aheadOfClock = (at, now = Date.now()) => Date.parse(at) > now + FUTURE_SLACK_MS;
+export const aheadOfClock = (at: any, now = Date.now()) => Date.parse(at) > now + FUTURE_SLACK_MS;
 
 /** The store-relative folder of an artifact's comments: artifact-comments/<the artifact's location>. */
-export const commentsFolder = (scope, address) => path.posix.join(ARTIFACT_COMMENTS, artifactLocation(scope, address));
+export const commentsFolder = (scope: any, address: any) => path.posix.join(ARTIFACT_COMMENTS, artifactLocation(scope, address));
 
 // A comment's file name: its time with ":" and "." as "-", then "-", a random suffix, and ".json", so names never collide.
 // The time part has one width and keeps the time's text order, so the order of comment names is the order by time and then by file name.
-const nameTime = (at) => at.replace(/[:.]/g, "-");
-const commentName = (at) => `${nameTime(at)}-${randomBytes(4).toString("hex")}.json`;
+const nameTime = (at: any) => at.replace(/[:.]/g, "-");
+const commentName = (at: any) => `${nameTime(at)}-${randomBytes(4).toString("hex")}.json`;
 const NAME_TIME_LENGTH = "YYYY-MM-DDTHH-MM-SS-sssZ".length;
 // The time that a comment-named file's name gives, in the form a comment's at takes; a file holds a comment only when its at is this time.
-const timeOfName = (name) => `${name.slice(0, 13)}:${name.slice(14, 16)}:${name.slice(17, 19)}.${name.slice(20, NAME_TIME_LENGTH)}`;
+const timeOfName = (name: string) => `${name.slice(0, 13)}:${name.slice(14, 16)}:${name.slice(17, 19)}.${name.slice(20, NAME_TIME_LENGTH)}`;
 
 /**
  * The stored comment that a file's name and bytes hold, or null for a file that is not in the exact form addComment writes:
  * a name of the comment form whose time part is the comment's at, one line of JSON with exactly its keys, location naming the folder that holds it, and every value of the form and size that Prism writes.
  * A store sync uses the same check, so a merge rewrites location only in a comment that every reader takes.
  */
-export function storedComment(name, bytes, location) {
+export function storedComment(name: string, bytes: any, location: string) {
   if (!bytes || bytes.length > COMMENT_FILE_MAX) return null;
   if (!ARTIFACT_COMMENT_FILE.test(name)) return null;
   let value;
@@ -83,20 +83,20 @@ export function storedComment(name, bytes, location) {
  * The line and text of a comment file that a store sync saved aside from the comment folder of a location, as { line, text },
  * or null when the file is no comment of the exact form addComment writes, within every bound a reader checks, so a note quotes no other bytes.
  */
-export async function savedComment(target, location) {
+export async function savedComment(target: string, location: string) {
   const bytes = await readCommentFile(target);
   const value = bytes ? storedComment(path.basename(target), bytes, location) : null;
   return value ? { line: value.line, text: value.text } : null;
 }
 
 // A comment as get_artifact and /api/artifact return it.
-const shown = (name, value) => ({ id: name.slice(0, -".json".length), version: value.version, line: value.line, text: value.text, author: { name: value.author.name, host: value.author.host }, at: value.at, entry: value.entry });
+const shown = (name: string, value: any) => ({ id: name.slice(0, -".json".length), version: value.version, line: value.line, text: value.text, author: { name: value.author.name, host: value.author.host }, at: value.at, entry: value.entry });
 
 /**
  * The bytes of a comment file, or null when it is no regular file of at most COMMENT_FILE_MAX bytes: it is opened without following a link and without blocking,
  * and its type and size come from the opened file before any byte is read; where the platform has no O_NOFOLLOW, a check of the entry before the open stands in for it.
  */
-export async function readCommentFile(target) {
+export async function readCommentFile(target: string) {
   if (!constants.O_NOFOLLOW && !(await lstat(target).catch(() => null))?.isFile()) return null;
   let handle;
   try { handle = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0)); }
@@ -117,11 +117,11 @@ export async function readCommentFile(target) {
  * Every entry of a comment folder that is no folder, as { name, target, comment }, where comment is the stored comment or null for a file that holds none, such as a link or a damaged file.
  * A missing folder holds none.
  */
-async function folderEntries(target, location) {
+async function folderEntries(target: string, location: string) {
   let entries;
   try { entries = await readdir(target, { withFileTypes: true }); }
   catch (error) { if (["ENOENT", "ENOTDIR"].includes(error.code)) return []; throw error; }
-  const found = [];
+  const found: any[] = [];
   for (const entry of entries) {
     if (entry.isDirectory()) continue;
     const file = path.join(target, entry.name);
@@ -131,14 +131,14 @@ async function folderEntries(target, location) {
   return found;
 }
 
-const byText = (left, right) => left < right ? -1 : left > right ? 1 : 0;
+const byText = (left: any, right: any) => left < right ? -1 : left > right ? 1 : 0;
 
 /**
  * The names of a comment folder's regular files named like a comment, read one batch at a time and no further than one past the entries an artifact's comments may hold, in name order.
  * A file holds a comment only when its name's time part is the comment's at, so name order is the order by time and then by file name in which a reader lists comments, known without reading a file.
  * A folder of more entries than an artifact's comments may hold holds no comment that a reader takes, so it lists none.
  */
-async function boundedNames(target) {
+async function boundedNames(target: string) {
   const names = [];
   let count = 0;
   const folder = await opendir(target, { bufferSize: 128 });
@@ -152,7 +152,7 @@ async function boundedNames(target) {
 }
 
 /** Whether an artifact's comment folder already holds the entries that an artifact's comments may hold, so no comment is added to it; read no further than that many names. */
-async function folderFull(target) {
+async function folderFull(target: string) {
   let count = 0;
   let folder;
   try { folder = await opendir(target, { bufferSize: 128 }); }
@@ -184,16 +184,16 @@ const listings = new Map();
 const inFlight = new Map();
 
 // What tells two states of a folder or file apart: its device, inode, size, and change and modification times, in nanoseconds where the platform has them.
-const stampOf = (info) => `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`;
-const lstatOrNull = (target) => lstat(target, { bigint: true }).catch((error) => { if (["ENOENT", "ENOTDIR"].includes(error.code)) return null; throw error; });
-const racy = (info, now) => now - Number(info.mtimeMs) < RACY_MS || now - Number(info.ctimeMs) < RACY_MS;
+const stampOf = (info: any) => `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`;
+const lstatOrNull = (target: string) => lstat(target, { bigint: true }).catch((error) => { if (["ENOENT", "ENOTDIR"].includes(error.code)) return null; throw error; });
+const racy = (info: any, now: any) => now - Number(info.mtimeMs) < RACY_MS || now - Number(info.ctimeMs) < RACY_MS;
 
 /**
  * The listing this process keeps of a comment folder, as { location, stamp, racy, names, files, revision, valid, summary }, taken again once the folder's stamp changed, or always with fresh,
  * where names are its comment names in order, files maps each file read to { stamp, racy, checked, at, entry }, revision counts the changes to files,
  * and valid and summary are what Attention keeps of it, taken again once the listing or its revision changes; null for a missing folder, or a link or other entry in its place, which holds none.
  */
-function folderListing(target, location, { fresh = false } = {}) {
+function folderListing(target: string, location: string, { fresh = false } = {}) {
   const key = `${fresh ? "fresh" : "kept"}\0${location}\0${target}`;
   if (inFlight.has(key)) return inFlight.get(key);
   const reading = readListing(target, location, fresh).finally(() => inFlight.delete(key));
@@ -201,7 +201,7 @@ function folderListing(target, location, { fresh = false } = {}) {
   return reading;
 }
 
-async function readListing(target, location, fresh) {
+async function readListing(target: string, location: string, fresh: any) {
   // The folder's stamp is taken before its names are read, so a change during the read leaves a stamp that the next read finds changed.
   const folder = await lstatOrNull(target);
   if (!folder?.isDirectory()) { listings.delete(target); return null; }
@@ -231,7 +231,7 @@ const HOLDS_NONE = Object.freeze({ at: null, entry: null });
  * and read whether it was read. A file read before is taken as it was within trustedMs of its last check,
  * and else checked by its stamp and taken while that is unchanged; any other file is read, opened without following a link. fresh reads the file again whatever its stamp.
  */
-async function knownFile(listing, target, name, { trustedMs, fresh = false }) {
+async function knownFile(listing: any, target: string, name: string, { trustedMs, fresh = false }: { trustedMs: any; fresh?: boolean }) {
   const known = listing.files.get(name);
   const now = Date.now();
   if (!fresh && known && !known.racy && now - known.checked < trustedMs) return { file: known, read: false };
@@ -249,7 +249,7 @@ async function knownFile(listing, target, name, { trustedMs, fresh = false }) {
 }
 
 // What a listing knew of one file is dropped, so the file is read again when a reader next needs it.
-function forget(listing, name) {
+function forget(listing: any, name: string) {
   if (listing.files.delete(name)) listing.revision += 1;
 }
 
@@ -257,7 +257,7 @@ function forget(listing, name) {
  * The comments of one folder, oldest first by time and then by file name, as { name, at, entry }, from the listing this process keeps of it; fresh lists the folder and reads every file again.
  * A missing folder, or a link or other entry in its place, holds none.
  */
-function commentOrder(target, location, { fresh = false } = {}) {
+function commentOrder(target: string, location: string, { fresh = false } = {}) {
   const key = `${fresh ? "fresh" : "kept"}\0${location}\0${target}`;
   if (inFlight.has(key)) return inFlight.get(key);
   const reading = readOrder(target, location, fresh).finally(() => inFlight.delete(key));
@@ -265,30 +265,30 @@ function commentOrder(target, location, { fresh = false } = {}) {
   return reading;
 }
 
-async function readOrder(target, location, fresh) {
+async function readOrder(target: string, location: string, fresh: any) {
   const listing = await folderListing(target, location, { fresh });
   if (!listing) return [];
-  const order = [];
+  const order: any[] = [];
   for (let index = 0; index < listing.names.length; index += STAMPS_AT_ONCE) {
     const batch = listing.names.slice(index, index + STAMPS_AT_ONCE);
-    const found = await Promise.all(batch.map((name) => knownFile(listing, target, name, { trustedMs: LISTING_TRUSTED_MS, fresh })));
-    batch.forEach((name, position) => { const { file } = found[position]; if (file.at !== null) order.push({ name, at: file.at, entry: file.entry }); });
+    const found = await Promise.all(batch.map((name: string) => knownFile(listing, target, name, { trustedMs: LISTING_TRUSTED_MS, fresh })));
+    batch.forEach((name: string, position: any) => { const { file } = found[position]; if (file.at !== null) order.push({ name, at: file.at, entry: file.entry }); });
   }
   return order;
 }
 
 // The stored comment of one listed file, read again, or null when it no longer holds the comment the listing names, as after a change in place.
-async function listedComment(target, location, { name, at, entry }) {
+async function listedComment(target: string, location: string, { name, at, entry }: { name: string; at: any; entry: any }) {
   const bytes = await readCommentFile(path.join(target, name));
   const value = bytes ? storedComment(name, bytes, location) : null;
   return value && value.at === at && value.entry === entry ? value : null;
 }
 
 // The stored comments that items of a listing name, read again, as { name, value }, with a change since the listing as null.
-const readListed = (target, location, items) => Promise.all(items.map(async (item) => { const value = await listedComment(target, location, item); return value ? { name: item.name, value } : null; }));
+const readListed = (target: string, location: string, items: any) => Promise.all(items.map(async (item: any) => { const value = await listedComment(target, location, item); return value ? { name: item.name, value } : null; }));
 
 // The folder of an artifact's comments, or null when a link at artifact-comments/ or at a folder below it would lead a read elsewhere.
-const resolvedFolder = (seen, scope, address) => resolveStatusFile(seen, commentsFolder(scope, address)).catch(() => null);
+const resolvedFolder = (seen: any, scope: any, address: any) => resolveStatusFile(seen, commentsFolder(scope, address)).catch(() => null);
 
 /** The most comments one read returns, so a sync that brings any number of them puts a bounded amount of text in one result. */
 export const COMMENT_PAGE = 20;
@@ -299,7 +299,7 @@ export const COMMENT_PAGE = 20;
  * and the 1-based position of the first one left out, or null when none is, so reads from 1, each from the last one's nextCommentOffset, give every comment once.
  * The count needs every file of the one folder, at most COMMENTS_PER_ARTIFACT_MAX, each read once and then checked by its stamp.
  */
-export async function listComments(seen, scope, address, offset = 1) {
+export async function listComments(seen: any, scope: any, address: any, offset = 1) {
   const target = await resolvedFolder(seen, scope, address);
   if (!target) return { comments: [], totalComments: 0, nextCommentOffset: null };
   const location = artifactLocation(scope, address);
@@ -322,14 +322,14 @@ export async function listComments(seen, scope, address, offset = 1) {
  * { location, entries }, with entries every file, link, or other entry of the folder that is no folder, as { name, target, comment },
  * and comment the stored comment that a move carries, or null. A folder behind a link holds nothing that Prism reads or removes.
  */
-export async function commentFolderOf(seen, scope, address) {
+export async function commentFolderOf(seen: any, scope: any, address: any) {
   const location = artifactLocation(scope, address);
   const target = await resolvedFolder(seen, scope, address);
   return { location, target, entries: target ? await folderEntries(target, location) : [] };
 }
 
 /** The file that a comment takes in the comment folder of another location, with location naming it and every other key as it was: { target, bytes }. */
-export async function movedComment(seen, scope, address, { name, comment }) {
+export async function movedComment(seen: any, scope: any, address: any, { name, comment }: { name: string; comment: any }) {
   const target = await resolveStatusFile(seen, `${commentsFolder(scope, address)}/${name}`);
   return { target, bytes: Buffer.from(`${JSON.stringify({ ...comment, location: artifactLocation(scope, address) })}\n`, "utf8") };
 }
@@ -339,7 +339,7 @@ export async function movedComment(seen, scope, address, { name, comment }) {
  * where author is { name, host } and entry the review app's history entry that applies it, whose id, time, author, and source the file keeps.
  * Returns the comment as a reader gets it.
  */
-export async function addComment(seen, scope, address, { version, line, text, author, entry }) {
+export async function addComment(seen: any, scope: any, address: any, { version, line, text, author, entry }: { version: any; line: string; text: string; author: any; entry: any }) {
   const folder = await resolveStatusFile(seen, commentsFolder(scope, address));
   // An artifact holds at most COMMENTS_PER_ARTIFACT_MAX comments, past which no reader takes any, so a comment on a full folder is refused and stores nothing.
   if (await folderFull(folder)) throw Object.assign(new Error(`This file already holds the ${COMMENTS_PER_ARTIFACT_MAX} comments that a file may hold, so the comment was not stored.`), { code: "comment_limit" });
@@ -366,10 +366,10 @@ const work = { walked: 0, merged: 0 };
 export const attentionWork = () => ({ ...work });
 
 // A listing's comment names whose time is a real moment, in name order, taken once for each listing, so a name of an invalid time is dropped once rather than walked on each poll.
-const validNames = (listing) => listing.valid ??= listing.names.filter((name) => storedTime(timeOfName(name)));
+const validNames = (listing: any) => listing.valid ??= listing.names.filter((name: string) => storedTime(timeOfName(name)));
 
 // The number of valid names, in name order, whose time is no more than FUTURE_SLACK_MS after now: name order is time order, so the names ahead of the clock are a suffix that a binary search finds.
-function eligibleCount(valid, now) {
+function eligibleCount(valid: any, now: any) {
   const limit = nameTime(new Date(now + FUTURE_SLACK_MS).toISOString());
   let low = 0, high = valid.length;
   while (low < high) {
@@ -382,7 +382,7 @@ function eligibleCount(valid, now) {
 
 // The order in which Recent changes lists comments: newer time first, then the greater entry id; a name whose file is not known yet comes before every known comment of its time, since it may hold any entry,
 // and names not known yet of one time go by name, so a read of them takes the folders in turn where their names are alike.
-function newer(left, right) {
+function newer(left: any, right: any) {
   if (left.at !== right.at) return left.at > right.at;
   if (Boolean(left.unknown) !== Boolean(right.unknown)) return Boolean(left.unknown);
   return left.unknown ? left.name > right.name : left.entry > right.entry;
@@ -395,7 +395,7 @@ function newer(left, right) {
  * A comment that the latest known ones leave out is listed by no read, since the folder alone holds latest that come before it, whatever its unknown names hold.
  * low is the first valid name the walk took, checkedAt the oldest stamp check of the known files from low to end, and stamping where a check of their stamps stopped, or null.
  */
-function folderSummary(listing, end, latest) {
+function folderSummary(listing: any, end: any, latest: any) {
   const kept = listing.summary;
   if (kept && kept.revision === listing.revision && kept.end === end && kept.latest === latest) return { summary: kept, walked: false };
   const valid = validNames(listing);
@@ -430,19 +430,19 @@ function folderSummary(listing, end, latest) {
 }
 
 // A place in a list of items in the order of newer: item is the next one, or null past the last, and next() moves on to the one after it.
-function listCursor(items) {
+function listCursor(items: any) {
   let at = 0;
   return { item: items[0] ?? null, next() { at += 1; this.item = items[at] ?? null; } };
 }
 
 // A place in a folder's summary: its known comments and its names to read merged newest first, each name's item made only when the merge reaches it.
-function summaryCursor(listing, summary) {
+function summaryCursor(listing: any, summary: any) {
   const valid = validNames(listing);
   const { top, unknown } = summary;
-  const nameAt = (position) => { const name = valid[unknown[position]]; return { name, at: timeOfName(name), unknown: true }; };
+  const nameAt = (position: any) => { const name = valid[unknown[position]]; return { name, at: timeOfName(name), unknown: true }; };
   let known = 0, named = 0, pending = unknown.length ? nameAt(0) : null;
   const cursor = {
-    item: null,
+    item: null as any,
     next() {
       const comment = known < top.length ? top[known] : null;
       if (pending && (!comment || newer(pending, comment))) {
@@ -461,7 +461,7 @@ function summaryCursor(listing, summary) {
  * Check the stamps of the known files that a folder's summary took, from where the last check stopped, at most budget of them, and return how many it checked.
  * A file whose stamp changed, or that is no regular file now, is no longer known, so the next summary lists it as a name to read; once every one is checked, checkedAt moves to when the pass began.
  */
-async function restamp(listing, target, summary, budget, now) {
+async function restamp(listing: any, target: string, summary: any, budget: any, now: any) {
   const valid = validNames(listing);
   if (summary.stamping === null) summary.stamping = { next: summary.end - 1, began: now };
   let used = 0;
@@ -490,12 +490,12 @@ async function restamp(listing, target, summary, budget, now) {
  * sources whose next items tie go in the order they were added, so each read takes one order. pop() gives { source, item } and moves that source on to its next item.
  */
 function mergedNewestFirst() {
-  const heap = [];
+  const heap: any[] = [];
   let added = 0;
-  const itemOf = (entry) => entry.source.cursor.item;
-  const before = (left, right) => newer(itemOf(left), itemOf(right)) || (!newer(itemOf(right), itemOf(left)) && left.order < right.order);
-  const swap = (left, right) => { [heap[left], heap[right]] = [heap[right], heap[left]]; };
-  const up = (index) => {
+  const itemOf = (entry: any) => entry.source.cursor.item;
+  const before = (left: any, right: any) => newer(itemOf(left), itemOf(right)) || (!newer(itemOf(right), itemOf(left)) && left.order < right.order);
+  const swap = (left: any, right: any) => { [heap[left], heap[right]] = [heap[right], heap[left]]; };
+  const up = (index: number) => {
     while (index > 0) {
       const parent = (index - 1) >> 1;
       if (!before(heap[index], heap[parent])) return;
@@ -503,7 +503,7 @@ function mergedNewestFirst() {
       index = parent;
     }
   };
-  const down = (index) => {
+  const down = (index: number) => {
     for (;;) {
       let top = index;
       for (const child of [2 * index + 1, 2 * index + 2]) if (child < heap.length && before(heap[child], heap[top])) top = child;
@@ -514,7 +514,7 @@ function mergedNewestFirst() {
   };
   return {
     get size() { return heap.length; },
-    add(source) { if (source.cursor.item) { heap.push({ source, order: added++ }); up(heap.length - 1); } },
+    add(source: any) { if (source.cursor.item) { heap.push({ source, order: added++ }); up(heap.length - 1); } },
     peek: () => itemOf(heap[0]),
     pop() {
       const entry = heap[0];
@@ -529,7 +529,7 @@ function mergedNewestFirst() {
 }
 
 // A comment's history entry as Recent changes lists it, with initiative null and artifact { path, scope }, since a comment belongs to no initiative.
-const commentEntry = (value, file, scope) => ({
+const commentEntry = (value: any, file: string, scope: any) => ({
   id: value.entry,
   action: "artifact.comment",
   target: `artifact:${scope.label}:${file}`,
@@ -555,7 +555,7 @@ const yieldTurn = () => new Promise((resolve) => setImmediate(resolve));
  * or, once that budget ends, lists after the comments it has the newest known ones, and reads again each one it lists before it lists it, so an honest store costs about latest file reads, a poll's work does not grow with names ahead of the clock, of an invalid time, or tied at one time,
  * and each later read goes on past what the earlier ones learned. It yields to the event loop between folders whose summary it takes again, so no poll holds the event loop long.
  */
-export async function appliedComments(seen, now = Date.now(), { latest = Infinity, artifacts = [], resolve = (relative) => resolveStatusFile(seen, relative) } = {}) {
+export async function appliedComments(seen: any, now = Date.now(), { latest = Infinity, artifacts = [], resolve = (relative: string) => resolveStatusFile(seen, relative) } = {}) {
   // The listing of every folder this read takes stays kept for the next one, so no read evicts a listing that the same read or the next one needs.
   listingsKept = Math.max(LISTINGS_KEPT, artifacts.length + 64);
   const bounded = Number.isFinite(latest);
@@ -582,10 +582,10 @@ export async function appliedComments(seen, now = Date.now(), { latest = Infinit
     tops.push({ listing, target, file, scope, top: summary.top });
     if (walked) await yieldTurn();
   }
-  const found = [];
+  const found: any[] = [];
   const ids = new Set();
   const learned = [];
-  const take = ({ source, item }) => { if (!ids.has(item.entry)) { ids.add(item.entry); found.push({ source, ...item }); } };
+  const take = ({ source, item }: { source: any; item: any }) => { if (!ids.has(item.entry)) { ids.add(item.entry); found.push({ source, ...item }); } };
   while (queue.size && found.length < latest) {
     if (!queue.peek().unknown) {
       take(queue.pop());
@@ -634,7 +634,7 @@ export async function appliedComments(seen, now = Date.now(), { latest = Infinit
  * or null when the file holds no comment of that entry, the comment is dated more than a few minutes after the clock, or its folder holds more entries than an artifact's comments may.
  * It reads that one file and the folder's kept listing, so an applied comment reaches another checkout's tabs at the cost of one entry, whatever the store's other folders hold.
  */
-export async function appliedComment(seen, { path: file, scope }, address, { comment, id }, now = Date.now()) {
+export async function appliedComment(seen: any, { path: file, scope }: { path: any; scope: any }, address: any, { comment, id }: { comment: any; id: string }, now = Date.now()) {
   const name = `${comment}.json`;
   if (!ARTIFACT_COMMENT_FILE.test(name)) return null;
   const target = await resolvedFolder(seen, scope, address);
