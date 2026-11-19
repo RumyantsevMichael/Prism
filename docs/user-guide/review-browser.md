@@ -111,7 +111,8 @@ The tab and its page return to normal on their own when the target comes back, f
 When Prism moves a record from its legacy location into `.prism/`, a tab on that record follows it to the new path.
 
 **Who's working** shows up to three avatars of the agents that hold a live claim on a slice, and how many are working.
-Its popover lists every live claim and then every claim that expired, with the holder, the harness the agent runs in when its claim records one (otherwise Agent), the activity, the slice, and the time left.
+Its popover lists every live claim and then every claim that expired, with the holder, the harness, the activity, the slice, and the time left.
+Wherever the browser shows a claim, on a slice, an initiative, the roadmap, the sidebar, or Who's working, it names the harness the agent runs in and the model of the session's main agent as `<harness> · <model>`, such as `Codex · gpt-5.5`, when the claim records them, and `Agent` and no model otherwise.
 The sidebar shows a claimed slice's holder at the end of its row.
 Claims are read-only in the browser.
 
