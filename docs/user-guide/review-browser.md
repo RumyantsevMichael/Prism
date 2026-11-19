@@ -210,7 +210,7 @@ An initiative has these settings, each with its default and the moment an agent 
 | Review | `marked`, `recommended`, `all` | `marked` | Sets the review mark of slices whose design is not yet accepted; a slice whose design is already accepted keeps its review. |
 | Models | For each host, a provider and the model and effort of the coordinator, design and implementation, code review, security review, and design gate summary agents | The host's own default for each | The coordinator's for launches started after the change, and each agent's for agents started after it. |
 
-A host that is not found on this computer shows why, such as `Claude Code was not found: no claude executable on PATH.`, and choosing it is refused with that reason.
+Choosing a host that is not found on this computer is refused with its reason, such as `Claude Code was not found: no claude executable on PATH.`
 A change to Models names one host and keeps the choices of every other host.
 It takes only a provider, model, or effort that the host reports, its default, or a model name you typed, which Prism cannot check; a value the host does not offer is refused with a reason such as `Claude Code on this computer does not offer the model claude-opus-3.`
 While the host cannot report its options, Models takes only the host's defaults and typed model names.
