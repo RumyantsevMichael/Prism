@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import test from "node:test";
-import { markdownLinks, resolveLinks } from "../../src/server/review/artifact-links.mjs";
-import { linkTargets, renderText } from "../../src/server/review/public/views/markdown.js";
+import { markdownLinks, resolveLinks } from "../../dist/server/review/artifact-links.mjs";
+import { linkTargets, renderText } from "../../dist/server/review/public/views/markdown.js";
 import { artifactKinds, parseWorkflowConfig } from "../../dist/server/workflow/workflow-config.mjs";
 import { git, isolateGit, networkStore, place, server, startApp, storeCheckout, workspaceId, writeArtifact } from "./fixtures/workspace-view.mjs";
 import { launch, settle, skip } from "./fixtures/kit-browser.mjs";
