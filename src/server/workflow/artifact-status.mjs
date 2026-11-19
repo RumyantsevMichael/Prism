@@ -273,8 +273,8 @@ export function answerApproval(kind, file, record, { id, choice, note = null, by
   if (!gate) {
     const closed = record.closed.find((item) => item.id === id);
     if (closed?.answer) throw fail("gate_answered", "The question already has an answer.");
-    if (closed?.closed === "shipped") throw fail("unknown_gate", `An initiative whose slice.md links ${file} shipped and accepted it, which ended this question; the agent asks again if another status still applies.`);
-    throw fail("unknown_gate", closed ? "The agent asked again since this question, so it no longer applies." : "The question is no longer open; the agent resolved or withdrew it.");
+    // The review browser answers only a pending gate, so a closed one, whether a later ask or a ship ended it, reads as no longer open.
+    throw fail("unknown_gate", closed ? "The question was closed without an answer, so it no longer applies." : "The question is no longer open; the agent resolved or withdrew it.");
   }
   if (!askableStatus(kind, gate.status, gate.shipped) || !VERSION.test(gate.version ?? "")) {
     throw fail("gate_invalid", `The approval gate on ${file} holds a status or version that no ask_approval records, so answering it would change ${file} in a way nobody asked; nothing changed. The agent asks again.`);
@@ -365,8 +365,9 @@ const byText = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 /**
  * The structural merge of a status record that changed on two machines, as store sync takes it: { path, base, local, upstream } as UTF-8 text, base null for a record new on both sides,
  * answering { contents } or { conflict }, which keeps the upstream record and saves this machine's.
- * Where one side's ship accepted the ADR and the other side only asked an approval or answered one without approving, the acceptance stays, so the file that the ship rewrote and the recorded status agree,
- * and each approval that the other side asked and the ship never saw ends as closed "shipped", which an answer then names; both sides' closed gates and history stay.
+ * Where one side's ship accepted the ADR and the other side only asked an approval or answered one without approving, the acceptance stays, so the file that the ship rewrote and the recorded status agree.
+ * Gates merge by id: each approval still pending on the other side whose id the ship's record holds neither pending nor closed ends as closed "shipped",
+ * a closed gate that both sides hold keeps the ship's copy, and history entries merge by their content; both sides' closed gates and history stay.
  * The merge reads only what the three records say, so every machine merges the same versions to the same bytes.
  */
 export function mergeStatusRecord({ path: file, base, local, upstream }) {

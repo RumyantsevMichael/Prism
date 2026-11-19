@@ -276,6 +276,10 @@ test("clause 44: a ship of a slice.md of 1 MiB of distinct links takes seconds, 
   await mkdir(path.dirname(stored), { recursive: true });
   await writeFile(stored, `${CONTRACT}${" ".repeat(1024 * 1024 + 1)}\n`);
   const late = await approved(second, secondReview);
+  const entry = ok(await second.call("get_roadmap", {})).derived.find((item) => item.id === "reports");
+  assert.equal(entry.readyToShip, false, "readyToShip runs the ship's read of the slice.md files");
+  const diagnostic = entry.diagnostics.find((item) => item.code === "artifact_too_large");
+  assert.equal(diagnostic.path, SLICE);
   const tooLarge = refused(await ship(second, late), "artifact_too_large");
   assert.equal(tooLarge.data.path, SLICE);
   assert.equal(await statusOf(second, CITED), "Proposed");
@@ -350,6 +354,9 @@ test("clause 44: a link that could name ADRs in two scopes names the one in its 
   await writeFile(apiSlice, "# B\n\n[split](../../../ADRs/x/split.md)\n");
   ok(await onApi.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] }] }));
   const before = ok(await onApi.call("get_roadmap", {}));
+  const entry = before.derived.find((item) => item.id === "reports");
+  assert.equal(entry.readyToShip, false, "readyToShip runs the ship's check of ambiguous links");
+  assert.deepEqual(entry.diagnostics.find((item) => item.code === "adr_ambiguous").adrs, [{ path: SHARED, scopes: ["api", "web"] }, { path: SPLIT, scopes: ["web", "workspace"] }]);
   const unclear = refused(await ship(onApi, await approved(onApi, apiReview)), "adr_ambiguous");
   assert.deepEqual(unclear.data.adrs, [{ path: SHARED, scopes: ["api", "web"] }, { path: SPLIT, scopes: ["web", "workspace"] }]);
   assert.match(unclear.message, /docs\/ADRs\/x\/shared\.md in scopes api, web; docs\/ADRs\/x\/split\.md in scopes web, workspace/);
