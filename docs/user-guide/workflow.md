@@ -489,4 +489,6 @@ In Codex the offer needs Prism's hooks to be trusted through `/hooks`, like gate
 Prism no longer reads `.claude/workflow-config.md`, and `prism:setup` migrates its values into `.prism/workflow.md` without changing the old file.
 On resume, orchestration imports a legacy `map.puml` into the initiative record.
 `prism:setup` proposes a roadmap record from a legacy roadmap and replaces the hand-written roadmap Markdown only after you accept it.
+An initiative that the legacy roadmap lists as shipped is recorded as shipped before Prism, without the ship gate, since it has no slices or verification runs to confirm, and the setup report names each one.
+The roadmap shows it as shipped before Prism, and its plan documents stay unchanged.
 See [Upgrading to managed records](upgrading-to-managed-records.md) for everything that changed in Prism 0.10.0.
