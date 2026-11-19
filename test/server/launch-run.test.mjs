@@ -63,8 +63,14 @@ test("clause 2: the launch is unavailable while the initiative's host is not fou
 
 test("clause 3: a saved choice the host does not offer refuses the launch with its reason, before any confirmation", { skip: posixOnly }, async (t) => {
   const s = await runOptionsReview(t);
+  await settings(s.root, { host: "claude-code", models: { "claude-code": { designImplementation: { earlier: "Claude Opus 4.1" } } } });
+  const earlier = await launch(s);
+  assert.equal(earlier.status, 409, JSON.stringify(earlier.json));
+  assert.deepEqual([earlier.json.code, earlier.json.message], ["choice_not_offered", "Design and implementation: Prism kept the earlier model name Claude Opus 4.1, which Claude Code cannot take as a model."]);
+  assert.deepEqual(s.optionReads(), [], "an earlier name is refused without reading the host");
   const cases = [
     [{ "claude-code": { coordinator: { model: "claude-opus-3" } } }, "Coordinator: Claude Code on this computer does not offer the model claude-opus-3."],
+    [{ "claude-code": { coordinator: { model: "fable" }, gateSummary: { earlier: "Haiku (fast)" } } }, "Design gate summary: Prism kept the earlier model name Haiku (fast), which Claude Code cannot take as a model."],
     [{ "claude-code": { coordinator: { model: "claude-opus-4-6", effort: "xhigh" } } }, "Coordinator: Opus 4.6 does not take the effort xhigh."],
     [{ "claude-code": { securityReview: { model: "claude-opus-4-6" } } }, "Security review: Claude Code on this computer does not offer the model claude-opus-4-6."],
     [{ "claude-code": { codeReview: { model: "gone-family" }, gateSummary: { model: "also-gone" } } }, "Code review: Claude Code on this computer does not offer the model gone-family."]
