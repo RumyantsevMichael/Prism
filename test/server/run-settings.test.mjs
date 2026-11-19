@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { readFile, readdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { INITIATIVE, actionOf, apply, listing, runOptionsReview } from "./fixtures/run-options-hosts.mjs";
 import { settled } from "./fixtures/wait.mjs";
 
 // Requirements: docs/requirements/initiative-settings.md §10, §11, and docs/requirements/launch-run-configuration.md §10, §11, §12, §13, §16, §17.
-// The initiative's host and its per-host model and effort choices as coordination state settings and as review app actions.
+// The initiative's host and its per-host model and effort choices as coordination state settings and as review app actions, and the
+// earlier model names that the host cannot take, kept for the person to replace and never passed to a host.
 
 const posixOnly = process.platform === "win32" ? "the stub hosts are POSIX scripts" : false;
 const TARGET = `initiative:${INITIATIVE}`;
@@ -31,6 +34,22 @@ const send = async (s, action, input, confirmed = false) => {
   return apply(s.base, { action, target: TARGET, input, revision: current.revision, ...(confirmed ? { confirmed: true } : {}) }, s.headers);
 };
 const models = (input) => ({ host: "claude-code", provider: null, ...Object.fromEntries(KINDS.map((kind) => [kind, null])), ...input });
+const EARLIER = "Claude Opus 4.1";
+const earlierReason = (label) => `Prism kept the earlier model name ${EARLIER}, which ${label} cannot take as a model.`;
+const refusedNaming = (root, value, where) => assert.rejects(write(root, { models: value }), (error) => {
+  assert.match(error.message + JSON.stringify(error.errors ?? error.details ?? ""), new RegExp(where.replace(/[.]/g, "\\.")), `${JSON.stringify(value)} names ${where}`);
+  return true;
+});
+
+// The JSON files under a folder that hold a text, such as the coordination state file after a write that left the text in it.
+async function filesHolding(folder, text, found = []) {
+  for (const entry of await readdir(folder, { withFileTypes: true })) {
+    const full = path.join(folder, entry.name);
+    if (entry.isDirectory() && entry.name !== "node_modules") await filesHolding(full, text, found);
+    else if (entry.isFile() && entry.name.endsWith(".json") && (await readFile(full, "utf8")).includes(text)) found.push(full);
+  }
+  return found;
+}
 
 test("clause 1: the initiative settings are host, autonomy, commit, push, continuation, review, and models, and models read per host", { skip: posixOnly }, async (t) => {
   const s = await runOptionsReview(t);
@@ -92,6 +111,32 @@ test("clause 4: earlier models values migrate without loss: host defaults to no 
   const action = actionOf(await listing(s.base, TARGET, s.headers), "initiative.models");
   assert.deepEqual(action.value["claude-code"].designImplementation, { model: "d", effort: null, typed: true });
   assert.deepEqual(action.value.codex.gateSummary, HOST_DEFAULT);
+});
+
+test("clause 4: an earlier name that breaks the model rule is kept as an earlier name of every host, never as a model, and the record stays valid", { skip: posixOnly }, async (t) => {
+  const s = await runOptionsReview(t);
+  const { effectiveSettings } = await import("../../dist/server/workflow/state.mjs");
+  const long = `${"a".repeat(150)} ${"b".repeat(100)}`;
+  const kept = { designImplementation: { earlier: EARLIER }, codeReview: { model: "sonnet", typed: true }, securityReview: { earlier: "Opus 4.1 (work)" }, gateSummary: { earlier: `${"a".repeat(150)} ${"b".repeat(49)}` } };
+  assert.deepEqual(effectiveSettings({ settings: { models: { delivery: EARLIER, review: " sonnet ", securityReview: "  Opus\t 4.1\n(work) ", examples: long } } }).models, { "claude-code": kept, codex: kept }, "white space and control characters become single spaces, and the name keeps its first 200 characters");
+  assert.deepEqual(effectiveSettings({ settings: { models: { delivery: "\u0007", review: "opus", securityReview: "opus" } } }).models.codex, { codeReview: { model: "opus", typed: true }, securityReview: { model: "opus", typed: true } }, "a name left empty reads as the host default");
+  const migrated = { designImplementation: { earlier: EARLIER }, codeReview: { model: "sonnet", typed: true }, securityReview: { model: "opus", typed: true } };
+  await write(s.root, { models: { delivery: EARLIER, review: "sonnet", securityReview: "opus" } });
+  assert.deepEqual((await state(s.root)).state.settings.models, { "claude-code": migrated, codex: migrated }, "a write in the earlier form is taken and stored migrated");
+  await write(s.root, { models: {}, autonomy: "broad" });
+  const files = await filesHolding(s.root, '"autonomy": "broad"');
+  assert.equal(files.length, 1, "one state file holds the initiative's settings");
+  const record = JSON.parse(await readFile(files[0], "utf8"));
+  record.settings.models = { delivery: EARLIER, review: "sonnet", securityReview: "opus" };
+  await writeFile(files[0], `${JSON.stringify(record, null, 2)}\n`);
+  const read = await state(s.root);
+  assert.equal(read.valid, true, `a record that an earlier Prism wrote reads valid: ${JSON.stringify(read.errors)}`);
+  assert.deepEqual(read.state.settings.models, { "claude-code": migrated, codex: migrated });
+  await write(s.root, { push: "off" });
+  const after = await state(s.root);
+  assert.equal(after.state.settings.push, "off", "an agent's update of another setting is taken");
+  assert.deepEqual(after.state.settings.models, { "claude-code": migrated, codex: migrated }, "and keeps the earlier name");
+  assert.deepEqual(JSON.parse(await readFile(files[0], "utf8")).settings.models, { "claude-code": migrated, codex: migrated }, "the record stores it migrated");
 });
 
 test("clause 5: the host action offers every supported host, marks one this computer lacks with its reason, and shows the first one found", { skip: posixOnly }, async (t) => {
@@ -242,6 +287,58 @@ test("clause 11: update_coordination_state takes the host and the per-host model
   assert.deepEqual(Object.keys(entry.properties).sort(), ["codeReview", "coordinator", "designImplementation", "gateSummary", "provider", "securityReview"]);
   assert.equal(entry.additionalProperties, false);
   assert.deepEqual(Object.keys(entry.properties.coordinator.properties).sort(), ["effort", "model", "typed"]);
+  for (const kind of KINDS.slice(1)) {
+    assert.deepEqual(Object.keys(entry.properties[kind].properties).sort(), ["earlier", "effort", "model", "typed"], `${kind} can keep an earlier name`);
+    assert.equal(entry.properties[kind].properties.earlier.maxLength, 200);
+  }
+});
+
+test("clause 12: a stored earlier name stands alone in the choice of an agent kind and keeps its rule", { skip: posixOnly }, async (t) => {
+  const s = await runOptionsReview(t);
+  const stored = { "claude-code": { designImplementation: { earlier: EARLIER }, codeReview: { model: "opus" } }, codex: { gateSummary: { earlier: "Opus 4.1 (work)" } } };
+  await write(s.root, { models: stored });
+  assert.deepEqual((await state(s.root)).state.settings.models, stored);
+  const refusals = [
+    [{ "claude-code": { coordinator: { earlier: EARLIER } } }, "settings.models.claude-code.coordinator.earlier"],
+    [{ "claude-code": { codeReview: { earlier: EARLIER, effort: "high" } } }, "settings.models.claude-code.codeReview.earlier"],
+    [{ "claude-code": { codeReview: { earlier: EARLIER, model: "opus", typed: true } } }, "settings.models.claude-code.codeReview.earlier"],
+    [{ codex: { gateSummary: { earlier: "" } } }, "settings.models.codex.gateSummary.earlier"],
+    [{ codex: { gateSummary: { earlier: " Opus" } } }, "settings.models.codex.gateSummary.earlier"],
+    [{ codex: { gateSummary: { earlier: "Opus  4.1" } } }, "settings.models.codex.gateSummary.earlier"],
+    [{ codex: { gateSummary: { earlier: "Opus\n4.1" } } }, "settings.models.codex.gateSummary.earlier"],
+    [{ codex: { gateSummary: { earlier: "x".repeat(201) } } }, "settings.models.codex.gateSummary.earlier"],
+    [{ codex: { gateSummary: { earlier: 41 } } }, "settings.models.codex.gateSummary.earlier"]
+  ];
+  for (const [value, where] of refusals) await refusedNaming(s.root, value, where);
+  assert.deepEqual((await state(s.root)).state.settings.models, stored, "a refused write changes nothing");
+});
+
+test("clause 13: the models action shows an earlier name, refuses to apply it with its reason, and takes any other value in its place", { skip: posixOnly }, async (t) => {
+  const s = await runOptionsReview(t);
+  const migrated = { designImplementation: { earlier: EARLIER }, codeReview: { model: "sonnet", typed: true }, securityReview: { model: "opus", typed: true } };
+  await write(s.root, { models: { delivery: EARLIER, review: "sonnet", securityReview: "opus" } });
+  const action = actionOf(await listing(s.base, TARGET, s.headers), "initiative.models");
+  assert.equal(action.available, true, action.reason);
+  const shown = { model: null, effort: null, typed: false, earlier: EARLIER };
+  assert.deepEqual(action.value["claude-code"].designImplementation, shown);
+  assert.deepEqual(action.value.codex.designImplementation, shown);
+  assert.deepEqual(action.value["claude-code"].codeReview, { model: "sonnet", effort: null, typed: true });
+  assert.deepEqual(action.value["claude-code"].gateSummary, HOST_DEFAULT);
+  const rest = { codeReview: { model: "sonnet", effort: null, typed: true }, securityReview: { model: "opus", effort: null, typed: true } };
+  const held = await send(s, "initiative.models", models({ coordinator: { model: "fable", effort: "high", typed: false }, designImplementation: shown, ...rest }));
+  assert.equal(held.status, 400, JSON.stringify(held.json));
+  assert.deepEqual([held.json.code, held.json.field, held.json.message], ["invalid_input", "designImplementation", earlierReason("Claude Code")]);
+  const codex = await send(s, "initiative.models", models({ host: "codex", designImplementation: shown }));
+  assert.deepEqual([codex.status, codex.json.field, codex.json.message], [400, "designImplementation", earlierReason("Codex")]);
+  const malformed = await send(s, "initiative.models", models({ designImplementation: { ...shown, earlier: "Opus\n4.1" } }));
+  assert.deepEqual([malformed.status, malformed.json.code, malformed.json.field], [400, "invalid_input", "designImplementation"]);
+  assert.deepEqual((await state(s.root)).state.settings.models, { "claude-code": migrated, codex: migrated }, "nothing refused is stored");
+  const replaced = await send(s, "initiative.models", models({ coordinator: { model: "fable", effort: "high", typed: false }, ...rest }));
+  assert.equal(replaced.status, 200, JSON.stringify(replaced.json));
+  assert.deepEqual((await state(s.root)).state.settings.models, {
+    "claude-code": { coordinator: { model: "fable", effort: "high" }, codeReview: { model: "sonnet", typed: true }, securityReview: { model: "opus", typed: true } },
+    codex: migrated
+  }, "the host default replaces the earlier name of the changed host, and every other host keeps its own");
 });
 
 // The tools that Prism's MCP server lists, from a server of its own.
