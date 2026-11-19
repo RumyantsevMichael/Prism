@@ -201,6 +201,33 @@ test("clause 10: a second source that the same run would migrate into the same t
   assert.equal(refused.value?.code, "migration_pending", refused.text);
 });
 
+test("clause 10: within one run a target that another proposal migrates away, or a source that another proposal writes into, is refused, so no chain loses a statement", async (context) => {
+  const EXTRA = "docs/requirements/extra.md";
+  const MOVED = "docs/requirements/audit-new.md";
+  const header = "# Audit log\n\nStatus: Draft\nCreated: 2026-08-01\nApproved: n/a\n";
+  const PROBLEM = "Administrators change settings that nobody can trace.";
+  const EXTRA_SOURCE = `${header}\n## Context\n\n${PROBLEM}\n\n## 1\n\nThe system shall record every administrative action.\n`;
+  const LOG_SOURCE = `${header}\n## Context\n\n${PROBLEM}\n`;
+  const migrated = auditContent({ status: "Draft" }).replace("Approved: 2026-08-02", "Approved: n/a").replace("## Problem\n\nunknown", `## Problem\n\n${PROBLEM}`);
+  const sectionsOnly = migrated.split("<a id=")[0].trimEnd() + "\n";
+  for (const order of [["into", "away"], ["away", "into"]]) {
+    const { root, call, run } = await project(context, { [EXTRA]: EXTRA_SOURCE, [AUDIT]: LOG_SOURCE });
+    // EXTRA into AUDIT, and AUDIT into MOVED with AUDIT removed: applied together, EXTRA's obligation would end in no file.
+    const proposals = {
+      into: { run, type: "requirements", source: EXTRA, target: AUDIT, content: migrated, summary: "Merges the extra file into the audit log.", leftovers: [], asked: [REMOVE] },
+      away: { run, type: "requirements", source: AUDIT, target: MOVED, content: sectionsOnly, summary: "Moves the audit log to a new file.", leftovers: [], asked: [REMOVE] }
+    };
+    const first = await propose(call, proposals[order[0]]);
+    assert.ok(first.migration, `${order[0]}: ${first.text}`);
+    const second = await propose(call, proposals[order[1]]);
+    assert.equal(second.value?.code, "migration_pending", `${order.join(" then ")}: ${second.text}`);
+    assert.equal((await call("get_migration_run", { run })).value.run.migrations.length, 1, "the refused proposal is not recorded");
+    assert.equal(await read(root, EXTRA), EXTRA_SOURCE);
+    assert.equal(await read(root, AUDIT), LOG_SOURCE);
+    assert.equal(await exists(root, MOVED), false);
+  }
+});
+
 test("clauses 16, 17, 20, 22: a run that asked applies with the person's answers once it continues: the source is removed, the chosen entry kept, and the migration is a decided source", async (context) => {
   const conflicting = TERMS_TEXT.replace("| Backoff | The wait between two attempts. |", "| Backoff | The wait between two attempts. |\n| Retry deadline | The longest a request may wait. |");
   const { root, call, run } = await project(context, { [TERMS]: conflicting });

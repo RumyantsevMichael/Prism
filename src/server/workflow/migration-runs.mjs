@@ -89,6 +89,9 @@ export async function writeRun(root, record) {
 
 /** Run an action under a run's record lock. */
 export const withRunLock = (root, id, action) => withRecordLock(root, runKey(id), action, fail);
+// Proposals of every run take one shared lock before their own run's, so two runs never both see a target free and both hold it.
+const PROPOSAL_LOCK = "run-ffffffffffffffff";
+export const withProposalLock = (root, action) => withRunLock(root, PROPOSAL_LOCK, action);
 
 /** A run that exists, read under its lock by the caller: refused with migration_run_unknown when no run has the id. */
 export async function storedRun(root, id) {

@@ -142,6 +142,7 @@ A status or a Created, Approved, or Accepted date counts only when it is the typ
 When the source or the target is Approved or Accepted, content that changes its status, its Created or Approved date, or drops an identity, such as a requirement section number or a glossary term id, is refused with `migration_changes_decision`.
 A target that already exists keeps each of its entries, a requirement section, a glossary term, or a feature Rule, unchanged: the source's differing version of an entry goes under `conflicts`, and content that changes a target entry is refused with `migration_conflict`.
 A target that another open run's proposal holds, or that another source's proposal in the same run writes, is refused with `migration_pending`, and a new proposal of a source replaces the run's earlier proposal of it.
+Within one run a file is never both migrated into and migrated away: a target that another proposal moves elsewhere and removes, or a separate source that another proposal writes into, is refused with `migration_pending`, so no chain of moves can leave a statement in no file.
 
 Each proposal lists its points: each leftover, each source entry that the target holds with other text, and Prism's own points, one for each `unknown` value of the content, one for each conflict, and one for removing a separate source.
 The proposal settles a leftover or such an entry under `settled`, with the reason it loses nothing, or asks the person under `asked`, with its recommendation, and Prism's own points are always asked.

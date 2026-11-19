@@ -9,7 +9,7 @@ import { artifactLocations, artifactTypeOf } from "./artifact-check.mjs";
 import { artifactAddress } from "./artifact-paths.mjs";
 import { newStatus } from "./artifact-status.mjs";
 import { dropReportedFindings } from "./format-findings.mjs";
-import { OPEN_STATUSES, allRuns, appliedMigrationIds, artifactName, requireOpen, scopeInputOf, shownMigration, storedRun, withRunLock, writeRun } from "./migration-runs.mjs";
+import { OPEN_STATUSES, allRuns, appliedMigrationIds, artifactName, requireOpen, scopeInputOf, shownMigration, storedRun, withProposalLock, withRunLock, writeRun } from "./migration-runs.mjs";
 import { commitStoreFiles, syncRecordStoreNow } from "./record-store-sync.mjs";
 import { applyStoreRun, storeArtifactCopy, storeSyncBase } from "./store-artifacts.mjs";
 import { normalizeStatement, splitStatements } from "./statements.mjs";
@@ -468,13 +468,21 @@ export async function proposeMigration(input) {
   const existing = separateSource && target.text !== null ? target : null;
   const content = given.content;
 
-  return storeRefusing(() => withRunLock(root, known.id, async () => {
+  return storeRefusing(() => withProposalLock(root, () => withRunLock(root, known.id, async () => {
     const run = await storedRun(root, known.id);
     requireOpen(run);
     // Another open run's proposal of the target holds it, and so does another source's proposal of it in this run, since each proposal holds the whole target.
     const holds = (migration) => migration.target.path === target.path && sameScope(migration.target.scope, target.scope);
     const ownOther = run.migrations.find((migration) => holds(migration) && !(migration.source.path === source.path && sameScope(migration.source.scope, source.scope)));
     if (ownOther) throw fail("migration_pending", `The format migration ${ownOther.id} of ${label(ownOther.source)} in this run already writes ${label(target)}, so another source cannot be migrated into it in the same run.`, { id: ownOther.id, run: run.id });
+    // A run applies its proposals together, so no proposal's target may be another proposal's separate source, which the run removes, and no separate source may be another proposal's target:
+    // a chain such as X into Y and Y into Z would remove Y after X was written into it, and X's statements would reach no file.
+    const isSource = (migration, artifact) => migration.source.path === artifact.path && sameScope(migration.source.scope, artifact.scope);
+    const others = run.migrations.filter((migration) => !isSource(migration, source));
+    const removed = others.find((migration) => migration.separateSource && isSource(migration, target));
+    if (removed) throw fail("migration_pending", `The format migration ${removed.id} in this run migrates ${label(target)} into ${label(removed.target)} and removes it, so ${label(target)} cannot also be the target of another migration in the same run.`, { id: removed.id, run: run.id });
+    const into = separateSource ? others.find((migration) => migration.target.path === source.path && sameScope(migration.target.scope, source.scope)) : null;
+    if (into) throw fail("migration_pending", `The format migration ${into.id} of ${label(into.source)} in this run writes ${label(source)}, so ${label(source)} cannot also be migrated into another file and removed in the same run.`, { id: into.id, run: run.id });
     for (const other of await allRuns(root)) {
       if (other.id === run.id || !OPEN_STATUSES.has(other.status) && other.status !== "asking" && other.status !== "waiting-for-host") continue;
       const holding = other.migrations.find(holds);
@@ -630,7 +638,7 @@ export async function proposeMigration(input) {
     const migrations = earlier ? run.migrations.map((item) => item === earlier ? migration : item) : [...run.migrations, migration];
     await writeRun(root, { ...run, migrations, nextPoint });
     return { migration: shownMigration(migration) };
-  }));
+  })));
 }
 
 const storeKindOfPath = (config, file) => artifactAddress(artifactKinds(config), file)?.kind ?? null;
