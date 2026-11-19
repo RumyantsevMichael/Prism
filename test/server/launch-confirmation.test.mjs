@@ -51,6 +51,16 @@ setTimeout(() => process.exit(plan.code ?? 0), plan.waitMs ?? 10);
 
 const request = (env, extra = {}) => ({ initiative: "reports", host: "claude-code", checkout: CHECKOUT, env, platform: "linux", now: T0, ...extra });
 
+/** Runs a launch that shows a confirmed dialog and checks that its window ends 30 minutes after the dialog ended, on the request's clock. */
+async function opened(launch, now) {
+  const started = Date.now();
+  const answer = await launch();
+  const endsAt = Date.parse(answer.windowEndsAt);
+  assert.equal(answer.asked, true);
+  assert.ok(endsAt >= now + 30 * MINUTE && endsAt <= now + 30 * MINUTE + (Date.now() - started), `the window ends 30 minutes after the dialog, not at ${answer.windowEndsAt}`);
+  return answer;
+}
+
 async function rejection(promise) {
   try {
     await promise;
@@ -64,13 +74,12 @@ test("on Linux a confirmed zenity dialog opens a 30-minute window in which launc
   const { env, asked } = await dialogs(t, ["zenity"], { zenity: { code: 0 } });
   env.DISPLAY = ":0";
   const { confirmLaunch } = await module();
-  assert.deepEqual(await confirmLaunch(request(env)), { asked: true, windowEndsAt: new Date(T0 + 30 * MINUTE).toISOString() });
+  const first = await opened(() => confirmLaunch(request(env)), T0);
   const [dialog] = asked();
   assert.deepEqual(dialog.argv, ["--question", "--default-cancel", "--title=Prism", "--ok-label=Launch", "--cancel-label=Cancel", "--timeout=120", `--text=${MESSAGE}`]);
-  assert.deepEqual(await confirmLaunch(request(env, { now: T0 + 29 * MINUTE, host: "codex" })), { asked: false, windowEndsAt: new Date(T0 + 30 * MINUTE).toISOString() });
+  assert.deepEqual(await confirmLaunch(request(env, { now: T0 + 29 * MINUTE, host: "codex" })), { asked: false, windowEndsAt: first.windowEndsAt });
   assert.equal(asked().length, 1, "a launch inside the window shows no dialog");
-  const after = await confirmLaunch(request(env, { now: T0 + 31 * MINUTE }));
-  assert.deepEqual(after, { asked: true, windowEndsAt: new Date(T0 + 61 * MINUTE).toISOString() });
+  await opened(() => confirmLaunch(request(env, { now: T0 + 31 * MINUTE })), T0 + 31 * MINUTE);
   assert.equal(asked().length, 2, "after the window ends the next launch asks again");
 });
 
@@ -78,9 +87,9 @@ test("a launch inside the window does not extend it", { skip: posixOnly }, async
   const { env } = await dialogs(t, ["zenity"], { zenity: { code: 0 } });
   env.WAYLAND_DISPLAY = "wayland-0";
   const { confirmLaunch } = await module();
-  await confirmLaunch(request(env));
+  const first = await confirmLaunch(request(env));
   await confirmLaunch(request(env, { now: T0 + 20 * MINUTE }));
-  const later = await confirmLaunch(request(env, { now: T0 + 30 * MINUTE }));
+  const later = await confirmLaunch(request(env, { now: Date.parse(first.windowEndsAt) }));
   assert.equal(later.asked, true, "the window ends 30 minutes after the confirmation, not after the last launch");
 });
 
