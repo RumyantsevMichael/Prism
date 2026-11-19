@@ -43,7 +43,10 @@ const OPTIONS = `<prism-list-item value="opus">Opus 5.5<span slot="detail">Best 
 <prism-list-item value="fable" selected>Fable 5.2<span slot="detail">Most capable for the hardest, longest tasks</span></prism-list-item>
 <prism-list-item value="sonnet">Sonnet 5.5<span slot="detail">Efficient for routine tasks</span></prism-list-item>
 <prism-list-item value="old" disabled>Opus 3<span slot="detail">No longer offered</span></prism-list-item>`;
-const picker = (attributes = "", extra = "") => `<prism-picker id="pk" label="Coordinator" heading="Coordinator model" filter-label="Filter models" value="fable" display="Fable 5.2" detail="High effort" hint="Most capable for the hardest, longest tasks" ${attributes}>${OPTIONS}${extra}</prism-picker>`;
+// The HTML parser keeps the first copy of a repeated attribute, so a test's attributes replace the defaults here rather than follow them on the tag.
+const DEFAULTS = { id: "pk", label: "Coordinator", heading: "Coordinator model", "filter-label": "Filter models", value: "fable", display: "Fable 5.2", detail: "High effort", hint: "Most capable for the hardest, longest tasks" };
+const attribute = ([name, value]) => (value === true ? name : `${name}="${String(value).replaceAll("&", "&amp;").replaceAll('"', "&quot;")}"`);
+const picker = (attributes = {}, extra = "") => `<prism-picker ${Object.entries({ ...DEFAULTS, ...attributes }).map(attribute).join(" ")}>${OPTIONS}${extra}</prism-picker>`;
 const EFFORT = `<div slot="extra"><prism-button size="sm" pressed="true">High</prism-button><prism-button size="sm" pressed="false">Max</prism-button></div>`;
 const trigger = (page) => page.getByRole("button", { name: "Coordinator" });
 const popover = (page) => page.getByRole("dialog", { name: "Coordinator model" });
@@ -84,7 +87,7 @@ test("clause 2: the picker shows its label, its value and detail in one button, 
 test("clause 3: the button opens a popover with a focused filter, the options, and the extra controls", { skip }, async (context) => {
   const page = await catalog(context);
   for (const open of ["click", "Enter", " ", "ArrowDown"]) {
-    await mount(page, picker("", EFFORT));
+    await mount(page, picker({}, EFFORT));
     if (open === "click") await trigger(page).click();
     else {
       await trigger(page).focus();
@@ -101,7 +104,7 @@ test("clause 3: the button opens a popover with a focused filter, the options, a
 
 test("clause 4: typing in the filter keeps only matching options, and shows the empty text when none match", { skip }, async (context) => {
   const page = await catalog(context);
-  await mount(page, picker("", `<p slot="empty">Claude Code reported no models.</p>`));
+  await mount(page, picker({}, `<p slot="empty">Claude Code reported no models.</p>`));
   await trigger(page).click();
   await filter(page).fill("OPUS");
   assert.deepEqual(await shownOptions(page), ["Opus 5.5", "Opus 3"], "matching ignores letter case");
@@ -127,7 +130,7 @@ test("clause 5: choosing an option sets the value, selects only it, sends change
   await settled(() => popover(page).isVisible(), false);
   assert.equal(await popover(page).isVisible(), false, "it closes");
   assert.equal(await trigger(page).evaluate((element) => element.getRootNode().activeElement === element), true, "focus returns to the button");
-  await mount(page, picker("", EFFORT));
+  await mount(page, picker({}, EFFORT));
   await trigger(page).click();
   await popover(page).getByRole("option", { name: /Opus 5\.5/ }).click();
   assert.equal(await page.locator("#pk").getAttribute("value"), "opus");
@@ -153,12 +156,12 @@ test("clause 6: Escape and a click outside close the popover, and a disabled opt
 
 test("clause 7: a busy or disabled picker opens nothing, and a busy one shows that it reads", { skip }, async (context) => {
   const page = await catalog(context);
-  await mount(page, picker('busy display="Reading Claude Code’s models…" detail=""'));
+  await mount(page, picker({ busy: true, display: "Reading Claude Code’s models…", detail: "" }));
   assert.equal(await trigger(page).isDisabled(), true);
   assert.equal(await trigger(page).getAttribute("aria-busy"), "true");
   assert.equal(await page.locator("#pk prism-spinner").count(), 1);
   assert.match(await trigger(page).innerText(), /Reading Claude Code’s models…/);
-  await mount(page, picker("disabled"));
+  await mount(page, picker({ disabled: true }));
   assert.equal(await trigger(page).isDisabled(), true);
   await trigger(page).click({ force: true });
   assert.equal(await popover(page).isVisible(), false);
@@ -166,7 +169,7 @@ test("clause 7: a busy or disabled picker opens nothing, and a busy one shows th
 
 test("clause 8: on a phone-wide window the button and the open popover stay inside the window", { skip }, async (context) => {
   const page = await catalog(context, { width: 390, height: 800 });
-  await mount(page, picker('display="A model name far longer than any phone gives room for, so it has to end early" detail="Extra high effort"', EFFORT));
+  await mount(page, picker({ display: "A model name far longer than any phone gives room for, so it has to end early", detail: "Extra high effort" }, EFFORT));
   await trigger(page).click();
   await settled(() => popover(page).isVisible(), true);
   const box = await popover(page).boundingBox();
