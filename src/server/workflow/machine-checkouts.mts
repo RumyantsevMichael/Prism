@@ -8,6 +8,8 @@ import { parseStoreJson } from "./store-json.mjs";
 
 // Each machine lists where its checkouts of each named repository are, in Prism's application folder beside the managed store clones.
 // The list holds local paths, so it stays on this machine and never reaches a record store.
+export interface CheckoutEntry { store: string; repository: string; path: string; recordedAt: string }
+
 const CHECKOUTS_FILE = "checkouts.json";
 const SCHEMA_VERSION = 1;
 const LOCK_TIMEOUT_MS = 5000;
@@ -17,16 +19,16 @@ export function checkoutsFile(env = process.env) {
   return path.join(reviewAppDirectory(env), CHECKOUTS_FILE);
 }
 
-const real = (target) => realpath(target).catch(() => path.resolve(target));
+const real = (target: string) => realpath(target).catch(() => path.resolve(target));
 
-const validEntry = (entry) => entry !== null && typeof entry === "object"
+const validEntry = (entry: any): entry is CheckoutEntry => entry !== null && typeof entry === "object"
   && typeof entry.store === "string" && path.isAbsolute(entry.store)
   && typeof entry.repository === "string" && entry.repository
   && typeof entry.path === "string" && path.isAbsolute(entry.path)
   && typeof entry.recordedAt === "string";
 
 // The listed entries, [] for a missing or unreadable list, or null for a list this Prism must leave alone: another schemaVersion, or no regular file.
-async function readEntries(file) {
+async function readEntries(file: string): Promise<CheckoutEntry[] | null> {
   let info;
   try { info = await lstat(file); }
   catch (error) { if (error.code === "ENOENT") return []; throw error; }
@@ -39,40 +41,40 @@ async function readEntries(file) {
 }
 
 // The real path of the store a checkout's workflow configuration names, without cloning a remote store, or null when it names none.
-async function configuredStore(root, env) {
+async function configuredStore(root: string, env: NodeJS.ProcessEnv) {
   const { workspace } = await readWorkflowConfig(root);
   const configured = workspace?.store ?? null;
   if (configured === null) return { store: null, repository: null };
   if (isRemoteStore(configured)) {
     const id = await managedStoreId(configured);
-    return { store: id ? await real(path.join(managedStoresDirectory(env), id)) : null, repository: workspace.repository };
+    return { store: id ? await real(path.join(managedStoresDirectory(env), id)) : null, repository: workspace!.repository };
   }
-  return { store: await real(path.resolve(root, configured)), repository: workspace.repository };
+  return { store: await real(path.resolve(root, configured)), repository: workspace!.repository };
 }
 
 // Whether a listed path still holds a .prism/workflow.md that names this store and this repository name.
-async function stillHolds(entry, env) {
+async function stillHolds(entry: CheckoutEntry, env: NodeJS.ProcessEnv) {
   try {
     const named = await configuredStore(entry.path, env);
     return named.store === entry.store && named.repository === entry.repository;
   } catch { return false; }
 }
 
-const order = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
-const byPlace = (left, right) => order(left.store, right.store) || order(left.repository, right.repository) || order(left.path, right.path);
+const order = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
+const byPlace = (left: CheckoutEntry, right: CheckoutEntry) => order(left.store, right.store) || order(left.repository, right.repository) || order(left.path, right.path);
 
 /**
  * Record a checkout of a named repository in this machine's list: replace any entry with the same path, drop each entry of the same store and repository whose path no longer holds that checkout, and rewrite the list atomically under its lock.
  * Resolves to true when the list was written, or false when it is left alone because another Prism wrote it with another schemaVersion.
  */
-export async function recordCheckout({ store, repository, path: checkout, env = process.env, now = new Date() }) {
+export async function recordCheckout({ store, repository, path: checkout, env = process.env, now = new Date() }: { store: string; repository: string; path: string; env?: NodeJS.ProcessEnv; now?: Date }) {
   const file = checkoutsFile(env);
   const entry = { store: await real(store), repository, path: await real(checkout), recordedAt: now.toISOString() };
   await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
   return withArtifactLock(file, () => withFileLock(file, async () => {
     const listed = await readEntries(file);
     if (listed === null) return false;
-    const kept = [];
+    const kept: CheckoutEntry[] = [];
     for (const item of listed) {
       if (item.path === entry.path) continue;
       if (item.store === entry.store && item.repository === entry.repository && !(await stillHolds(item, env))) continue;
@@ -88,5 +90,5 @@ export async function recordCheckout({ store, repository, path: checkout, env = 
 export async function listMachineCheckouts(env = process.env) {
   const listed = await readEntries(checkoutsFile(env)).catch(() => null) ?? [];
   const held = await Promise.all(listed.map(async (entry) => (await stillHolds(entry, env)) ? { store: entry.store, repository: entry.repository, path: entry.path } : null));
-  return held.filter(Boolean);
+  return held.filter(Boolean as unknown as (entry: unknown) => entry is Omit<CheckoutEntry, "recordedAt">);
 }

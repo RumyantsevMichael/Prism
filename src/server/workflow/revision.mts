@@ -1,5 +1,5 @@
 // Revision mismatches name the likely cause, so an agent can retry with the right value instead of working around the tool.
-export function revisionMismatch(label, expected, current) {
+export function revisionMismatch(label: string, expected: string | null | undefined, current: string | null) {
   if (expected === "null") {
     return `The expectedRevision argument is the string "null". Pass JSON null${current === null ? ` to create the ${label}` : `, or the current revision ${current} to change the existing ${label}`}.`;
   }

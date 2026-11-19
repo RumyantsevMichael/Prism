@@ -7,19 +7,31 @@ const LOCK_TIMEOUT_MS = 5000;
 const LOCK_STALE_MS = 30000;
 // A reclaimer holds its reclaim lock only while it reads and removes one file, so an older reclaim lock belongs to a reclaimer that died.
 const RECLAIM_STALE_MS = 10000;
-const artifactLocks = new Map();
+const artifactLocks = new Map<string, Promise<unknown>>();
 
-function defaultError(code, message) {
+/** Builds the error a lock failure throws, so each store reports it in its own error type. */
+export type MakeError = (code: string, message: string) => Error;
+export interface FileLockOptions {
+  timeoutMs?: number;
+  staleMs?: number;
+  renew?: boolean;
+  abandonWhenUnrenewed?: boolean;
+  closeHandle?: boolean;
+  heartbeatMs?: number;
+  onRenew?: (held: boolean) => void;
+}
+
+function defaultError(code: string, message: string) {
   return Object.assign(new Error(message), { code });
 }
 
-async function wait(milliseconds) {
+async function wait(milliseconds: number) {
   await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 // Removes an abandoned lock under a reclaim lock and reports whether it ran.
 // Without it, two starters that both judged one lock abandoned could each remove it, and the later removal would take away the lock the earlier one had just created.
-async function removeAbandonedLock(lockPath, token) {
+async function removeAbandonedLock(lockPath: string, token: unknown) {
   const reclaimPath = `${lockPath}.reclaim`;
   try {
     await (await open(reclaimPath, "wx", 0o600)).close();
@@ -39,7 +51,7 @@ async function removeAbandonedLock(lockPath, token) {
   return true;
 }
 
-async function acquireFileLock(artifactPath, makeError, options) {
+async function acquireFileLock(artifactPath: string, makeError: MakeError, options: FileLockOptions) {
   const lockPath = `${artifactPath}.lock`;
   const deadline = Date.now() + (options.timeoutMs ?? LOCK_TIMEOUT_MS);
   // The first attempt always runs, so a short timeout such as the sync lock's one millisecond never times out untried, and so does the attempt after an abandoned lock is removed.
@@ -96,7 +108,7 @@ async function acquireFileLock(artifactPath, makeError, options) {
   throw makeError("lock_timeout", "The artifact file is locked by another writer.");
 }
 
-export async function withFileLock(artifactPath, action, makeError = defaultError, options = {}) {
+export async function withFileLock<T>(artifactPath: string, action: () => T | Promise<T>, makeError: MakeError = defaultError, options: FileLockOptions = {}): Promise<T> {
   const lock = await acquireFileLock(artifactPath, makeError, options);
   // A lock never keeps its file open, and a lock whose action moves the folder that holds it is never renewed there, since the folder moves away from the lock's path.
   const heartbeat = options.renew && !options.closeHandle ? setInterval(async () => {
@@ -109,16 +121,16 @@ export async function withFileLock(artifactPath, action, makeError = defaultErro
   try {
     return await action();
   } finally {
-    clearInterval(heartbeat);
+    clearInterval(heartbeat as NodeJS.Timeout | undefined);
     const owner = await readFile(lock.lockPath, "utf8").then(parseStoreJson).catch(() => null);
     if (owner?.token === lock.token) await rm(lock.lockPath, { force: true }).catch(() => {});
   }
 }
 
-export async function withArtifactLock(artifactPath, action) {
+export async function withArtifactLock<T>(artifactPath: string, action: () => T | Promise<T>): Promise<T> {
   const previous = artifactLocks.get(artifactPath) ?? Promise.resolve();
-  let release;
-  const current = new Promise((resolve) => {
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
     release = resolve;
   });
   artifactLocks.set(artifactPath, current);
@@ -135,7 +147,7 @@ export async function withArtifactLock(artifactPath, action) {
 
 // Windows refuses to rename a file or folder while another process holds it, as another reader, Git that has just exited, or a virus scanner reading new files does,
 // so there a rename is retried for a few seconds while the refusal says the path is in use.
-export async function renameWhenFree(from, to) {
+export async function renameWhenFree(from: string, to: string): Promise<void> {
   for (let delay = 10; ; delay *= 2) {
     try { return await rename(from, to); }
     catch (error) {
@@ -145,8 +157,9 @@ export async function renameWhenFree(from, to) {
   }
 }
 
-/** @param {string} artifactPath @param {string | Uint8Array} contents @param {{ renameFile?: typeof rename, mode?: number, beforeTemporary?: (path: string) => Promise<void>, afterTemporary?: (path: string) => Promise<void> }} options */
-export async function writeAtomically(artifactPath, contents, { renameFile = renameWhenFree, mode: requestedMode, beforeTemporary, afterTemporary } = {}) {
+export interface AtomicWriteOptions { renameFile?: (from: string, to: string) => Promise<void>; mode?: number; beforeTemporary?: (path: string) => Promise<void>; afterTemporary?: (path: string) => Promise<void> }
+
+export async function writeAtomically(artifactPath: string, contents: string | Uint8Array, { renameFile = renameWhenFree, mode: requestedMode, beforeTemporary, afterTemporary }: AtomicWriteOptions = {}) {
   let mode = requestedMode ?? 0o644;
   try {
     const info = await lstat(artifactPath);

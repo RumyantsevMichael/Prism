@@ -10,12 +10,12 @@ export const JSON_DEPTH_MAX = 64;
  * Whether a JSON value nests arrays and objects deeper than max, found without recursion and with one frame per level of the path being walked,
  * so a caller can set aside a value that serializing would exhaust the call stack on.
  */
-export function nestedDeeperThan(value, max = JSON_DEPTH_MAX) {
+export function nestedDeeperThan(value: unknown, max = JSON_DEPTH_MAX): boolean {
   if (!value || typeof value !== "object") return false;
   // Each frame holds one array or object, the keys of an object, and the position of the next child to visit.
-  const frames = [{ item: value, keys: Array.isArray(value) ? null : Object.keys(value), at: 0 }];
+  const frames: { item: any; keys: string[] | null; at: number }[] = [{ item: value, keys: Array.isArray(value) ? null : Object.keys(value), at: 0 }];
   while (frames.length) {
-    const frame = frames.at(-1);
+    const frame = frames.at(-1)!;
     const length = frame.keys ? frame.keys.length : frame.item.length;
     if (frame.at >= length) { frames.pop(); continue; }
     const child = frame.keys ? frame.item[frame.keys[frame.at]] : frame.item[frame.at];
@@ -30,7 +30,7 @@ export function nestedDeeperThan(value, max = JSON_DEPTH_MAX) {
 const OPEN_SQUARE = 0x5b, OPEN_CURLY = 0x7b, CLOSE_SQUARE = 0x5d, CLOSE_CURLY = 0x7d, QUOTE = 0x22, BACKSLASH = 0x5c;
 
 /** Whether JSON text nests arrays and objects deeper than max, read by its brackets outside strings with one counter, so the check needs no memory beyond the text. */
-function textNestedDeeperThan(text, max) {
+function textNestedDeeperThan(text: string, max: number) {
   let depth = 0, inString = false;
   for (let at = 0; at < text.length; at++) {
     const code = text.charCodeAt(at);
@@ -49,8 +49,8 @@ function textNestedDeeperThan(text, max) {
  * so every caller that sets aside a file that does not parse sets aside such a file too.
  * The depth is read from the text before it is parsed, so a value too deep is refused before any of it is built.
  */
-export function parseStoreJson(source) {
+export function parseStoreJson(source: string | Buffer): any {
   const text = Buffer.isBuffer(source) ? source.toString("utf8") : source;
   if (typeof text === "string" && textNestedDeeperThan(text, JSON_DEPTH_MAX)) throw new SyntaxError(`The JSON nests arrays and objects deeper than ${JSON_DEPTH_MAX} levels.`);
-  return JSON.parse(text);
+  return JSON.parse(text as string);
 }

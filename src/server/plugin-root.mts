@@ -3,8 +3,8 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const PLUGIN_ROOT = fileURLToPath(new URL("../../", import.meta.url));
-export const pluginPath = (...segments) => path.join(PLUGIN_ROOT, ...segments);
-export const pluginURL = (...segments) => pathToFileURL(pluginPath(...segments));
+export const pluginPath = (...segments: string[]) => path.join(PLUGIN_ROOT, ...segments);
+export const pluginURL = (...segments: string[]) => pathToFileURL(pluginPath(...segments));
 
 // The installed plugin's release version, or null when the manifest cannot be read.
 export function pluginVersion() {

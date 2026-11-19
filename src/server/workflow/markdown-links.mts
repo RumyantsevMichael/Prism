@@ -19,7 +19,7 @@ const ATTRIBUTE = String.raw`(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:[^"'=<
 const OPEN_TAG = String.raw`<[A-Za-z][A-Za-z0-9-]*${ATTRIBUTE}*\s*\/?>`;
 const CLOSING_TAG = String.raw`<\/[A-Za-z][A-Za-z0-9-]*\s*>`;
 // The seven kinds of HTML block, each with the condition that ends it: a line that holds the end text, or a blank line; the seventh cannot interrupt a paragraph.
-const HTML_BLOCKS = [
+const HTML_BLOCKS: { start: RegExp; end: RegExp | null; paragraphStays?: boolean; not?: RegExp }[] = [
   { start: /^<(?:script|pre|style|textarea)(?:\s|>|$)/i, end: /<\/(?:script|pre|style|textarea)>/i },
   { start: /^<!--/, end: /-->/ },
   { start: /^<\?/, end: /\?>/ },
@@ -33,14 +33,18 @@ const EMAIL_AUTOLINK = /<[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0
 const INLINE_TAG = new RegExp(`${OPEN_TAG}|${CLOSING_TAG}`, "y");
 const DECLARATION = /<![A-Za-z][^>]*>/y;
 
-const NAMED_ENTITIES = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: " " };
+interface Budget { left: number }
+type Leaf = { kind: "paragraph"; lines: string[] } | { kind: "fence"; marker: string } | { kind: "html"; end: RegExp | null } | { kind: "indented" };
+type Container = { kind: "quote"; indent?: undefined; empty?: undefined } | { kind: "item"; indent: number; empty: boolean };
+
+const NAMED_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: " " };
 
 class OverBudget extends Error {}
 
-const isBlank = (text) => /^[ \t]*$/.test(text);
+const isBlank = (text: string) => /^[ \t]*$/.test(text);
 
 // A thematic break: three or more of one of *, -, and _, with only spaces and tabs among them, looked at once from left to right.
-function thematicBreak(text) {
+function thematicBreak(text: string) {
   const marker = text[0];
   if (marker !== "*" && marker !== "-" && marker !== "_") return false;
   let count = 0;
@@ -50,10 +54,10 @@ function thematicBreak(text) {
   }
   return count >= 3;
 }
-const isSpace = (character) => character === " " || character === "\t" || character === "\n";
+const isSpace = (character: string | undefined) => character === " " || character === "\t" || character === "\n";
 
 // The columns and characters of a line's leading spaces and tabs, with a tab reaching the next multiple of four from the line's column.
-function indentation(text, column) {
+function indentation(text: string, column: number) {
   let columns = 0, characters = 0;
   for (; characters < text.length; characters += 1) {
     if (text[characters] === " ") columns += 1;
@@ -64,7 +68,7 @@ function indentation(text, column) {
 }
 
 // A line without its first count columns of indentation, a tab that reaches past them leaving the rest of its width as spaces.
-function stripColumns(text, column, count) {
+function stripColumns(text: string, column: number, count: number) {
   let taken = 0, index = 0;
   while (taken < count && index < text.length) {
     const width = text[index] === "\t" ? 4 - ((column + taken) % 4) : text[index] === " " ? 1 : 0;
@@ -76,24 +80,24 @@ function stripColumns(text, column, count) {
   return { text: text.slice(index), column: column + taken };
 }
 
-function unescape(text) {
-  return text.replace(/\\([!-/:-@[-`{-~])/g, "$1").replace(/&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([A-Za-z]+));/g, (whole, decimal, hex, name) => {
+function unescape(text: string) {
+  return text.replace(/\\([!-/:-@[-`{-~])/g, "$1").replace(/&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([A-Za-z]+));/g, (whole, decimal, hex, name: string) => {
     if (name !== undefined) return NAMED_ENTITIES[name] ?? whole;
     const code = decimal !== undefined ? Number(decimal) : Number.parseInt(hex, 16);
     return code > 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff) ? String.fromCodePoint(code) : "�";
   });
 }
 
-const normalizeLabel = (label) => label.trim().replace(/[ \t\r\n]+/g, " ").toLowerCase().toUpperCase();
+const normalizeLabel = (label: string) => label.trim().replace(/[ \t\r\n]+/g, " ").toLowerCase().toUpperCase();
 
 /**
  * The parsers that inline text and link reference definitions share, over one text, each charging the characters it looks at to budget,
  * so a text built to make the reader look at its characters again and again stops the read instead of holding the server.
  */
-function scanners(text, budget) {
-  const charge = (count) => { budget.left -= count; if (budget.left < 0) throw new OverBudget(); };
+function scanners(text: string, budget: Budget) {
+  const charge = (count: number) => { budget.left -= count; if (budget.left < 0) throw new OverBudget(); };
   // A link label: its raw text and the index after its closing bracket, or null; [] gives the empty label, which only a collapsed reference takes.
-  const label = (at) => {
+  const label = (at: number) => {
     if (text[at] !== "[") return null;
     let index = at + 1;
     for (; index < text.length; index += 1) {
@@ -108,7 +112,7 @@ function scanners(text, budget) {
     return { raw: text.slice(at + 1, index), end: index + 1 };
   };
   // A link destination at an index: its unescaped value and the index after it, or null.
-  const destination = (at) => {
+  const destination = (at: number) => {
     if (text[at] === "<") {
       let index = at + 1;
       for (; index < text.length; index += 1) {
@@ -135,7 +139,7 @@ function scanners(text, budget) {
     return { value: unescape(text.slice(at, index)), end: index };
   };
   // A link title at an index, in double quotes, single quotes, or parentheses: the index after it, or null.
-  const title = (at) => {
+  const title = (at: number) => {
     const open = text[at];
     const close = open === "(" ? ")" : open === "\"" || open === "'" ? open : null;
     if (close === null) return null;
@@ -150,7 +154,7 @@ function scanners(text, budget) {
     return index < text.length ? index + 1 : null;
   };
   // Spaces and tabs with at most one line ending among them: the index after them.
-  const whitespace = (at) => {
+  const whitespace = (at: number) => {
     let index = at, endings = 0;
     while (index < text.length && isSpace(text[index])) {
       if (text[index] === "\n" && (endings += 1) > 1) break;
@@ -163,7 +167,7 @@ function scanners(text, budget) {
 }
 
 /** The link reference definitions that open a paragraph: the definitions it holds, added to definitions where no earlier one has the label, and the rest of its text. */
-function takeDefinitions(text, definitions, budget) {
+function takeDefinitions(text: string, definitions: Map<string, string>, budget: Budget) {
   const { label, destination, title, whitespace } = scanners(text, budget);
   let at = 0;
   for (;;) {
@@ -171,9 +175,9 @@ function takeDefinitions(text, definitions, budget) {
     if (!named || text[named.end] !== ":" || isBlank(named.raw.replace(/\n/g, " "))) break;
     const target = destination(whitespace(named.end + 1));
     if (!target || (target.value === "" && text[whitespace(named.end + 1)] !== "<")) break;
-    const lineEnd = (from) => { const index = text.indexOf("\n", from); return index < 0 ? text.length : index; };
+    const lineEnd = (from: number) => { const index = text.indexOf("\n", from); return index < 0 ? text.length : index; };
     // A title is optional; a definition whose title does not end its line keeps no title, and then its destination must end its line.
-    let end = null;
+    let end: number | null = null;
     const afterTarget = whitespace(target.end);
     if (afterTarget > target.end) {
       const closed = title(afterTarget);
@@ -198,7 +202,7 @@ function takeDefinitions(text, definitions, budget) {
  * The destinations of the links of one piece of inline text, in order: inline links and reference links whose label a definition holds.
  * Each found destination is passed to found.
  */
-function inlineLinks(text, definitions, budget, found) {
+function inlineLinks(text: string, definitions: Map<string, string>, budget: Budget, found: (link: string) => void) {
   const { charge, label, destination, title, whitespace } = scanners(text, budget);
   // Every maximal run of backticks by its length, so a code span finds its closing run without looking at the text again.
   const runs = new Map();
@@ -211,7 +215,7 @@ function inlineLinks(text, definitions, budget, found) {
     runs.get(length).starts.push(index);
     index = end;
   }
-  const closingRun = (length, from) => {
+  const closingRun = (length: number, from: number) => {
     const entry = runs.get(length);
     if (!entry) return -1;
     while (entry.next < entry.starts.length && entry.starts[entry.next] < from) entry.next += 1;
@@ -219,7 +223,7 @@ function inlineLinks(text, definitions, budget, found) {
   };
   // The next index of a text from an index, remembered so that a search never looks at the same characters twice.
   const remembered = new Map();
-  const nextIndex = (needle, from) => {
+  const nextIndex = (needle: string, from: number) => {
     const known = remembered.get(needle);
     if (known !== undefined && (known === -1 || known >= from)) return known;
     const index = text.indexOf(needle, from);
@@ -227,7 +231,7 @@ function inlineLinks(text, definitions, budget, found) {
     remembered.set(needle, index);
     return index;
   };
-  const sticky = (pattern, at) => {
+  const sticky = (pattern: RegExp, at: number) => {
     pattern.lastIndex = at;
     const match = pattern.exec(text);
     if (!match) return -1;
@@ -235,7 +239,7 @@ function inlineLinks(text, definitions, budget, found) {
     return at + match[0].length;
   };
   // Raw HTML or an autolink at a "<": the index after it, or -1.
-  const html = (at) => {
+  const html = (at: number) => {
     if (text.startsWith("<!-->", at)) return at + 5;
     if (text.startsWith("<!--->", at)) return at + 6;
     if (text.startsWith("<!--", at)) { const end = nextIndex("-->", at + 4); return end < 0 ? -1 : end + 3; }
@@ -249,9 +253,9 @@ function inlineLinks(text, definitions, budget, found) {
     return sticky(INLINE_TAG, at);
   };
   // The destination of the autolink that html last read, which is a link too, though always to another site.
-  let autolink = null;
-  const links = [];
-  const openers = [];
+  let autolink: string | null = null;
+  const links: string[] = [];
+  const openers: { image: boolean; textStart: number; links: number; sequence: number }[] = [];
   let sequence = 0;
   // Openers of a link that were opened before a link that closed: a link holds no link, so they open none.
   let barrier = -1;
@@ -268,7 +272,7 @@ function inlineLinks(text, definitions, budget, found) {
     if (character === "<") {
       autolink = null;
       const end = html(index);
-      if (autolink !== null) links.push(autolink);
+      if (autolink !== null) links.push(autolink as string);
       index = end < 0 ? index + 1 : end;
       continue;
     }
@@ -277,7 +281,7 @@ function inlineLinks(text, definitions, budget, found) {
     if (character !== "]") { index += 1; continue; }
     const opener = openers.pop();
     if (!opener || (!opener.image && opener.sequence < barrier)) { index += 1; continue; }
-    let target = null, end = index + 1;
+    let target: string | null = null, end = index + 1;
     if (text[index + 1] === "(") {
       let at = whitespace(index + 2);
       if (text[at] === ")") { target = ""; end = at + 1; }
@@ -308,18 +312,18 @@ function inlineLinks(text, definitions, budget, found) {
 }
 
 /** The block structure of a Markdown text as its pieces of inline text, the paragraphs and headings in order, with the link reference definitions that its paragraphs open with. */
-function inlineTexts(text, budget) {
-  const pieces = [];
-  const definitions = new Map();
-  let containers = [];
-  let leaf = null;
+function inlineTexts(text: string, budget: Budget) {
+  const pieces: { text: string }[] = [];
+  const definitions = new Map<string, string>();
+  let containers: Container[] = [];
+  let leaf: Leaf | null = null as Leaf | null;
   const close = () => {
     if (leaf?.kind === "paragraph") pieces.push({ text: takeDefinitions(leaf.lines.join("\n"), definitions, budget) });
     leaf = null;
   };
   // A line that a container it does not continue would hold opens a block of its own rather than going on with the open paragraph:
   // the container that it continues holds no paragraph, so a list item of any number or none counts, while the seventh kind of HTML block still never interrupts a paragraph.
-  const interrupts = (line, column) => {
+  const interrupts = (line: string, column: number) => {
     const { columns, characters } = indentation(line, column);
     if (columns >= 4) return false;
     const rest = line.slice(characters);
@@ -434,12 +438,12 @@ function inlineTexts(text, budget) {
  * The destinations of the links of a Markdown text, as CommonMark reads it, in the order they appear, with backslash escapes and character references resolved;
  * images, and links inside their descriptions, are left out. A text whose syntax would make the read look at its characters many times over gives null.
  */
-export function markdownLinkDestinations(text) {
+export function markdownLinkDestinations(text: string) {
   const budget = { left: 32 * text.length + 65536 };
   try {
     const { pieces, definitions } = inlineTexts(text, budget);
-    const found = [];
-    for (const piece of pieces) inlineLinks(piece.text, definitions, budget, (link) => found.push(link));
+    const found: string[] = [];
+    for (const piece of pieces) inlineLinks(piece.text, definitions, budget, (link: string) => found.push(link));
     return found;
   } catch (error) {
     if (error instanceof OverBudget) return null;

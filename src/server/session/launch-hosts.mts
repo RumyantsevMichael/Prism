@@ -48,21 +48,21 @@ export const HOST_ERROR_FALLBACK = "The turn failed without a message.";
 export const HOST_SESSION_ID_PATTERN = /^[0-9A-Za-z_][0-9A-Za-z_-]*$/;
 export const SESSION_ID_PLACEHOLDER = "<host session id>";
 
-export function validHostSessionId(value) {
+export function validHostSessionId(value: unknown): value is string {
   return typeof value === "string" && HOST_SESSION_ID_PATTERN.test(value);
 }
 
 /** The text with every occurrence of the host session id, in any letter case, replaced by a placeholder; the pattern keeps the id free of regular expression syntax. */
-export function redactSessionId(text, hostSessionId) {
+export function redactSessionId<T>(text: T, hostSessionId: unknown): T {
   if (typeof text !== "string" || !validHostSessionId(hostSessionId)) return text;
-  return text.replace(new RegExp(hostSessionId, "gi"), SESSION_ID_PLACEHOLDER);
+  return text.replace(new RegExp(hostSessionId, "gi"), SESSION_ID_PLACEHOLDER) as T;
 }
 
-export function hostDefinition(host) {
+export function hostDefinition(host: string) {
   return HOSTS.find((definition) => definition.host === host) ?? null;
 }
 
-async function executableFile(file) {
+async function executableFile(file: string) {
   try {
     if (!(await stat(file)).isFile()) return false;
     if (process.platform !== "win32") await access(file, constants.X_OK);
@@ -72,14 +72,14 @@ async function executableFile(file) {
   }
 }
 
-function pathEntries(env) {
+function pathEntries(env: NodeJS.ProcessEnv) {
   const value = env.PATH ?? env.Path ?? "";
   return value.split(path.delimiter).filter((entry) => entry && path.isAbsolute(entry));
 }
 
 // npm's command shims run Node with a script beside the shim, named as "%dp0%\<relative script>".
-async function npmShimScript(file) {
-  let text;
+async function npmShimScript(file: string) {
+  let text: string;
   try { text = await readFile(file, "utf8"); } catch { return null; }
   if (!/node/i.test(text)) return null;
   const match = /"%~?dp0%?\\([^"%]+\.(?:c|m)?js)"/i.exec(text);
@@ -92,10 +92,12 @@ async function npmShimScript(file) {
  * How a host is run on this machine: { ...definition, available, executable, command, prefix, reason },
  * where command and prefix are what the supervisor spawns before the host arguments.
  */
-export async function resolveHost(host, env = process.env) {
+export interface ResolvedHost { host: string; label: string; executable: string | null; available: boolean; command: string | null; prefix: string[]; reason: string | null }
+
+export async function resolveHost(host: string, env = process.env): Promise<ResolvedHost | null> {
   const definition = hostDefinition(host);
   if (!definition) return null;
-  const missing = { ...definition, available: false, executable: null, command: null, prefix: [], reason: `${definition.label} was not found: no ${definition.executable} executable on PATH.` };
+  const missing: ResolvedHost = { ...definition, available: false, executable: null, command: null, prefix: [], reason: `${definition.label} was not found: no ${definition.executable} executable on PATH.` };
   const entries = pathEntries(env);
   if (process.platform !== "win32") {
     for (const entry of entries) {
@@ -120,13 +122,13 @@ export async function resolveHost(host, env = process.env) {
 /** One entry per host in order: { host, label, available, executable, reason }. */
 export async function hostAvailability({ env = process.env } = {}) {
   return Promise.all(HOSTS.map(async ({ host }) => {
-    const { label, available, executable, reason } = await resolveHost(host, env);
+    const { label, available, executable, reason } = (await resolveHost(host, env))!;
     return { host, label, available, executable, reason };
   }));
 }
 
 /** The arguments of a run: Claude Code's launch or resume form with its session id, or Codex's app server. */
-export function hostArguments({ host, hostSessionId, resume }) {
+export function hostArguments({ host, hostSessionId, resume }: { host: string; hostSessionId: unknown; resume?: boolean }) {
   if (host === "claude-code") {
     if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
     return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...CLAUDE_FLAGS];
@@ -136,56 +138,56 @@ export function hostArguments({ host, hostSessionId, resume }) {
 }
 
 /** The stream-json user message that gives a Claude Code run its prompt. */
-export function claudePrompt(initiative) {
+export function claudePrompt(initiative: string) {
   return { type: "user", message: { role: "user", content: `/prism:orchestrate ${initiative}` } };
 }
 
 /** The Codex request that opens the run's thread: thread/start for a launch, thread/resume with the kept thread id for a resume. */
-export function codexThreadRequest({ checkout, hostSessionId, resume }) {
+export function codexThreadRequest({ checkout, hostSessionId, resume }: { checkout: string; hostSessionId: unknown; resume?: boolean }) {
   if (!resume) return { method: "thread/start", params: { cwd: checkout, ...CODEX_POLICY } };
   if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
   return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...CODEX_POLICY } };
 }
 
 /** The Codex request that starts the run's one orchestrate turn. */
-export function codexTurnRequest({ threadId, initiative }) {
+export function codexTurnRequest({ threadId, initiative }: { threadId: string; initiative: string }) {
   return { method: "turn/start", params: { threadId, input: [{ type: "text", text: `$prism:orchestrate ${initiative}` }] } };
 }
 
 /** The stream-json line that Claude Code's own Stop button sends: an interrupt control request with a request id that Prism chooses. */
-export function claudeInterrupt(requestId) {
+export function claudeInterrupt(requestId: string) {
   return { type: "control_request", request_id: requestId, request: { subtype: "interrupt" } };
 }
 
 /** The Codex request that interrupts the run's turn, as the app's own Stop button does. */
-export function codexInterruptRequest({ threadId, turnId }) {
+export function codexInterruptRequest({ threadId, turnId }: { threadId: string | null; turnId: string }) {
   return { method: "turn/interrupt", params: { threadId, turnId } };
 }
 
 /** The command that continues a host session in a terminal, or null for an id that breaks HOST_SESSION_ID_PATTERN. */
-export function resumeCommandOf(host, hostSessionId) {
+export function resumeCommandOf(host: string, hostSessionId: unknown) {
   if (!validHostSessionId(hostSessionId)) return null;
   return host === "claude-code" ? `claude --resume ${hostSessionId}` : `codex resume ${hostSessionId}`;
 }
 
 /** The environment of a run: the starter's own, without the host session variables, and with PRISM_LAUNCH naming the launch. */
-export function hostEnvironment(env, launchId) {
-  const result = { ...env };
+export function hostEnvironment(env: NodeJS.ProcessEnv, launchId: string) {
+  const result: NodeJS.ProcessEnv = { ...env };
   for (const name of STRIPPED_VARIABLES) delete result[name];
   result.PRISM_LAUNCH = launchId;
   return result;
 }
 
 /** Splits a byte stream into lines, dropping every line longer than MAX_LINE_BYTES. */
-export function lineSplitter(onLine) {
-  let pending = [];
+export function lineSplitter(onLine: (line: string) => void) {
+  let pending: Buffer[] = [];
   let pendingBytes = 0;
   let discarding = false;
-  const emit = (buffer) => {
+  const emit = (buffer: Buffer) => {
     if (!discarding && buffer.length <= MAX_LINE_BYTES) onLine(buffer.toString("utf8").replace(/\r$/, ""));
   };
   return {
-    push(chunk) {
+    push(chunk: Buffer) {
       let start = 0;
       let index = chunk.indexOf(10);
       while (index !== -1) {
@@ -218,7 +220,7 @@ export function lineSplitter(onLine) {
   };
 }
 
-function parseObject(line) {
+function parseObject(line: string) {
   try {
     const value = JSON.parse(line);
     return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
@@ -227,23 +229,23 @@ function parseObject(line) {
   }
 }
 
-function blockText(content) {
+function blockText(content: unknown) {
   if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map((block) => (typeof block === "string" ? block : typeof block?.text === "string" ? block.text : "")).join("");
+  if (Array.isArray(content)) return content.map((block: any) => (typeof block === "string" ? block : typeof block?.text === "string" ? block.text : "")).join("");
   return "";
 }
 
 
-const text = (value) => (typeof value === "string" ? value : "");
+const text = (value: unknown) => (typeof value === "string" ? value : "");
 // A Claude Code error result's text: its `result` when that is a non-empty string, and otherwise its `errors` strings joined.
-const claudeErrorText = (event) => (text(event.result) || (Array.isArray(event.errors) ? event.errors.filter((entry) => typeof entry === "string").join("; ") : ""));
+const claudeErrorText = (event: any) => (text(event.result) || (Array.isArray(event.errors) ? event.errors.filter((entry: unknown) => typeof entry === "string").join("; ") : ""));
 
 // A slice of a long string can keep the whole string alive, so kept host text is copied into a string of its own; the UTF-16
 // round trip keeps every code unit, a lone surrogate at the cut included.
-const detached = (text) => Buffer.from(text, "utf16le").toString("utf16le");
+const detached = (text: string) => Buffer.from(text, "utf16le").toString("utf16le");
 // Host ids are kept by a fixed-size digest of every UTF-16 code unit, so a long id costs no more than a short one and ids that
 // differ only in a lone surrogate stay apart.
-const digestKey = (id) => createHash("sha256").update(Buffer.from(id, "utf16le")).digest("base64");
+const digestKey = (id: string) => createHash("sha256").update(Buffer.from(id, "utf16le")).digest("base64");
 
 /**
  * One run's conversation with its host over the host's standard input and output.
@@ -257,11 +259,24 @@ const digestKey = (id) => createHash("sha256").update(Buffer.from(id, "utf16le")
  * `interrupt()` stops the run the way the host's own Stop button does: it sends the host's interrupt while the input is open and
  * closes the input once the host has answered it, or at once for a Codex run that has not sent turn/start yet.
  */
-export function hostConversation(host, { initiative, checkout, hostSessionId = null, resume = false, send, closeInput, onSessionId = () => {}, onModel = () => {} }) {
-  const facts = { hostSessionId: null, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null };
+export interface HostRefusal { tool: string; reason: string }
+export interface HostFacts { hostSessionId: string | null; turnId: string | null; model: string | null; refusals: HostRefusal[]; refusalCount: number; hostError: string | null }
+export interface HostConversationOptions {
+  initiative: string;
+  checkout: string;
+  hostSessionId?: string | null;
+  resume?: boolean;
+  send: (message: unknown) => void;
+  closeInput: () => void;
+  onSessionId?: (id: string) => void;
+  onModel?: (model: string) => void;
+}
+
+export function hostConversation(host: string, { initiative, checkout, hostSessionId = null, resume = false, send, closeInput, onSessionId = () => {}, onModel = () => {} }: HostConversationOptions) {
+  const facts: HostFacts = { hostSessionId: null, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null };
   let modelSeen = false;
   // Only the first place that can name the run's model counts; a value that is no model a claim may record keeps none.
-  const named = (value) => {
+  const named = (value: unknown) => {
     if (modelSeen) return;
     modelSeen = true;
     if (!isAgentModel(value)) return;
@@ -269,12 +284,12 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
     onModel(facts.model);
   };
   let inputOpen = true;
-  const redact = (value) => redactSessionId(redactSessionId(value, hostSessionId), facts.hostSessionId);
+  const redact = (value: string) => redactSessionId(redactSessionId(value, hostSessionId), facts.hostSessionId);
   // The id is replaced before the text is cut, so no cut leaves part of it behind.
-  const cut = (value) => detached(redact(value).slice(0, REFUSAL_REASON_MAX));
-  const hostError = (value) => cut(value || HOST_ERROR_FALLBACK);
-  const toolName = (value, fallback) => (typeof value === "string" && value ? detached(redact(value).slice(0, TOOL_NAME_MAX)) : fallback);
-  const write = (message) => {
+  const cut = (value: string) => detached(redact(value).slice(0, REFUSAL_REASON_MAX));
+  const hostError = (value: string) => cut(value || HOST_ERROR_FALLBACK);
+  const toolName = (value: unknown, fallback: string) => (typeof value === "string" && value ? detached(redact(value).slice(0, TOOL_NAME_MAX)) : fallback);
+  const write = (message: unknown) => {
     if (inputOpen) send(message);
   };
   const close = () => {
@@ -289,11 +304,11 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
   // Running tasks are held by digest, at most TRACKED_TASKS of them; a start past that is only counted, and a notification of a
   // task that is not held ends one counted task, so the input never closes while the host still reports more starts than ends.
   function claudeHandler() {
-    const toolResults = new Map();
-    const tasks = new Set();
+    const toolResults = new Map<string, string>();
+    const tasks = new Set<string>();
     let untrackedTasks = 0;
     const taskKey = digestKey;
-    let interruptId = null;
+    let interruptId: string | null = null;
     return {
       start: () => write(claudePrompt(initiative)),
       interrupt() {
@@ -301,7 +316,7 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
         interruptId = randomUUID();
         write(claudeInterrupt(interruptId));
       },
-      event(event) {
+      event(event: any) {
         if (event.type === "control_response") {
           if (interruptId !== null && event.response?.request_id === interruptId) close();
           return;
@@ -327,15 +342,15 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
             const key = digestKey(block.tool_use_id);
             toolResults.delete(key);
             toolResults.set(key, cut(blockText(block.content).trim()));
-            if (toolResults.size > KEPT_TOOL_RESULTS) toolResults.delete(toolResults.keys().next().value);
+            if (toolResults.size > KEPT_TOOL_RESULTS) toolResults.delete(toolResults.keys().next().value!);
           }
           return;
         }
         if (event.type !== "result") return;
         // The last result event decides the run's refusals and host error.
-        const denials = (Array.isArray(event.permission_denials) ? event.permission_denials : []).filter((denial) => denial && typeof denial === "object");
+        const denials = (Array.isArray(event.permission_denials) ? event.permission_denials : []).filter((denial: any) => denial && typeof denial === "object");
         facts.refusalCount = denials.length;
-        facts.refusals = denials.slice(0, RECORDED_REFUSALS).map((denial) => {
+        facts.refusals = denials.slice(0, RECORDED_REFUSALS).map((denial: any) => {
           const tool = toolName(denial.tool_name, "a tool");
           const reason = typeof denial.tool_use_id === "string" ? toolResults.get(digestKey(denial.tool_use_id))?.trim() : undefined;
           return { tool, reason: reason || cut(`${tool} was refused.`) };
@@ -350,20 +365,20 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
   // that the host sends is answered with HOST_REQUEST_REFUSAL, and the input closes when the run's turn completes or the host
   // answers one of Prism's requests with an error.
   function codexHandler() {
-    const pending = new Map();
-    const completed = new Map();
+    const pending = new Map<number | string, string>();
+    const completed = new Map<string, any>();
     let nextId = 1;
-    let threadId = null;
+    let threadId: string | null = null;
     let turnRequested = false;
     let turnDone = false;
     let stopAsked = false;
     let interruptSent = false;
-    const request = (method, params) => {
+    const request = (method: string, params: unknown) => {
       const id = nextId++;
       pending.set(id, method);
       write({ jsonrpc: "2.0", id, method, params });
     };
-    const turnEnded = (turn) => {
+    const turnEnded = (turn: any) => {
       turnDone = true;
       if (turn?.status === "failed") facts.hostError = hostError(text(turn.error?.message));
       close();
@@ -375,7 +390,7 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
       const { method, params } = codexInterruptRequest({ threadId, turnId: facts.turnId });
       request(method, params);
     };
-    const answered = (method, result) => {
+    const answered = (method: string, result: any) => {
       if (method === "initialize") {
         write({ jsonrpc: "2.0", method: "initialized", params: {} });
         const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume });
@@ -417,7 +432,7 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
         if (!turnRequested) close();
         else sendInterrupt();
       },
-      event(message) {
+      event(message: any) {
         const hasId = typeof message.id === "string" || typeof message.id === "number";
         if (hasId && typeof message.method === "string") {
           write({ jsonrpc: "2.0", id: message.id, error: { ...HOST_REQUEST_REFUSAL } });
@@ -458,7 +473,7 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
             const key = digestKey(params.turn.id);
             completed.delete(key);
             completed.set(key, kept);
-            if (completed.size > KEPT_EARLY_COMPLETIONS) completed.delete(completed.keys().next().value);
+            if (completed.size > KEPT_EARLY_COMPLETIONS) completed.delete(completed.keys().next().value!);
           }
           else if (params.turn.id === facts.turnId) turnEnded(params.turn);
         }
@@ -466,7 +481,7 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
     };
   }
 
-  const splitter = lineSplitter((line) => {
+  const splitter = lineSplitter((line: string) => {
     const event = parseObject(line);
     if (event) handle.event(event);
   });
@@ -475,10 +490,10 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
     get inputOpen() { return inputOpen; },
     /** Writes the run's opening message: the prompt, or Codex's initialize request. */
     start: () => handle.start(),
-    push: (chunk) => splitter.push(chunk),
+    push: (chunk: Buffer) => splitter.push(chunk),
     end: () => splitter.end(),
     /** Writes one more message to the host while its input is open, such as a stop's interrupt; answers whether it was written. */
-    send: (message) => { if (!inputOpen) return false; send(message); return true; },
+    send: (message: unknown) => { if (!inputOpen) return false; send(message); return true; },
     closeInput: close,
     /** Sends the host's interrupt for a stop; a run whose input is already closed gets none. */
     interrupt: () => { if (inputOpen) handle.interrupt(); }

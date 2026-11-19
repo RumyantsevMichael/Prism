@@ -10,26 +10,32 @@ const MANIFEST_MAX_BYTES = 1024 * 1024;
 const MEMBER_MANIFESTS = ["package.json", "Cargo.toml", "go.mod", "Package.swift"];
 const LOCKFILES = ["bun.lock", "bun.lockb", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "Cargo.lock", "go.work.sum"];
 // The lockfiles that each workspace tool keeps at the root; for JavaScript only the package manager's own lockfiles count, so a stray one stays in the root component.
-const TOOL_LOCKFILES = { bun: ["bun.lock", "bun.lockb"], pnpm: ["pnpm-lock.yaml"], yarn: ["yarn.lock"], npm: ["package-lock.json"], cargo: ["Cargo.lock"], go: ["go.work.sum"] };
+const TOOL_LOCKFILES: Record<string, string[]> = { bun: ["bun.lock", "bun.lockb"], pnpm: ["pnpm-lock.yaml"], yarn: ["yarn.lock"], npm: ["package-lock.json"], cargo: ["Cargo.lock"], go: ["go.work.sum"] };
 const PACKAGE_DEPENDENCIES = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
 const CARGO_DEPENDENCIES = ["dependencies", "dev-dependencies"];
 const NAME_LIMIT = 64;
 
 class Unreadable extends Error {}
 
-const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-const byCodePoint = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
+// A parsed TOML table: keys to strings, booleans, arrays, and tables.
+type Toml = Record<string, any>;
+interface Skipped { path: string; reason: string }
+export interface ProposedComponent { name: string; folder: string; testCommand: string | null; dependsOn: string[] }
+interface Member { folder: string; name?: string; unreadable?: boolean; packageName: string | null; cargoName: string | null; module: string | null; testScript: boolean; packageDependencies: string[]; cargoPaths: string[]; requires: string[] }
 
-async function isFile(file) {
+const isObject = (value: any): value is Record<string, any> => value !== null && typeof value === "object" && !Array.isArray(value);
+const byCodePoint = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
+
+async function isFile(file: string) {
   try { return (await lstat(file)).isFile(); } catch { return false; }
 }
 
-async function isFolder(folder) {
+async function isFolder(folder: string) {
   try { return (await lstat(folder)).isDirectory(); } catch { return false; }
 }
 
 // A manifest's text, null when it does not exist, or an Unreadable error with the reason.
-async function manifestText(root, relative) {
+async function manifestText(root: string, relative: string) {
   const file = path.join(root, relative);
   let stats;
   try { stats = await lstat(file); } catch (error) {
@@ -41,7 +47,7 @@ async function manifestText(root, relative) {
   try { return (await readFile(file)).toString("utf8"); } catch (error) { throw new Unreadable(`could not be read: ${error.message}`); }
 }
 
-function parseJson(text) {
+function parseJson(text: string) {
   let value;
   try { value = parseStoreJson(text); } catch (error) { throw new Unreadable(`is not valid JSON: ${error.message}`); }
   if (!isObject(value)) throw new Unreadable("is not a JSON object.");
@@ -52,12 +58,12 @@ function parseJson(text) {
  * Parse the TOML that Cargo manifests use: tables, arrays of tables, dotted and quoted keys, strings of every kind, arrays, inline tables,
  * and other scalars kept as their text. Anything else throws Unreadable, so a manifest is never guessed at.
  */
-export function parseToml(text) {
-  const root = {};
+export function parseToml(text: string): Toml {
+  const root: Toml = {};
   let table = root;
   let index = 0;
   const line = () => text.slice(0, index).split("\n").length;
-  const fail = (reason) => { throw new Unreadable(`is not TOML that Prism can read: ${reason} on line ${line()}.`); };
+  const fail = (reason: string): never => { throw new Unreadable(`is not TOML that Prism can read: ${reason} on line ${line()}.`); };
   const blank = () => { while (index < text.length && (text[index] === " " || text[index] === "\t")) index += 1; };
   const comment = () => { if (text[index] === "#") while (index < text.length && text[index] !== "\n") index += 1; };
   const space = () => {
@@ -69,8 +75,8 @@ export function parseToml(text) {
       else return;
     }
   };
-  const escapes = { b: "\b", t: "\t", n: "\n", f: "\f", r: "\r", e: "\u001b", "\"": "\"", "\\": "\\" };
-  const basic = (multiline) => {
+  const escapes: Record<string, string> = { b: "\b", t: "\t", n: "\n", f: "\f", r: "\r", e: "\u001b", "\"": "\"", "\\": "\\" };
+  const basic = (multiline: boolean) => {
     let value = "";
     for (;;) {
       if (index >= text.length) fail("an unterminated string");
@@ -104,7 +110,7 @@ export function parseToml(text) {
       index += 2;
     }
   };
-  const literal = (multiline) => {
+  const literal = (multiline: boolean) => {
     const end = multiline ? "'''" : "'";
     const close = text.indexOf(end, index);
     if (close === -1) fail("an unterminated string");
@@ -122,27 +128,27 @@ export function parseToml(text) {
     return literal(false);
   };
   const key = () => {
-    const parts = [];
+    const parts: string[] = [];
     for (;;) {
       blank();
       if (text[index] === "\"" || text[index] === "'") parts.push(string());
       else {
         const bare = /^[A-Za-z0-9_-]+/.exec(text.slice(index, index + 4096));
         if (!bare) fail("a key that is missing or not bare or quoted");
-        parts.push(bare[0]);
-        index += bare[0].length;
+        parts.push(bare![0]);
+        index += bare![0].length;
       }
       blank();
       if (text[index] !== ".") return parts;
       index += 1;
     }
   };
-  const value = () => {
+  const value = (): unknown => {
     const character = text[index];
     if (character === "\"" || character === "'") return string();
     if (character === "[") {
       index += 1;
-      const items = [];
+      const items: unknown[] = [];
       for (;;) {
         space();
         if (text[index] === "]") { index += 1; return items; }
@@ -155,7 +161,7 @@ export function parseToml(text) {
     }
     if (character === "{") {
       index += 1;
-      const inline = {};
+      const inline: Toml = {};
       for (;;) {
         space();
         if (text[index] === "}") { index += 1; return inline; }
@@ -173,10 +179,10 @@ export function parseToml(text) {
     // Numbers, booleans, and dates are kept as their text, which no reader here needs.
     const scalar = /^(?:\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?|[A-Za-z0-9_+.:-]+)/.exec(text.slice(index, index + 4096));
     if (!scalar) fail("a value that is not a string, array, inline table, or scalar");
-    index += scalar[0].length;
-    return scalar[0] === "true" ? true : scalar[0] === "false" ? false : scalar[0];
+    index += scalar![0].length;
+    return scalar![0] === "true" ? true : scalar![0] === "false" ? false : scalar![0];
   };
-  function descend(target, parts) {
+  function descend(target: Toml, parts: string[]): Toml {
     let current = target;
     for (const part of parts) {
       if (!Object.hasOwn(current, part)) current[part] = {};
@@ -186,9 +192,9 @@ export function parseToml(text) {
     }
     return current;
   }
-  function assign(target, parts, item) {
+  function assign(target: Toml, parts: string[], item: unknown) {
     const parent = descend(target, parts.slice(0, -1));
-    parent[parts.at(-1)] = item;
+    parent[parts.at(-1)!] = item;
   }
   for (;;) {
     space();
@@ -201,7 +207,7 @@ export function parseToml(text) {
       index += array ? 2 : 1;
       if (array) {
         const parent = descend(root, parts.slice(0, -1));
-        const last = parts.at(-1);
+        const last = parts.at(-1)!;
         if (!Object.hasOwn(parent, last)) parent[last] = [];
         if (!Array.isArray(parent[last])) fail(`an array of tables ${parts.join(".")} that is already a table`);
         table = {};
@@ -222,10 +228,10 @@ export function parseToml(text) {
   }
 }
 
-const strings = (value) => Array.isArray(value) && value.every((item) => typeof item === "string");
+const strings = (value: any) => Array.isArray(value) && value.every((item) => typeof item === "string");
 
 // A plain or quoted YAML scalar, or undefined when it uses YAML that this reader does not read.
-function yamlScalar(raw) {
+function yamlScalar(raw: string) {
   const value = raw.trim();
   const quoted = /^(?:"((?:[^"\\]|\\.)*)"|'((?:[^']|'')*)')\s*(?:#.*)?$/.exec(value);
   if (quoted) return quoted[1] !== undefined ? quoted[1].replace(/\\(.)/g, "$1") : quoted[2].replaceAll("''", "'");
@@ -235,11 +241,11 @@ function yamlScalar(raw) {
 }
 
 /** The packages list of a pnpm-workspace.yaml: a block list or a flow list of plain or quoted strings, or an Unreadable error. */
-export function pnpmPatterns(text) {
+export function pnpmPatterns(text: string): string[] {
   const lines = text.split(/\r?\n/);
   const start = lines.findIndex((entry) => /^packages\s*:/.test(entry));
   if (start === -1) return [];
-  const unreadable = (reason) => new Unreadable(`is not YAML that Prism can read: ${reason} on line ${start + 1}.`);
+  const unreadable = (reason: string) => new Unreadable(`is not YAML that Prism can read: ${reason} on line ${start + 1}.`);
   const rest = lines[start].replace(/^packages\s*:/, "").replace(/(^|\s)#.*$/, "").trim();
   if (rest !== "") {
     const flow = /^\[(.*)\]$/.exec(rest);
@@ -251,7 +257,7 @@ export function pnpmPatterns(text) {
       return scalar;
     });
   }
-  const patterns = [];
+  const patterns: string[] = [];
   for (const entry of lines.slice(start + 1)) {
     if (entry.trim() === "" || /^\s*#/.test(entry)) continue;
     const item = /^(\s*)-\s+(.*)$/.exec(entry);
@@ -267,12 +273,12 @@ export function pnpmPatterns(text) {
 }
 
 // The text of a Go file without its // comments, outside quoted paths.
-const goLines = (text) => text.split(/\r?\n/).map((entry) => entry.replace(/\/\/.*$/, "").trim()).filter(Boolean);
-const goPath = (value) => value.replace(/^"(.*)"$/, "$1").replace(/^`(.*)`$/, "$1");
+const goLines = (text: string) => text.split(/\r?\n/).map((entry) => entry.replace(/\/\/.*$/, "").trim()).filter(Boolean);
+const goPath = (value: string) => value.replace(/^"(.*)"$/, "$1").replace(/^`(.*)`$/, "$1");
 
 /** The arguments of each `directive` line or block of a go.work or go.mod file, as lists of words. */
-function goDirectives(text, directive) {
-  const found = [];
+function goDirectives(text: string, directive: string) {
+  const found: string[][] = [];
   let block = false;
   for (const entry of goLines(text)) {
     if (block) {
@@ -290,16 +296,16 @@ function goDirectives(text, directive) {
 }
 
 // A workspace pattern as a project-relative glob without ./, a trailing /, or . segments, or null when it leaves the project or names its root.
-function normalizePattern(pattern) {
+function normalizePattern(pattern: string) {
   const normalized = path.posix.normalize(pattern.trim().replaceAll("\\", "/")).replace(/\/+$/, "");
   if (normalized === "" || normalized === "." || normalized === ".." || normalized.startsWith("../") || normalized.startsWith("/") || /^[A-Za-z]:/.test(normalized)) return null;
   return normalized;
 }
 
-const excluded = (name) => name === "node_modules" || name.startsWith(".");
-const segmentPattern = (segment) => new RegExp(`^${segment.split("*").map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join("[^/]*")}$`);
+const excluded = (name: string) => name === "node_modules" || name.startsWith(".");
+const segmentPattern = (segment: string) => new RegExp(`^${segment.split("*").map((part: string) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join("[^/]*")}$`);
 
-async function childFolders(root, relative) {
+async function childFolders(root: string, relative: string) {
   try {
     const entries = await readdir(path.join(root, relative), { withFileTypes: true });
     return entries.filter((entry) => entry.isDirectory() && !excluded(entry.name)).map((entry) => entry.name).sort(byCodePoint);
@@ -309,11 +315,11 @@ async function childFolders(root, relative) {
 }
 
 /** The project-relative folders that a pattern matches, where * matches within one folder name and ** any number of folders, skipping node_modules and folders starting with a dot. */
-async function matchPattern(root, pattern) {
+async function matchPattern(root: string, pattern: string) {
   const segments = pattern.split("/");
-  const matched = new Set();
-  const seen = new Set();
-  const visit = async (relative, position) => {
+  const matched = new Set<string>();
+  const seen = new Set<string>();
+  const visit = async (relative: string, position: number) => {
     const key = `${relative}\0${position}`;
     if (seen.has(key)) return;
     seen.add(key);
@@ -322,7 +328,7 @@ async function matchPattern(root, pattern) {
       return;
     }
     const segment = segments[position];
-    const join = (name) => (relative === "" ? name : `${relative}/${name}`);
+    const join = (name: string) => (relative === "" ? name : `${relative}/${name}`);
     if (segment === "**") {
       await visit(relative, position + 1);
       for (const name of await childFolders(root, relative)) await visit(join(name), position);
@@ -341,11 +347,11 @@ async function matchPattern(root, pattern) {
 
 // The workspace patterns that the root manifests give, as { include, exclude, tools }, where tools names the workspace tools whose manifests give them,
 // adding each root manifest Prism cannot read to skipped.
-async function workspacePatterns(root, skipped) {
-  const include = [];
-  const exclude = [];
-  const tools = new Set();
-  const read = async (relative, parse) => {
+async function workspacePatterns(root: string, skipped: Skipped[]) {
+  const include: string[] = [];
+  const exclude: string[] = [];
+  const tools = new Set<string>();
+  const read = async (relative: string, parse: (text: string) => void) => {
     try {
       const text = await manifestText(root, relative);
       if (text !== null) parse(text);
@@ -354,21 +360,21 @@ async function workspacePatterns(root, skipped) {
       skipped.push({ path: relative, reason: `${relative} ${error.message}` });
     }
   };
-  const add = (tool, patterns) => {
+  const add = (tool: string, patterns: string[]) => {
     tools.add(tool);
     for (const pattern of patterns) (pattern.startsWith("!") ? exclude : include).push(pattern.replace(/^!/, ""));
   };
-  await read("package.json", (text) => {
+  await read("package.json", (text: string) => {
     const workspaces = parseJson(text).workspaces;
     if (workspaces === undefined) return;
     const patterns = isObject(workspaces) ? workspaces.packages : workspaces;
     if (!strings(patterns)) throw new Unreadable("has workspaces that are neither a list of strings nor an object whose packages is one.");
     add("javascript", patterns);
   });
-  await read("pnpm-workspace.yaml", (text) => {
+  await read("pnpm-workspace.yaml", (text: string) => {
     if (/^packages\s*:/m.test(text)) add("javascript", pnpmPatterns(text));
   });
-  await read("Cargo.toml", (text) => {
+  await read("Cargo.toml", (text: string) => {
     const workspace = parseToml(text).workspace;
     if (!isObject(workspace)) return;
     for (const field of ["members", "exclude"]) if (workspace[field] !== undefined && !strings(workspace[field])) throw new Unreadable(`has a [workspace] ${field} that is not a list of strings.`);
@@ -376,7 +382,7 @@ async function workspacePatterns(root, skipped) {
     add("cargo", workspace.members ?? []);
     exclude.push(...(workspace.exclude ?? []));
   });
-  await read("go.work", (text) => {
+  await read("go.work", (text: string) => {
     const uses = goDirectives(text, "use");
     if (uses.length) add("go", uses.map((words) => words[0]).filter((word) => word !== undefined));
   });
@@ -384,10 +390,10 @@ async function workspacePatterns(root, skipped) {
 }
 
 // What one member folder's manifests give: { packageName, cargoName, module, testScript, packageDependencies, cargoPaths, requires }, or { unreadable: true }.
-async function readMember(root, folder, skipped) {
-  const member = { packageName: null, cargoName: null, module: null, testScript: false, packageDependencies: [], cargoPaths: [], requires: [] };
+async function readMember(root: string, folder: string, skipped: Skipped[]) {
+  const member: Omit<Member, "folder"> = { packageName: null, cargoName: null, module: null, testScript: false, packageDependencies: [], cargoPaths: [], requires: [] };
   let unreadable = false;
-  const read = async (file, parse) => {
+  const read = async (file: string, parse: (text: string) => void) => {
     const relative = `${folder}/${file}`;
     try {
       const text = await manifestText(root, relative);
@@ -398,13 +404,13 @@ async function readMember(root, folder, skipped) {
       unreadable = true;
     }
   };
-  await read("package.json", (text) => {
+  await read("package.json", (text: string) => {
     const manifest = parseJson(text);
     if (typeof manifest.name === "string") member.packageName = manifest.name;
     member.testScript = isObject(manifest.scripts) && Object.hasOwn(manifest.scripts, "test");
     for (const field of PACKAGE_DEPENDENCIES) if (isObject(manifest[field])) member.packageDependencies.push(...Object.keys(manifest[field]));
   });
-  await read("Cargo.toml", (text) => {
+  await read("Cargo.toml", (text: string) => {
     const manifest = parseToml(text);
     if (isObject(manifest.package) && typeof manifest.package.name === "string") member.cargoName = manifest.package.name;
     for (const field of CARGO_DEPENDENCIES) {
@@ -414,27 +420,27 @@ async function readMember(root, folder, skipped) {
       }
     }
   });
-  await read("go.mod", (text) => {
+  await read("go.mod", (text: string) => {
     const modules = goDirectives(text, "module");
     if (modules.length && modules[0][0]) member.module = modules[0][0];
     member.requires = goDirectives(text, "require").map((words) => words[0]).filter(Boolean);
   });
-  return unreadable ? { unreadable: true } : member;
+  return unreadable ? { unreadable: true } as Omit<Member, "folder"> : member;
 }
 
 /** A manifest name made into a component name: lowercased, each run of other characters than a-z, 0-9, _, and - replaced by -, trimmed of - and _, and cut to 64 characters. */
-export function componentName(value) {
+export function componentName(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^[-_]+|[-_]+$/g, "").slice(0, NAME_LIMIT).replace(/[-_]+$/, "");
 }
 
-function packageManager(lockfiles, rootFiles) {
+function packageManager(lockfiles: string[], rootFiles: { pnpmWorkspace: boolean }) {
   if (lockfiles.includes("bun.lock") || lockfiles.includes("bun.lockb")) return "bun";
   if (lockfiles.includes("pnpm-lock.yaml") || rootFiles.pnpmWorkspace) return "pnpm";
   if (lockfiles.includes("yarn.lock")) return "yarn";
   return "npm";
 }
 
-function blockMarkdown(components, sharedPaths) {
+function blockMarkdown(components: ProposedComponent[], sharedPaths: string[]) {
   const lines = ["## Components"];
   for (const component of components) {
     lines.push(`- ${component.name}: ${component.folder}`);
@@ -450,30 +456,30 @@ function blockMarkdown(components, sharedPaths) {
  * Returns { markdown, components, sharedPaths, skipped }, where components lists { name, folder, testCommand, dependsOn } in folder order,
  * rootName is the root component's name, which no proposed component takes, and every manifest Prism cannot read is listed in skipped as { path, reason }.
  */
-export async function proposeComponents(root, { rootName }) {
-  const skipped = [];
+export async function proposeComponents(root: string, { rootName }: { rootName: string }) {
+  const skipped: Skipped[] = [];
   const patterns = await workspacePatterns(root, skipped);
   if (patterns === null) return null;
-  const folders = new Set();
-  for (const pattern of patterns.include.map(normalizePattern).filter((item) => item !== null)) for (const folder of await matchPattern(root, pattern)) folders.add(folder);
-  for (const pattern of patterns.exclude.map(normalizePattern).filter((item) => item !== null)) for (const folder of await matchPattern(root, pattern)) folders.delete(folder);
-  const members = [];
+  const folders = new Set<string>();
+  for (const pattern of patterns.include.map(normalizePattern).filter((item): item is string => item !== null)) for (const folder of await matchPattern(root, pattern)) folders.add(folder);
+  for (const pattern of patterns.exclude.map(normalizePattern).filter((item): item is string => item !== null)) for (const folder of await matchPattern(root, pattern)) folders.delete(folder);
+  const members: Member[] = [];
   for (const folder of [...folders].sort(byCodePoint)) {
-    const present = [];
+    const present: string[] = [];
     for (const file of MEMBER_MANIFESTS) if (await isFile(path.join(root, folder, file))) present.push(file);
     if (present.length) members.push({ folder, ...(await readMember(root, folder, skipped)) });
   }
-  const lockfiles = [];
+  const lockfiles: string[] = [];
   for (const file of LOCKFILES) if (await isFile(path.join(root, file))) lockfiles.push(file);
   const manager = packageManager(lockfiles, { pnpmWorkspace: await isFile(path.join(root, "pnpm-workspace.yaml")) });
   const owned = new Set([...patterns.tools].flatMap((tool) => TOOL_LOCKFILES[tool === "javascript" ? manager : tool]));
   const sharedPaths = lockfiles.filter((file) => owned.has(file));
 
-  const taken = new Set();
-  const free = (name) => name !== "" && name !== rootName && !taken.has(name);
+  const taken = new Set<string>();
+  const free = (name: string) => name !== "" && name !== rootName && !taken.has(name);
   for (const member of members) {
-    const segment = componentName(member.folder.split("/").at(-1));
-    const manifestName = member.unreadable ? null : member.packageName !== null ? member.packageName.split("/").at(-1) : member.cargoName ?? member.module?.split("/").at(-1) ?? null;
+    const segment = componentName(member.folder.split("/").at(-1)!);
+    const manifestName = member.unreadable ? null : member.packageName !== null ? member.packageName.split("/").at(-1)! : member.cargoName ?? member.module?.split("/").at(-1) ?? null;
     let name = manifestName === null ? segment : componentName(manifestName);
     if (!free(name)) name = segment;
     for (let suffix = 2; !free(name); suffix += 1) name = `${segment.slice(0, NAME_LIMIT - `-${suffix}`.length)}-${suffix}`;
@@ -482,26 +488,26 @@ export async function proposeComponents(root, { rootName }) {
   }
 
   // A package name or Go module that several folders share resolves to the first of them in folder order.
-  const byPackage = new Map();
-  const byModule = new Map();
+  const byPackage = new Map<string, Member>();
+  const byModule = new Map<string, Member>();
   const byFolder = new Map(members.map((member) => [member.folder, member]));
   for (const member of members) {
     if (member.unreadable) continue;
     if (member.packageName !== null && !byPackage.has(member.packageName)) byPackage.set(member.packageName, member);
     if (member.module !== null && !byModule.has(member.module)) byModule.set(member.module, member);
   }
-  const components = members.map((member) => {
-    if (member.unreadable) return { name: member.name, folder: member.folder, testCommand: null, dependsOn: [] };
-    const dependencies = new Set();
-    for (const name of member.packageDependencies) if (byPackage.has(name)) dependencies.add(byPackage.get(name));
-    for (const folder of member.cargoPaths) if (byFolder.has(folder)) dependencies.add(byFolder.get(folder));
-    for (const module of member.requires) if (byModule.has(module)) dependencies.add(byModule.get(module));
+  const components: ProposedComponent[] = members.map((member) => {
+    if (member.unreadable) return { name: member.name!, folder: member.folder, testCommand: null, dependsOn: [] };
+    const dependencies = new Set<Member>();
+    for (const name of member.packageDependencies) if (byPackage.has(name)) dependencies.add(byPackage.get(name)!);
+    for (const folder of member.cargoPaths) if (byFolder.has(folder)) dependencies.add(byFolder.get(folder)!);
+    for (const module of member.requires) if (byModule.has(module)) dependencies.add(byModule.get(module)!);
     dependencies.delete(member);
     return {
-      name: member.name,
+      name: member.name!,
       folder: member.folder,
       testCommand: member.testScript ? `${manager} run test` : null,
-      dependsOn: [...dependencies].map((dependency) => dependency.name).sort(byCodePoint)
+      dependsOn: [...dependencies].map((dependency) => dependency.name!).sort(byCodePoint)
     };
   });
   return { markdown: blockMarkdown(components, sharedPaths), components, sharedPaths, skipped };

@@ -7,7 +7,7 @@ import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 /** A remote URL without its user, password, or token, so no credential ever reaches a record. */
 // Only network remotes name a place others can find; local paths and helper transports such as ext:: are left out.
 const REMOTE_SCHEMES = new Set(["https:", "http:", "ssh:", "git:"]);
-export function publicRemote(url) {
+export function publicRemote(url: unknown): string | null {
   if (typeof url !== "string" || !url) return null;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) {
     try {
@@ -30,32 +30,33 @@ const PLAINTEXT_URL = /^(?:http|git):\/\//i;
 const STORE_SCP = /^(?:[^@/\\\s]+@)?[A-Za-z0-9][A-Za-z0-9.-]+:[^:\s][^\s]*$/;
 
 /** Whether a Workspace Store value names a Git remote rather than a folder. */
-export function isRemoteStore(value) {
+export function isRemoteStore(value: unknown): value is string {
   return typeof value === "string" && (STORE_URL.test(value) || STORE_SCP.test(value));
 }
 
 // The remote as messages may name it: scheme, host, and path, never user information, query, or fragment.
-function remoteParts(value) {
+interface RemoteParts { visible: string; prefix: string; path: string }
+function remoteParts(value: unknown): RemoteParts | null {
   if (!isRemoteStore(value)) return null;
   if (STORE_URL.test(value)) {
     let parsed;
     try { parsed = new URL(value); } catch { return null; }
     if (parsed.protocol !== "file:" && !parsed.hostname) return null;
     const visible = parsed.protocol === "file:" ? `file://${parsed.host}${parsed.pathname}` : publicRemote(value);
-    return visible && { visible, prefix: `${parsed.protocol}//${parsed.host.toLowerCase()}`, path: parsed.pathname };
+    return (visible && { visible, prefix: `${parsed.protocol}//${parsed.host.toLowerCase()}`, path: parsed.pathname }) as RemoteParts | null;
   }
   const visible = publicRemote(value);
   const separator = visible?.indexOf(":") ?? -1;
-  return separator > 0 && { visible, prefix: `${visible.slice(0, separator).toLowerCase()}:`, path: visible.slice(separator + 1) };
+  return (separator > 0 && { visible, prefix: `${visible!.slice(0, separator).toLowerCase()}:`, path: visible!.slice(separator + 1) }) as RemoteParts | null;
 }
 
 /** A remote store value without user information, query, or fragment, for messages; null when it names no remote. */
-export function remoteLabel(value) {
+export function remoteLabel(value: unknown): string | null {
   return remoteParts(value)?.visible ?? null;
 }
 
 // The key Prism 0.20 hashed for a remote store's clone folder: scheme, lowercase host and port, and path without trailing slashes and one trailing .git, or lowercase host:path for the scp form.
-function legacyKey(value) {
+function legacyKey(value: unknown) {
   const parts = remoteParts(value);
   if (!parts) return null;
   let tail = parts.path.replace(/\/+$/, "");
@@ -63,23 +64,23 @@ function legacyKey(value) {
   return `${parts.prefix}${tail}`;
 }
 
-const sha16 = (value) => createHash("sha256").update(value).digest("hex").slice(0, 16);
+const sha16 = (value: string) => createHash("sha256").update(value).digest("hex").slice(0, 16);
 
 /** The folder name that Prism 0.20 gave a remote store's managed clone, or null when the value names no remote. */
-export function legacyStoreId(value) {
+export function legacyStoreId(value: unknown) {
   const key = legacyKey(value);
   return key && sha16(key);
 }
 
 // The network part of an identity: lowercase host, a slash, and the path without leading and trailing slashes and one trailing .git.
-function networkIdentity(host, pathname) {
+function networkIdentity(host: string, pathname: string) {
   let tail = pathname.replace(/^\/+|\/+$/g, "");
   if (tail.toLowerCase().endsWith(".git")) tail = tail.slice(0, -4).replace(/\/+$/, "");
   return host && tail ? `${host.toLowerCase()}/${tail}` : null;
 }
 
 // The real path of a store folder, or of the folder.git that Git also finds for it, or the path itself when neither exists yet.
-async function realFolder(folder) {
+async function realFolder(folder: string) {
   const bare = path.resolve(folder);
   for (const candidate of [bare, `${bare}.git`]) {
     try { return await realpath(candidate); } catch { /* Try the next spelling Git accepts. */ }
@@ -88,7 +89,7 @@ async function realFolder(folder) {
 }
 
 // The identity of a network URL or scp-form remote, which needs no file system, or null for any other value.
-function networkStoreIdentity(value) {
+function networkStoreIdentity(value: string) {
   if (NETWORK_URL.test(value)) {
     let parsed;
     try { parsed = new URL(value); } catch { return null; }
@@ -108,7 +109,7 @@ function networkStoreIdentity(value) {
  * the same after its scheme for an http:// or git:// remote, which Git reaches without encryption, so a plaintext spelling never shares a clone with an encrypted one,
  * or file: and the real path of a folder store or a file:// URL, a relative path resolved from root; null when the value names no usable store.
  */
-export async function storeIdentity(value, { root = process.cwd() } = {}) {
+export async function storeIdentity(value: unknown, { root = process.cwd() }: { root?: string } = {}): Promise<string | null> {
   if (typeof value !== "string" || !value.trim()) return null;
   if (NETWORK_URL.test(value)) return networkStoreIdentity(value);
   if (/^file:\/\//i.test(value)) {
@@ -124,7 +125,7 @@ export async function storeIdentity(value, { root = process.cwd() } = {}) {
 }
 
 /** The folder name of a remote store's managed clone: the first 16 hex characters of the SHA-256 of its store identity, or null when it names no remote. */
-export async function managedStoreId(value) {
+export async function managedStoreId(value: unknown) {
   if (!isRemoteStore(value)) return null;
   const identity = await storeIdentity(value);
   return identity && sha16(identity);
@@ -142,21 +143,21 @@ export function legacyStoresDirectory(env = process.env) {
 }
 
 /** Text without the user information, query, or fragment of any URL in it, so a Git message never carries a credential. */
-export function withoutCredentials(text) {
+export function withoutCredentials<T>(text: T): T {
   if (typeof text !== "string") return text;
   // A URL runs to whitespace or a quote, as Git quotes it; its user information runs to the last '@' before the path, since a password may hold an '@' or a '?'.
-  return text.replace(/\b([a-z][a-z0-9+.-]*:\/\/)([^\s'"`<>]*)/gi, (whole, scheme, rest) => {
+  return (text as string).replace(/\b([a-z][a-z0-9+.-]*:\/\/)([^\s'"`<>]*)/gi, (whole, scheme, rest) => {
     const slash = rest.indexOf("/");
     const authority = slash < 0 ? rest : rest.slice(0, slash);
     const afterUser = rest.slice(authority.lastIndexOf("@") + 1);
     // Everything from the first '?' or '#' to the end of the URL can carry a token, and Git needs neither to name the remote.
     return `${scheme}${afterUser.replace(/[?#].*$/s, "")}`;
-  });
+  }) as T;
 }
 
 // The form storeIdentity routes a remote value by, checked in its order: a network URL by its scheme, then a file:// URL, then the scp form; null for a file:// URL or a folder.
-function storeForm(value) {
-  if (NETWORK_URL.test(value)) return /^[a-z][a-z0-9+.-]*:/i.exec(value)[0].toLowerCase();
+function storeForm(value: string) {
+  if (NETWORK_URL.test(value)) return /^[a-z][a-z0-9+.-]*:/i.exec(value)![0].toLowerCase();
   if (/^file:\/\//i.test(value)) return null;
   return STORE_SCP.test(value) ? "scp" : null;
 }
@@ -166,7 +167,7 @@ function storeForm(value) {
  * and the user of an scp-form address with a password. An address without a credential comes back as it is.
  * Only the leading user information is taken out, and the result must name the same remote store as the value, so a credential is never removed by turning the value into another store.
  */
-export function addressWithoutCredentials(value) {
+export function addressWithoutCredentials(value: unknown): string | null {
   if (typeof value !== "string") return null;
   if (!credentialsIn(value)) return value;
   // A value that names a folder has no user information to take out.
@@ -195,7 +196,7 @@ export function addressWithoutCredentials(value) {
  * An SSH login name such as the git of git@github.com:acme/store.git only selects the host's account, since SSH authenticates with the machine's keys, so it is no credential.
  * A query or fragment of a network URL can carry a token too, and Git uses neither to find a store, so either counts as a credential.
  */
-export function credentialsIn(value) {
+export function credentialsIn(value: unknown): boolean {
   if (typeof value !== "string") return false;
   const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(value)?.[1]?.toLowerCase();
   if (scheme && ["http", "https", "git", "ssh"].includes(scheme)) {

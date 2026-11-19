@@ -2,8 +2,10 @@ import { readFile, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+export interface WorkspaceIdentity { repository: string; worktree: string | null; branch: string | null; detached: boolean }
+
 // A detached HEAD reports its short commit as the branch and sets detached.
-async function readHead(gitDirectory) {
+async function readHead(gitDirectory: string): Promise<{ branch: string | null; detached: boolean }> {
   const head = (await readFile(path.join(gitDirectory, "HEAD"), "utf8").catch(() => "")).trim();
   const branch = /^ref:\s*refs\/heads\/(.+)$/.exec(head)?.[1];
   if (branch) return { branch, detached: false };
@@ -12,8 +14,8 @@ async function readHead(gitDirectory) {
 
 // Names a project by its repository, its checked-out branch, and, for a linked worktree, the worktree folder.
 // Only files under .git are read, so no git executable is needed and a missing or odd .git degrades to the folder name.
-export async function readWorkspaceIdentity(projectRoot) {
-  const folder = { repository: path.basename(projectRoot), worktree: null, branch: null, detached: false };
+export async function readWorkspaceIdentity(projectRoot: string): Promise<WorkspaceIdentity> {
+  const folder: WorkspaceIdentity = { repository: path.basename(projectRoot), worktree: null, branch: null, detached: false };
   const dotGit = path.join(projectRoot, ".git");
   const info = await stat(dotGit).catch(() => null);
   if (!info) return folder;
@@ -31,12 +33,12 @@ export async function readWorkspaceIdentity(projectRoot) {
 }
 
 // A checkout is named by its branch, because a worktree folder is often a generated name; the folder is the fallback.
-export function workspaceName(identity) {
+export function workspaceName(identity: WorkspaceIdentity) {
   if (identity.branch) return identity.detached ? `detached ${identity.branch}` : identity.branch;
   return identity.worktree;
 }
 
-export function workspaceLabel(identity) {
+export function workspaceLabel(identity: WorkspaceIdentity) {
   const name = workspaceName(identity);
   return name ? `${identity.repository}/${name}` : identity.repository;
 }
@@ -47,7 +49,7 @@ export function hostLabel() {
 }
 
 /** A checkout as a history entry records it: its <repository>/<branch> label, as the project switcher names it, on this machine's host. */
-export function checkoutLabel(identity, host = hostLabel()) {
+export function checkoutLabel(identity: WorkspaceIdentity, host = hostLabel()) {
   return `${workspaceLabel(identity)} on ${host}`;
 }
 
@@ -55,7 +57,7 @@ export function checkoutLabel(identity, host = hostLabel()) {
  * A workspace's name, as the review app lists it: the workspace name that the store's roadmap record holds, else the last segment of the store identity without a trailing .git,
  * else, for a project without a store, the name of its checkout's folder.
  */
-export function workspaceTitle({ workspaceName: kept = null, identity = null, root = null }) {
+export function workspaceTitle({ workspaceName: kept = null, identity = null, root = null }: { workspaceName?: string | null; identity?: string | null; root?: string | null }) {
   if (kept) return kept;
   if (identity) {
     const last = identity.replace(/^file:/, "").split(/[\\/:]+/).filter(Boolean).pop() ?? identity;

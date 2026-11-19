@@ -6,7 +6,20 @@ const CONFIG_PATH = path.join(".prism", "workflow.md");
 const CONFIG_MAX_BYTES = 256 * 1024;
 
 // Labels match on the text before any parenthesized note, so "Plans (scratch)" and "Plans (coordination scratch)" both name the plans path.
-const PATH_KEYS = new Map([
+export type PathKey = "requirements" | "adrs" | "plans" | "features" | "roadmap" | "glossary" | "userGuide" | "productStrategy";
+export type WorkflowPaths = Record<PathKey, string | null>;
+export interface ConfigDiagnostic { code: string; label?: string; message: string }
+interface ConfigEntry { label: string; value: string }
+export interface WorkflowConfig {
+  paths: WorkflowPaths;
+  configured: string[];
+  sections: Record<string, Record<string, string>>;
+  lines: Record<string, string[]>;
+  workspace: { store: string | null; repository: string | null; sync: boolean };
+  diagnostics: ConfigDiagnostic[];
+}
+
+const PATH_KEYS = new Map<string, PathKey>([
   ["requirements", "requirements"],
   ["adrs", "adrs"],
   ["plans", "plans"],
@@ -17,7 +30,7 @@ const PATH_KEYS = new Map([
   ["product strategy", "productStrategy"]
 ]);
 
-export const DEFAULT_PATHS = Object.freeze({
+export const DEFAULT_PATHS: Readonly<WorkflowPaths> = Object.freeze({
   requirements: "docs/requirements",
   adrs: "docs/ADRs",
   plans: "docs/plans",
@@ -29,11 +42,11 @@ export const DEFAULT_PATHS = Object.freeze({
 });
 
 // Each section keeps its raw lines too, with their indentation, for readers such as the component reader that give nested items a meaning of their own.
-function sections(markdown) {
-  const result = new Map();
-  const lines = new Map();
-  let current = null;
-  let fence = null;
+function sections(markdown: string) {
+  const result = new Map<string, ConfigEntry[]>();
+  const lines = new Map<string, string[]>();
+  let current: string | null = null;
+  let fence: string | null = null;
   for (const line of markdown.split(/\r?\n/)) {
     const fenceMatch = line.trim().match(/^(`{3,}|~{3,})/);
     if (fenceMatch) {
@@ -57,17 +70,17 @@ function sections(markdown) {
       continue;
     }
     if (current) {
-      lines.get(current).push(line);
+      lines.get(current)!.push(line);
     }
     const entry = line.match(/^\s*-\s+([^:]+):\s*(.*?)\s*$/);
     if (current && entry) {
-      result.get(current).push({ label: entry[1].trim(), value: entry[2].replace(/^(['"])(.*)\1$/, "$2").trim() });
+      result.get(current)!.push({ label: entry[1].trim(), value: entry[2].replace(/^(['"])(.*)\1$/, "$2").trim() });
     }
   }
   return { entries: result, lines };
 }
 
-function normalizePath(value, label, diagnostics) {
+function normalizePath(value: string, label: string, diagnostics: ConfigDiagnostic[]) {
   if (!value || /^n\/a$/i.test(value)) {
     return null;
   }
@@ -84,16 +97,16 @@ function normalizePath(value, label, diagnostics) {
 }
 
 // Unlike Paths, the record store may leave the project root, so its value stays as written; the record store resolves and checks it.
-function workspaceValue(parsed, key) {
+function workspaceValue(parsed: Map<string, ConfigEntry[]>, key: string) {
   const entry = (parsed.get("Workspace") ?? []).find(({ label }) => label.replace(/\s*\(.*\)\s*$/, "").trim().toLowerCase() === key);
   return !entry?.value || /^n\/a$/i.test(entry.value) ? null : entry.value;
 }
 
-export function parseWorkflowConfig(markdown) {
-  const diagnostics = [];
+export function parseWorkflowConfig(markdown: string | null | undefined): WorkflowConfig {
+  const diagnostics: ConfigDiagnostic[] = [];
   const { entries: parsed, lines } = sections(markdown ?? "");
-  const paths = { ...DEFAULT_PATHS };
-  const configured = new Set();
+  const paths: WorkflowPaths = { ...DEFAULT_PATHS };
+  const configured = new Set<string>();
   if (!parsed.has("Paths")) {
     diagnostics.push({ code: "paths_missing", message: "The workflow config has no Paths section, so defaults apply." });
   }
@@ -117,11 +130,11 @@ export function parseWorkflowConfig(markdown) {
   // A repository name only names a checkout to its record store, so without a store the Repository line is ignored.
   const repository = store === null ? null : workspaceValue(parsed, "repository");
   // Only the sections whose nesting a reader interprets keep their raw lines, so the parsed result stays small.
-  const raw = Object.fromEntries(["Components", "Workspace"].filter((name) => lines.has(name)).map((name) => [name, lines.get(name)]));
+  const raw = Object.fromEntries(["Components", "Workspace"].filter((name) => lines.has(name)).map((name) => [name, lines.get(name)!]));
   return { paths, configured: [...configured].sort(), sections: values, lines: raw, workspace: { store, repository, sync: isRemoteStore(store) ? !/^off$/i.test(sync) : /^on$/i.test(sync) }, diagnostics };
 }
 
-export async function readWorkflowConfig(projectRoot) {
+export async function readWorkflowConfig(projectRoot: string): Promise<WorkflowConfig & { exists: boolean }> {
   let markdown = "";
   let exists = true;
   try {
@@ -144,7 +157,7 @@ export async function readWorkflowConfig(projectRoot) {
 }
 
 // Run statistics are collected unless "Collection: off" sits under "## Run statistics"; a config that cannot be read reports unknown.
-export function runStatisticsCollection(config) {
+export function runStatisticsCollection(config: any) {
   if (!config || typeof config !== "object" || !config.sections || typeof config.sections !== "object") {
     return "unknown";
   }
@@ -155,7 +168,7 @@ export function runStatisticsCollection(config) {
 }
 
 // The roadmap record sits beside the configured roadmap projection and shares its base name.
-export function roadmapPaths(config) {
+export function roadmapPaths(config: { paths: WorkflowPaths }) {
   const projection = config.paths.roadmap;
   if (!projection) {
     return null;
@@ -164,23 +177,23 @@ export function roadmapPaths(config) {
   return { record: `${base}.json`, projection: projection.endsWith(".md") ? projection : `${base}.md` };
 }
 
-export function initiativeDirectory(config, initiative) {
+export function initiativeDirectory(config: { paths: WorkflowPaths }, initiative: string) {
   return config.paths.plans === null ? null : path.posix.join(config.paths.plans, initiative);
 }
 
 // The configured paths whose files are descriptive artifacts: three folders and two files, each with the kind it names.
-const ARTIFACT_KIND_SHAPES = Object.freeze([["requirements", true], ["adrs", true], ["plans", true], ["glossary", false], ["roadmap", false]]);
+const ARTIFACT_KIND_SHAPES: readonly (readonly [PathKey, boolean])[] = Object.freeze([["requirements", true], ["adrs", true], ["plans", true], ["glossary", false], ["roadmap", false]]);
 
 /**
  * The configured artifact kinds of a parsed workflow configuration: { kinds, excluded }.
  * kinds lists { kind, path, folder } for each configured kind, a key set to n/a left out, longest path first so the first kind that contains a path names it;
  * excluded lists the configured feature file and user guide folders, whose files stay in the checkout even inside an artifact folder.
  */
-export function artifactKinds(config) {
+export function artifactKinds(config: { paths?: Partial<WorkflowPaths> } | null | undefined): { kinds: { kind: PathKey; path: string; folder: boolean }[]; excluded: string[] } {
   const kinds = ARTIFACT_KIND_SHAPES
     .filter(([kind]) => typeof config?.paths?.[kind] === "string")
-    .map(([kind, folder]) => ({ kind, path: config.paths[kind], folder }))
+    .map(([kind, folder]) => ({ kind, path: config!.paths![kind] as string, folder }))
     .sort((left, right) => right.path.length - left.path.length);
-  const excluded = [config?.paths?.features, config?.paths?.userGuide].filter((value) => typeof value === "string");
+  const excluded = [config?.paths?.features, config?.paths?.userGuide].filter((value): value is string => typeof value === "string");
   return { kinds, excluded };
 }

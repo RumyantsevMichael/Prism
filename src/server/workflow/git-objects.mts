@@ -7,6 +7,11 @@ import { promisify } from "node:util";
 
 const execute = promisify(execFile);
 
+/** A tree entry as Git reads it: its mode in 16 bits, its octal mode text, its name bytes, its object, and the byte where the next entry starts. */
+export interface TreeEntry { start: number; mode: number; modeText: string; name: Buffer; object: string; next: number }
+/** A message of Git's fsck: its id and its text. */
+export interface GitProblem { id: string; text: string }
+
 // Code points that HFS+ ignores in a name, as Git 2.43's next_hfs_char in utf8.c lists them.
 const HFS_IGNORED = new Set([0x200c, 0x200d, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x206a, 0x206b, 0x206c, 0x206d, 0x206e, 0x206f, 0xfeff]);
 
@@ -14,10 +19,10 @@ const HFS_IGNORED = new Set([0x200c, 0x200d, 0x200e, 0x200f, 0x202a, 0x202b, 0x2
  * The code point at a byte of a name and its length, as Git 2.43's pick_one_utf8_char in utf8.c reads it: the name ends at its last byte as at a zero byte,
  * and a byte that begins no UTF-8 character, an overlong form, a surrogate, a code point above U+10FFFF, U+FFFE, and U+FFFF are all malformed, which is null.
  */
-function utf8CodePoint(bytes, at) {
-  const byte = (offset) => bytes[at + offset] ?? 0;
+function utf8CodePoint(bytes: Uint8Array, at: number) {
+  const byte = (offset: number) => bytes[at + offset] ?? 0;
   const s0 = byte(0);
-  const follows = (count) => Array.from({ length: count }, (_, offset) => byte(offset + 1)).every((next) => (next & 0xc0) === 0x80);
+  const follows = (count: number) => Array.from({ length: count }, (_, offset) => byte(offset + 1)).every((next) => (next & 0xc0) === 0x80);
   if (s0 < 0x80) return { code: s0, size: 1 };
   if ((s0 & 0xe0) === 0xc0) return !follows(1) || (s0 & 0xfe) === 0xc0 ? null : { code: ((s0 & 0x1f) << 6) | (byte(1) & 0x3f), size: 2 };
   if ((s0 & 0xf0) === 0xe0) {
@@ -35,7 +40,7 @@ function utf8CodePoint(bytes, at) {
  * Whether a name's bytes are "." and the needle as Git 2.43's is_hfs_dot_generic in utf8.c reads them: HFS+'s ignored code points anywhere, ASCII letters in any case,
  * and after the needle the name's end, a malformed byte, or a folder separator, which is "/" and, on Git for Windows, "\".
  */
-function hfsDotName(bytes, needle) {
+function hfsDotName(bytes: Uint8Array, needle: string) {
   let at = 0;
   const next = () => {
     for (;;) {
@@ -59,11 +64,11 @@ function hfsDotName(bytes, needle) {
  * a short name of the needle's first six letters followed by "~1" to "~4", or a fall-back short name of up to six letters of shortPrefix, a "~", and digits, eight bytes in all,
  * each then followed only by spaces and dots up to the name's end or a colon.
  */
-function ntfsDotName(bytes, needle, shortPrefix) {
-  const byte = (at) => bytes[at] ?? 0;
-  const lower = (code) => code >= 0x41 && code <= 0x5a ? code + 0x20 : code;
-  const sameLetters = (from, text) => [...text].every((letter, offset) => lower(byte(from + offset)) === letter.charCodeAt(0));
-  const onlySpacesAndPeriods = (at) => {
+function ntfsDotName(bytes: Uint8Array, needle: string, shortPrefix: string) {
+  const byte = (at: number) => bytes[at] ?? 0;
+  const lower = (code: number) => code >= 0x41 && code <= 0x5a ? code + 0x20 : code;
+  const sameLetters = (from: number, text: string) => [...text].every((letter, offset) => lower(byte(from + offset)) === letter.charCodeAt(0));
+  const onlySpacesAndPeriods = (at: number) => {
     for (;;) {
       const code = byte(at++);
       if (code === 0 || code === 0x3a) return true;
@@ -92,23 +97,23 @@ function ntfsDotName(bytes, needle, shortPrefix) {
  * A store shares no .gitmodules and holds a .gitattributes only as the file at its root, so every other entry with such a name, of any mode, is one no store may hold,
  * whatever this machine's Git checks of it.
  */
-export function gitFileName(bytes) {
+export function gitFileName(bytes: Uint8Array) {
   return hfsDotName(bytes, "gitattributes") || ntfsDotName(bytes, "gitattributes", "gi7d29") || hfsDotName(bytes, "gitmodules") || ntfsDotName(bytes, "gitmodules", "gi7eba");
 }
 
 /** Whether a name's bytes are one that Git's is_hfs_dotgit (utf8.c) or is_ntfs_dotgit (path.c) reads as Git's own folder, such as .GIT, ".git ", GIT~1, or .git followed by U+200C. */
-export const dotGitName = (bytes) => hfsDotName(bytes, "git") || ntfsDotGit(bytes);
+export const dotGitName = (bytes: Uint8Array) => hfsDotName(bytes, "git") || ntfsDotGit(bytes);
 
 /** Whether a name's bytes are .gitmodules as Git's is_hfs_dotgitmodules or is_ntfs_dotgitmodules reads them. */
-const modulesName = (bytes) => hfsDotName(bytes, "gitmodules") || ntfsDotName(bytes, "gitmodules", "gi7eba");
+const modulesName = (bytes: Uint8Array) => hfsDotName(bytes, "gitmodules") || ntfsDotName(bytes, "gitmodules", "gi7eba");
 
 /**
  * Whether a name's bytes begin with .git or git~1, in any ASCII letter case, followed only by dots and spaces up to the name's end, a colon, or a folder separator,
  * as Git 2.43's is_ntfs_dotgit in path.c reads them; Git for Windows reads "/" and "\\" as folder separators.
  */
-function ntfsDotGit(bytes) {
-  const byte = (at) => bytes[at] ?? 0;
-  const lower = (code) => code >= 0x41 && code <= 0x5a ? code + 0x20 : code;
+function ntfsDotGit(bytes: Uint8Array) {
+  const byte = (at: number) => bytes[at] ?? 0;
+  const lower = (code: number) => code >= 0x41 && code <= 0x5a ? code + 0x20 : code;
   let at = 1;
   if (byte(0) === 0x2e) {
     if (lower(byte(1)) !== 0x67 || lower(byte(2)) !== 0x69 || lower(byte(3)) !== 0x74) return false;
@@ -125,8 +130,8 @@ function ntfsDotGit(bytes) {
 }
 
 const S_IFMT = 0o170000;
-export const isTreeMode = (mode) => (mode & S_IFMT) === 0o040000;
-export const isLinkMode = (mode) => (mode & S_IFMT) === 0o120000;
+export const isTreeMode = (mode: number) => (mode & S_IFMT) === 0o040000;
+export const isLinkMode = (mode: number) => (mode & S_IFMT) === 0o120000;
 // The modes Git's fsck_tree takes as standard: a file, an executable file, a link, a folder, and a submodule link.
 const STANDARD_MODES = new Set([0o100755, 0o100644, 0o120000, 0o040000, 0o160000]);
 // The longest tree entry name that Git 2.43 and later accept, as fsck.c's max_tree_entry_len sets it; a longer one is largePathname, which a checked fetch refuses.
@@ -136,7 +141,7 @@ export const TREE_NAME_BYTES_MAX = 4096;
  * The tree entry that starts at a byte of a tree, as Git 2.43's decode_tree_entry in tree-walk.c reads it, or null where Git reads the tree as malformed:
  * { start, mode, modeText, name, object, next }, where mode is the octal mode as fsck_tree holds it, in 16 bits, name the name's bytes, and next the byte where the next entry starts.
  */
-function treeEntryAt(contents, at, hashSize) {
+function treeEntryAt(contents: Buffer, at: number, hashSize: number): TreeEntry | null {
   if (contents.length - at < hashSize + 3 || contents[contents.length - (hashSize + 1)] !== 0) return null;
   if (contents[at] === 0x20) return null;
   let mode = 0;
@@ -153,8 +158,8 @@ function treeEntryAt(contents, at, hashSize) {
 }
 
 /** The entries of a tree's bytes in their order, up to the first that Git reads as malformed. */
-export function treeEntries(contents, hashSize) {
-  const entries = [];
+export function treeEntries(contents: Buffer, hashSize: number) {
+  const entries: TreeEntry[] = [];
   for (let at = 0; at < contents.length;) {
     const entry = treeEntryAt(contents, at, hashSize);
     if (!entry) break;
@@ -166,13 +171,13 @@ export function treeEntries(contents, hashSize) {
 
 const UNORDERED = -1;
 const DUPLICATE = -2;
-const lessThanSlash = (code) => code > 0 && code < 0x2f;
+const lessThanSlash = (code: number) => code > 0 && code < 0x2f;
 
 /**
  * Whether two adjacent tree entries are in Git's order, as Git 2.43's verify_ordered in fsck.c decides: 0, UNORDERED, or DUPLICATE.
  * A folder sorts as its name with "/" added, and candidates keeps the files that a later folder of one name could duplicate, such as "a" before "a-b" and the folder "a".
  */
-function verifyOrdered(mode1, name1, mode2, name2, candidates) {
+function verifyOrdered(mode1: number, name1: Buffer, mode2: number, name2: Buffer, candidates: Buffer[]) {
   const length = Math.min(name1.length, name2.length);
   const compared = Buffer.compare(name1.subarray(0, length), name2.subarray(0, length));
   if (compared < 0) return 0;
@@ -203,13 +208,13 @@ function verifyOrdered(mode1, name1, mode2, name2, candidates) {
  * badFilemode and the info messages on links named .gitattributes, .gitignore, or .mailmap never fail a fetch, so they are not reported.
  * The .gitmodules and .gitattributes that a tree holds are checked by their blobs, which the caller reads.
  */
-export function treeProblems(contents, hashSize) {
-  const found = new Map();
-  const report = (id, name) => { if (!found.has(id)) found.set(id, []); if (name) found.get(id).push(name); };
+export function treeProblems(contents: Buffer, hashSize: number) {
+  const found = new Map<string, Buffer[]>();
+  const report = (id: string, name?: Buffer) => { if (!found.has(id)) found.set(id, []); if (name) found.get(id)!.push(name); };
   let entry = contents.length ? treeEntryAt(contents, 0, hashSize) : undefined;
   if (entry === null) report("badTree");
-  let previous = null;
-  const candidates = [];
+  let previous: TreeEntry | null = null;
+  const candidates: Buffer[] = [];
   while (entry) {
     const { mode, name } = entry;
     if (/^0+$/.test(entry.object)) report("nullSha1", name);
@@ -251,9 +256,10 @@ export const TREE_DEPTH_TEXT = "exceeded maximum allowed tree depth";
  * trees holds the bytes of the trees a walk would reach, as Map(object, bytes); a folder whose tree it lacks does not count, as Git skips a tree that the fetching machine already holds before it counts it.
  * Returns { root, depth, names }, where names are the bytes of the folder names on the deepest path from that root, or null.
  */
-export function tooDeepTree(roots, trees) {
-  const deepest = new Map();
-  const folders = (tree) => treeEntries(trees.get(tree), tree.length / 2).filter((entry) => isTreeMode(entry.mode) && trees.has(entry.object));
+export function tooDeepTree(roots: string[], trees: Map<string, Buffer>) {
+  type Depth = { depth: number; via: TreeEntry | null };
+  const deepest = new Map<string, Depth>();
+  const folders = (tree: string) => treeEntries(trees.get(tree)!, tree.length / 2).filter((entry) => isTreeMode(entry.mode) && trees.has(entry.object));
   for (const root of roots) {
     if (!trees.has(root)) continue;
     // Each tree's depth below it is found once, without recursion, so a chain of any length fits the stack.
@@ -270,7 +276,7 @@ export function tooDeepTree(roots, trees) {
         }
         continue;
       }
-      let best = { depth: 0, via: null };
+      let best: Depth = { depth: 0, via: null };
       for (const entry of top.folders) {
         const below = (deepest.get(entry.object)?.depth ?? 0) + 1;
         if (below > best.depth) best = { depth: below, via: entry };
@@ -279,10 +285,10 @@ export function tooDeepTree(roots, trees) {
       walking.delete(top.tree);
       stack.pop();
     }
-    const found = deepest.get(root);
+    const found = deepest.get(root)!;
     if (found.depth > TREE_DEPTH_MAX) {
-      const names = [];
-      for (let step = found; step.via; step = deepest.get(step.via.object)) names.push(step.via.name);
+      const names: Buffer[] = [];
+      for (let step = found; step.via; step = deepest.get(step.via.object)!) names.push(step.via.name);
       return { root, depth: found.depth, names };
     }
   }
@@ -290,7 +296,7 @@ export function tooDeepTree(roots, trees) {
 }
 
 // Git 2.43's words for each tree message, as fsck_tree reports it.
-const TREE_TEXT = {
+const TREE_TEXT: Record<string, string> = {
   badTree: "cannot be parsed as a tree", nullSha1: "contains entries pointing to null sha1", fullPathname: "contains full pathnames", emptyName: "contains empty pathname",
   hasDot: "contains '.'", hasDotdot: "contains '..'", hasDotgit: "contains '.git'", zeroPaddedFilemode: "contains zero-padded file modes", largePathname: "contains excessively large pathname",
   gitmodulesSymlink: ".gitmodules is a symbolic link", duplicateEntries: "contains duplicate file entries", treeNotSorted: "not properly sorted"
@@ -300,16 +306,16 @@ const TREE_TEXT = {
  * What a checked fetch of Git 2.40 to 2.52 refuses in a commit's bytes, as verify_headers, fsck_commit, and fsck_ident in fsck.c report it with --strict: { id, text }, or null.
  * Git 2.25 to 2.39 also take a date after spaces that are not spaces or tabs, such as a carriage return, which Git 2.40 refuses as badDate; every other rule is the same in each release.
  */
-export function commitProblem(contents, hexLength) {
+export function commitProblem(contents: Buffer, hexLength: number): GitProblem | null {
   for (let at = 0; at < contents.length; at++) {
     if (contents[at] === 0) return { id: "nulInHeader", text: `unterminated header: NUL at offset ${at}` };
     if (contents[at] === 10 && contents[at + 1] === 10) break;
     if (at === contents.length - 1 && contents[at] !== 10) return { id: "unterminatedHeader", text: "unterminated header" };
   }
   if (!contents.length) return { id: "unterminatedHeader", text: "unterminated header" };
-  const byte = (at) => contents[at] ?? 0;
-  const startsWith = (at, text) => at < contents.length && contents.subarray(at, at + text.length).equals(Buffer.from(text));
-  const objectLine = (at) => /^[0-9a-fA-F]+$/.test(contents.subarray(at, at + hexLength).toString("latin1")) && contents.subarray(at, at + hexLength).length === hexLength && byte(at + hexLength) === 10;
+  const byte = (at: number) => contents[at] ?? 0;
+  const startsWith = (at: number, text: string) => at < contents.length && contents.subarray(at, at + text.length).equals(Buffer.from(text));
+  const objectLine = (at: number) => /^[0-9a-fA-F]+$/.test(contents.subarray(at, at + hexLength).toString("latin1")) && contents.subarray(at, at + hexLength).length === hexLength && byte(at + hexLength) === 10;
   let at = 0;
   if (!startsWith(at, "tree ")) return { id: "missingTree", text: "invalid format - expected 'tree' line" };
   if (!objectLine(at + 5)) return { id: "badTreeSha1", text: "invalid 'tree' line format - bad sha1" };
@@ -338,13 +344,13 @@ export function commitProblem(contents, hexLength) {
 const DATE_MAX = 2n ** 63n - 1n;
 
 /** An author or committer line from its first byte after the keyword, as Git 2.43's fsck_ident reads it: { next, problem }, where next is the byte after its line. */
-function identity(contents, from) {
-  const byte = (at) => contents[at] ?? 0;
+function identity(contents: Buffer, from: number): { next: number; problem: GitProblem | null } {
+  const byte = (at: number) => contents[at] ?? 0;
   const lineEnd = contents.indexOf(10, from);
   const next = lineEnd < 0 ? contents.length : lineEnd + 1;
-  const fail = (id, what) => ({ next, problem: { id, text: `invalid author/committer line - ${what}` } });
-  const isDigit = (code) => code >= 0x30 && code <= 0x39;
-  const skipName = (at) => { while (![0x3c, 0x3e, 10, 0].includes(byte(at))) at++; return at; };
+  const fail = (id: string, what: string) => ({ next, problem: { id, text: `invalid author/committer line - ${what}` } });
+  const isDigit = (code: number) => code >= 0x30 && code <= 0x39;
+  const skipName = (at: number) => { while (![0x3c, 0x3e, 10, 0].includes(byte(at))) at++; return at; };
   let at = from;
   if (byte(at) === 0x3c) return fail("missingNameBeforeEmail", "missing space before email");
   at = skipName(at);
@@ -375,9 +381,9 @@ export const LINK_TARGET_BYTES_MAX = 260;
  * What those releases' fsck_blob refuses in a link's target, which every later release dropped again: symlinkTargetLength for one longer than PATH_MAX,
  * and symlinkPointsToGitDir for one with a part, between "/" or "\\", that Git reads as its own folder; { id, text } or null.
  */
-export function linkTargetProblem(target) {
+export function linkTargetProblem(target: Buffer): GitProblem | null {
   if (target.length > LINK_TARGET_BYTES_MAX) return { id: "symlinkTargetLength", text: "symlink target too long" };
-  const parts = [];
+  const parts: Buffer[] = [];
   for (let at = 0; at <= target.length;) {
     let end = at;
     while (end < target.length && target[end] !== 0x2f && target[end] !== 0x5c) end++;
@@ -396,13 +402,13 @@ const NO_OBJECT = /^0+$/;
  * A project below its Git top folder counts only its own paths, relative to the project root, as its content trees hold the whole checkout.
  * Returns null when Git cannot compare the trees, such as when it no longer holds one of them.
  */
-export async function changedBlobs(projectRoot, from, to) {
+export async function changedBlobs(projectRoot: string, from: string, to: string) {
   try {
     const env = { ...process.env, GIT_OPTIONAL_LOCKS: "0" };
     const prefix = (await execute("git", ["rev-parse", "--show-prefix"], { cwd: projectRoot, env, windowsHide: true })).stdout.trim();
     const { stdout } = await execute("git", ["diff-tree", "-r", "-z", "--raw", "--no-abbrev", "--no-renames", ...(prefix ? [`--relative=${prefix}`] : []), "--end-of-options", from, to], { cwd: projectRoot, env, maxBuffer: 256 * 1024 * 1024, windowsHide: true });
     const fields = stdout.split("\0");
-    const changed = [];
+    const changed: { path: string; blob: string | null }[] = [];
     for (let at = 0; at + 1 < fields.length; at += 2) {
       const object = fields[at].split(" ")[3];
       if (fields[at][0] !== ":" || object === undefined) return null;
@@ -419,8 +425,8 @@ export async function changedBlobs(projectRoot, from, to) {
  * The paths are taken literally, so a path with a pattern character names only itself.
  * Returns null when Git cannot read the tree.
  */
-export async function objectsAt(projectRoot, tree, paths) {
-  const found = new Map(paths.map((item) => [item, null]));
+export async function objectsAt(projectRoot: string, tree: string, paths: string[]) {
+  const found = new Map<string, string | null>(paths.map((item) => [item, null]));
   if (!paths.length) return found;
   try {
     const env = { ...process.env, GIT_OPTIONAL_LOCKS: "0" };

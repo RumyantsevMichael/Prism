@@ -18,7 +18,7 @@ A change to Markdown changes agent behavior at task time.
 skills/
   <name>/SKILL.md    # one directory per skill; the directory name is the skill name
 src/                 # editable server, native helper, and hook sources
-  server/            # mcp.mjs, cli.mjs, review-app.mjs, plugin-root.mjs, and one directory per domain
+  server/            # the mcp, cli, review-app, and plugin-root modules, and one directory per domain
     workflow/        # coordination state, artifact storage, decision history
     review/          # review server, review ledger, browser assets in public/
     conservation/    # change map and conservation analysis
@@ -261,11 +261,14 @@ To validate `plugin.json` in isolation, copy the plugin into a scratch directory
 
 ## Native semantic runtime
 
-The new native subsystem uses strict TypeScript in `.mts` files.
-Older server modules remain JavaScript, and newer modules such as the conservation store also use `.mts`.
+Server, hook, and native runtime modules use strict TypeScript in `.mts` files, which the build compiles to `.mjs` files of the same name under `dist/`.
+Review app browser modules use strict TypeScript in `.ts` files, which the build compiles to `.js` files of the same name, with no syntax lowered.
+A module that is still JavaScript is copied to `dist/` as it is.
+The build checks that every TypeScript module type-checks before it writes anything, with the settings in `tsconfig.native.json`.
+Tests and scripts import the built module under `dist/`, never a source under `src/`, because a TypeScript source has no runnable file there.
 Shared source unit, index, and worker message types live in `src/server/repository-intelligence/repository-unit-types.mts`.
 Edit runtime sources under `src/`, then regenerate the complete runtime tree under `dist/`.
-The build compiles TypeScript and copies handwritten JavaScript, browser assets, and runtime registries.
+The build compiles TypeScript and copies the remaining JavaScript, browser assets, and runtime registries.
 `dist/` is ignored, so commit only the sources.
 CI builds `dist/` in every job that runs the plugin, and each release package ships the generated JavaScript, so users do not need a TypeScript compiler.
 

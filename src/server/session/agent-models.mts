@@ -11,15 +11,15 @@ export const AGENT_MODEL_TTL_MS = 24 * 60 * 60000;
 const MODEL_LIMIT = 128;
 
 /** Whether a value is a model a claim may record: a string of 1 to 128 characters with no control character. */
-export const isAgentModel = (value) => typeof value === "string" && value.length >= 1 && value.length <= MODEL_LIMIT && !/[\u0000-\u001f\u007f-\u009f]/.test(value);
+export const isAgentModel = (value: unknown): value is string => typeof value === "string" && value.length >= 1 && value.length <= MODEL_LIMIT && !/[\u0000-\u001f\u007f-\u009f]/.test(value);
 
 export function agentModelDirectory(env = process.env) {
   return path.join(reviewAppDirectory(env), DIRECTORY);
 }
 
-const noteFile = (directory, holder) => path.join(directory, `${createHash("sha256").update(holder, "utf8").digest("hex").slice(0, 32)}.json`);
+const noteFile = (directory: string, holder: string) => path.join(directory, `${createHash("sha256").update(holder, "utf8").digest("hex").slice(0, 32)}.json`);
 
-async function removeExpired(directory, now) {
+async function removeExpired(directory: string, now: number) {
   for (const name of await readdir(directory).catch(() => [])) {
     const file = path.join(directory, name);
     const info = await stat(file).catch(() => null);
@@ -28,7 +28,7 @@ async function removeExpired(directory, now) {
 }
 
 /** Write the main agent's model for one session's claim holder; a missing holder or a malformed model writes nothing. */
-export async function writeAgentModel({ holder, model, directory = agentModelDirectory(), now = Date.now() }) {
+export async function writeAgentModel({ holder, model, directory = agentModelDirectory(), now = Date.now() }: { holder: unknown; model: unknown; directory?: string; now?: number }) {
   if (typeof holder !== "string" || !holder || !isAgentModel(model)) return false;
   await prepareDirectory(directory);
   await removeExpired(directory, now);
@@ -40,7 +40,7 @@ export async function writeAgentModel({ holder, model, directory = agentModelDir
 }
 
 /** The main agent's model for one session's claim holder, or null without a note younger than 24 hours. */
-export async function readAgentModel(holder, { directory = agentModelDirectory(), now = Date.now() } = {}) {
+export async function readAgentModel(holder: unknown, { directory = agentModelDirectory(), now = Date.now() }: { directory?: string; now?: number } = {}): Promise<string | null> {
   if (typeof holder !== "string" || !holder) return null;
   try {
     const file = noteFile(directory, holder);

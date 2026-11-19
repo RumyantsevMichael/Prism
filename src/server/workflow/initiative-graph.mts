@@ -5,20 +5,25 @@ export const SLICE_STATUSES = Object.freeze([...LEAF_STATUSES, "split"]);
 export const SLUG_PATTERN = /^[A-Za-z0-9_-]+$/;
 export const REQUIREMENT_PATTERN = /^[^\s#]+#[^\s#]+$/;
 
+export interface SliceFixes { slice?: string; defects?: string[] }
+export interface GraphSlice { title: string; outcome?: string; status: string; parent: string | null; requirements: string[]; dependencies: string[]; fixes?: SliceFixes }
+export type SliceInput = { title: string; outcome?: string; status: string; parent?: string | null; requirements?: string[]; dependencies?: string[]; fixes?: SliceFixes };
+
 export class InitiativeGraphError extends Error {
-  constructor(message) {
+  declare code: string;
+  constructor(message: string) {
     super(message);
     this.name = "InitiativeGraphError";
     this.code = "invalid_initiative";
   }
 }
 
-function requireCondition(condition, message) {
+function requireCondition(condition: unknown, message: string): asserts condition {
   if (!condition) throw new InitiativeGraphError(message);
 }
 
-function copySlices(input) {
-  const slices = Object.create(null);
+function copySlices(input: Record<string, SliceInput> | null | undefined) {
+  const slices: Record<string, GraphSlice> = Object.create(null);
   for (const [slug, slice] of Object.entries(input ?? {})) {
     slices[slug] = {
       title: slice.title,
@@ -27,13 +32,13 @@ function copySlices(input) {
       parent: slice.parent ?? null,
       requirements: [...(slice.requirements ?? [])],
       dependencies: [...(slice.dependencies ?? [])],
-      ...(slice.fixes === undefined ? {} : { fixes: { slice: slice.fixes?.slice, defects: Array.isArray(slice.fixes?.defects) ? [...slice.fixes.defects] : slice.fixes?.defects } })
+      ...(slice.fixes === undefined ? {} : { fixes: { slice: slice.fixes?.slice, defects: Array.isArray(slice.fixes?.defects) ? [...slice.fixes!.defects!] : slice.fixes?.defects } })
     };
   }
   return slices;
 }
 
-export function analyzeInitiative(input) {
+export function analyzeInitiative(input: Record<string, SliceInput> | null | undefined) {
   const slices = copySlices(input);
   const slugs = Object.keys(slices);
   requireCondition(slugs.length > 0, "Expected exactly one root");
@@ -48,7 +53,7 @@ export function analyzeInitiative(input) {
     // A fix slice sits below the done slice it fixes and names that slice and the defects it fixes.
     if (slice.fixes !== undefined) {
       requireCondition(slice.parent !== null && slice.fixes.slice === slice.parent, "A fix slice must sit below the slice it fixes");
-      requireCondition(Array.isArray(slice.fixes.defects) && slice.fixes.defects.length > 0 && slice.fixes.defects.every((id) => typeof id === "string" && id.length > 0), "A fix slice must name the defects it fixes");
+      requireCondition(Array.isArray(slice.fixes.defects) && slice.fixes.defects.length > 0 && slice.fixes.defects.every((id: unknown) => typeof id === "string" && id.length > 0), "A fix slice must name the defects it fixes");
       requireCondition(slice.status !== "split", "A fix slice cannot split");
     }
   }
@@ -63,22 +68,22 @@ export function analyzeInitiative(input) {
     for (const target of slice.dependencies) requireCondition(typeof target === "string" && Object.hasOwn(slices, target), "Unknown dependency target");
   }
   // A slice's parts split it, while its fix slices sit beside it as leaves of its ancestors and never split it.
-  const childrenOf = Object.create(null);
-  const fixesOf = Object.create(null);
+  const childrenOf: Record<string, string[]> = Object.create(null);
+  const fixesOf: Record<string, string[]> = Object.create(null);
   for (const slug of slugs) {
     childrenOf[slug] = [];
     fixesOf[slug] = [];
   }
-  for (const slug of slugs) if (slices[slug].parent !== null) (slices[slug].fixes ? fixesOf : childrenOf)[slices[slug].parent].push(slug);
+  for (const slug of slugs) if (slices[slug].parent !== null) (slices[slug].fixes ? fixesOf : childrenOf)[slices[slug].parent!].push(slug);
   // A parent chain that never reaches the root is a cycle, which a single-root check alone cannot see.
   for (const slug of slugs) {
-    const seen = new Set();
-    for (let owner = slug; owner !== null; owner = slices[owner].parent) {
+    const seen = new Set<string>();
+    for (let owner: string | null = slug; owner !== null; owner = slices[owner].parent) {
       requireCondition(!seen.has(owner), "Parent cycle");
       seen.add(owner);
     }
   }
-  const leaves = (slug) => [...(childrenOf[slug].length ? childrenOf[slug].flatMap(leaves) : [slug]), ...fixesOf[slug].flatMap(leaves)];
+  const leaves = (slug: string): string[] => [...(childrenOf[slug].length ? childrenOf[slug].flatMap(leaves) : [slug]), ...fixesOf[slug].flatMap(leaves)];
   for (const slug of slugs) {
     const slice = slices[slug];
     const children = childrenOf[slug];
@@ -89,10 +94,10 @@ export function analyzeInitiative(input) {
     }
   }
   const root = roots[0];
-  const effectiveDependencies = {};
+  const effectiveDependencies: Record<string, string[]> = {};
   for (const slug of leaves(root)) {
-    const targets = new Set();
-    for (let owner = slug; owner !== null; owner = slices[owner].parent) {
+    const targets = new Set<string>();
+    for (let owner: string | null = slug; owner !== null; owner = slices[owner].parent) {
       for (const dependency of slices[owner].dependencies) {
         for (const target of leaves(dependency)) targets.add(target);
       }
@@ -100,9 +105,9 @@ export function analyzeInitiative(input) {
     requireCondition(!targets.has(slug), "Expanded self-dependency");
     effectiveDependencies[slug] = [...targets].sort();
   }
-  const visited = new Set();
-  const active = new Set();
-  const visit = (slug) => {
+  const visited = new Set<string>();
+  const active = new Set<string>();
+  const visit = (slug: string) => {
     requireCondition(!active.has(slug), "Expanded dependency cycle");
     if (visited.has(slug)) return;
     active.add(slug);
@@ -132,7 +137,7 @@ const quoted = '"(?:[^"\\\\]|\\\\.)*"';
 const declaration = new RegExp('^state (' + quoted + ') as (s_[0-9a-f]+) <<([a-z-]+)>>( \\{)?$');
 const requirementLine = new RegExp('^(s_[0-9a-f]+) : requires (' + quoted + ')$');
 
-function slugFor(alias) {
+function slugFor(alias: string) {
   const hex = alias.slice(2);
   const slug = Buffer.from(hex, "hex").toString("utf8");
   requireCondition(SLUG_PATTERN.test(slug) && Buffer.from(slug).toString("hex") === hex, "Invalid slice alias");
@@ -140,14 +145,14 @@ function slugFor(alias) {
 }
 
 // Reads the retired map.puml grammar exactly, so legacy maps import deterministically.
-export function parseLegacyMap(source) {
+export function parseLegacyMap(source: string) {
   const lines = source.trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   requireCondition(lines.shift() === "@startuml" && lines.pop() === "@enduml", "Expected one PlantUML diagram");
   const title = /^title Initiative: ([A-Za-z0-9_-]+)$/.exec(lines.shift() ?? "");
   requireCondition(title, "Invalid initiative title");
   requireCondition(lines.shift() === "hide empty description", "Missing map header");
-  const slices = Object.create(null);
-  const stack = [];
+  const slices: Record<string, GraphSlice> = Object.create(null);
+  const stack: string[] = [];
   for (const line of lines) {
     let match;
     if ((match = declaration.exec(line))) {

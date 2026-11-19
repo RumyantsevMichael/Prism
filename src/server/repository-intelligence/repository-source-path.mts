@@ -4,7 +4,9 @@ function unsafePathError() {
   return new TypeError("The source range must use a safe project-relative path.");
 }
 
-export function normalizeRepositorySourcePath(value, options = {}) {
+export interface SourcePathOptions { projectRoot?: string }
+
+export function normalizeRepositorySourcePath(value: unknown, options: SourcePathOptions = {}): string {
   if (typeof value !== "string" || !value || value.includes("\0")) throw unsafePathError();
   const portable = value.replaceAll("\\", "/");
   if (path.posix.isAbsolute(portable) || /^[a-z]:/i.test(portable)) throw unsafePathError();
@@ -21,10 +23,10 @@ export function normalizeRepositorySourcePath(value, options = {}) {
   return normalized;
 }
 
-export function normalizeRepositorySourceRange(sourceRange, options = {}) {
+export function normalizeRepositorySourceRange(sourceRange: { file?: unknown; range?: { startLine?: unknown; endLine?: unknown } } | null | undefined, options: SourcePathOptions = {}) {
   const file = normalizeRepositorySourcePath(sourceRange?.file, options);
-  const startLine = sourceRange?.range?.startLine;
-  const endLine = sourceRange?.range?.endLine;
+  const startLine = sourceRange?.range?.startLine as number;
+  const endLine = sourceRange?.range?.endLine as number;
   if (!Number.isSafeInteger(startLine) || startLine < 1 || !Number.isSafeInteger(endLine) || endLine < startLine) {
     throw new TypeError("The source range must contain valid positive line numbers.");
   }
