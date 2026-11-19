@@ -3,16 +3,20 @@ import { createHash, randomBytes } from "node:crypto";
 import { runGit } from "./record-store-sync.mjs";
 import { hostLabel } from "../review/workspace-identity.mjs";
 import { parseStoreJson } from "./store-json.mjs";
+import { isAgentModel } from "../session/agent-models.mjs";
 
 // A claim names the host session, or without one the Prism server process, that works on a slice, so no two agents in any checkout or machine that shares the records start one slice.
 // Each claim is a record of its own beside the initiative record, covers the slice's descendants, and lapses unless its holder renews it.
 // Lease checks use this machine's clock.
 export const CLAIM_ACTIVITIES = Object.freeze(["design", "implementation"]);
 // host is optional: the name of the harness the holder runs in, such as Claude Code or Codex, shown to people and never used to decide anything.
+// model is optional too: the model of the session's main agent, recorded only for a claim that a call positively attributed to that agent took.
 // Prism reads it before any release writes it, because releases up to 0.20 refuse a claim with a field they do not know; later releases leave such a field out instead.
-const CLAIM_FIELDS = ["schemaVersion", "slug", "holder", "label", "host", "activity", "claimedAt", "renewedAt", "expiresAt", "nonce"];
+const CLAIM_FIELDS = ["schemaVersion", "slug", "holder", "label", "host", "model", "activity", "claimedAt", "renewedAt", "expiresAt", "nonce"];
 const HOST_LIMIT = 64;
-const SETTINGS = { leaseMs: 30 * 60 * 1000, renewMs: 10 * 60 * 1000 };
+// PRISM_CLAIM_RENEW_MS, a whole number of milliseconds from 10 to 600000, sets the renewal interval for tests.
+const renewFromEnv = (value) => /^\d+$/.test(String(value ?? "").trim()) && Number(value) >= 10 && Number(value) <= 600000 ? Number(value) : null;
+const SETTINGS = { leaseMs: 30 * 60 * 1000, renewMs: renewFromEnv(process.env.PRISM_CLAIM_RENEW_MS) ?? 10 * 60 * 1000 };
 /**
  * The holder for a host session identifier, or null without one.
  * Claude Code gives its MCP servers the session identifier, so a server it restarts in the same session holds the same claims; the record keeps only a digest of it.
@@ -24,7 +28,29 @@ const digestHolder = (value) => {
   const id = typeof value === "string" ? value.trim() : "";
   return id ? `session-${createHash("sha256").update(id).digest("hex").slice(0, 16)}` : null;
 };
-const identity = { holder: sessionHolder() ?? randomBytes(8).toString("hex"), label: null };
+const identity = { holder: sessionHolder() ?? randomBytes(8).toString("hex"), label: null, host: null };
+
+/** The holder for one host session identifier, such as Codex's root session id, or null without one. */
+export const holderOf = (sessionId) => digestHolder(sessionId);
+
+/**
+ * The harness an MCP client names in its initialize clientInfo: its title when non-blank, else its name, with whitespace runs made one space, trimmed, and cut to 64 characters; null without either.
+ */
+export function harnessName(clientInfo) {
+  for (const value of [clientInfo?.title, clientInfo?.name]) {
+    const name = typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, HOST_LIMIT).trim() : "";
+    if (name) return name;
+  }
+  return null;
+}
+
+// Whether the current tool call is positively the session's main agent's, so a claim it takes records the main agent's model.
+const agentCall = new AsyncLocalStorage();
+/** Run one tool call knowing whether it is positively the session's main agent's. */
+export const withClaimAgent = (main, run) => agentCall.run({ main: main === true }, run);
+export const callIsMainAgent = () => agentCall.getStore()?.main === true;
+/** The harness this server's client named, or null. */
+export const claimHost = () => identity.host;
 // Codex names its root session, which its sub-agents share, in each tool call's metadata rather than in the server's environment.
 const callSession = new AsyncLocalStorage();
 
@@ -54,6 +80,7 @@ export function configureClaims(settings = {}) {
   for (const key of ["leaseMs", "renewMs"]) if (Number.isFinite(settings[key])) SETTINGS[key] = settings[key];
   if (typeof settings.holder === "string") identity.holder = settings.holder;
   if (settings.label !== undefined) identity.label = settings.label;
+  if (settings.host !== undefined) identity.host = settings.host;
   if (timer) { clearInterval(timer); timer = null; startTimer(); }
 }
 
@@ -75,7 +102,7 @@ export async function claimLabel(folder) {
 export const isLive = (claim, now = Date.now()) => Boolean(claim) && Date.parse(claim.expiresAt) > now;
 
 /** What a result shows of a claim. */
-export const claimView = (claim) => ({ slug: claim.slug, holder: claim.holder, label: claim.label, ...(claim.host ? { host: claim.host } : {}), activity: claim.activity, expiresAt: claim.expiresAt });
+export const claimView = (claim) => ({ slug: claim.slug, holder: claim.holder, label: claim.label, ...(claim.host ? { host: claim.host } : {}), ...(claim.model ? { model: claim.model } : {}), activity: claim.activity, expiresAt: claim.expiresAt });
 
 /** A claim's stored bytes, with its fields in a fixed order. */
 export function serializeClaim(claim) {
@@ -97,14 +124,15 @@ export function parseClaim(slug, bytes) {
   for (const key of ["claimedAt", "renewedAt", "expiresAt"]) if (typeof claim[key] !== "string" || !Number.isFinite(Date.parse(claim[key]))) problems.push(`${key} must be a date-time`);
   if (!CLAIM_ACTIVITIES.includes(claim.activity)) problems.push(`activity must be ${CLAIM_ACTIVITIES.join(" or ")}`);
   if (problems.length) return { problem: `${slug}: the claim record is invalid: ${problems.join("; ")}.` };
-  return { claim: Object.fromEntries(CLAIM_FIELDS.filter((key) => Object.hasOwn(claim, key)).map((key) => [key, claim[key]])) };
+  // A malformed model reads as the same claim without one, so it never refuses or hides the claim.
+  return { claim: Object.fromEntries(CLAIM_FIELDS.filter((key) => Object.hasOwn(claim, key) && (key !== "model" || isAgentModel(claim.model))).map((key) => [key, claim[key]])) };
 }
 
 /** A claim taken now with a fresh nonce; a holder that takes its own live claim again for the same activity keeps when it was first claimed. */
-export function newClaim(previous, { slug, holder, label, activity, now }) {
+export function newClaim(previous, { slug, holder, label, host = null, model = null, activity, now }) {
   const at = new Date(now).toISOString();
   const kept = previous?.holder === holder && previous.activity === activity && isLive(previous, now);
-  return { schemaVersion: 1, slug, holder, label, activity, claimedAt: kept ? previous.claimedAt : at, renewedAt: at, expiresAt: new Date(now + SETTINGS.leaseMs).toISOString(), nonce: randomBytes(12).toString("hex") };
+  return { schemaVersion: 1, slug, holder, label, ...(host ? { host } : {}), ...(isAgentModel(model) ? { model } : {}), activity, claimedAt: kept ? previous.claimedAt : at, renewedAt: at, expiresAt: new Date(now + SETTINGS.leaseMs).toISOString(), nonce: randomBytes(12).toString("hex") };
 }
 
 /** A live claim with its lease extended from now. */
@@ -144,9 +172,12 @@ function startTimer() {
 
 const heldKey = (root, initiative, slug) => `${root}\0${initiative}\0${slug}`;
 
-/** Renew a claim this process took, identified by its nonce, for as long as the process runs. */
-export function holdClaim(root, initiative, claim) {
-  held.set(heldKey(root, initiative, claim.slug), { root, initiative, slug: claim.slug, holder: claim.holder, nonce: claim.nonce });
+/**
+ * Renew a claim this process took, identified by its nonce, for as long as the process runs.
+ * main records whether a main agent's call took or adopted it, so only its renewals rewrite the model.
+ */
+export function holdClaim(root, initiative, claim, { main = callIsMainAgent() } = {}) {
+  held.set(heldKey(root, initiative, claim.slug), { root, initiative, slug: claim.slug, holder: claim.holder, nonce: claim.nonce, main });
   startTimer();
 }
 
@@ -232,10 +263,15 @@ export function renewHeldClaims() {
   return renewing;
 }
 
-/** Decide a renewal: the renewed claim, or why the held claim is lost. */
-export function renewal(entry, claim, now = Date.now()) {
+/**
+ * Decide a renewal: the renewed claim, or why the held claim is lost.
+ * A claim a main agent's call took takes the session's model as it is now, and loses it without one; any other claim never carries a model.
+ */
+export function renewal(entry, claim, now = Date.now(), model = null) {
   const reason = lossOf(entry, claim, now);
-  return reason ? { lost: reason } : { claim: renewedClaim(claim, now) };
+  if (reason) return { lost: reason };
+  const { model: _previous, ...rest } = renewedClaim(claim, now);
+  return { claim: entry.main && isAgentModel(model) ? { ...rest, model } : rest };
 }
 
 /** Stop renewing every claim, so a process or a test can finish; the claims lapse when their lease runs out. */

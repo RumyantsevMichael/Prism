@@ -5,6 +5,8 @@ import { withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { describeRecordStore } from "../workflow/record-store.mjs";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { hostDefinition, redactSessionId, resumeCommandOf } from "./launch-hosts.mjs";
+import { isAgentModel } from "./agent-models.mjs";
+import { sessionHolder } from "../workflow/slice-claims.mjs";
 
 // The record of each launched session lives in <review app folder>/launches/<launch id>/launch.json, private to the user.
 // The host session id lives only there, and a launch view carries it only in its resumeCommand: host text in its reason has the id replaced.
@@ -161,21 +163,26 @@ export async function writeGateRecord(folder, { marks, answers }) {
 }
 
 /**
- * What the coordination state says about the gates a launch marked: { waiting, answerWaits }.
+ * What the coordination state says about the gates a launch marked: { waiting, waitingGate, answerWaits }.
  * A gate counts as marked while its mark exists and it is pending; it waits while it has no answer, and an answer whose history entry
- * this machine did not record came through the record store from another machine.
+ * this machine did not record came through the record store from another machine. waitingGate is the id of the first gate, in the
+ * order the launch marked them, that waits, or null.
  */
 export function gateFacts(gates, pending) {
-  const marked = new Set(gates.marks.map((mark) => mark.gate));
-  const recorded = new Set(gates.answers.map((answer) => answer.entry));
-  let waiting = false;
-  let elsewhere = false;
+  const byId = new Map();
   for (const gate of Array.isArray(pending) ? pending : []) {
-    if (!gate || typeof gate !== "object" || !marked.has(gate.id)) continue;
-    if (!gate.answer) waiting = true;
+    if (gate && typeof gate === "object" && typeof gate.id === "string") byId.set(gate.id, gate);
+  }
+  const recorded = new Set(gates.answers.map((answer) => answer.entry));
+  let waitingGate = null;
+  let elsewhere = false;
+  for (const id of new Set(gates.marks.map((mark) => mark.gate))) {
+    const gate = byId.get(id);
+    if (!gate) continue;
+    if (!gate.answer) waitingGate ??= id;
     else if (!(typeof gate.answer.entry === "string" && recorded.has(gate.answer.entry))) elsewhere = true;
   }
-  return { waiting, answerWaits: elsewhere };
+  return { waiting: waitingGate !== null, waitingGate, answerWaits: elsewhere };
 }
 
 /** Every launch folder on this machine with its record: [{ folder, record }], skipping unreadable ones. */
@@ -276,7 +283,10 @@ function stateOf(record, status, label, gates) {
 }
 
 /**
- * The launch view of a record: { id, initiative, host, hostLabel, checkout, launchedAt, runningMs, runs, state, reason, exit, resumeCommand, answerWaits }.
+ * The launch view of a record: { id, initiative, host, hostLabel, model, holder, checkout, launchedAt, runningMs, runs, endedAt, state,
+ * reason, exit, resumeCommand, waitingGate, answerWaits }.
+ * model is the last run's recorded model, holder the claim holder that the host session takes claims as, and only resumeCommand
+ * names the host session id.
  * gates is gateFacts of the launch as the page's checkout reads its initiative's coordination state; without it no gate is counted.
  */
 export function launchView(record, { now = Date.now(), gates = null } = {}) {
@@ -295,20 +305,27 @@ export function launchView(record, { now = Date.now(), gates = null } = {}) {
   const ended = [...record.runs].reverse().find((run) => run.endedAt);
   const exit = status === "lost" ? null : ended?.exit ? { code: ended.exit.code ?? null, signal: ended.exit.signal ?? null } : null;
   const command = status === "running" ? null : resumeCommandOf(record.host, record.hostSessionId);
+  const last = record.runs.at(-1);
+  const end = status === "ended" || status === "lost" ? lastEnd(record, status) : Number.NaN;
+  const holder = typeof record.hostSessionId === "string" ? sessionHolder({ CLAUDE_CODE_SESSION_ID: record.hostSessionId }) : null;
   const resumeCommand = command ? { command, cwd: record.checkout } : null;
   return {
     id: record.id,
     initiative: record.initiative,
     host: record.host,
     hostLabel: label,
+    model: isAgentModel(last?.model) ? last.model : null,
+    holder,
     checkout: record.checkout,
     launchedAt: record.runs[0]?.startedAt ?? null,
     runningMs,
     runs: record.runs.length,
+    endedAt: Number.isFinite(end) ? new Date(end).toISOString() : null,
     state,
     reason,
     exit,
     resumeCommand,
+    waitingGate: state === "waiting" && typeof gates?.waitingGate === "string" ? gates.waitingGate : null,
     answerWaits: facts.answerWaits
   };
 }

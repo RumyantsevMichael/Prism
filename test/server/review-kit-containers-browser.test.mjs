@@ -364,7 +364,7 @@ test("clause 45: a dialog opens modally over a blurred scrim, keeps focus inside
 test("clause 46: a popover opens from its button as a named non-modal dialog, closes with Escape or a click outside, and stays inside the window", { skip }, async (context) => {
   const { page } = await catalog(context, "", { viewport: { width: 1280, height: 800 } });
   await mount(page, `<div class="end"><prism-button id="who">3 working</prism-button></div>
-    <prism-popover id="pop" for="who" heading="Who's working"><p>Claude on build-2 · Agent · implementation · 41 min left</p><prism-button id="inside">Inside</prism-button></prism-popover><prism-button id="other">Other</prism-button>`, { width: "1200px" });
+    <prism-popover id="pop" for="who" heading="Agents"><p>Claude on build-2 · Agent · implementation · 41 min left</p><prism-button id="inside">Inside</prism-button></prism-popover><prism-button id="other">Other</prism-button>`, { width: "1200px" });
   // The page's style policy refuses inline style attributes, so the right-edge layout goes through the CSSOM.
   await page.evaluate(() => { const end = document.querySelector("#fixture .end"); end.style.setProperty("display", "flex"); end.style.setProperty("justify-content", "flex-end"); });
   const button = page.locator("#fixture").getByRole("button", { name: "3 working" });
@@ -373,25 +373,25 @@ test("clause 46: a popover opens from its button as a named non-modal dialog, cl
   assert.equal(await button.getAttribute("aria-expanded"), "false");
   await button.focus();
   await page.keyboard.press("Enter");
-  const popover = page.getByRole("dialog", { name: "Who's working" });
+  const popover = page.getByRole("dialog", { name: "Agents" });
   assert.equal(await popover.count(), 1);
   assert.equal(await button.getAttribute("aria-expanded"), "true");
   assert.notEqual(await popover.getAttribute("aria-modal"), "true", "a popover is not modal");
   const inside = await popover.evaluate((element) => { const box = element.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight; });
   assert.equal(inside, true, "the popover stays inside the window");
   await page.keyboard.press("Escape");
-  assert.equal(await page.getByRole("dialog", { name: "Who's working" }).count(), 0);
+  assert.equal(await page.getByRole("dialog", { name: "Agents" }).count(), 0);
   assert.equal(await page.evaluate(() => document.activeElement?.id), "who", "Escape returns focus to the button");
   await button.click();
   await page.mouse.click(5, 790);
-  assert.equal(await page.getByRole("dialog", { name: "Who's working" }).count(), 0, "a click outside closes it");
+  assert.equal(await page.getByRole("dialog", { name: "Agents" }).count(), 0, "a click outside closes it");
   await button.click();
   await button.click();
-  assert.equal(await page.getByRole("dialog", { name: "Who's working" }).count(), 0, "its button toggles it");
+  assert.equal(await page.getByRole("dialog", { name: "Agents" }).count(), 0, "its button toggles it");
   const phone = await openPage(page.context().browser(), page.url(), { viewport: { width: 390, height: 800 } });
-  await mount(phone, `<prism-button id="who">3 working</prism-button><prism-popover for="who" heading="Who's working"><p>Text</p></prism-popover>`, { width: "360px" });
+  await mount(phone, `<prism-button id="who">3 working</prism-button><prism-popover for="who" heading="Agents"><p>Text</p></prism-popover>`, { width: "360px" });
   await phone.locator("#fixture").getByRole("button", { name: "3 working" }).click();
-  const width = await phone.getByRole("dialog", { name: "Who's working" }).evaluate((element) => [element.getBoundingClientRect().width, innerWidth]);
+  const width = await phone.getByRole("dialog", { name: "Agents" }).evaluate((element) => [element.getBoundingClientRect().width, innerWidth]);
   assert.ok(Math.abs(width[0] - width[1]) <= 1, "at 720px and below a popover spans the window");
 });
 

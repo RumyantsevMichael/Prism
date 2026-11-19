@@ -1661,77 +1661,73 @@ a.inspect-tile:focus-visible {
   min-width: 0;
 }
 
-/* ---------- Launched sessions: one card per session, its facts, its terminal command, and its actions ---------- */
+/* ---------- Agents: the Show choice over one library table of agents, and a launched session's details under its row ---------- */
 
-.launches,
-.launches-list {
+.agents {
   display: grid;
   gap: var(--prism-space-5);
   min-width: 0;
 }
 
-.launches-notice:empty,
-.launches-error[hidden] {
+.agents-notice:empty,
+.agents-error[hidden],
+.agents-toolbar[hidden],
+.agents-none[hidden],
+.agents-table[hidden] {
   display: none;
 }
 
-.launch-info {
-  display: grid;
-  gap: var(--prism-space-3);
-  min-width: 0;
-}
-
-.launch-head {
+.agents-toolbar {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: var(--prism-space-3) var(--prism-space-4);
   min-width: 0;
 }
 
-.launch-title {
-  min-width: 0;
-  margin: 0;
-  font-size: var(--prism-font-size-lg);
-  overflow-wrap: anywhere;
+/* The agent and what it works on take the room; the state, the time, and the one action keep a share each, so every row's cells line up. */
+.agents-table {
+  --prism-lib-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) minmax(0, 1.8fr) minmax(0, 0.8fr) minmax(0, 0.6fr) minmax(0, 0.5fr);
 }
 
-.view-section .launch-reason {
-  margin: 0;
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-sm);
-  overflow-wrap: anywhere;
-}
-
-.launch-info .key-values {
-  margin: 0;
-}
-
-.launch-running {
+.agents-time {
   font-variant-numeric: tabular-nums;
 }
 
-.launch-resume {
+.agents-action {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.agents-details {
+  display: grid;
+  gap: var(--prism-space-3);
+}
+
+.agents-details-body {
   display: grid;
   gap: var(--prism-space-2);
   min-width: 0;
 }
 
-.view-section .launch-resume-lead {
+.agents-details-reason,
+.agents-details-lead {
   margin: 0;
   color: var(--prism-color-ink-muted);
   font-size: var(--prism-font-size-sm);
   overflow-wrap: anywhere;
 }
 
-.launch-folder {
+.agents-details-reason {
+  color: var(--prism-color-ink);
+}
+
+.agents-folder {
   color: var(--prism-color-ink);
   font-family: var(--prism-font-code);
   font-size: var(--prism-font-size-code);
   overflow-wrap: anywhere;
 }
 
-.launch-command {
+.agents-command {
   display: flex;
   align-items: center;
   gap: var(--prism-space-3);
@@ -1739,22 +1735,20 @@ a.inspect-tile:focus-visible {
 }
 
 /* The command takes the room its Copy button leaves, so a long command scrolls inside its block and the button keeps its width. */
-.launch-code {
+.agents-code {
   flex: 1 1 0;
   min-width: 0;
 }
 
-.launch-actions {
+.agents-details-actions {
   min-width: 0;
-  margin-top: var(--prism-space-3);
-  border-top: var(--prism-stroke) solid var(--prism-color-line);
 }
 
-.launch-actions:empty {
+.agents-details-actions:empty {
   display: none;
 }
 
-.launch-action-effect {
+.agents-action-effect {
   color: var(--prism-color-ink-muted);
   font-size: var(--prism-font-size-sm);
   font-weight: var(--prism-font-weight-regular);

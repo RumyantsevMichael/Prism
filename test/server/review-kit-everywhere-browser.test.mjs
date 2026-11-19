@@ -182,7 +182,7 @@ test("clause 69: no page or overlay of the review app names Prism's own files", 
     for (const failure of await stateFileNames(page)) failures.push(`${ref}: ${failure}`);
     await page.locator("header").getByRole("button", { name: /working/ }).click();
     await repainted(page);
-    for (const failure of await stateFileNames(page)) failures.push(`${ref} with Who's working open: ${failure}`);
+    for (const failure of await stateFileNames(page)) failures.push(`${ref} with the agents menu open: ${failure}`);
     await page.keyboard.press("Escape");
     await page.context().close();
   }

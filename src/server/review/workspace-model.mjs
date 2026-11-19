@@ -59,8 +59,10 @@ export function forgetWorkspace() {
   memo.clear();
 }
 
-export const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary", "code", "launches"]);
-const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary", code: "Code", launches: "Launched sessions" });
+export const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary", "code", "agents"]);
+const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary", code: "Code", agents: "Agents" });
+// The Agents page's Show choices that an address can make: agents:<group>.
+export const AGENT_GROUP_PAGES = Object.freeze(["needs-you", "this-computer", "other", "expired"]);
 
 // A record is read where it lives: under .prism, or beside its Markdown until the first write moves it there.
 async function recordFile(root, key) {
@@ -311,17 +313,20 @@ async function computeRoadmapView(projectRoot) {
   };
 }
 
-// Every live and lapsed claim of the roadmap's initiatives and of the unlisted ones, in one read, for the page's claim index.
+// Every live and lapsed claim of the roadmap's initiatives and of the unlisted ones, in one read, for the page's claim index, which names no holder.
 export function loadClaims(projectRoot) {
-  return remember(`claims:${projectRoot}`, () => computeClaims(projectRoot));
+  return remember(`claims:${projectRoot}`, async () => ({ claims: (await loadHeldClaims(projectRoot)).claims.map(({ holder, ...claim }) => claim) }));
+}
+
+/** The same claims with each one's holder, for the agents list, which matches a launched session to the claims it holds and never shows the holder. */
+export function loadHeldClaims(projectRoot) {
+  return remember(`held-claims:${projectRoot}`, () => computeClaims(projectRoot));
 }
 
 async function computeClaims(projectRoot) {
   const roadmap = await loadRoadmapView(projectRoot);
-  const initiatives = [
-    ...roadmap.items.map((item) => ({ id: item.id, title: item.title ?? item.id, claims: item.claims })),
-    ...await Promise.all(roadmap.unlisted.map(async (id) => ({ id, title: id, claims: sliceClaims(await claimedSlices(projectRoot, id)) })))
-  ];
+  const listed = [...roadmap.items.map((item) => ({ id: item.id, title: item.title ?? item.id })), ...roadmap.unlisted.map((id) => ({ id, title: id }))];
+  const initiatives = await Promise.all(listed.map(async ({ id, title }) => ({ id, title, claims: sliceClaims(await claimedSlices(projectRoot, id), { holders: true }) })));
   return { claims: initiatives.flatMap(({ id, title, claims }) => claims.map((claim) => ({ ref: `slice:${id}/${claim.slug}`, initiative: id, initiativeTitle: title, ...claim }))) };
 }
 
@@ -345,18 +350,18 @@ async function withExpiredClaims(projectRoot, id, read) {
     const { claim } = parseClaim(slice, bytes);
     if (!claim || isLive(claim, now) || !Object.hasOwn(slices, slice) || slices[slice].claim) continue;
     copy ??= { ...slices };
-    copy[slice] = { ...slices[slice], expiredClaim: { label: claim.label, ...(claim.host ? { host: claim.host } : {}), activity: claim.activity, claimedAt: claim.claimedAt, expiresAt: claim.expiresAt } };
+    copy[slice] = { ...slices[slice], expiredClaim: { holder: claim.holder, label: claim.label, ...(claim.host ? { host: claim.host } : {}), ...(claim.model ? { model: claim.model } : {}), activity: claim.activity, claimedAt: claim.claimedAt, expiresAt: claim.expiresAt } };
   }
   return copy ? { ...read, loaded: { ...read.loaded, record: { ...read.loaded.record, slices: copy } } } : read;
 }
 
-// The claims of an initiative's slices: each slice's live claim, or the claim that lapsed without a release, with the slice's title and parent.
-function sliceClaims(slices) {
+// The claims of an initiative's slices: each slice's live claim, or the claim that lapsed without a release, with the slice's title, and with holders each claim's holder.
+function sliceClaims(slices, { holders = false } = {}) {
   const claims = [];
   for (const [slug, slice] of Object.entries(slices ?? {})) {
     const claim = slice?.claim ?? slice?.expiredClaim;
     if (!claim || typeof claim.label !== "string") continue;
-    claims.push({ slug, sliceTitle: slice.title ?? slug, label: claim.label, host: typeof claim.host === "string" ? claim.host : null, activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null, expired: !slice.claim });
+    claims.push({ slug, sliceTitle: slice.title ?? slug, ...(holders ? { holder: typeof claim.holder === "string" ? claim.holder : null } : {}), label: claim.label, host: typeof claim.host === "string" ? claim.host : null, model: typeof claim.model === "string" ? claim.model : null, activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null, expired: !slice.claim });
   }
   return claims;
 }
@@ -386,7 +391,7 @@ async function claimedSlices(projectRoot, id) {
 function holdingClaim(slices, slug) {
   for (let owner = slug; owner !== null && owner !== undefined && slices && Object.hasOwn(slices, owner); owner = slices[owner].parent ?? null) {
     const claim = slices[owner].claim;
-    if (claim && typeof claim.label === "string" && (owner === slug || claim.activity === "design")) return { label: claim.label, host: typeof claim.host === "string" ? claim.host : null, activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null };
+    if (claim && typeof claim.label === "string" && (owner === slug || claim.activity === "design")) return { label: claim.label, host: typeof claim.host === "string" ? claim.host : null, model: typeof claim.model === "string" ? claim.model : null, activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null };
   }
   return null;
 }
@@ -1493,8 +1498,8 @@ export async function entityContext(projectRoot, ref) {
   if (parsed?.kind === "glossary") return { trail: [placeCrumb("knowledge"), { ref, label: "Glossary" }], scope: { kind: "global" }, place: "knowledge" };
   // A workspace's code content belongs with its records in Knowledge.
   if (parsed?.kind === "code") return { trail: [placeCrumb("knowledge"), { ref, label: "Code" }], scope: { kind: "global" }, place: "knowledge" };
-  // The Launched sessions place belongs to no place of the rail, so its trail is its own name.
-  if (parsed?.kind === "launches") return { trail: [{ ref, label: SECTION_LABELS.launches }], scope: { kind: "global" }, place: null };
+  // The Agents page belongs to no place of the rail, so its trail is its own name, whichever group its address shows.
+  if (parsed?.kind === "agents") return { trail: [{ ref, label: SECTION_LABELS.agents }], scope: { kind: "global" }, place: null };
   if (parsed?.kind === "initiative" || parsed?.kind === "slice") return initiativeContext(projectRoot, parsed.id, { slug: parsed.kind === "slice" ? parsed.slug : null });
   if (typeof ref !== "string" || !ref) throw new Error("A tab reference is required.");
   const prefixed = /^(attention|knowledge):(.+)$/.exec(ref);
@@ -1555,6 +1560,11 @@ function bandRank(roadmap, id) {
 // Entity tabs name Prism concepts rather than files, so they never collide with artifact paths, which always carry an extension.
 export function parseEntityRef(ref) {
   if (SECTION_REFS.includes(ref)) return { kind: ref };
+  // The Launched sessions address, as a restored tab or an old link, opens the Agents page that replaced it.
+  if (ref === "launches") return { kind: "agents" };
+  // The Agents page with one Show choice made.
+  const group = /^agents:([a-z-]+)$/.exec(ref ?? "");
+  if (group && AGENT_GROUP_PAGES.includes(group[1])) return { kind: "agents", page: group[1] };
   // Attention's filtered pages: one kind, one initiative's items, the roadmap's open questions, or the questions answered this week.
   let match = /^attention:(questions|findings|failed|blocked|ready|problems|answered|roadmap-questions|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "attention", page: match[1] };
@@ -1591,14 +1601,6 @@ async function initiativeCode(projectRoot, view) {
   return code;
 }
 
-// Each initiative's title by its id: the roadmap's titles, and the id itself for an initiative that has only a record.
-async function initiativeTitles(projectRoot) {
-  const roadmap = await loadRoadmapView(projectRoot).catch(() => ({ items: [], unlisted: [] }));
-  const titles = Object.fromEntries((roadmap.unlisted ?? []).map((id) => [id, id]));
-  for (const item of roadmap.items ?? []) titles[item.id] = item.title;
-  return titles;
-}
-
 export async function loadEntity(projectRoot, ref, options = {}) {
   const parsed = parseEntityRef(ref);
   if (!parsed) throw new Error(`Unknown entity reference: ${ref}`);
@@ -1608,8 +1610,8 @@ export async function loadEntity(projectRoot, ref, options = {}) {
   if (parsed.kind === "glossary") return { ref, kind: "glossary", data: await loadGlossary(projectRoot) };
   // A workspace's page lists its code repositories itself; a checkout's own page has none.
   if (parsed.kind === "code") return { ref, kind: "code", data: { repositories: [] } };
-  // The place reads its sessions from api/launches itself; the page carries only the initiatives' titles, so a running time never redraws it.
-  if (parsed.kind === "launches") return { ref, kind: "launches", data: { titles: await initiativeTitles(projectRoot) } };
+  // The page reads its agents from api/agents itself and carries only the group its address shows, so a running time never redraws it.
+  if (parsed.kind === "agents") return { ref, kind: "agents", data: { show: parsed.page ?? "all" } };
   if (parsed.kind === "knowledge" && parsed.page === "diagrams") {
     const diagrams = await loadDiagrams(projectRoot);
     // Each diagram's kind and the page of what it belongs to, by path, beside the list that clause 51 of the places contract fixes.

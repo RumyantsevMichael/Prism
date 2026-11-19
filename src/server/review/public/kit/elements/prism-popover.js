@@ -13,7 +13,7 @@ export class PrismPopover extends Base {
   static tag = "prism-popover";
   static observedAttributes = ["for", "heading", "open"];
   static catalog = {
-    purpose: "A non-modal panel on frosted glass that a kit button opens, such as Who's working; it stays inside the window and spans its width on narrow windows.",
+    purpose: "A non-modal panel on frosted glass that a kit button opens, such as the agents menu; it stays inside the window and spans its width on narrow windows.",
     options: [
       { name: "for", values: ["id"], default: "", description: "The id of the kit button that opens it; the popover sets aria-haspopup=\"dialog\" and aria-expanded on it." },
       { name: "heading", values: ["text"], default: "", description: "The heading, which names the popover." },

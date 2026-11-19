@@ -12,7 +12,7 @@ import path from "node:path";
 import { COMMENTS_PER_ARTIFACT_MAX, finishUnfinishedMoves, nameToolCallRoot, outsideToolCall, recordStoreOf, recordStoreSummary, restoreMigrationReports, takeMigrationReports, toolCallContext, withToolCall } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
 import { confirmSavedConflicts, releaseSavedConflicts, takeSavedConflicts } from "./workflow/record-store-sync.mjs";
-import { callSessionId, withCallSession } from "./workflow/slice-claims.mjs";
+import { callSessionId, configureClaims, harnessName, withCallSession, withClaimAgent } from "./workflow/slice-claims.mjs";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
 import {
   listRepositoryIntelligenceProviders,
@@ -51,7 +51,7 @@ import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs"
 import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, waitForUserGates } from "./workflow/gate-wait.mjs";
 import { endGateWait, keptSettingsText, personChangesText, rememberAskedGates, startGateWait, takePersonChanges } from "./workflow/change-notices.mjs";
-import { callAgent, currentCallAgent, withCallAgent } from "./workflow/call-agent.mjs";
+import { callAgent, callAgentRole, currentCallAgent, withCallAgent } from "./workflow/call-agent.mjs";
 import { recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
 import { startBackgroundPreparation } from "./repository-intelligence/background-preparation.mjs";
@@ -1622,6 +1622,8 @@ input.on("line", async (line) => {
     if (request.method === "initialize") {
       clientName = typeof request.params?.clientInfo?.name === "string" ? request.params.clientInfo.name : null;
       clientVersion = typeof request.params?.clientInfo?.version === "string" ? request.params.clientInfo.version : null;
+      // The harness the client names itself is what each claim this server takes records as its host.
+      configureClaims({ host: harnessName(request.params?.clientInfo) });
       result(request.id, {
         protocolVersion: request.params?.protocolVersion ?? "2025-06-18",
         capabilities: { tools: {} },
@@ -1638,7 +1640,9 @@ input.on("line", async (line) => {
       const call = toolCallContext();
       const value = await withToolCall(call, () => withCallSession(meta, async () => {
         const agent = await callAgent(meta).catch(() => undefined);
-        return withCallAgent(agent, async () => withPersonChanges(name, argumentsValue, await callTool(name, argumentsValue, meta, request.id)));
+        // A claim records the session's main agent model only when the call is positively that agent's.
+        const role = await callAgentRole(meta).catch(() => "unknown");
+        return withCallAgent(agent, () => withClaimAgent(role === "main", async () => withPersonChanges(name, argumentsValue, await callTool(name, argumentsValue, meta, request.id))));
       })).finally(done);
       log.debug("tool_call", { tool: name, ms: Math.round(performance.now() - started), ...(value?.isError ? { isError: true } : {}) });
       // A cancelled request gets no response, so it carries no notes either; nor does a result made once the host closed input, which ends the session.

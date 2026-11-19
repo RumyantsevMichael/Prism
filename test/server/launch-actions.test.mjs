@@ -299,7 +299,7 @@ test("the launch list is readable without a write session", { skip: posixOnly },
   assert.equal(read.status, 200);
   const [view] = read.json.launches;
   assert.equal(view.id, id);
-  assert.deepEqual(Object.keys(view).sort(), ["answerWaits", "checkout", "exit", "host", "hostLabel", "id", "initiative", "launchedAt", "reason", "resumeCommand", "runningMs", "runs", "state"]);
+  assert.deepEqual(Object.keys(view).sort(), ["answerWaits", "checkout", "endedAt", "exit", "holder", "host", "hostLabel", "id", "initiative", "launchedAt", "model", "reason", "resumeCommand", "runningMs", "runs", "state", "waitingGate"]);
 });
 
 test("no Prism tool lets an agent launch, resume, or stop a session", async (t) => {

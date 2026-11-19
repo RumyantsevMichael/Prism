@@ -14,7 +14,8 @@ import { inArtifactStore, listClaimRecords, listInitiatives, listStoreArtifacts,
 import { ARTIFACT_LOCATION_BYTES_MAX, ARTIFACT_NAME_FORM, artifactAddress as artifactAddressOf, collideInLetterCase, locationExcess, locationLimits, STORE_NAME_BYTES_MAX, wellFormedName } from "./artifact-paths.mjs";
 import { acceptArtifactVersions, ArtifactError, storeArtifactLocation } from "./store-artifacts.mjs";
 import { syncRecordStoreNow } from "./record-store-sync.mjs";
-import { blockingClaim, claimedMessage, claimHolder, claimLabel, claimView, dropClaim, holdClaim, isLive, newClaim, parseClaim, pendClaim, renewal, serializeClaim, settleClaim, takeLostClaims, adoptClaims } from "./slice-claims.mjs";
+import { readAgentModel } from "../session/agent-models.mjs";
+import { blockingClaim, callIsMainAgent, claimedMessage, claimHolder, claimHost, claimLabel, claimView, dropClaim, holdClaim, isLive, newClaim, parseClaim, pendClaim, renewal, serializeClaim, settleClaim, takeLostClaims, adoptClaims } from "./slice-claims.mjs";
 import { mergeHistory, mergeKeyed, mergeUnit, MergeConflict, parseVersions } from "./record-merge.mjs";
 import { CONTRACT_TOKEN_BUDGET, designProblems, digestFrozenTests, installFrozenTests, latestDependentsRun, measureContract, restageFrozenTests, REVIEW_MARKS, stageFrozenTests, verifiedCode, withdrawFrozenTests } from "./slice-design.mjs";
 import { effectiveSettings, readCoordinationState } from "./state.mjs";
@@ -410,8 +411,8 @@ async function claimsView(resolved, loaded, { report = true } = {}) {
     record = { ...record, slices: { ...record.slices } };
     for (const [slug, claim] of claims) {
       if (!isLive(claim, now) || !Object.hasOwn(record.slices, slug)) continue;
-      record.slices[slug] = { ...record.slices[slug], claim: { holder: claim.holder, label: claim.label, ...(claim.host ? { host: claim.host } : {}), activity: claim.activity, claimedAt: claim.claimedAt, renewedAt: claim.renewedAt, expiresAt: claim.expiresAt } };
-      listed[slug] = { label: claim.label, ...(claim.host ? { host: claim.host } : {}), activity: claim.activity, expiresAt: claim.expiresAt, heldHere: claim.holder === holder };
+      record.slices[slug] = { ...record.slices[slug], claim: { holder: claim.holder, label: claim.label, ...(claim.host ? { host: claim.host } : {}), ...(claim.model ? { model: claim.model } : {}), activity: claim.activity, claimedAt: claim.claimedAt, renewedAt: claim.renewedAt, expiresAt: claim.expiresAt } };
+      listed[slug] = { label: claim.label, ...(claim.host ? { host: claim.host } : {}), ...(claim.model ? { model: claim.model } : {}), activity: claim.activity, expiresAt: claim.expiresAt, heldHere: claim.holder === holder };
     }
   }
   if (report) adoptClaims(resolved.root, resolved.initiative, claims, now);
@@ -735,7 +736,7 @@ function takeClaim(record, slugValue, activity, effects, operation) {
     claims.expired.push(claimView(previous));
     effects.notes.set(operation, { replacedClaim: { holder: previous.holder, label: previous.label, activity: previous.activity, expiresAt: previous.expiresAt } });
   }
-  claims.files.set(slugValue, newClaim(previous, { slug: slugValue, holder: claims.holder, label: claims.label, activity, now: claims.now }));
+  claims.files.set(slugValue, newClaim(previous, { slug: slugValue, holder: claims.holder, label: claims.label, host: claims.host, model: claims.model, activity, now: claims.now }));
 }
 
 function endClaim(slugValue, effects) {
@@ -1187,9 +1188,12 @@ async function reviewPolicy(resolved, effects) {
 // An update that takes or releases a claim runs in two phases: its claim records first, confirmed with the store's remote, then the rest of the update.
 const takesClaims = (operation) => operation.op === "claim" || operation.op === "release_claim" || (operation.op === "set_status" && operation.status === "in-progress");
 
+// A claim records the harness of the server's client, and the session's main agent model only when the call is positively that agent's.
 async function claimContext(resolved, mode, label = null) {
   const { claims } = await readClaims(resolved);
-  return { mode, holder: claimHolder(), label, now: Date.now(), files: claims, initial: new Map(claims), expired: [], released: [], releasedSlugs: new Set(), ended: new Set() };
+  const holder = claimHolder();
+  const model = mode === "plan" && callIsMainAgent() ? await readAgentModel(holder) : null;
+  return { mode, holder, label, host: claimHost(), model, now: Date.now(), files: claims, initial: new Map(claims), expired: [], released: [], releasedSlugs: new Set(), ended: new Set() };
 }
 
 // Claim records change one process at a time per initiative, so two local starts never both pass the check for overlapping claims.
@@ -1469,10 +1473,11 @@ async function undoClaims(resolved, plan) {
 /** Renew one claim this process holds by rewriting only its claim record; returns { renewed } or { lost } with the reason. */
 export async function renewClaim(entry) {
   const resolved = await resolveInitiative(entry.root, entry.initiative);
+  const model = entry.main ? await readAgentModel(entry.holder) : null;
   return withClaimsLock(resolved, async () => {
     let decided;
     await changeClaim(resolved, entry.slug, (current) => {
-      decided = renewal(entry, current);
+      decided = renewal(entry, current, Date.now(), model);
       return decided.lost ? undefined : decided.claim;
     });
     return decided.lost ? decided : { renewed: decided.claim };

@@ -104,122 +104,31 @@ body {
   margin-inline-start: auto;
 }
 
-.topbar-presence,
+.topbar-agents,
 .topbar-attention {
   flex: none;
 }
 
-/* The DOM lists the stack first to last, and each avatar after the first tucks under the one before it. */
-.presence-stack {
-  display: inline-flex;
-  align-items: center;
-  margin-inline-end: var(--prism-space-3);
-  vertical-align: middle;
-}
-
-.presence-stack > * + * {
-  margin-inline-start: var(--prism-avatar-overlap);
-}
-
-.presence-more {
-  margin-inline-start: var(--prism-space-2);
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-2xs);
-  font-weight: var(--prism-font-weight-semibold);
-}
-
-/* Who's working: live claims, then claims that expired, each with its holder, activity, slice, and time left. */
-.presence-content {
+/* The agents menu: the launched sessions that need the person as rows, then the counts that lead to the Agents page, then the way to the whole page. */
+.agents-menu-body {
   display: grid;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.agents-menu-group {
+  display: flex;
+  align-items: center;
   gap: var(--prism-space-2);
-  min-width: 0;
-}
-
-.presence-group {
-  margin: var(--prism-space-3) 0 0;
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-2xs);
-  font-weight: var(--prism-font-weight-semibold);
-  letter-spacing: var(--prism-tracking-caps);
-  text-transform: uppercase;
-}
-
-.presence-list {
-  display: grid;
-  gap: var(--prism-space-1);
   margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.presence-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--prism-space-1) var(--prism-space-4);
-  min-width: 0;
-  padding: var(--prism-space-3) var(--prism-space-4);
-  border-radius: var(--prism-radius-md);
-}
-
-.presence-row > :first-child {
-  grid-row: 1 / span 2;
-  align-self: start;
-}
-
-.presence-holder {
-  grid-column: 2;
-  grid-row: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
   font-weight: var(--prism-font-weight-semibold);
 }
 
-.presence-kind {
-  margin-inline-start: var(--prism-space-2);
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-2xs);
-  font-weight: var(--prism-font-weight-medium);
-}
-
-.presence-time {
-  grid-column: 3;
-  grid-row: 1;
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-xs);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.presence-row.is-expired .presence-time {
-  color: var(--prism-color-ink);
-  font-weight: var(--prism-font-weight-semibold);
-}
-
-.presence-what {
-  grid-column: 2 / -1;
-  grid-row: 2;
+.agents-menu-foot {
+  display: flex;
   min-width: 0;
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-sm);
-  overflow-wrap: anywhere;
-}
-
-.presence-activity {
-  color: var(--prism-color-ink);
-  font-weight: var(--prism-font-weight-medium);
-}
-
-.presence-slice {
-  color: var(--prism-color-accent-text);
-}
-
-.presence-none,
-.presence-note {
-  margin: var(--prism-space-2) 0 0;
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-xs);
-  overflow-wrap: anywhere;
 }
 
 /* ---------- Banners across the window ---------- */
@@ -1147,16 +1056,6 @@ body {
 
   .topbar-search {
     flex-basis: 160px;
-  }
-
-  /* Who's working shows its avatars alone; its count still names it. */
-  .topbar-presence .presence-count {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
   }
 
   .shell-body {

@@ -8,7 +8,7 @@ import { codeChip } from "./code-location.js";
 import { claimChip, claimOf } from "./claims.js";
 import { componentChip } from "./components.js";
 import { createActionList } from "./actions.js";
-import { REFRESH_MS, stateOf } from "./launched-sessions.js";
+import { REFRESH_MS, stateOf } from "./agents.js";
 import { shippedHistoryHtml } from "./shipped-history.js";
 import { preference, setPreference } from "../kit/preferences.js";
 
@@ -215,8 +215,10 @@ export function latestLaunch(launches, initiative) {
     .sort((left, right) => (right.launchedAt ?? "").localeCompare(left.launchedAt ?? ""))[0] ?? null;
 }
 
+const AGENTS_LINK = '<a href="./review?artifact=agents" data-artifact="agents">Open in Agents</a>';
+
 // How the initiative's latest launched run on this computer stands: a badge in the page head while it failed, is blocked, waits, or runs,
-// and in the Launch popover its state, host, and reason with a link to its row in Launched sessions. It is read every few seconds while the page shows.
+// and in the Launch popover its state, host, and reason with a link to the Agents page. It is read every few seconds while the page shows.
 function mountLastRun(container, data, ctx, endRoot) {
   const slot = endRoot?.querySelector("[data-last-run-slot]");
   if (!slot || typeof fetch !== "function") return;
@@ -229,20 +231,25 @@ function mountLastRun(container, data, ctx, endRoot) {
     shown = key;
     const head = launch ? HEAD_RUN_TEXT[launch.state] : null;
     const [words, tone] = launch ? stateOf(launch) : ["", "neutral"];
-    slot.innerHTML = head ? `<prism-button size="sm" variant="ghost" class="initiative-last-run" data-initiative-last-run tip="${popover ? "Show the latest run" : "Open Launched sessions"}">${badge(head, tone)}</prism-button>` : "";
+    // A tab that can only read launches nothing, so its head leads straight to the Agents page.
+    const readOnly = typeof ctx.canWrite === "function" && !ctx.canWrite();
+    slot.innerHTML = !head ? ""
+      : readOnly ? `<span class="initiative-last-run" data-initiative-last-run-state>${badge(head, tone)}</span>${AGENTS_LINK}`
+      : `<prism-button size="sm" variant="ghost" class="initiative-last-run" data-initiative-last-run tip="${popover ? "Show the latest run" : "Open Agents"}">${badge(head, tone)}</prism-button>`;
+    bindLinks(slot, ctx);
     if (!latest) return;
     latest.hidden = !launch;
     latest.innerHTML = launch
       ? `<div class="initiative-latest-run-head"><span class="initiative-latest-run-title">Latest run · ${escapeHtml(launch.hostLabel ?? launch.host ?? "")}</span>${badge(words, tone)}</div>
         ${launch.reason ? `<p class="initiative-latest-run-reason">${escapeHtml(launch.reason)}</p>` : ""}
-        <a href="./review?artifact=launches" data-artifact="launches">Open in Launched sessions</a>`
+        ${AGENTS_LINK}`
       : "";
     bindLinks(latest, ctx);
   };
   slot.addEventListener("click", (event) => {
     if (!event.target.closest?.("[data-initiative-last-run]")) return;
     if (popover) popover.show?.();
-    else ctx.openArtifact?.("launches");
+    else ctx.openArtifact?.("agents");
   });
   let reading = false;
   const refresh = async () => {

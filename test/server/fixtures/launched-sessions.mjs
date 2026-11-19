@@ -35,7 +35,7 @@ export const LAUNCH_ID = /^launch-[0-9a-f]{16}$/;
 // turn/interrupt, sends turn notifications, and exits when its input closes; any other codex command fails with exit code 2.
 // A plan: { hold: "forever" | <ms until the turn ends>, exit, stderr, isError, denials: [{ tool, reason }], background: <ms> (claude:
 // a background task that ends that long after the turn and is followed by one more turn), threadId (codex; null refuses thread/start),
-// declined: [<command>] (codex), failed (codex), askApproval (codex: the stub asks the client for an approval), ignoreInterrupt
+// declined: [<command>] (codex), failed (codex), model (the model that the claude init event or the codex thread/start and thread/resume results name), askApproval (codex: the stub asks the client for an approval), ignoreInterrupt
 // (the stub answers no interrupt and keeps running after its input closes), children: ["attached" | "detached"] }.
 // The log holds one { kind: "run" } entry per run, one { kind: "input" } entry per message the run read, and { kind: "closed" } when its input closed.
 // Each stub names node by its absolute path, so PATH needs no folder of node's, which may also hold a real host.
@@ -101,7 +101,7 @@ if (host === "claude") {
       started = true;
       later(300, () => {
         turn = true;
-        write({ type: "system", subtype: "init", session_id: id, permissionMode: valueAfter("--permission-mode") });
+        write({ type: "system", subtype: "init", session_id: id, permissionMode: valueAfter("--permission-mode"), ...(plan.model !== undefined ? { model: plan.model } : {}) });
         if (plan.background !== undefined) write({ type: "system", subtype: "task_started", task_id: "task_bg", task_type: "local_bash", session_id: id });
         if (plan.hold !== "forever") later(plan.hold ?? 0, endTurn);
       });
@@ -129,11 +129,11 @@ if (host === "codex") {
     if (message.method === "thread/start") {
       if (plan.threadId === null) { refuse(message.id, "The thread could not start."); return; }
       threadId = plan.threadId === undefined ? ${JSON.stringify(CODEX_THREAD)} : plan.threadId;
-      respond(message.id, { thread: { id: threadId } });
+      respond(message.id, { thread: { id: threadId }, ...(plan.model !== undefined ? { model: plan.model } : {}) });
       notify("thread/started", { thread: { id: threadId } });
       return;
     }
-    if (message.method === "thread/resume") { threadId = message.params?.threadId ?? null; respond(message.id, { thread: { id: threadId } }); return; }
+    if (message.method === "thread/resume") { threadId = message.params?.threadId ?? null; respond(message.id, { thread: { id: threadId }, ...(plan.model !== undefined ? { model: plan.model } : {}) }); return; }
     if (message.method === "turn/start") {
       turns += 1;
       turnId = "turn-" + turns;
