@@ -650,7 +650,8 @@ const ACTION_STATUS = {
   stop_timeout: 409,
   launch_failed: 500
 };
-const ACTION_FIELDS = ["current", "reason", "field", "accepted"];
+// A refusal of an approval that would break the format names each artifact with its findings, as update_artifact names them.
+const ACTION_FIELDS = ["current", "reason", "field", "accepted", "artifacts"];
 export const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
 
 function sendJson(response, statusCode, body) {

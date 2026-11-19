@@ -815,6 +815,8 @@ async function applyOperations(seenStore, checked, { held = null, noteWrites = f
         const id = await identityHeld(source.scope, address);
         await setIdentity(source.scope, address, file, null);
         await setIdentity(scope, address, file, id);
+        // A write or edit earlier in this update is checked where the update leaves the file, so a move after it is no way around the format check.
+        for (const entry of formatted) if (entry.file === file && entry.scope.label === source.scope.label) entry.scope = scope;
       }
       artifacts.push(counted({ path: file, scope, version: source.record.version }, removed));
     }
