@@ -23,7 +23,7 @@ const FILES = [
   "views/registry.js",
   "views/page-bar.js",
   "views/claim-index.js",
-  "views/presence.js",
+  "views/agents-menu.js",
   "styles/shell.css"
 ];
 

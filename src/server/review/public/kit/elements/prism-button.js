@@ -29,7 +29,8 @@ export class PrismButton extends Base {
 
   constructor() {
     super();
-    this.root = shadow(this, PrismButton.styles, `<button type="button" part="control"><span class="content" part="content"><slot></slot></span></button><span class="badge" part="badge" hidden><slot name="badge"></slot></span>`, { delegatesFocus: true });
+    // A subclass, such as prism-agent-summary, adopts its own list of stylesheets.
+    this.root = shadow(this, this.constructor.styles ?? PrismButton.styles, `<button type="button" part="control"><span class="content" part="content"><slot></slot></span></button><span class="badge" part="badge" hidden><slot name="badge"></slot></span>`, { delegatesFocus: true });
     this.control = this.root.querySelector("button");
     this.words = this.root.querySelector(".content > slot");
     const badge = this.root.querySelector(".badge");

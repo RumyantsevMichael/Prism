@@ -569,6 +569,21 @@ const third = 3;</code></pre></prism-code>`,
     "long-text": rowsOf(`<prism-row icon="question" tone="info"><a href="#entry-prism-row">${LONG}</a><span slot="description">${LONG}</span><prism-chip slot="kind" tone="accent">${LONG}</prism-chip><time slot="time" datetime="2026-11-10T08:00:00Z">2 min</time><prism-button slot="action" size="sm">Answer</prism-button></prism-row><prism-row wrap icon="check-circle" tone="success">${LONG}<span slot="detail">${LONG}</span><prism-chip slot="kind" tone="success">Answered</prism-chip></prism-row>`),
     "unbroken-name": rowsOf(`<prism-row icon="question" tone="info"><a href="#entry-prism-row">${UNBROKEN}</a><span slot="description">${UNBROKEN}</span><prism-chip slot="kind">${UNBROKEN}</prism-chip><prism-button slot="action" size="sm">Open</prism-button></prism-row><prism-row wrap icon="check-circle" tone="success">${UNBROKEN}<span slot="detail">${UNBROKEN}</span><prism-chip slot="kind" tone="success">Answered</prism-chip></prism-row>`)
   },
+  "prism-count-link": {
+    default: `<prism-count-link href="#entry-prism-count-link" icon="play" count="3">Launched on this computer</prism-count-link>`,
+    zero: `<prism-count-link href="#entry-prism-count-link" icon="clock" count="0">Expired claims</prism-count-link>`,
+    list: `<div class="prism-count-links"><prism-count-link href="#entry-prism-count-link" icon="play" count="4">Launched on this computer</prism-count-link><prism-count-link href="#entry-prism-count-link" icon="agent" count="6">Other sessions</prism-count-link><prism-count-link href="#entry-prism-count-link" icon="clock" count="2">Expired claims</prism-count-link></div>`,
+    "long-text": `<div class="catalog-narrow prism-count-links"><prism-count-link href="#entry-prism-count-link" icon="agent" count="12345">${LONG}</prism-count-link></div>`,
+    "unbroken-name": `<div class="catalog-narrow prism-count-links"><prism-count-link href="#entry-prism-count-link" icon="agent" count="7">${UNBROKEN}</prism-count-link></div>`
+  },
+  "prism-agent-summary": {
+    quiet: `<prism-agent-summary variant="chrome" shape="round" working="0"></prism-agent-summary>`,
+    working: `<prism-agent-summary variant="chrome" shape="round" working="2" expired="1"></prism-agent-summary>`,
+    "needs-you": `<prism-agent-summary variant="chrome" shape="round" working="4" failed="1" waiting="1" expired="1"></prism-agent-summary><prism-agent-summary variant="chrome" shape="round" working="3" waiting="2"></prism-agent-summary>`,
+    many: `<prism-agent-summary variant="chrome" shape="round" working="10" failed="1" waiting="1" expired="2"></prism-agent-summary>`,
+    "long-text": `<div class="catalog-narrow"><prism-agent-summary variant="chrome" shape="round" working="12345" failed="678" waiting="9012" expired="34"></prism-agent-summary></div>`,
+    "unbroken-name": `<div class="catalog-narrow"><prism-agent-summary variant="chrome" shape="round" working="1234567890" failed="1234567890" waiting="1234567890"></prism-agent-summary></div>`
+  },
   "prism-page-sub": {
     default: `<prism-page-sub>Records changed in the last 7 days, from the repository's history, those not committed first.</prism-page-sub>`,
     "with-link": `<prism-page-sub>Review findings · 2 of 7 items<a slot="end" href="#entry-prism-page-sub">Show everything</a></prism-page-sub>`,

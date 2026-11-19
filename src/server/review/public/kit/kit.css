@@ -3303,6 +3303,60 @@ prism-row[wrap] .prism-row-title {
   }
 }
 
+/* ---------- prism-count-link: a link to a filtered page with a glyph, a label, and a count; a .prism-count-links list stacks them with a line between ---------- */
+
+.prism-count-links {
+  display: grid;
+  min-width: 0;
+}
+
+prism-count-link {
+  display: block;
+  min-width: 0;
+}
+
+.prism-count-links > prism-count-link + prism-count-link {
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.prism-count-link-anchor {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  min-height: var(--prism-row-height);
+  padding: var(--prism-space-2) var(--prism-space-3);
+  border-radius: var(--prism-radius-md);
+  color: var(--prism-color-ink);
+  text-decoration: none;
+}
+
+.prism-count-link-anchor:hover {
+  background: var(--prism-color-hover);
+}
+
+.prism-count-link-anchor:focus-visible {
+  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
+  outline-offset: calc(-1 * var(--prism-stroke-strong));
+}
+
+.prism-count-link-glyph {
+  flex: none;
+  color: var(--prism-color-ink-muted);
+}
+
+.prism-count-link-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-count-link-count {
+  flex: none;
+}
+
 /* ---------- prism-inbox: two-line items to pick one from, the picked one raised on the surface ---------- */
 
 :where(prism-inbox, prism-inbox-item),

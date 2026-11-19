@@ -50,6 +50,8 @@ import { PrismCode } from "./elements/prism-code.js";
 import { PrismInbox } from "./elements/prism-inbox.js";
 import { PrismInboxItem } from "./elements/prism-inbox-item.js";
 import { PrismRow } from "./elements/prism-row.js";
+import { PrismCountLink } from "./elements/prism-count-link.js";
+import { PrismAgentSummary } from "./elements/prism-agent-summary.js";
 import { PrismPageSub } from "./elements/prism-page-sub.js";
 import { PrismLibTable } from "./elements/prism-lib-table.js";
 import { PrismPhase } from "./elements/prism-phase.js";
@@ -119,6 +121,8 @@ export const KIT_ELEMENTS = [
   PrismInbox,
   PrismInboxItem,
   PrismRow,
+  PrismCountLink,
+  PrismAgentSummary,
   PrismPageSub,
   PrismLibTable,
   PrismPhase,

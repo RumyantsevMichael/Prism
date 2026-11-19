@@ -15,7 +15,7 @@ import { missingNotice, nextMissingTabs, renderMissing } from "./views/missing-t
 import { createPageBar } from "./views/page-bar.js";
 import { DEFAULT_PLACE, PLACES, placeNamed } from "./views/places.js";
 import { claimElement, createClaimIndex } from "./views/claim-index.js";
-import { createPresence } from "./views/presence.js";
+import { createAgentsMenu } from "./views/agents-menu.js";
 import { DENSITIES, onPreferencesChange, preference, preferencesReady, savePreferences, setPreference, THEMES } from "./kit/preferences.js";
 import { shownActionEntries } from "./views/actions.js";
 import { artifactChangesView, artifactReviewHtml, focusAfterMore, mountArtifactReview, readListedComments } from "./views/artifact-review.js";
@@ -173,7 +173,7 @@ let sidePanel;
 let panelPreview;
 let pageBar;
 let claimIndex;
-let presence;
+let agentsMenu;
 const viewStates = new Map();
 const treeToggles = new Map();
 
@@ -3083,15 +3083,26 @@ async function initialize() {
     onChange: () => {
       navigationKey = "";
       renderNavigation();
-      presence?.render();
+      void agentsMenu?.refresh();
     }
   });
   await claimIndex.refresh().catch(() => {});
-  presence = createPresence({
-    button: document.getElementById("presence-button"),
-    popover: document.getElementById("presence"),
-    claims: claimIndex,
-    onOpen: (ref) => openRef(ref)
+  agentsMenu = createAgentsMenu({
+    button: document.getElementById("agents-button"),
+    popover: document.getElementById("agents"),
+    onOpen: (ref) => openRef(ref),
+    // Answer selects the question the launch waits on, with its answer form, once Attention shows.
+    onAnswer: async (gate) => {
+      const { openQuestion } = await import("./views/attention.js");
+      openQuestion({ openArtifact: (ref) => openRef(ref) }, gate);
+    },
+    // Open shows the Agents page with that session's details unfolded, and shows every group if the page's Show choice left the session out.
+    onOpenAgent: (id) => {
+      const state = viewState("agents");
+      state.openAgents = [...new Set([...(state.openAgents ?? []), id])];
+      if (state.show && !["all", "needs-you", "this-computer"].includes(state.show)) state.show = "all";
+      openRef("agents");
+    }
   });
   palette = createPalette({
     dialog: document.getElementById("palette"),
@@ -3321,7 +3332,6 @@ async function initialize() {
   });
   connectSessionEvents();
   renderNavigation();
-  presence.render();
   document.addEventListener("click", noteLinkOpened, { capture: true });
   document.addEventListener("auxclick", noteLinkOpened, { capture: true });
   if (requestedPath && requestedPath !== selectedPath && selectedPath && openTabs.includes(selectedPath) && openedFromLink(requestedPath)) {

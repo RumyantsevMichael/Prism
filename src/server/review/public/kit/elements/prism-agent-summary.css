@@ -1,0 +1,70 @@
+/* prism-agent-summary: the agents button's avatars, its count, and its status badges in a row; a phone-width window keeps two avatars and one corner count. */
+
+.content {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+/* The DOM lists the stack first to last, and each avatar after the first tucks under the one before it. */
+.stack {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+.stack > * + * {
+  margin-inline-start: var(--prism-avatar-overlap);
+}
+
+.more {
+  margin-inline-start: var(--prism-space-2);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-2xs);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.count {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.marks {
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: var(--prism-space-2);
+}
+
+/* The corner count stands on the button's top end corner, as a count on an icon button does. */
+.corner {
+  position: absolute;
+  top: calc(-1 * var(--prism-space-2));
+  right: calc(-1 * var(--prism-space-2));
+  display: flex;
+  pointer-events: none;
+}
+
+@media (min-width: 601px) {
+  .corner {
+    display: none;
+  }
+}
+
+@media (max-width: 600px) {
+  :host([variant]) button {
+    padding: 0 var(--prism-space-4);
+  }
+
+  .count,
+  .marks,
+  .more,
+  .stack > prism-avatar:nth-child(n + 3) {
+    display: none;
+  }
+}
