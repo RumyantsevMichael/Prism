@@ -44,7 +44,7 @@ async function busy(t) {
 }
 
 const agentsButton = (page) => page.getByRole("button", { name: /^Agents:/ });
-const menu = (page) => page.getByRole("dialog", { name: "Agents" });
+const menu = (page) => page.getByRole("dialog", { name: "Agents", exact: true });
 const shownRef = (page) => page.evaluate(() => new URL(location.href).searchParams.get("artifact"));
 const visibleText = (locator) => locator.evaluate((node) => node.innerText.replace(/\s+/g, " ").trim());
 
@@ -139,7 +139,7 @@ test("§16 §17 §19 the menu lists what needs the person as rows, counts the re
   for (const name of ["Dana on studio-mac", "Claude on vm", "Michael on work-mac", "Search"]) assert.equal(whole.includes(name), false, `${name} is counted, not listed`);
   const counts = await dialog.getByRole("link").evaluateAll((links) => links.map((link) => link.innerText.replace(/\s+/g, " ").trim()));
   assert.deepEqual(counts, ["Launched on this computer 3", "Other sessions 2", "Expired claims 1"]);
-  assert.equal(await dialog.getByRole("button", { name: "Open Agents" }).count(), 1);
+  assert.equal(await dialog.getByRole("button", { name: "Open Agents", exact: true }).count(), 1);
   assert.deepEqual(page.errors, []);
 });
 
@@ -156,11 +156,11 @@ test("§17 each count opens its group on the Agents page, and Open Agents opens 
     assert.equal(await menu(page).count(), 0, "the menu closes");
   }
   await agentsButton(page).click();
-  await menu(page).getByRole("button", { name: "Open Agents" }).click();
+  await menu(page).getByRole("button", { name: "Open Agents", exact: true }).click();
   await settled(() => shownRef(page), "agents");
   assert.equal(await shownRef(page), "agents");
   await waitForView(page);
-  assert.equal(await page.getByRole("heading", { name: "Agents", level: 1 }).count(), 1);
+  assert.equal(await page.getByRole("heading", { name: "Agents", level: 1, exact: true }).count(), 1);
 });
 
 test("§18 Answer opens the waited question in Attention, and Open shows the failed session's details on the Agents page", { skip: skipHere, timeout: 120000 }, async (t) => {
@@ -168,7 +168,7 @@ test("§18 Answer opens the waited question in Attention, and Open shows the fai
   const page = await s.open();
   await settled(() => agentsButton(page).getAttribute("aria-label").catch(() => null), (name) => name?.includes("1 waits"));
   await agentsButton(page).click();
-  await menu(page).getByRole("button", { name: "Answer" }).click();
+  await menu(page).getByRole("button", { name: "Answer", exact: true }).click();
   await settled(() => shownRef(page), "attention");
   await waitForView(page);
   const form = page.locator(`.gate-answer[data-gate="${s.gate}"][data-initiative="${INITIATIVE}"]`);
@@ -176,7 +176,7 @@ test("§18 Answer opens the waited question in Attention, and Open shows the fai
   assert.match(await visibleText(page.locator("#artifact")), /Which retention window\?/);
   assert.equal(await menu(page).count(), 0, "the menu closes");
   await agentsButton(page).click();
-  await menu(page).getByRole("button", { name: "Open" }).click();
+  await menu(page).getByRole("button", { name: "Open", exact: true }).click();
   await settled(() => shownRef(page), "agents");
   await waitForView(page);
   const details = page.locator(`[data-agent="launch:${s.failed}"] [data-agent-details]`);
