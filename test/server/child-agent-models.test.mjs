@@ -22,7 +22,9 @@ const writeSettings = async (root, settings) => {
 
 /** get_coordination_state from a Prism MCP server that a client of the given name started. */
 async function coordinationState(t, root, clientName) {
-  const child = spawn(process.execPath, [path.join(ROOT, "dist/server/mcp.mjs")], { stdio: ["pipe", "pipe", "ignore"], env: { ...process.env, PRISM_REVIEW_APP: "off", PRISM_REVIEW_BROWSER_ON_START: "off" } });
+  const env = { ...process.env, PRISM_REVIEW_APP: "off", PRISM_REVIEW_BROWSER_ON_START: "off" };
+  delete env.CLAUDE_PROJECT_DIR;
+  const child = spawn(process.execPath, [path.join(ROOT, "dist/server/mcp.mjs")], { stdio: ["pipe", "pipe", "ignore"], env });
   t.after(() => child.kill());
   let buffer = "";
   const answers = [];
