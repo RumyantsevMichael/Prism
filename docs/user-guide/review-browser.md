@@ -228,6 +228,7 @@ Index actions are not part of an initiative, so shipping one leaves them availab
 An initiative whose record cannot be read and that the roadmap does not list has no settings, so its page offers none.
 On a slice page the card names the initiative above its title, because the settings belong to the whole initiative and a change there applies to every slice.
 Each setting shows its options as a button group, the sentence on when a change takes effect, and for an on or off setting what the picked option does.
+Models shows a button per host but not yet the provider, model, and effort choices kept for it, so picking a host changes nothing, its **Apply** stays disabled, and every host's choices stay as stored.
 In the dialog, the options you pick wait for **Apply**, which counts them, such as **Apply 2 changes**, and applies them one by one; it stops at a change that is refused or that you do not confirm, and closes once all of them applied.
 **Cancel**, Esc, or **Close** closes the dialog and drops the changes you have not applied.
 On a slice page's card, picking an option applies it at once.

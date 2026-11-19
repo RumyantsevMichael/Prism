@@ -38,11 +38,27 @@ function isRequired(field, input) {
   return Boolean(when) && when.values.includes(normalized(input[when.field]));
 }
 
+// A value kept per option of a choice, such as the models kept per host, is keyed by that choice's option values.
+function keyField(action) {
+  const value = action.value;
+  if (!isRecord(value)) return null;
+  return (action.fields ?? []).find((field) => Array.isArray(field.options) && field.options.length > 0 && field.options.every((option) => Object.hasOwn(value, option.value))) ?? null;
+}
+
+// The picked option's entry fills the other fields, so a field this view does not draw sends what is stored, and a pick alone is no change.
+function keyedInput(action, current, values) {
+  const key = keyField(action);
+  const picked = key ? normalized(Object.hasOwn(values, key.name) ? values[key.name] : current[key.name]) : null;
+  const entry = picked === null ? null : action.value[picked];
+  if (!isRecord(entry)) return current;
+  return Object.fromEntries((action.fields ?? []).map((field) => [field.name, field === key ? picked : entry[field.name] ?? null]));
+}
+
 /** The state of one action's control from the person's draft: { input, ready, confirm, hint }. */
 export function actionFormState(action, draft = {}) {
   const values = draft?.values ?? {};
   const fields = action.fields ?? [];
-  const current = currentInput(action);
+  const current = keyedInput(action, currentInput(action), values);
   const input = Object.fromEntries(fields.map((field) => [field.name, Object.hasOwn(values, field.name) ? values[field.name] : current[field.name]]));
   const missing = fields.find((field) => isRequired(field, input) && !filled(input[field.name]));
   // An action without a value, such as an answer or a rebuild, is never unchanged; a setting is unchanged while every field holds its current value.
