@@ -668,8 +668,11 @@ const LAUNCH_RESUME = {
 // review app folder, from the same host reports as a launch's coordinator. Any available host starts each run on the first host
 // found with its defaults, so it takes no provider, model, or effort.
 const AUTOMATIC_ONLY_DEFAULTS = "Any available host takes only the host's default model.";
+// A choice that cannot be read shows no host, so the page offers to store a readable one, and any choice applied over it is stored.
+const UNREADABLE_PRISM_RUNS = "The stored choice could not be read, so each run starts on the first host Prism finds with its default model until you apply a host.";
 const prismRunsValue = (context) => {
   const { state, choice } = context.prismRuns;
+  if (state === "unreadable") return { host: null, provider: null, run: { ...HOST_DEFAULT_CHOICE } };
   if (state !== "chosen") return { host: AUTOMATIC, provider: null, run: { ...HOST_DEFAULT_CHOICE } };
   return { host: choice.host, provider: choice.provider, run: { model: choice.model, effort: choice.effort, typed: choice.typed } };
 };
@@ -685,11 +688,13 @@ const MACHINE_PRISM_RUNS = {
     choice("host", "Host", [
       { value: AUTOMATIC, label: AUTOMATIC_LABEL, consequence: "Each run starts on the first host Prism finds on this computer, with its default model.", reason: null },
       ...hostOptions(context, (label) => `${label} runs Prism's own runs.`)
-    ], { required: true }),
+    ], { required: true, ...(context.prismRuns.state === "unreadable" ? { hint: UNREADABLE_PRISM_RUNS } : {}) }),
     field("provider", "run-option", "Provider", { for: "coordinator", option: "provider", hint: PROVIDER_HINT, fixedWhen: { field: "host", values: [AUTOMATIC] } }),
     field("run", "run-choice", "Model", { for: "coordinator", heading: "Model of Prism's own runs", hint: "The model and effort of each run, from what the host reports.", fixedWhen: { field: "host", values: [AUTOMATIC] } })
   ],
   value: prismRunsValue,
+  // A change is compared with the value only while that value is stored or is the default of no choice, never an unreadable one.
+  stored: (context) => (context.prismRuns.state === "unreadable" ? null : prismRunsValue(context)),
   context: () => null,
   recommended: () => null,
   confirm: () => null,
@@ -950,6 +955,7 @@ export async function applyAction({ projectRoot, target, action, input, revision
       applied = await entryOf(checked, read);
       const { host, provider, run } = checked.after;
       await writePrismRunsChoice({ choice: { host, provider, ...run }, by: applied.by.name ?? applied.by.checkout, revision: read.prismRuns.revision, env }).catch(async (error) => {
+        if (error instanceof PrismRunsError && error.code === "not_a_file") throw fail("invalid_input", error.message, { field: null });
         if (error instanceof PrismRunsError && error.code === "stale_revision") {
           const current = view(definition, await readTarget(projectRoot, parsed, indexer, undefined, env, checkouts, readOptions));
           throw fail("stale_revision", "The choice changed since the page read it.", { current });

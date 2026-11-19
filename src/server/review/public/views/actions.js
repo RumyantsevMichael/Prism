@@ -51,12 +51,12 @@ function keyField(action) {
 
 // The picked option's entry fills the other fields, so a field this view does not draw sends what is stored, and a pick alone is no change.
 // A run action whose value holds the choices of one host, such as Prism's own runs, holds them for that host only, so another host's
-// choices start from its defaults.
+// choices start from its defaults, and choosing that host is itself the change.
 function keyedInput(action, current, values) {
   const key = keyField(action);
   const host = key ? null : hostFieldOf(action);
   if (host && Object.hasOwn(values, host.name) && normalized(values[host.name]) !== current[host.name]) {
-    return Object.fromEntries((action.fields ?? []).map((field) => [field.name, field === host ? normalized(values[host.name]) : isRunField(field) ? null : current[field.name]]));
+    return Object.fromEntries((action.fields ?? []).map((field) => [field.name, isRunField(field) ? null : current[field.name]]));
   }
   const picked = key ? normalized(Object.hasOwn(values, key.name) ? values[key.name] : current[key.name]) : null;
   const entry = picked === null ? null : action.value[picked];
@@ -153,14 +153,15 @@ function shownFields(action, input) {
 // A one-choice setting applies when an option is picked; an action with text or several fields applies with its own button.
 const appliesOnPick = (action) => !action.context && action.fields.length === 1 && action.fields[0].kind !== "text";
 
-// A choice of host is one select: a host this computer lacks shows as unavailable and cannot be chosen, with its reason below.
+// A choice of host is one select: a host this computer lacks shows as unavailable and cannot be chosen, with its reason below, and the
+// field's own hint, such as why a stored choice cannot be read, takes the place of the hosts' hint.
 function selectHtml(action, field, input, { disabled, key }) {
   const picked = normalized(input[field.name]);
   const chosen = field.options.find((option) => option.value === picked);
   const options = field.options.map((option) => `<prism-option value="${escapeHtml(option.value)}"${option.value === picked ? " selected" : ""}${option.reason ? " disabled" : ""}>${escapeHtml(option.label ?? option.value)}${option.reason ? ": unavailable" : ""}</prism-option>`).join("");
   const reasons = field.options.filter((option) => option.reason).map((option) => `<p class="action-reason">${escapeHtml(option.reason)}</p>`).join("");
   const consequence = !action.context && chosen?.consequence && !chosen.reason ? `<p class="gate-consequence action-consequence">${escapeHtml(chosen.consequence)}</p>` : "";
-  return `<div class="action-choice is-wide"><prism-field class="action-field" type="select" label="${escapeHtml(field.label)}" hint="${escapeHtml(HOST_HINT)}" value="${escapeHtml(picked ?? "")}" data-select data-field="${escapeHtml(field.name)}" data-focus-key="${escapeHtml(`${key}|${field.name}`)}"${disabled ? " disabled" : ""}>${options}</prism-field>${consequence}${reasons}</div>`;
+  return `<div class="action-choice is-wide"><prism-field class="action-field" type="select" label="${escapeHtml(field.label)}" hint="${escapeHtml(field.hint ?? HOST_HINT)}" value="${escapeHtml(picked ?? "")}" data-select data-field="${escapeHtml(field.name)}" data-focus-key="${escapeHtml(`${key}|${field.name}`)}"${disabled ? " disabled" : ""}>${options}</prism-field>${consequence}${reasons}</div>`;
 }
 
 function fieldHtml(action, field, input, { disabled, key, layout }) {
@@ -302,11 +303,13 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
 
   // A run action keeps the person's unsent choices per host, { hosts: { <host>: values }, host }, so switching hosts and back keeps them;
   // its draft is the shown host's choices, or none while that host has none and the host itself is unchanged.
+  // A value that names no host, as a stored choice that cannot be read, is replaced by the shown host, so that host can be applied.
   function runDraftOf(target, action) {
     const kept = drafts[keyOf(target, action)];
     const host = shownHost(target, action);
     const own = kept?.hosts?.[host] ?? null;
-    if (!own && kept?.host === undefined) return null;
+    const noHost = !keyField(action) && normalized(currentInput(action)[hostFieldOf(action).name]) === null;
+    if (!own && kept?.host === undefined && !noHost) return null;
     return { values: { [hostFieldOf(action).name]: host, ...(own ?? {}) } };
   }
 

@@ -97,6 +97,9 @@ export async function writePrismRunsChoice({ choice, by, revision, env = process
   return withFileLock(file, async () => {
     const current = await readPrismRunsChoice(env);
     if (current.revision !== revision) throw new PrismRunsError("stale_revision", "The choice changed since the page read it.");
+    // Prism replaces only a regular file, so a link or a folder in its place is left alone and named.
+    const info = await lstat(file).catch((error) => (error.code === "ENOENT" ? null : Promise.reject(error)));
+    if (info && (info.isSymbolicLink() || !info.isFile())) throw new PrismRunsError("not_a_file", `${file} is not a regular file, so Prism cannot store the choice there; remove it and apply the choice again.`);
     const record = { ...checked, at: now.toISOString(), by: String(by ?? "").replace(/\s+/g, " ").trim().slice(0, BY_MAX) };
     await writeAtomically(file, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
     if (process.platform !== "win32") await chmod(file, 0o600);
