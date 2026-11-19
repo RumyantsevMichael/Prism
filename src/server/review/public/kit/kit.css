@@ -398,6 +398,15 @@ prism-segmented {
   cursor: pointer;
 }
 
+/* With wrap, a choice of several segments that no longer fit on one line goes on to the next line rather than shortening each segment's words; only a segment too long for a line of its own shortens. */
+prism-segmented[wrap] {
+  flex-wrap: wrap;
+}
+
+prism-segmented[wrap] > .prism-segment {
+  max-width: 100%;
+}
+
 .prism-segment-text {
   min-width: 0;
   overflow: hidden;

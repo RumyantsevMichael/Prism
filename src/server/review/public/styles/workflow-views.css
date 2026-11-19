@@ -1685,7 +1685,7 @@ a.inspect-tile:focus-visible {
 
 /* The agent and what it works on take the room; the state, the time, and the one action keep a share each, so every row's cells line up. */
 .agents-table {
-  --prism-lib-columns: minmax(0, 1.3fr) minmax(0, 0.9fr) minmax(0, 2fr) minmax(0, 0.9fr) minmax(0, 0.7fr) minmax(0, 0.5fr);
+  --prism-lib-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) minmax(0, 1.8fr) minmax(0, 0.8fr) minmax(0, 0.6fr) minmax(0, 0.5fr);
 }
 
 .agents-time {

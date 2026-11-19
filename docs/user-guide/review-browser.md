@@ -175,7 +175,7 @@ See [Upgrading to managed records](upgrading-to-managed-records.md#answering-in-
 
 Every change that the review page makes is an action: answering a question, changing an initiative setting, commenting on a file in the record store, rebuilding an index, or launching, stopping, or resuming a launched session.
 The page sends each action with the version of the record it showed you, so when an agent or another tab changed that record in the meantime, Prism refuses your action and changes nothing.
-Apart from a rebuild, which starts Prism's own indexer, and the launched-session actions of [Launched sessions](#launched-sessions), an action changes only Prism's records, and it never runs a command, changes a project file, or writes to Git.
+Apart from a rebuild, which starts Prism's own indexer, and the launched-session actions of [Launched sessions](#launched-sessions) on [the Agents page](#the-agents-page), an action changes only Prism's records, and it never runs a command, changes a project file, or writes to Git.
 Answering the approval of a requirement or ADR also needs a tab that can make changes, and Prism records nothing when the file changed since the approval was asked.
 When more than one pending approval holds the same id, as a copied status record or a scope move that stopped halfway can leave, Prism lists each one, names every file and scope that holds the id, and refuses an answer to any of them, so the agent asks again for the file it means.
 A comment needs a tab that can make changes and a Git `user.name` in the checkout, and Prism stores nothing when the file changed since the page showed it; the page then shows the current file and keeps your comment unsent.
@@ -251,8 +251,8 @@ Checkouts whose records live in the same place, such as two checkouts of one sha
 Like every action, a launch needs a tab that can make changes.
 
 The initiative page also shows how the initiative's latest launched session on this computer stands.
-While that session failed, is blocked, waits for you, or runs, the page head shows `Last run failed`, `Last run blocked`, `Waiting for you`, or `Running` beside **Launch**, and pressing it opens **Launch an orchestration**, or **Launched sessions** in a tab that cannot make changes.
-At the top of **Launch an orchestration**, **Latest run** names the session's host and state, with its reason, such as `Claude Code reported an error:` and the host's own message or `Codex ended with exit code 1.`, and **Open in Launched sessions** opens its row.
+While that session failed, is blocked, waits for you, or runs, the page head shows `Last run failed`, `Last run blocked`, `Waiting for you`, or `Running` beside **Launch**, and pressing it opens **Launch an orchestration**; in a tab that cannot make changes the state stands beside **Open in Agents**, which opens the Agents page.
+At the top of **Launch an orchestration**, **Latest run** names the session's host and state, with its reason, such as `Claude Code reported an error:` and the host's own message or `Codex ended with exit code 1.`, and **Open in Agents** opens the Agents page.
 The page reads this every few seconds, so a session that fails moments after it starts shows there without a reload.
 
 Before anything starts, Prism asks you in a dialog of the operating system, outside the browser, so a script that drives the page cannot launch on its own.
@@ -280,15 +280,41 @@ Each launched session keeps its record in `launches/<launch id>/` in the review 
 The host's session id stays in that record on this computer: no shared record, history entry, or log holds it, and only this computer's page shows it, in the command that continues the session in a terminal.
 Each run also keeps the model its host reports as soon as the host names it, from Claude Code's first `init` event or from the result of Codex's thread start or resume, and a launched session names the model of its latest run; a run whose host names no model, or a value longer than 128 characters or holding a control character, keeps none.
 
-### The Launched sessions place
+### The Agents page
 
-Open **Launched sessions** from the Jump palette, where its detail reads `Headless sessions on this computer`, or at the address `review?artifact=launches`.
-It lists every launched session on this computer whose checkout shares this checkout's records, the most recently launched first.
-Each session shows its initiative's title, which opens the initiative page, the host, when it was launched, its running time, which counts every second while a run runs, its state, the reason for the state, how its last run ended, and its **Stop** and **Resume** actions.
-**Runs** shows how many times the session ran when it ran more than once.
-While no run runs and the host reported its session id, the session also shows the command that continues it in a terminal, `claude --resume <session id>` or `codex resume <thread id>`, with the folder to run it in, and **Copy** copies the command.
-The place reads the list again every 5 seconds and after each action you apply there.
-Without a launched session it says `Nothing launched on this computer yet. Launch an initiative from its page.`.
+The Agents page lists every agent working on this workspace and every session launched on this computer, one row each.
+Open **Agents** from the Jump palette, or at the address `review?artifact=agents`; the old address `review?artifact=launches` opens it too.
+Its lead reads `Every agent working on this workspace, and every session launched on this computer.`.
+It lists every launched session on this computer whose checkout shares this checkout's records, and every live or expired claim on the workspace's slices that no launched session here holds.
+A launched session holds the claims its own agent takes, so its slice shows in its row rather than in a row of its own.
+
+**Show** narrows the table: **All**, **Needs you**, **This computer**, **Other sessions**, and **Expired**, each with its count.
+**This computer** shows every launched session, and the addresses `agents:needs-you`, `agents:this-computer`, `agents:other`, and `agents:expired` open the page with that choice made.
+
+The table's columns are **Agent**, **Host · model**, **Working on**, **State**, and **Time**, and a last column holds a row's one action.
+Its groups come in this order, each with its count, and a group without agents is left out:
+
+| Group | What it lists |
+| --- | --- |
+| Needs you | Launched sessions that failed, then those that wait for your answer, the latest launched first. |
+| Launched on this computer | Every other launched session, the latest launched first. |
+| Other sessions | Agents that hold a live claim, the claim that lapses first first. |
+| Claims that expired | Claims whose lease passed, the latest to lapse first. |
+
+A launched session's name is its initiative's title, which opens the initiative page, and under it the row says when it started, how its last run ended, and how many runs it had when more than one.
+A claim's name is the claim's label, such as `Dana on studio-mac`, which opens the slice it works on.
+**Host · model** names the harness and the model as `<harness> · <model>`, the harness alone without a model, and `Agent` when nothing names them.
+**Working on** says `Ended <time> ago: <reason>` for a failed session, and otherwise the activity and the slice, such as `design · Retention policy`, or the session's reason.
+**Time** is how long a launched session has run, which counts every second while it runs, `<n> min left` for a live claim, and `expired <time> ago` for an expired one.
+A session that waits offers **Answer**, which opens Attention with the question it waits on selected and its answer form shown; a running session offers **Stop**; any other session offers **Open**, which unfolds its details under its row.
+A claim offers no action.
+
+The details hold the session's reason, the command that continues it in a terminal while no run runs and the host reported its session id, `claude --resume <session id>` or `codex resume <thread id>`, with the folder to run it in and **Copy**, which copies the command, and the session's own actions, such as **Resume**.
+The page reads the list again every 5 seconds and after each action you apply there, and moves a claim to **Claims that expired** once its lease passes.
+In a tab that cannot make changes the page says so, **Stop** stays unavailable, and the details offer no action, while **Answer** still opens the question.
+With no agent and no launched session it says `No agent works on this workspace, and nothing was launched on this computer.`.
+
+A launched session's state is one of these:
 
 | State | Meaning |
 | --- | --- |

@@ -1,7 +1,7 @@
 import { createActionList, readOnlyNotice } from "./actions.js";
 import { openQuestion } from "./attention.js";
 import { coalesce } from "./poller.js";
-import { artifactLink, badge, bindLinks, emptyState, escapeHtml, formatTime } from "./util.js";
+import { badge, bindLinks, emptyState, escapeHtml } from "./util.js";
 import { agoText, timeLeft } from "../kit/claim-time.js";
 
 // The Agents page: every agent of the workspace and every session launched on this computer, one library table row each, grouped by
@@ -91,10 +91,19 @@ export function timeText(entry, now = Date.now(), elapsed = 0) {
   return timeLeft(entry.expiresAt, now).text;
 }
 
+// A start as the time of day for today, and the day and time otherwise.
+function startText(at, now) {
+  const time = Date.parse(at ?? "");
+  if (!Number.isFinite(time)) return "";
+  const date = new Date(time);
+  const clock = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return new Date(now).toDateString() === date.toDateString() ? clock : `${date.toLocaleDateString(undefined, { day: "numeric", month: "short" })} ${clock}`;
+}
+
 /** The line under a launch's name: when it started, how its last run ended, and how many runs it had when more than one. */
-export function launchFacts(launch) {
+export function launchFacts(launch, now = Date.now()) {
   if (!launch) return "";
-  return [launch.launchedAt ? `Started ${formatTime(launch.launchedAt)}` : "", exitText(launch.exit), launch.runs > 1 ? `${launch.runs} runs` : ""].filter(Boolean).join(" · ");
+  return [launch.launchedAt ? `Started ${startText(launch.launchedAt, now)}` : "", exitText(launch.exit), launch.runs > 1 ? `${launch.runs} runs` : ""].filter(Boolean).join(" · ");
 }
 
 // Within needs-you, failed before waiting; launches the latest launched first; live claims the one that lapses first first; expired ones the latest to lapse first.
@@ -127,7 +136,8 @@ function titleHtml(entry, ctx) {
   const icon = entry.kind === "launch" ? KIND_ICONS.launch : entry.group === "expired" ? KIND_ICONS.expired : KIND_ICONS.claim;
   const ref = entry.kind === "launch" ? `initiative:${entry.initiative?.id}` : entry.slice?.ref ?? `initiative:${entry.initiative?.id}`;
   const facts = entry.kind === "launch" ? launchFacts(entry.launch) : "";
-  return `<prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon><span class="prism-lib-title-text">${artifactLink(ref, ctx, entry.name ?? "")}${facts ? `<span class="prism-lib-cell is-detail">${escapeHtml(facts)}</span>` : ""}</span>`;
+  const link = ref && ctx.hasArtifact(ref) ? `<a href="./review?artifact=${encodeURIComponent(ref)}" data-artifact="${escapeHtml(ref)}">${escapeHtml(entry.name ?? "")}</a>` : `<span>${escapeHtml(entry.name ?? "")}</span>`;
+  return `<prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon><span class="prism-lib-title-text">${link}${facts ? `<span class="prism-lib-cell is-detail">${escapeHtml(facts)}</span>` : ""}</span>`;
 }
 
 function actionHtml(entry, writable) {
@@ -140,7 +150,8 @@ function actionHtml(entry, writable) {
 
 function detailsHtml(entry) {
   const command = entry.launch?.resumeCommand;
-  const reason = entry.reason ? `<p class="agents-details-reason">${escapeHtml(entry.reason)}</p>` : "";
+  // The reason shows here only when the row's Working on names the slice in its place.
+  const reason = entry.reason && !workText(entry).includes(entry.reason) ? `<p class="agents-details-reason">${escapeHtml(entry.reason)}</p>` : "";
   if (!command) return `${reason}<p class="agents-details-lead">${ticking(entry) ? "It runs now; the command that continues it in a terminal shows once it stops." : "This session has no terminal command to continue it."}</p>`;
   return `${reason}<p class="agents-details-lead">Continue it in a terminal, in <span class="agents-folder" data-code-subject>${escapeHtml(command.cwd)}</span></p>
     <div class="agents-command"><prism-code class="agents-code"><pre><code>${escapeHtml(command.command)}</code></pre></prism-code><prism-button size="sm" variant="ghost" data-copy-command tip="Copy the command">Copy</prism-button></div>`;
@@ -155,7 +166,7 @@ export async function render(container, entity, ctx) {
   container.innerHTML = `<div class="agents">
     <div class="agents-notice" data-agents-notice></div>
     <p class="error agents-error" role="alert" hidden></p>
-    <div class="agents-toolbar" data-agents-toolbar hidden><prism-segmented label="Show" value="${escapeHtml(state.show)}" data-agents-show>${showChoices}</prism-segmented></div>
+    <div class="agents-toolbar" data-agents-toolbar hidden><prism-segmented label="Show" value="${escapeHtml(state.show)}" wrap data-agents-show>${showChoices}</prism-segmented></div>
     <prism-lib-table class="agents-table" data-agents-table hidden><div class="prism-lib-row is-head" aria-hidden="true">${columns}</div></prism-lib-table>
     <div class="agents-none" data-agents-none hidden>${emptyState(EMPTY_TEXT)}</div>
   </div>`;

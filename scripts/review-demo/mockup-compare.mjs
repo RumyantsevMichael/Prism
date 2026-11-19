@@ -1,9 +1,12 @@
 // Compare the demo review app with the approved UI kit mockup, scene by scene, as side-by-side screenshots.
 // Each mockup scene is put into the same state in the app: the same kind of page, the same menu, popover, palette query, or side panel, at the same window size, theme, and density.
-// Usage: node scripts/review-demo/mockup-compare.mjs --out <directory> [--scenes attention,roadmap,slice,palette,drawer] [--widths 1440,820,390] [--themes light,dark] [--densities compact,comfortable] [--mockup <file>]
+// Usage: node scripts/review-demo/mockup-compare.mjs --out <directory> [--scenes attention,roadmap,slice,palette,drawer,agents] [--widths 1440,820,390] [--themes light,dark] [--densities compact,comfortable] [--mockup <file>]
+// The agents scene compares the Agents page with the approved pictures of its mockup, which exist at 1440 pixels in both themes and at 390 pixels in the light theme,
+// and its run seeds the demo with agents at work, which the other scenes then show too.
 // The output folder holds one `<scene>-<width>-<theme>-<density>.png` per combination, the mockup on the left and the app on the right, and an index.html that shows them in pairs.
 // Playwright is not a dependency of this repository; the comparison uses an installed copy, local or global.
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -62,6 +65,16 @@ const SCENES = {
       const navigation = page.locator("#nav-button");
       if (await navigation.isVisible()) await navigation.click();
     }
+  },
+  agents: {
+    caption: "The Agents page with every group",
+    ref: "agents",
+    // The approved mockup of this page is a set of pictures, taken at twice the pixel density, rather than a frame of the kit mockup.
+    picture: (width, theme) => {
+      const file = path.join(ROOT, "scripts/review-demo/mockups/agent-activity", `optD-page-${width}-${theme}.png`);
+      return existsSync(file) ? file : null;
+    },
+    open: (page) => page.locator("#artifact [data-agent]").first().waitFor({ timeout: 10000 })
   }
 };
 const DENSITIES = ["compact", "comfortable"];
@@ -88,6 +101,7 @@ export async function frameWindow(page, { file, scene, theme, density, height })
 }
 
 async function shootMockup(browser, mockupFile, { scene, width, theme, density }) {
+  if (SCENES[scene].picture) return readFile(SCENES[scene].picture(width, theme));
   const context = await browser.newContext({ viewport: { width, height: HEIGHT }, deviceScaleFactor: 1, colorScheme: theme });
   const page = await context.newPage();
   const frame = await frameWindow(page, { file: mockupFile, scene, theme, density, height: HEIGHT });
@@ -137,7 +151,7 @@ async function compose(browser, { mockup, app, width, title }) {
   const image = (buffer) => `data:image/png;base64,${buffer.toString("base64")}`;
   await page.setContent(`<!doctype html><html><body style="margin:0;background:#8a8f98;font:600 14px system-ui,sans-serif;color:#fff">
     <div style="display:grid;grid-template-columns:${width}px ${width}px;gap:${gap}px">
-      <div><div style="height:${label}px;display:flex;align-items:center;padding:0 8px;white-space:nowrap;overflow:hidden">Mockup · ${title}</div><img style="display:block" src="${image(mockup)}"></div>
+      <div><div style="height:${label}px;display:flex;align-items:center;padding:0 8px;white-space:nowrap;overflow:hidden">Mockup · ${title}</div><img style="display:block;width:${width}px" src="${image(mockup)}"></div>
       <div><div style="height:${label}px;display:flex;align-items:center;padding:0 8px;white-space:nowrap;overflow:hidden">App · ${title}</div><img style="display:block" src="${image(app)}"></div>
     </div></body></html>`);
   await page.evaluate(() => Promise.all([...document.images].map((img) => img.decode())));
@@ -205,7 +219,7 @@ async function main() {
   const entries = [];
   try {
     const projectRoot = path.join(parent, "demo");
-    execFileSync(process.execPath, [path.join(ROOT, "scripts/review-demo/seed.mjs"), projectRoot], { stdio: "ignore" });
+    execFileSync(process.execPath, [path.join(ROOT, "scripts/review-demo/seed.mjs"), projectRoot, ...(scenes.includes("agents") ? ["--agents", appDirectory] : [])], { stdio: "ignore" });
     const { startStandaloneReview } = await import(pathToFileURL(path.join(ROOT, "dist/server/review/review-server-pool.mjs")).href);
     const env = { ...process.env, PRISM_REVIEW_APP_DIR: appDirectory, PLUGIN_DATA: path.join(parent, "demo-data") };
     delete env.PRISM_REVIEW_APP;
@@ -215,7 +229,9 @@ async function main() {
     project.url.search = "";
 
     // The review app stores one theme and density for every page it serves, and shares its open page between browsers, so the combinations run one after another.
-    const jobs = densities.flatMap((density) => scenes.flatMap((scene) => widths.flatMap((width) => themes.map((theme) => ({ scene, width, theme, density })))));
+    // A scene compared with pictures runs only at the widths and themes it has a picture of.
+    const jobs = densities.flatMap((density) => scenes.flatMap((scene) => widths.flatMap((width) => themes.map((theme) => ({ scene, width, theme, density })))))
+      .filter((job) => !SCENES[job.scene].picture || SCENES[job.scene].picture(job.width, job.theme));
     for (const job of jobs) {
       const stored = await fetch(new URL("api/preferences", project.url), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ theme: job.theme, density: job.density }) });
       if (!stored.ok) throw new Error(`The review app did not store the ${job.theme} theme and ${job.density} density (${stored.status}).`);
