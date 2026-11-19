@@ -26,6 +26,7 @@ import { shippedCommit, sliceFiles } from "./slice-files.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
 import { listLaunches } from "../session/launched-sessions.mjs";
+import { listAgents } from "./agents.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 import { readStoredPreferences, writePreferences } from "./review-preferences.mjs";
 import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
@@ -1517,6 +1518,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     } else if (route === "/api/launches" && request.method === "GET") {
       // Every launched session of this machine that shares this checkout's record store; reading needs no write session.
       sendJson(response, 200, await listLaunches({ projectRoot, env: process.env }));
+    } else if (route === "/api/agents" && request.method === "GET") {
+      // Every agent once: this computer's launched sessions and the workspace's claims that none of them holds; reading needs no write session.
+      sendJson(response, 200, await listAgents({ projectRoot, env: process.env }));
     } else if (route === "/api/actions/targets" && request.method === "GET") {
       try {
         sendJson(response, 200, await listActionTargets({ projectRoot, kind: url.searchParams.get("kind"), checkouts: await checkoutRoots() }));

@@ -311,17 +311,20 @@ async function computeRoadmapView(projectRoot) {
   };
 }
 
-// Every live and lapsed claim of the roadmap's initiatives and of the unlisted ones, in one read, for the page's claim index.
+// Every live and lapsed claim of the roadmap's initiatives and of the unlisted ones, in one read, for the page's claim index, which names no holder.
 export function loadClaims(projectRoot) {
-  return remember(`claims:${projectRoot}`, () => computeClaims(projectRoot));
+  return remember(`claims:${projectRoot}`, async () => ({ claims: (await loadHeldClaims(projectRoot)).claims.map(({ holder, ...claim }) => claim) }));
+}
+
+/** The same claims with each one's holder, for the agents list, which matches a launched session to the claims it holds and never shows the holder. */
+export function loadHeldClaims(projectRoot) {
+  return remember(`held-claims:${projectRoot}`, () => computeClaims(projectRoot));
 }
 
 async function computeClaims(projectRoot) {
   const roadmap = await loadRoadmapView(projectRoot);
-  const initiatives = [
-    ...roadmap.items.map((item) => ({ id: item.id, title: item.title ?? item.id, claims: item.claims })),
-    ...await Promise.all(roadmap.unlisted.map(async (id) => ({ id, title: id, claims: sliceClaims(await claimedSlices(projectRoot, id)) })))
-  ];
+  const listed = [...roadmap.items.map((item) => ({ id: item.id, title: item.title ?? item.id })), ...roadmap.unlisted.map((id) => ({ id, title: id }))];
+  const initiatives = await Promise.all(listed.map(async ({ id, title }) => ({ id, title, claims: sliceClaims(await claimedSlices(projectRoot, id), { holders: true }) })));
   return { claims: initiatives.flatMap(({ id, title, claims }) => claims.map((claim) => ({ ref: `slice:${id}/${claim.slug}`, initiative: id, initiativeTitle: title, ...claim }))) };
 }
 
@@ -345,18 +348,18 @@ async function withExpiredClaims(projectRoot, id, read) {
     const { claim } = parseClaim(slice, bytes);
     if (!claim || isLive(claim, now) || !Object.hasOwn(slices, slice) || slices[slice].claim) continue;
     copy ??= { ...slices };
-    copy[slice] = { ...slices[slice], expiredClaim: { label: claim.label, ...(claim.host ? { host: claim.host } : {}), ...(claim.model ? { model: claim.model } : {}), activity: claim.activity, claimedAt: claim.claimedAt, expiresAt: claim.expiresAt } };
+    copy[slice] = { ...slices[slice], expiredClaim: { holder: claim.holder, label: claim.label, ...(claim.host ? { host: claim.host } : {}), ...(claim.model ? { model: claim.model } : {}), activity: claim.activity, claimedAt: claim.claimedAt, expiresAt: claim.expiresAt } };
   }
   return copy ? { ...read, loaded: { ...read.loaded, record: { ...read.loaded.record, slices: copy } } } : read;
 }
 
-// The claims of an initiative's slices: each slice's live claim, or the claim that lapsed without a release, with the slice's title and parent.
-function sliceClaims(slices) {
+// The claims of an initiative's slices: each slice's live claim, or the claim that lapsed without a release, with the slice's title, and with holders each claim's holder.
+function sliceClaims(slices, { holders = false } = {}) {
   const claims = [];
   for (const [slug, slice] of Object.entries(slices ?? {})) {
     const claim = slice?.claim ?? slice?.expiredClaim;
     if (!claim || typeof claim.label !== "string") continue;
-    claims.push({ slug, sliceTitle: slice.title ?? slug, label: claim.label, host: typeof claim.host === "string" ? claim.host : null, model: typeof claim.model === "string" ? claim.model : null, activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null, expired: !slice.claim });
+    claims.push({ slug, sliceTitle: slice.title ?? slug, ...(holders ? { holder: typeof claim.holder === "string" ? claim.holder : null } : {}), label: claim.label, host: typeof claim.host === "string" ? claim.host : null, model: typeof claim.model === "string" ? claim.model : null, activity: claim.activity === "design" ? "design" : "implementation", claimedAt: claim.claimedAt ?? null, renewedAt: claim.renewedAt ?? null, expiresAt: claim.expiresAt ?? null, expired: !slice.claim });
   }
   return claims;
 }
