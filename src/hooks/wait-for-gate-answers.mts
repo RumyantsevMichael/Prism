@@ -7,7 +7,7 @@ import { takeWaitRequest } from "../server/workflow/gate-wait-requests.mjs";
 
 const MAX_HOOK_INPUT_BYTES = 4 * 1024 * 1024;
 
-async function readHookInput(input) {
+async function readHookInput(input: any) {
   const chunks = [];
   let size = 0;
   for await (const chunk of input) {
@@ -22,7 +22,7 @@ async function readHookInput(input) {
 // A host that cannot wait during a tool call, such as Codex, gets the wait here: wait_for_user_gate recorded it for this session,
 // and blocking the stop with the answers continues the turn as if the tool call had returned them.
 // Without a recorded wait, as always under Claude Code, the hook returns at once and lets the turn stop.
-export async function waitForGateAnswers({ input = process.stdin, directory, pollMs, settleMs } = {}) {
+export async function waitForGateAnswers({ input = process.stdin, directory, pollMs, settleMs }: any = {}) {
   const hookInput = JSON.parse(await readHookInput(input));
   if (hookInput.hook_event_name && hookInput.hook_event_name !== "Stop") return null;
   const sessionId = typeof hookInput.session_id === "string" ? hookInput.session_id : null;

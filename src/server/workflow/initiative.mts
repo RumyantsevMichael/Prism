@@ -315,7 +315,7 @@ function publicResult(resolved: any, loaded: any) {
   };
 }
 
-export async function readInitiative(projectRoot: string, initiative: string) {
+export async function readInitiative(projectRoot: string, initiative: string): Promise<any> {
   const resolved = await resolveInitiative(projectRoot, initiative);
   return { resolved, loaded: await loadRecord(resolved) };
 }

@@ -15,7 +15,7 @@ export function preferencesPath(env = process.env) {
   return path.join(reviewAppDirectory(env), PREFERENCES_FILE);
 }
 
-function invalid(message) {
+function invalid(message: any) {
   return Object.assign(new Error(message), { code: "invalid_preference" });
 }
 
@@ -29,14 +29,14 @@ export async function readPreferences(env = process.env) {
 }
 
 /** Throws invalid_preference unless the change is an object that gives one or more preferences, each with a value that fits it. */
-export function validatePreferenceChange(change) {
+export function validatePreferenceChange(change: any) {
   const checked = checkPreferenceChange(change);
   if (checked.error) throw invalid(checked.error);
   return checked.change;
 }
 
 // Writes of one process run one after another, so two quick choices never lose either value.
-let queue = Promise.resolve();
+let queue: Promise<any> = Promise.resolve();
 
 /** The stored preferences once every write this process started has finished, so a page that reloads right after a choice reads it. */
 export function readStoredPreferences(env = process.env) {
@@ -44,7 +44,7 @@ export function readStoredPreferences(env = process.env) {
 }
 
 /** Stores the given values, keeps the stored value of a key the change leaves out, and returns the full stored preferences. */
-export function writePreferences(change, env = process.env) {
+export function writePreferences(change: any, env = process.env) {
   const valid = validatePreferenceChange(change);
   const write = queue.then(async () => {
     const next = { ...(await readPreferences(env)), ...valid };

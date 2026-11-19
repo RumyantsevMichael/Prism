@@ -2,10 +2,10 @@
 // The first read waits for the value; a read within ttlMs answers the kept value, and a later read answers it too while one computation renews it behind.
 // invalidate() is for an event known to change the value: the next read waits for a new computation, and a computation started before it is discarded.
 // ttlMs may be a function of the last computation's duration, so a value that is slow to compute on a slow machine is renewed less often.
-export function createCachedValue(compute, { ttlMs, now = Date.now }) {
-  const ttl = (entry) => typeof ttlMs === "function" ? ttlMs(entry.ms) : ttlMs;
-  let entry = null;
-  let pending = null;
+export function createCachedValue(compute: any, { ttlMs, now = Date.now }: { ttlMs: any; now?: any }) {
+  const ttl = (entry: any) => typeof ttlMs === "function" ? ttlMs(entry.ms) : ttlMs;
+  let entry: any = null;
+  let pending: any = null;
   let generation = 0;
 
   function renew() {

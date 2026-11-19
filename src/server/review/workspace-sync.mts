@@ -13,13 +13,13 @@ const FAILED = new Set(["fetch_failed", "git_failed", "not_a_repository"]);
 const FETCHED = new Set(["ok", "conflicts", "push_rejected", "merge_failed"]);
 
 /** Git's reason, from its last line that says something, without credentials and without Git's own fatal: or error: prefix. */
-export function gitReason(message) {
+export function gitReason(message: any) {
   const lines = withoutCredentials(String(message ?? "")).split("\n").map((line) => line.trim()).filter(Boolean);
   const line = lines.findLast((item) => /^(fatal|error):/i.test(item)) ?? lines.at(-1) ?? "";
   return line.replace(/^(fatal|error):\s*/i, "") || "Git gave no reason";
 }
 
-const iso = (time) => time === null ? null : new Date(time).toISOString();
+const iso = (time: any) => time === null ? null : new Date(time).toISOString();
 
 /**
  * The fetch timer of one workspace: { viewers(count), state(), stop() }.
@@ -28,17 +28,17 @@ const iso = (time) => time === null ? null : new Date(time).toISOString();
  * sync(base) runs one record store sync, which commits the app's own record writes, fetches and merges the upstream, and pushes.
  * fetchCode() fetches the code clones of the workspace's repositories whose code content is on, after the store's sync and whatever its outcome, and never changes the store's sync state.
  */
-export function watchWorkspace({ base, label, intervalMs = WORKSPACE_FETCH_MS, maxMs = WORKSPACE_FETCH_MAX_MS, sync = syncRecordStore, fetchCode = async () => {}, now = Date.now } = {}) {
+export function watchWorkspace({ base, label, intervalMs = WORKSPACE_FETCH_MS, maxMs = WORKSPACE_FETCH_MAX_MS, sync = syncRecordStore, fetchCode = async () => {}, now = Date.now }: any = {}) {
   let connected = 0;
-  let timer = null;
-  let running = null;
+  let timer: any = null;
+  let running: any = null;
   let stopped = false;
   // wait is the wait after the latest attempt, and dueAt when the next fetch is due, which a page that reconnects during a backoff keeps.
   let wait = intervalMs;
-  let dueAt = null;
-  let lastAttemptAt = null;
-  let lastSyncedAt = null;
-  let failure = null;
+  let dueAt: any = null;
+  let lastAttemptAt: any = null;
+  let lastSyncedAt: any = null;
+  let failure: any = null;
   // A restarted app takes the time of the last fetch that succeeded from the store's own sync status, once.
   let restored = null;
 
@@ -95,7 +95,7 @@ export function watchWorkspace({ base, label, intervalMs = WORKSPACE_FETCH_MS, m
   }
 
   return {
-    viewers(count) {
+    viewers(count: number) {
       const before = connected;
       connected = Math.max(0, count);
       if (connected === 0) {

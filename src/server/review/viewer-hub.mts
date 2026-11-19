@@ -16,16 +16,16 @@ const STREAM_HEADERS = {
 };
 const TAB_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
 
-export function writeEvent(response, event, data) {
+export function writeEvent(response: any, event: any, data: any) {
   response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
 // The responses that are event streams, which stay open while their page does.
 const streams = new WeakSet();
 /** Whether a response is an event stream, whose length tells nothing about how fast the app answers. */
-export const isEventStream = (response) => streams.has(response);
+export const isEventStream = (response: any) => streams.has(response);
 
-export function openEventStream(response, onGone, heartbeatMs = HEARTBEAT_MS) {
+export function openEventStream(response: any, onGone: any, heartbeatMs = HEARTBEAT_MS) {
   streams.add(response);
   response.writeHead(200, STREAM_HEADERS);
   response.flushHeaders();
@@ -44,10 +44,10 @@ export function openEventStream(response, onGone, heartbeatMs = HEARTBEAT_MS) {
 
 /** The streams of one origin, the review app or a session server, and the tabs that joined each for a project. */
 // onChange runs whenever the tabs that joined change, as when a tab joins or leaves or its browser closes the stream.
-export function createViewerHub({ heartbeatMs = HEARTBEAT_MS, onChange = null } = {}) {
+export function createViewerHub({ heartbeatMs = HEARTBEAT_MS, onChange = null }: any = {}) {
   const streams = new Map();
 
-  function drop(id) {
+  function drop(id: string) {
     const stream = streams.get(id);
     if (!stream) return;
     clearInterval(stream.heartbeat);
@@ -55,7 +55,7 @@ export function createViewerHub({ heartbeatMs = HEARTBEAT_MS, onChange = null } 
     if (stream.members.size) onChange?.();
   }
 
-  function deliver(stream, event, data) {
+  function deliver(stream: any, event: any, data: any) {
     try {
       writeEvent(stream.response, event, data);
     } catch {
@@ -66,16 +66,16 @@ export function createViewerHub({ heartbeatMs = HEARTBEAT_MS, onChange = null } 
 
   return {
     /** Opens a stream on response and names it in its first event, `hub`, which the opening tab passes to the others. */
-    open(response) {
+    open(response: any) {
       const id = randomBytes(18).toString("base64url");
-      const stream = { id, response, members: new Map(), heartbeat: null };
+      const stream: any = { id, response, members: new Map(), heartbeat: null };
       streams.set(id, stream);
       stream.heartbeat = openEventStream(response, () => drop(id), heartbeatMs);
       writeEvent(response, "hub", { stream: id });
       return id;
     },
     /** Adds a tab to a stream for a project; false when the stream is gone, the tab id is malformed, or the stream is full. */
-    join(id, tab, project, writable) {
+    join(id: string, tab: any, project: any, writable: any) {
       const stream = streams.get(id);
       if (!stream || typeof tab !== "string" || !TAB_PATTERN.test(tab)) return false;
       if (!stream.members.has(tab) && stream.members.size >= MEMBER_LIMIT) return false;
@@ -83,22 +83,22 @@ export function createViewerHub({ heartbeatMs = HEARTBEAT_MS, onChange = null } 
       onChange?.();
       return true;
     },
-    leave(id, tab) {
+    leave(id: string, tab: any) {
       if (streams.get(id)?.members.delete(tab)) onChange?.();
     },
     /** Writes one project event to every stream with a tab of that project, once per stream. */
-    notify(project, event, data) {
+    notify(project: any, event: any, data: any) {
       for (const stream of [...streams.values()]) {
         if ([...stream.members.values()].some((member) => member.project === project)) deliver(stream, event, { project, data });
       }
     },
     /** Writes one project event to one stream only, such as the session snapshot a joining tab starts from. */
-    send(id, project, event, data) {
+    send(id: string, project: any, event: any, data: any) {
       const stream = streams.get(id);
       if (stream) deliver(stream, event, { project, data });
     },
     /** The tabs of a project across every stream, or only those that carry a write session. */
-    count(project, { writable = false } = {}) {
+    count(project: any, { writable = false }: any = {}) {
       let count = 0;
       for (const stream of streams.values()) {
         for (const member of stream.members.values()) if (member.project === project && (!writable || member.writable)) count += 1;

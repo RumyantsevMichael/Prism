@@ -17,20 +17,20 @@ const LEASE_RENEW_MS = 60 * 1000;
 // Tabs of a replaced app reconnect within a few seconds, so a start that replaced one waits before it decides whether a tab is open.
 const RECONNECT_GRACE_MS = 5000;
 
-const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const sleep = (milliseconds: number) => new Promise<any>((resolve) => setTimeout(resolve, milliseconds));
 
-function failure(message, reachable, fields = {}) {
+function failure(message: any, reachable: any, fields: any = {}) {
   return Object.assign(new Error(message), { reachable, ...fields });
 }
 
 // A request the app did not prove it answered counts as unreachable, so the client never acts on another listener's reply.
 // The whole exchange has one deadline and a size limit, so a listener that trickles or floods bytes cannot hold a tool call.
 // With `alive`, a request past its deadline asks whether the app is still running, and waits up to busyMs more for a running one.
-function controlRequest(discovery, method, route, body, timeoutMs = REQUEST_TIMEOUT_MS, { alive = null, busyMs = BUSY_TIMEOUT_MS } = {}) {
-  return new Promise((settle, fail) => {
-    let deadline = null, done = false;
-    const resolve = (value) => { done = true; clearTimeout(deadline); settle(value); };
-    const reject = (error) => { done = true; clearTimeout(deadline); fail(error); };
+function controlRequest(discovery: any, method: string, route: string, body?: any, timeoutMs = REQUEST_TIMEOUT_MS, { alive = null, busyMs = BUSY_TIMEOUT_MS }: any = {}) {
+  return new Promise<any>((settle, fail) => {
+    let deadline: any = null, done = false;
+    const resolve = (value: any) => { done = true; clearTimeout(deadline); settle(value); };
+    const reject = (error: any) => { done = true; clearTimeout(deadline); fail(error); };
     const text = body === undefined ? "" : JSON.stringify(body);
     const signed = signRequest(discovery.controlToken, method, route, text);
     const request = http.request({
@@ -41,7 +41,7 @@ function controlRequest(discovery, method, route, body, timeoutMs = REQUEST_TIME
       headers: { "X-Prism-Control": signed.header, ...(text ? { "Content-Type": "application/json" } : {}) }
     }, (response) => {
       response.once("error", (error) => reject(Object.assign(error, { reachable: false })));
-      const chunks = [];
+      const chunks: any[] = [];
       let size = 0;
       response.on("data", (chunk) => {
         size += chunk.length;
@@ -61,12 +61,12 @@ function controlRequest(discovery, method, route, body, timeoutMs = REQUEST_TIME
           reject(failure("The review app returned an invalid response.", true));
           return;
         }
-        if (response.statusCode >= 200 && response.statusCode < 300) resolve(value);
+        if (response!.statusCode! >= 200 && response!.statusCode! < 300) resolve(value);
         else reject(Object.assign(failure(value.message ?? `The review app answered ${response.statusCode}.`, true), { status: response.statusCode }));
       });
     });
     // Destroying a request whose response already started does not always surface an error, so the promise settles first.
-    function abandon(message, fields = {}) {
+    function abandon(message: any, fields: any = {}) {
       reject(Object.assign(failure(message, false), fields));
       request.destroy();
     }
@@ -85,7 +85,7 @@ function controlRequest(discovery, method, route, body, timeoutMs = REQUEST_TIME
 }
 
 // Starts the detached app outside any project, so it holds no project directory open and outlives this session.
-export function launchReviewApp({ directory }) {
+export function launchReviewApp({ directory }: { directory: string }) {
   try {
     const child = spawn(process.execPath, [pluginPath("dist", "server", "review-app.mjs")], {
       cwd: homedir(),
@@ -102,7 +102,7 @@ export function launchReviewApp({ directory }) {
   }
 }
 
-async function lockCleared(directory, deadline) {
+async function lockCleared(directory: string, deadline: any) {
   while (Date.now() < deadline) {
     try {
       await access(lockPath(directory));
@@ -118,19 +118,19 @@ async function lockCleared(directory, deadline) {
 // It never replaces a newer app, so sessions of two installed versions settle on the newer one instead of replacing each other.
 // Every registration and presentation names the evidence store, index storage, and managed record-store clones this process uses, so the app reads each project's
 // evidence, indexing state, and remote record store from them.
-export function createReviewAppClient({ directory = reviewAppDirectory(), launch = launchReviewApp, startTimeoutMs = START_TIMEOUT_MS, busyTimeoutMs = BUSY_TIMEOUT_MS, reconnectGraceMs = RECONNECT_GRACE_MS, pluginVersion = installedVersion(), evidenceDirectory, intelligenceDirectory, recordStoreDirectory } = {}) {
-  const storage = Object.fromEntries(Object.entries({ evidenceDirectory, intelligenceDirectory, recordStoreDirectory }).filter(([, value]) => value !== undefined));
-  let current = null;
+export function createReviewAppClient({ directory = reviewAppDirectory(), launch = launchReviewApp, startTimeoutMs = START_TIMEOUT_MS, busyTimeoutMs = BUSY_TIMEOUT_MS, reconnectGraceMs = RECONNECT_GRACE_MS, pluginVersion = installedVersion(), evidenceDirectory, intelligenceDirectory, recordStoreDirectory }: any = {}) {
+  const storage = Object.fromEntries(Object.entries<any>({ evidenceDirectory, intelligenceDirectory, recordStoreDirectory }).filter(([, value]) => value !== undefined));
+  let current: any = null;
   let connecting = null;
   let replaced = false;
   const leases = new Map();
 
-  const remaining = (deadline) => Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now());
+  const remaining = (deadline: any) => Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now());
 
-  const alive = (discovery) => () => appAlive(directory, discovery);
+  const alive = (discovery: any) => () => appAlive(directory, discovery);
 
   // With patience, a running app that answers late is still found, instead of being taken for a missing one.
-  async function proven(candidate, deadline, { patient = false } = {}) {
+  async function proven(candidate: any, deadline: any, { patient = false }: any = {}) {
     if (!candidate || remaining(deadline) <= 0) return null;
     try {
       const health = await controlRequest(candidate, "GET", "/control/health", undefined, remaining(deadline), patient ? { alive: alive(candidate), busyMs: busyTimeoutMs } : {});
@@ -157,7 +157,7 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
     const child = launch({ directory });
     // An app that loses the start race to another session's app exits on purpose, so an exit only explains a start that never answers.
     let exited = null;
-    child?.once?.("exit", (code, signal) => { exited = signal ? `on ${signal}` : `with code ${code}`; });
+    child?.once?.("exit", (code: any, signal: any) => { exited = signal ? `on ${signal}` : `with code ${code}`; });
     while (Date.now() < deadline) {
       await sleep(POLL_MS);
       const started = await proven(await readDiscovery(directory), deadline);
@@ -175,7 +175,7 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
 
   // One retry covers an app that exited or was replaced since this client last reached it; a reachable app's refusal is final,
   // and so is a running app that stayed busy past the longer wait, which a new connection would only wait for again.
-  async function call(method, route, body) {
+  async function call(method: string, route: string, body: any) {
     const target = await app();
     try {
       return await controlRequest(target, method, route, body, REQUEST_TIMEOUT_MS, { alive: alive(target), busyMs: busyTimeoutMs });
@@ -186,21 +186,21 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
     }
   }
 
-  async function renew(projectRoot) {
+  async function renew(projectRoot: string) {
     return call("PUT", `/control/projects/${leases.get(projectRoot).id}`, { projectRoot, ...storage });
   }
 
   // Each renewal names the project, so a replacement app learns every live project at the next renewal.
   // A lease whose first registration fails is dropped, so a session that fell back never keeps launching apps.
-  async function register(projectRoot) {
+  async function register(projectRoot: string) {
     if (leases.has(projectRoot)) return renew(projectRoot);
-    const lease = { id: randomUUID(), timer: null };
+    const lease: any = { id: randomUUID(), timer: null };
     leases.set(projectRoot, lease);
     try {
       const answer = await renew(projectRoot);
       if (leases.get(projectRoot) === lease) {
         lease.timer = setInterval(() => void renew(projectRoot).catch(() => {}), LEASE_RENEW_MS);
-        lease.timer.unref();
+        lease!.timer.unref();
       }
       return answer;
     } catch (error) {
@@ -210,7 +210,7 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
   }
 
   // A project that falls back to its own server stops renewing, so the app never lists it live and is never relaunched for it.
-  function release(projectRoot) {
+  function release(projectRoot: string) {
     const lease = leases.get(projectRoot);
     if (!lease) return;
     leases.delete(projectRoot);
@@ -218,12 +218,12 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
     if (current) void controlRequest(current, "DELETE", `/control/projects/${lease.id}`).catch(() => {});
   }
 
-  function present(projectRoot, { tabs, group, by, open }) {
+  function present(projectRoot: string, { tabs, group, by, open }: { tabs: any; group: any; by: any; open: any }) {
     return call("POST", "/control/present", { projectRoot, ...(tabs === undefined ? {} : { tabs }), ...(group === undefined ? {} : { group }), ...(by ? { by } : {}), open, acceptsGrant: true, ...storage });
   }
 
   // Opens a browser at session start only while no tab of any project is connected, so many sessions open at most one window.
-  async function openAtStart(projectRoot) {
+  async function openAtStart(projectRoot: string) {
     await register(projectRoot);
     if (replaced) await sleep(reconnectGraceMs);
     return call("POST", "/control/present", { projectRoot, open: true, start: true, acceptsGrant: true, ...storage });

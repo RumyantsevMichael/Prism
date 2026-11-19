@@ -32,7 +32,7 @@ export async function recordSessionFacts({
   input = process.stdin,
   environment = process.env,
   adapter = null
-} = {}) {
+}: any = {}) {
   const inputText = await readHookInput(input);
   const parsedInput = JSON.parse(inputText);
   const hookInput = { ...parsedInput };

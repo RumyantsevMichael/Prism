@@ -11,7 +11,7 @@ const KEPT_TOKENS = 100;
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 export const WRITE_SESSIONS_FILE = "write-sessions.json";
 
-const digest = (value) => createHash("sha256").update(value).digest("hex");
+const digest = (value: any) => createHash("sha256").update(value).digest("hex");
 const credential = () => randomBytes(32).toString("base64url");
 
 /**
@@ -19,13 +19,13 @@ const credential = () => randomBytes(32).toString("base64url");
  * Only SHA-256 digests of grants and tokens are held, in memory and, with a directory, in its private file, so no file reveals a credential.
  * restore accepts the digests the directory's file holds, which only an app that starts from a handoff does; any other start begins with none and clears the file.
  */
-export async function createWriteSessions({ directory = null, restore = false, now = Date.now } = {}) {
+export async function createWriteSessions({ directory = null, restore = false, now = Date.now }: any = {}) {
   const grants = new Map();
-  let tokens = [];
+  let tokens: any[] = [];
   const file = directory ? path.join(directory, WRITE_SESSIONS_FILE) : null;
   if (file && restore) {
     const saved = await readFile(file, "utf8").then(parseStoreJson, () => null);
-    if (Array.isArray(saved?.tokens)) tokens = saved.tokens.filter((value) => typeof value === "string" && /^[0-9a-f]{64}$/.test(value)).slice(-KEPT_TOKENS);
+    if (Array.isArray(saved?.tokens)) tokens = saved.tokens.filter((value: any) => typeof value === "string" && /^[0-9a-f]{64}$/.test(value)).slice(-KEPT_TOKENS);
   }
   let saving = Promise.resolve();
   function save() {
@@ -50,7 +50,7 @@ export async function createWriteSessions({ directory = null, restore = false, n
       return grant;
     },
     // Consumes a live grant and answers a new token, or null for a used, expired, or unknown grant.
-    async exchange(grant) {
+    async exchange(grant: any) {
       sweep();
       if (typeof grant !== "string" || !TOKEN.test(grant) || !grants.delete(digest(grant))) return null;
       const token = credential();
@@ -59,14 +59,14 @@ export async function createWriteSessions({ directory = null, restore = false, n
       return token;
     },
     // Whether a token is a live write session of this server or app.
-    valid(token) {
+    valid(token: string) {
       return typeof token === "string" && TOKEN.test(token) && tokens.includes(digest(token));
     }
   };
 }
 
 /** The URL that Prism opens: the review URL with the grant in its fragment, which never reaches a server. */
-export function withWriteGrant(url, grant) {
+export function withWriteGrant(url: string, grant: any) {
   if (!grant) return url;
   const value = new URL(url);
   value.hash = `write=${grant}`;

@@ -55,17 +55,17 @@ const backgroundPreparation = () => import("../repository-intelligence/backgroun
 const REBUILD_QUIET_MS = 60 * 1000;
 const REBUILD_GAP_MS = 5 * 60 * 1000;
 
-function isInside(root, target) {
+function isInside(root: string, target: string) {
   const relative = path.relative(root, target);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 // A resolved file is served only inside its root and never from a Git folder there, so a tracked symlink cannot show what the checkout's .git holds.
-function servableFrom(root, resolved) {
+function servableFrom(root: string, resolved: any) {
   return isInside(root, resolved) && !path.relative(root, resolved).split(path.sep).some((segment) => segment.toLowerCase() === ".git");
 }
 
-async function resolveProjectFile(projectRoot, requestedPath) {
+async function resolveProjectFile(projectRoot: string, requestedPath: any) {
   if (!requestedPath || path.isAbsolute(requestedPath)) {
     throw new Error("The artifact path must be relative to the project root.");
   }
@@ -81,9 +81,9 @@ async function resolveProjectFile(projectRoot, requestedPath) {
   return resolved;
 }
 
-function configuredRoots(config) {
+function configuredRoots(config: any) {
   const roots = new Set(["docs"]);
-  for (const value of Object.values(config.paths)) {
+  for (const value of Object.values<any>(config.paths)) {
     if (value) {
       roots.add(path.posix.extname(value) ? path.posix.dirname(value) : value);
     }
@@ -91,7 +91,7 @@ function configuredRoots(config) {
   return [...roots].filter((value) => value && value !== ".");
 }
 
-async function walkArtifacts(projectRoot, relativeRoot, results) {
+async function walkArtifacts(projectRoot: string, relativeRoot: any, results: any) {
   // An unavailable record store or a refused repository name hides only the records, so human documents still list.
   const located = await resolveRecordFile(projectRoot, relativeRoot).catch((error) => { if (recordsUnavailable(error)) return null; throw error; });
   if (!located) {
@@ -129,13 +129,13 @@ const LISTING_MIN_MS = 5000;
 const LISTING_FACTOR = 5;
 const SECRET_NAME = /^(\.env(\..*)?|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|\.npmrc|\.pypirc|\.netrc|credentials(\.json)?)$|\.(pem|key|p12|pfx|jks|keystore|kdbx|gpg|asc)$/i;
 /** Whether review sources leave a path out as a secret by its file name, such as .env or a private key. */
-export const secretPath = (file) => SECRET_NAME.test(path.posix.basename(String(file)));
+export const secretPath = (file: string) => SECRET_NAME.test(path.posix.basename(String(file)));
 /** Whether review sources leave a path out as a binary file by its extension. */
-export const binaryPath = (file) => BINARY_EXTENSION.test(path.posix.basename(String(file)));
+export const binaryPath = (file: string) => BINARY_EXTENSION.test(path.posix.basename(String(file)));
 const BINARY_EXTENSION = /\.(png|jpe?g|gif|webp|ico|bmp|pdf|zip|gz|tgz|bz2|xz|7z|rar|jar|war|class|pyc|so|dylib|dll|exe|wasm|woff2?|ttf|otf|eot|mp3|mp4|mov|avi|sqlite|db)$/i;
 
-function gitListFiles(projectRoot) {
-  return new Promise((resolve) => {
+function gitListFiles(projectRoot: string) {
+  return new Promise<any>((resolve) => {
     execFile("git", ["-C", projectRoot, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (error, stdout) => {
       resolve(error ? [] : stdout.split("\0").filter(Boolean));
     });
@@ -144,12 +144,12 @@ function gitListFiles(projectRoot) {
 
 // Source files are shown read-only: tracked or unignored files only, without secrets, binaries, or very large files.
 // A few file checks run at once, which shortens the listing on a file system where each check waits, such as a Windows drive under WSL.
-export async function listSourceFiles(projectRoot) {
-  const candidates = (await gitListFiles(projectRoot)).filter((file) => {
+export async function listSourceFiles(projectRoot: string) {
+  const candidates = (await gitListFiles(projectRoot)).filter((file: string) => {
     const name = path.posix.basename(file);
     return !SECRET_NAME.test(name) && !BINARY_EXTENSION.test(name);
   });
-  const files = [];
+  const files: any[] = [];
   const root = await realpath(projectRoot).catch(() => path.resolve(projectRoot));
   let next = 0;
   const check = async () => {
@@ -173,13 +173,13 @@ export async function listSourceFiles(projectRoot) {
 // The review page polls the project's listing every few seconds, so the server answers from its last listing and renews it behind,
 // at most as often as five times the time a listing took, so a project whose listing is slow is not listed again and again.
 const listings = new Map();
-function reviewListing(projectRoot) {
+function reviewListing(projectRoot: string) {
   let listing = listings.get(projectRoot);
   if (!listing) {
     listing = createCachedValue(async () => {
       const [artifacts, sources] = await Promise.all([listCheckoutArtifacts(projectRoot), listReviewSources(projectRoot)]);
       return { artifacts, sources };
-    }, { ttlMs: (ms) => Math.max(LISTING_MIN_MS, LISTING_FACTOR * ms) });
+    }, { ttlMs: (ms: number) => Math.max(LISTING_MIN_MS, LISTING_FACTOR * ms) });
     listings.set(projectRoot, listing);
   }
   return listing;
@@ -188,12 +188,12 @@ function reviewListing(projectRoot) {
 // A wanted file whose presence on disk disagrees with the kept listing, such as one an agent has just written, moved, or deleted, lists the project again,
 // so a few checked files keep the listing honest without listing the whole project on every request.
 // The listing keeps only what the checkout holds; a store's artifacts, which another process's tool call can change at any time, are listed on every request.
-async function listedFiles(projectRoot, wanted = []) {
+async function listedFiles(projectRoot: string, wanted: any[] = []) {
   const listing = reviewListing(projectRoot);
   let value = await listing.get();
   const isArtifact = await artifactPathTest(projectRoot);
   const files = wanted.filter((file) => typeof file === "string" && file !== "attention" && !parseEntityRef(file) && !isArtifact(file));
-  const listed = (file) => value.artifacts.includes(file) || value.sources.includes(file);
+  const listed = (file: string) => value.artifacts.includes(file) || value.sources.includes(file);
   const present = await Promise.all(files.map((file) => stat(path.join(projectRoot, file)).then((info) => info.isFile(), () => false)));
   if (files.some((file, index) => listed(file) !== present[index])) {
     listing.invalidate();
@@ -204,7 +204,7 @@ async function listedFiles(projectRoot, wanted = []) {
 
 // With a record store, the descriptive artifacts the checkout sees come from the store, by path, while the checkout's own files under those paths are not artifacts.
 // An unavailable store or a refused repository name lists no artifact, and never the checkout's files in their place; null means the project names no store.
-async function storeArtifactEntries(projectRoot) {
+async function storeArtifactEntries(projectRoot: string) {
   return listStoreArtifacts(projectRoot).catch((error) => {
     if (recordsUnavailable(error) || error?.name === "ArtifactError") return [];
     throw error;
@@ -212,26 +212,26 @@ async function storeArtifactEntries(projectRoot) {
 }
 
 /** Why the record store cannot serve the checkout's artifacts, as describeRecordStore reports it with the store named as configured, or null when it can or the project names no store. */
-async function artifactStoreRefusal(projectRoot) {
+async function artifactStoreRefusal(projectRoot: string) {
   return (await describeRecordStore(projectRoot).catch(() => null))?.unavailable ?? null;
 }
 
 // The checkout's tracked files under its artifact paths that an available store does not hold, which the browser shows beside the store's status; the browser itself never moves them:
 // awaitingMove counts those that an agent's tool call still moves or reports, and keptInCheckout those that a move kept for a person to settle.
-async function checkoutArtifactsOf(projectRoot, store) {
+async function checkoutArtifactsOf(projectRoot: string, store: any) {
   if (store.kind === "project" || store.unavailable) return {};
   return artifactsInCheckout(projectRoot);
 }
 
 /** The source files the review shows, without a checkout file at an artifact path of a project with a store, which is never the artifact. */
-async function listReviewSources(projectRoot) {
+async function listReviewSources(projectRoot: string) {
   const isArtifact = await artifactPathTest(projectRoot);
   return (await listSourceFiles(projectRoot)).filter((file) => !isArtifact(file));
 }
 
 /** The store ref, store:<location>, of each store artifact the checkout sees, by path; a path that several scopes hold names the first by label. */
-async function storeArtifactRefs(projectRoot) {
-  const refs = {};
+async function storeArtifactRefs(projectRoot: string) {
+  const refs: Record<string, any> = {};
   for (const entry of await storeArtifactEntries(projectRoot) ?? []) {
     if (Object.hasOwn(refs, entry.path)) continue;
     const location = await artifactStoreLocation(projectRoot, entry).catch(() => null);
@@ -241,32 +241,32 @@ async function storeArtifactRefs(projectRoot) {
 }
 
 /** An open tab of a workspace's review: a store artifact that the checkout names by its path becomes store:<location>, and every other tab stays as it is. */
-export async function storeTabRef(projectRoot, tab) {
+export async function storeTabRef(projectRoot: string, tab: any) {
   if (typeof tab !== "string" || tab.startsWith("store:") || parseEntityRef(tab) || !(await inArtifactStore(projectRoot, tab).catch(() => false))) return tab;
   const found = await storeArtifactLocation(projectRoot, tab).catch(() => null);
   return found ? `store:${found.location}` : tab;
 }
 
 /** The scope label of each store artifact the checkout sees, by path, or an empty object without a store; a path that several scopes hold names the first by label. */
-export async function listArtifactScopes(projectRoot) {
-  const scopes = {};
+export async function listArtifactScopes(projectRoot: string) {
+  const scopes: Record<string, any> = {};
   for (const entry of await storeArtifactEntries(projectRoot) ?? []) scopes[entry.path] ??= entry.scope.label;
   return scopes;
 }
 
-export async function listArtifacts(projectRoot) {
+export async function listArtifacts(projectRoot: string) {
   return withStoreArtifacts(projectRoot, await listCheckoutArtifacts(projectRoot));
 }
 
 // The artifacts the checkout itself holds, without a checkout file at an artifact path of a project with a store, which is never the artifact.
-async function listCheckoutArtifacts(projectRoot) {
+async function listCheckoutArtifacts(projectRoot: string) {
   const config = await readWorkflowConfig(projectRoot);
   const results = new Set();
   for (const root of configuredRoots(config)) {
     await walkArtifacts(projectRoot, root, results);
   }
   const isArtifact = await artifactPathTest(projectRoot);
-  for (const file of [...results]) if (isArtifact(file)) results.delete(file);
+  for (const file of [...results]) if (isArtifact((file as any))) results.delete(file);
   // Machine records live under .prism, which the walk above skips as a hidden folder.
   await walkArtifacts(projectRoot, `${RECORD_DIRECTORY}/initiatives`, results);
   const roadmap = recordPath({ kind: "roadmap" });
@@ -276,10 +276,10 @@ async function listCheckoutArtifacts(projectRoot) {
 
 // A workspace's page names each store artifact by its store location, store:<location>, never by a checkout's path, and lists the artifacts of every scope the store holds.
 const STORE_REF = "store:";
-const storeRefOf = (location) => `${STORE_REF}${location}`;
+const storeRefOf = (location: any) => `${STORE_REF}${location}`;
 
 // Every scope's artifacts in the store that a workspace's page reads through, or null when the page reads no store or its store cannot serve them.
-async function workspaceStoreArtifacts(projectRoot) {
+async function workspaceStoreArtifacts(projectRoot: string) {
   return workspaceArtifacts(projectRoot).catch((error) => {
     if (recordsUnavailable(error) || error?.name === "ArtifactError") return null;
     throw error;
@@ -288,34 +288,34 @@ async function workspaceStoreArtifacts(projectRoot) {
 
 // Scopes listed workspace first and then by label.
 // The folder of a scope below artifacts/ with its trailing slash, or "" for the workspace scope.
-const scopePrefix = (scope) => scope.kind === "workspace" ? "" : scope.kind === "repository" ? `repositories/${scope.repository}/` : `repositories/${scope.repository}/components/${scope.component}/`;
+const scopePrefix = (scope: any) => scope.kind === "workspace" ? "" : scope.kind === "repository" ? `repositories/${scope.repository}/` : `repositories/${scope.repository}/components/${scope.component}/`;
 
-const byScope = (left, right) => left.kind === "workspace" ? -1 : right.kind === "workspace" ? 1 : left.label < right.label ? -1 : left.label > right.label ? 1 : 0;
+const byScope = (left: any, right: any) => left.kind === "workspace" ? -1 : right.kind === "workspace" ? 1 : left.label < right.label ? -1 : left.label > right.label ? 1 : 0;
 
 /**
  * The store part of a workspace page's index: refs, the store:<location> of each artifact the page shows, artifactScopes, each ref's scope label, scopes, the scopes that hold an artifact with their counts,
  * and, when filter names scope labels, scopeFilter, the labels it applied in the order given, and unknownScopes, the labels no scope of the store has, with refs narrowed to the applied scopes;
  * notes says when the store holds no artifacts/ folder yet, naming the repositories that keep their artifacts in their checkouts.
  */
-async function workspaceIndex(projectRoot, stored, filter, repositories) {
-  const listed = stored.entries.filter((entry) => TEXT_EXTENSIONS.has(path.posix.extname(entry.location).toLowerCase()));
+async function workspaceIndex(projectRoot: string, stored: any, filter: any, repositories: any) {
+  const listed = stored.entries.filter((entry: any) => TEXT_EXTENSIONS.has(path.posix.extname(entry.location).toLowerCase()));
   const counts = new Map();
   for (const entry of listed) counts.set(entry.scope.label, (counts.get(entry.scope.label) ?? 0) + 1);
-  const scopes = stored.scopes.filter((scope) => counts.has(scope.label)).sort(byScope)
-    .map((scope) => ({ kind: scope.kind, label: scope.label, repository: scope.repository ?? null, component: scope.component ?? null, artifacts: counts.get(scope.label) }));
-  const result = { scopes, notes: [] };
+  const scopes = stored.scopes.filter((scope: any) => counts.has(scope.label)).sort(byScope)
+    .map((scope: any) => ({ kind: scope.kind, label: scope.label, repository: scope.repository ?? null, component: scope.component ?? null, artifacts: counts.get(scope.label) }));
+  const result: any = { scopes, notes: [] };
   let shown = listed;
   if (filter !== null) {
-    const known = new Set(stored.scopes.map((scope) => scope.label));
+    const known = new Set(stored.scopes.map((scope: any) => scope.label));
     const given = [...new Set(filter)];
     result.scopeFilter = given.filter((label) => known.has(label));
     result.unknownScopes = given.filter((label) => !known.has(label));
     const applied = new Set(result.scopeFilter);
-    shown = listed.filter((entry) => applied.has(entry.scope.label));
+    shown = listed.filter((entry: any) => applied.has(entry.scope.label));
   }
-  result.every = listed.map((entry) => storeRefOf(entry.location));
-  result.refs = shown.map((entry) => storeRefOf(entry.location));
-  result.artifactScopes = Object.fromEntries(shown.map((entry) => [storeRefOf(entry.location), entry.scope.label]));
+  result.every = listed.map((entry: any) => storeRefOf(entry.location));
+  result.refs = shown.map((entry: any) => storeRefOf(entry.location));
+  result.artifactScopes = Object.fromEntries(shown.map((entry: any) => [storeRefOf(entry.location), entry.scope.label]));
   if (!stored.held) {
     const names = await repositories();
     const named = names.length ? names.join(", ") : "Each repository";
@@ -326,14 +326,14 @@ async function workspaceIndex(projectRoot, stored, filter, repositories) {
 }
 
 // The scope labels that an index request's scopes parameter names, or null when it names none.
-function scopeFilterOf(url) {
+function scopeFilterOf(url: any) {
   if (!url.searchParams.has("scopes")) return null;
-  const labels = url.searchParams.get("scopes").split(",").map((label) => label.trim()).filter(Boolean);
+  const labels = url.searchParams.get("scopes").split(",").map((label: string) => label.trim()).filter(Boolean);
   return labels.length ? labels : null;
 }
 
 // The checkout's artifacts with the text artifacts that the store's scopes hold, as the store lists them now.
-async function withStoreArtifacts(projectRoot, local) {
+async function withStoreArtifacts(projectRoot: string, local: any) {
   const stored = await storeArtifactEntries(projectRoot);
   if (stored === null) return local;
   const results = new Set(local);
@@ -346,7 +346,7 @@ const SEARCH_LINE_LIMIT = 3;
 const SEARCH_SNIPPET = 160;
 const SEARCH_SIZE_LIMIT = 1024 * 1024;
 
-function snippet(line, token) {
+function snippet(line: string, token: string) {
   const text = line.trim();
   if (text.length <= SEARCH_SNIPPET) return text;
   const start = Math.max(0, text.toLowerCase().indexOf(token) - 40);
@@ -354,33 +354,33 @@ function snippet(line, token) {
 }
 
 // A search query's lowercase words, or null when they hold fewer than two characters in all.
-function searchTokens(query) {
+function searchTokens(query: any) {
   const tokens = String(query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
   return tokens.length && tokens.join("").length >= 2 ? tokens : null;
 }
 
 // How a text matches a query's words: null unless every word occurs in it, else its score, which ranks a name that holds every word and lines that hold them all together first,
 // and its first matching lines, those with the most words first.
-function matchText(content, tokens, name) {
+function matchText(content: any, tokens: any, name: string) {
   const lower = content.toLowerCase();
-  if (!tokens.every((token) => lower.includes(token))) return null;
-  const matches = [];
+  if (!tokens.every((token: string) => lower.includes(token))) return null;
+  const matches: any[] = [];
   let complete = 0;
-  content.split(/\r?\n/).forEach((line, index) => {
+  content.split(/\r?\n/).forEach((line: string, index: number) => {
     const lowerLine = line.toLowerCase();
-    const hits = tokens.filter((token) => lowerLine.includes(token)).length;
+    const hits = tokens.filter((token: string) => lowerLine.includes(token)).length;
     if (!hits) return;
     if (hits === tokens.length) complete += 1;
-    matches.push({ line: index + 1, text: snippet(line, tokens.find((token) => lowerLine.includes(token))), hits });
+    matches.push({ line: index + 1, text: snippet(line, tokens.find((token: string) => lowerLine.includes(token))), hits });
   });
   matches.sort((left, right) => right.hits - left.hits || left.line - right.line);
-  const nameHit = tokens.every((token) => name.toLowerCase().includes(token));
+  const nameHit = tokens.every((token: string) => name.toLowerCase().includes(token));
   return { score: (nameHit ? 1000 : 0) + complete * 10 + matches.length, matches: matches.slice(0, SEARCH_LINE_LIMIT).map(({ line, text }) => ({ line, text })) };
 }
 
 // Full-text search over the Prism artifacts the review lists, never over source files: every term must occur in a file,
 // and files whose lines hold all terms together rank first.
-export async function searchArtifacts(projectRoot, query) {
+export async function searchArtifacts(projectRoot: string, query: any) {
   const tokens = searchTokens(query);
   if (!tokens) return { query: query ?? "", results: [] };
   const results = [];
@@ -405,7 +405,7 @@ export async function searchArtifacts(projectRoot, query) {
 }
 
 // Full-text search over a workspace's store artifacts of every scope, matched as a checkout's search matches its artifacts, each result { ref, scope, matches }.
-async function searchStoreArtifacts(projectRoot, stored, tokens) {
+async function searchStoreArtifacts(projectRoot: string, stored: any, tokens: any) {
   const results = [];
   for (const entry of stored?.entries ?? []) {
     if (!TEXT_EXTENSIONS.has(path.posix.extname(entry.location).toLowerCase())) continue;
@@ -422,20 +422,20 @@ const SEARCH_PATH_LIMIT = 50;
 
 // The shortest folders and files of a checkout's review sources that lie outside every declared component's folder and hold none of them,
 // which select only the root component's index in a component search, or null when more are needed than one search takes.
-function rootComponentPaths(sources, folders) {
-  const inside = (file, folder) => file === folder || file.startsWith(`${folder}/`);
+function rootComponentPaths(sources: any, folders: any) {
+  const inside = (file: string, folder: string) => file === folder || file.startsWith(`${folder}/`);
   const paths = new Set();
   for (const file of sources) {
-    if (folders.some((folder) => inside(file, folder))) continue;
+    if (folders.some((folder: string) => inside(file, folder))) continue;
     const parts = file.split("/");
     let prefix = parts[0];
-    for (let depth = 1; depth < parts.length && folders.some((folder) => inside(folder, prefix)); depth += 1) prefix = `${prefix}/${parts[depth]}`;
+    for (let depth = 1; depth < parts.length && folders.some((folder: string) => inside(folder, prefix)); depth += 1) prefix = `${prefix}/${parts[depth]}`;
     paths.add(prefix);
   }
   return paths.size <= SEARCH_PATH_LIMIT ? [...paths].sort() : null;
 }
 
-function linkedDiagramPaths(artifactPath, content) {
+function linkedDiagramPaths(artifactPath: string, content: any) {
   const directory = path.posix.dirname(artifactPath.split(path.sep).join("/"));
   const links = new Set();
   for (const match of content.matchAll(/\[[^\]]*\]\(([^)]+\.puml)\)/gi)) {
@@ -450,11 +450,11 @@ function linkedDiagramPaths(artifactPath, content) {
   return [...links];
 }
 
-function isRecord(value) {
+function isRecord(value: any) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-export function artifactKind(artifactPath, data) {
+export function artifactKind(artifactPath: string, data: any) {
   const name = path.posix.basename(artifactPath.split(path.sep).join("/"));
   if (!isRecord(data)) {
     return "json";
@@ -471,7 +471,7 @@ export function artifactKind(artifactPath, data) {
   return "json";
 }
 
-async function loadJsonArtifact(projectRoot, artifactPath, content) {
+async function loadJsonArtifact(projectRoot: string, artifactPath: string, content: any) {
   let data;
   try {
     data = parseStoreJson(content);
@@ -479,7 +479,7 @@ async function loadJsonArtifact(projectRoot, artifactPath, content) {
     return { kind: "json", parseError: error.message };
   }
   const kind = artifactKind(artifactPath, data);
-  const result = { kind, data };
+  const result: any = { kind, data };
   if (kind === "change-map") {
     try {
       const key = await keyOfPath(projectRoot, artifactPath);
@@ -492,12 +492,12 @@ async function loadJsonArtifact(projectRoot, artifactPath, content) {
   }
   if (kind === "review-ledger") {
     const key = await keyOfPath(projectRoot, artifactPath).catch(() => null);
-    result.runTotals = key?.kind === "review" ? await readReviewRunTotals(projectRoot, key) : null;
+    result.runTotals = key?.kind === "review" ? await readReviewRunTotals(projectRoot, (key as any)) : null;
   }
   return result;
 }
 
-function truncateArrays(value, location, truncated) {
+function truncateArrays(value: any, location: any, truncated: any): any {
   if (Array.isArray(value)) {
     if (value.length > EVIDENCE_ARRAY_LIMIT) {
       truncated[location || "/"] = value.length;
@@ -505,12 +505,12 @@ function truncateArrays(value, location, truncated) {
     return value.slice(0, EVIDENCE_ARRAY_LIMIT).map((item, index) => truncateArrays(item, `${location}/${index}`, truncated));
   }
   if (isRecord(value)) {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, truncateArrays(item, `${location}/${key}`, truncated)]));
+    return Object.fromEntries(Object.entries<any>(value).map(([key, item]) => [key, truncateArrays(item, `${location}/${key}`, truncated)]));
   }
   return value;
 }
 
-export async function loadEvidence(projectRoot, evidenceId, store = conservationStore) {
+export async function loadEvidence(projectRoot: string, evidenceId: any, store = conservationStore) {
   if (typeof evidenceId !== "string" || !/^[a-f0-9]{64}$/.test(evidenceId)) {
     throw new Error("The evidence ID must be a 64-character lowercase hexadecimal digest.");
   }
@@ -521,7 +521,7 @@ export async function loadEvidence(projectRoot, evidenceId, store = conservation
 
 // A store artifact is read from the store, and every other file from the project or the record store as its path decides.
 // An unavailable store or a refused repository name throws its refusal rather than read the checkout's file.
-async function readReviewed(projectRoot, file) {
+async function readReviewed(projectRoot: string, file: any) {
   if (await inArtifactStore(projectRoot, file)) {
     const stored = await readStoreArtifact(projectRoot, file);
     if (stored === null) throw Object.assign(new Error(`${file} is not in the record store.`), { code: "ENOENT" });
@@ -533,14 +533,14 @@ async function readReviewed(projectRoot, file) {
 
 // What the review view shows of a store artifact beside its content: its scope, version, the version a person last accepted with its text, whether it changed since, and its comments.
 // The comments come one page at a time, from the 1-based commentOffset, with their total and the offset of the next page.
-async function reviewedStoreArtifact(projectRoot, file, options) {
+async function reviewedStoreArtifact(projectRoot: string, file: string, options: any) {
   const stored = await reviewStoreArtifact(projectRoot, file, options);
   if (stored === null) throw Object.assign(new Error(`${file} is not in the record store.`), { code: "ENOENT" });
   const { scope, version, accepted, changed, comments, totalComments, nextCommentOffset } = stored;
   return { content: stored.bytes.toString("utf8"), modifiedAt: stored.modifiedAt, artifact: { scope, version, accepted, changed, comments, totalComments, nextCommentOffset } };
 }
 
-export async function loadArtifact(projectRoot, artifactPath, { commentOffset = 1 } = {}) {
+export async function loadArtifact(projectRoot: string, artifactPath: string, { commentOffset = 1 }: any = {}) {
   if (await inArtifactStore(projectRoot, artifactPath)) {
     const { content, modifiedAt, artifact } = await reviewedStoreArtifact(projectRoot, artifactPath, { commentOffset });
     if (path.extname(artifactPath).toLowerCase() === ".json") return { path: artifactPath, content, diagrams: [], modifiedAt, artifact, ...(await loadJsonArtifact(projectRoot, artifactPath, content)) };
@@ -562,7 +562,7 @@ export async function loadArtifact(projectRoot, artifactPath, { commentOffset = 
   return { path: artifactPath, content, diagrams: await linkedDiagrams(projectRoot, artifactPath, content), modifiedAt: metadata.mtimeMs };
 }
 
-async function linkedDiagrams(projectRoot, artifactPath, content) {
+async function linkedDiagrams(projectRoot: string, artifactPath: string, content: any) {
   const diagrams = [];
   for (const diagramPath of linkedDiagramPaths(artifactPath, content)) {
     try {
@@ -577,7 +577,7 @@ async function linkedDiagrams(projectRoot, artifactPath, content) {
   return diagrams;
 }
 
-export function isTrustedHost(host) {
+export function isTrustedHost(host: any) {
   try {
     return TRUSTED_HOSTS.has(new URL(`http://${host}`).hostname);
   } catch {
@@ -585,7 +585,7 @@ export function isTrustedHost(host) {
   }
 }
 
-export function send(response, statusCode, body, contentType = "text/plain; charset=utf-8") {
+export function send(response: any, statusCode: any, body: any, contentType = "text/plain; charset=utf-8") {
   response.writeHead(statusCode, {
     "Content-Type": contentType,
     "Cache-Control": "no-store",
@@ -596,7 +596,7 @@ export function send(response, statusCode, body, contentType = "text/plain; char
   response.end(body);
 }
 
-async function serveFile(response, filePath, contentType) {
+async function serveFile(response: any, filePath: string, contentType: any) {
   try {
     send(response, 200, await readFile(filePath), contentType);
   } catch (error) {
@@ -609,7 +609,7 @@ async function serveFile(response, filePath, contentType) {
 }
 
 /** Whether a request is a browser loading a page, as opposed to a script, a stylesheet, or a call from the page. */
-export function wantsPage(request) {
+export function wantsPage(request: any) {
   if (request.method !== "GET" && request.method !== "HEAD") return false;
   const destination = request.headers["sec-fetch-dest"];
   if (destination) return destination === "document";
@@ -619,7 +619,7 @@ export function wantsPage(request) {
 const UNAVAILABLE_REASONS = new Set(["expired", "empty"]);
 
 /** The page for a link the review app cannot open: one without the current viewer credential ("expired") or an app with no project yet ("empty"). */
-export async function sendUnavailable(response, reason) {
+export async function sendUnavailable(response: any, reason: string) {
   const page = await readFile(path.join(PUBLIC_DIR, "unavailable.html"), "utf8");
   send(response, 404, page.replace("{{reason}}", UNAVAILABLE_REASONS.has(reason) ? reason : "expired"), "text/html; charset=utf-8");
 }
@@ -628,7 +628,7 @@ export async function sendUnavailable(response, reason) {
  * Answers a request that carries no current viewer credential. Only the kit's files and the marks, which hold no project data, are served,
  * and a page load gets the page that says the link no longer works, so a stale tab or a bare address shows the app's own page rather than a line of text.
  */
-export async function serveOutsideSession(request, response, pathname) {
+export async function serveOutsideSession(request: any, response: any, pathname: string) {
   if (pathname === "/favicon.svg" || pathname === "/prism-mark.svg") {
     await serveFile(response, path.join(PUBLIC_DIR, pathname.slice(1)), "image/svg+xml");
     return;
@@ -651,7 +651,7 @@ export async function serveOutsideSession(request, response, pathname) {
 export const EXPIRED_LINK_HEADER = "X-Prism-Link";
 
 // The file and type of a route under kit/ or styles/, or null for a path that leaves its folder, is not a known type, or is not a styles/<name>.css.
-export function publicAsset(route) {
+export function publicAsset(route: string) {
   const folder = route.startsWith("/kit/") ? "kit" : route.startsWith("/styles/") ? "styles" : null;
   if (!folder) return null;
   let relative;
@@ -669,7 +669,7 @@ export function publicAsset(route) {
   return isInside(root, file) ? { file, type: ASSET_TYPES.get(extension) } : null;
 }
 
-export function openBrowser(url) {
+export function openBrowser(url: any) {
   const platform = process.platform;
   // cmd.exe's start would read an & in the URL's query as a second command, so Windows opens the URL through the shell's URL handler.
   const command = platform === "darwin" ? "open" : platform === "win32" ? "rundll32" : "xdg-open";
@@ -686,7 +686,7 @@ export function openBrowser(url) {
 }
 
 /** The open tabs whose file the review no longer lists, or whose entity no longer resolves, in tab order. */
-export async function findMissingTabs(tabs, available, entityResolves) {
+export async function findMissingTabs(tabs: any, available: any, entityResolves: any) {
   const missing = [];
   for (const tab of tabs) {
     if (parseEntityRef(tab) ? !(await entityResolves(tab)) : !available.has(tab)) missing.push(tab);
@@ -695,7 +695,7 @@ export async function findMissingTabs(tabs, available, entityResolves) {
 }
 
 /** Each tab on a record that Prism moved from a legacy location, mapped to the record's current path by the record store's own mapping. */
-export async function movedRecordTabs(projectRoot, tabs, available) {
+export async function movedRecordTabs(projectRoot: string, tabs: any, available: any) {
   const moves = new Map();
   for (const tab of tabs) {
     if (available.has(tab) || parseEntityRef(tab)) continue;
@@ -707,7 +707,7 @@ export async function movedRecordTabs(projectRoot, tabs, available) {
   return moves;
 }
 
-export function normalizeTabs(value) {
+export function normalizeTabs(value: any) {
   if (value === undefined) {
     return [];
   }
@@ -718,13 +718,13 @@ export function normalizeTabs(value) {
   return [...new Set(tabs)];
 }
 
-function copyGroups(groups) {
-  return groups.map((group) => ({ name: group.name, tabs: [...group.tabs], collapsed: group.collapsed, ...(group.opener ? { opener: { ...group.opener } } : {}) }));
+function copyGroups(groups: any) {
+  return groups.map((group: any) => ({ name: group.name, tabs: [...group.tabs], collapsed: group.collapsed, ...(group.opener ? { opener: { ...group.opener } } : {}) }));
 }
 
 // A page's groups name open tabs, each tab in one group at most, with names that differ.
 // Who opened a group is the review app's record, never the page's: a group keeps the opener the session has under its name.
-function checkGroups(value, openTabs, follow = (tab) => tab, openers = new Map()) {
+function checkGroups(value: any, openTabs: any, follow = (tab: any) => tab, openers = new Map()) {
   if (!Array.isArray(value) || value.length > GROUP_LIMIT) {
     throw new Error(`The tab groups must be an array of at most ${GROUP_LIMIT} groups.`);
   }
@@ -749,7 +749,7 @@ function checkGroups(value, openTabs, follow = (tab) => tab, openers = new Map()
 }
 
 // Reads a request body of at most 64 KiB as text; the review app needs the exact text because control requests sign it.
-export async function readBody(request) {
+export async function readBody(request: any) {
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
@@ -766,7 +766,7 @@ export async function readBody(request) {
 // An approval of an artifact that changed since it was asked, of an id that more than one pending gate holds, an approval or comment by a checkout whose Git names no user,
 // or a comment on a file that already holds the comments a file may hold, conflicts with the store as it is,
 // and a store that cannot be used answers an approval or comment target with its own refusal as unavailable, as an artifact read does.
-const ACTION_STATUS = {
+const ACTION_STATUS: Record<string, any> = {
   unknown_target: 404,
   unknown_action: 404,
   stale_revision: 409,
@@ -797,11 +797,11 @@ const ACTION_STATUS = {
 const ACTION_FIELDS = ["current", "reason", "field", "accepted"];
 export const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
 
-export function sendJson(response, statusCode, body) {
+export function sendJson(response: any, statusCode: any, body: any) {
   send(response, statusCode, JSON.stringify(body), "application/json; charset=utf-8");
 }
 
-function sendActionError(response, error) {
+function sendActionError(response: any, error: any) {
   if (error?.name === "ActionError" && error.unavailable === true) {
     sendJson(response, 503, { code: error.code, message: withoutCredentials(error.message) });
     return;
@@ -812,7 +812,7 @@ function sendActionError(response, error) {
 }
 
 // A write comes from the review page itself: JSON, and an Origin, when the browser sends one, of the same host.
-export function fromPage(request) {
+export function fromPage(request: any) {
   const origin = request.headers.origin;
   if (String(request.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase() !== "application/json") return false;
   if (!origin) return true;
@@ -823,7 +823,7 @@ export function fromPage(request) {
   }
 }
 
-export async function readJson(request) {
+export async function readJson(request: any) {
   const text = await readBody(request);
   try {
     return parseStoreJson(text);
@@ -833,7 +833,7 @@ export async function readJson(request) {
 }
 
 /** Exchange the one-time grant of a tab that Prism opened, from its URL fragment, for the write session the tab keeps. */
-export async function exchangeWriteGrant(request, response, writeSessions) {
+export async function exchangeWriteGrant(request: any, response: any, writeSessions: any) {
   if (!fromPage(request)) {
     sendJson(response, 403, { code: "origin_refused", message: "A write session must be requested by the review page as JSON." });
     return;
@@ -851,7 +851,7 @@ export async function exchangeWriteGrant(request, response, writeSessions) {
  * Answer a route of the review page itself, its scripts, styles, kit, and the person's preferences, which every page of a server or app shares,
  * and resolve to whether the route was one of them.
  */
-export async function servePageRoute(request, response, route) {
+export async function servePageRoute(request: any, response: any, route: string) {
   if (route === "/" || route === "/review") {
     await serveFile(response, path.join(PUBLIC_DIR, "review.html"), "text/html; charset=utf-8");
   } else if (route === "/review.js") {
@@ -909,9 +909,9 @@ export async function servePageRoute(request, response, route) {
 // its open tabs then name each store artifact by its store location, store:<location>, never by a checkout path, and projectRoot is the checkout it reads through, which useCheckout(root) changes.
 // hub holds the shared viewer streams of the origin that serves this page; the review app passes one hub to every workspace and closes it itself, and a session server keeps its own.
 export function createProjectReview({ projectRoot, baseUrl, instance = null, appVersion = null, onViewer = null, onAction = null, evidenceStore = () => conservationStore, intelligenceDirectories = () => [nativeSemanticRuntime.directory], privateServer = null, writeSessions = null, workspace = null, hub: sharedHub = null,
-  rebuildIndex = (root, component, options = {}) => backgroundPreparation().then((module) => module.startIndexRebuild(root, { ...(component ? { component: { identity: component.identity, folder: component.folder } } : {}), ...options })), autoRebuild = (root) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }) {
+  rebuildIndex = (root: string, component: any, options: any = {}) => backgroundPreparation().then((module) => module.startIndexRebuild(root, { ...(component ? { component: { identity: component.identity, folder: component.folder } } : {}), ...options })), autoRebuild = (root: string) => backgroundPreparation().then((module) => module.backgroundIndexingEnabled(root)), rebuildTiming = { quietMs: REBUILD_QUIET_MS, gapMs: REBUILD_GAP_MS, freshnessMs: FRESHNESS_CHECK_MS } }: { projectRoot: string; baseUrl: any; instance?: any; appVersion?: any; onViewer?: any; onAction?: any; evidenceStore?: any; intelligenceDirectories?: any; privateServer?: any; writeSessions?: any; workspace?: any; hub?: any; rebuildIndex?: any; autoRebuild?: any; rebuildTiming?: any }) {
   const hub = sharedHub ?? createViewerHub();
-  let fingerprint = null;
+  let fingerprint: any = null;
   function currentFingerprint() {
     if (!fingerprint || Date.now() - fingerprint.at >= rebuildTiming.freshnessMs) fingerprint = { at: Date.now(), value: gitFingerprint(projectRoot).catch(() => null) };
     return fingerprint.value;
@@ -941,8 +941,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   // A person's request rebuilds only its own component, starts at once, and ignores the background opt-out, because it is not in the background.
   // A workspace's page also lists the components of its other checkouts on this machine, whose status each one's own index storage holds.
   const indexer = {
-    status: async (root, component) => componentIndexingStatus(root === projectRoot ? await indexingStatus() : await readIndexingStatus(root, intelligenceDirectories()), component),
-    rebuild: async (root, component) => {
+    status: async (root: string, component: any) => componentIndexingStatus(root === projectRoot ? await indexingStatus() : await readIndexingStatus(root, intelligenceDirectories()), component),
+    rebuild: async (root: string, component: any) => {
       if (await isStoreWithoutCheckout(root)) return;
       rebuild.startedAt = Date.now();
       Promise.resolve(rebuildIndex(root, component)).catch(() => {});
@@ -952,14 +952,14 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   // follows what an agent presents and its own choices, never another window's.
   // groups name sets of open tabs, such as the tabs an agent presented for one piece of work: each group's tabs stay side by side in openTabs,
   // in the order openTabs gives them, and a collapsed group shows only its name and its selected tab.
-  let session = { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], groups: [], activeSource: null, revision: 0 };
+  let session: Record<string, any> = { openTabs: [], activeTab: null, previewTab: null, agentTabs: [], groups: [], activeSource: null, revision: 0 };
   // Each viewer stream maps to its heartbeat and whether it carries a live write session; only writable streams count as connected tabs.
   // The review page joins the origin's shared stream instead, as a member of the hub under this page's path, and counts the same way.
   const viewers = new Map();
   const hubKey = `${new URL(baseUrl).pathname}/`;
-  let viewerOpenLease = null;
-  const canWrite = (token) => Boolean(writeSessions?.valid(token));
-  const writableRequest = (request) => canWrite(request.headers["x-prism-write"]);
+  let viewerOpenLease: any = null;
+  const canWrite = (token: string) => Boolean(writeSessions?.valid(token));
+  const writableRequest = (request: any) => canWrite(request.headers["x-prism-write"]);
 
   function sessionSnapshot() {
     const snapshot = { openTabs: [...session.openTabs], activeTab: session.activeTab, previewTab: session.previewTab, agentTabs: [...session.agentTabs], groups: copyGroups(session.groups), activeSource: session.activeSource, revision: session.revision };
@@ -981,7 +981,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     viewerOpenLease.unref();
   }
 
-  function removeViewer(response) {
+  function removeViewer(response: any) {
     const viewer = viewers.get(response);
     if (!viewer) {
       return;
@@ -996,7 +996,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     workspace?.viewers?.(viewers.size + hub.count(hubKey));
   }
 
-  function notify(event, data) {
+  function notify(event: any, data: any) {
     hub.notify(hubKey, event, data);
     for (const response of viewers.keys()) {
       try {
@@ -1008,23 +1008,23 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     }
   }
 
-  function openViewerStream(response, writable) {
+  function openViewerStream(response: any, writable: any) {
     const heartbeat = openEventStream(response, () => removeViewer(response));
     viewers.set(response, { heartbeat, writable });
     reportViewers();
     if (writable) clearViewerOpenLease();
     writeEvent(response, "session", sessionSnapshot());
-    onViewer?.((event, data) => writeEvent(response, event, data));
+    onViewer?.((event: any, data: any) => writeEvent(response, event, data));
   }
 
   // A tab joins the shared stream with its own write session, which decides whether it counts as a writable tab, exactly as its own stream would.
   // It starts from the session snapshot and the pending notices, sent on the shared stream for this page only.
-  function joinHub(stream, tab, writable) {
+  function joinHub(stream: any, tab: any, writable: any) {
     if (!hub.join(stream, tab, hubKey, writable)) return false;
     reportViewers();
     if (writable) clearViewerOpenLease();
     hub.send(stream, hubKey, "session", sessionSnapshot());
-    onViewer?.((event, data) => hub.send(stream, hubKey, event, data));
+    onViewer?.((event: any, data: any) => hub.send(stream, hubKey, event, data));
     return true;
   }
 
@@ -1037,7 +1037,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   async function reviewableFiles(wanted = []) {
     const { artifacts, sources } = await listedFiles(projectRoot, wanted);
     const stored = workspace ? await workspaceStoreArtifacts(projectRoot) : null;
-    const refs = stored ? stored.entries.map((entry) => storeRefOf(entry.location)) : [];
+    const refs = stored ? stored.entries.map((entry: any) => storeRefOf(entry.location)) : [];
     return new Set([...artifacts, ...sources, ...refs, ...await codeRefs()]);
   }
 
@@ -1067,14 +1067,14 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   // A workspace page's read of a code file by its ref, answered as a checkout's read of a review source is, from a registered checkout of that repository whose review sources list the path.
-  async function serveCodeFile(response, ref, code) {
+  async function serveCodeFile(response: any, ref: any, code: any) {
     for (const member of await workspace?.checkouts?.() ?? []) {
       if (member.repository !== code.repository) continue;
-      if (!(await listReviewSources(member.root).catch(() => [])).includes(code.path)) continue;
+      if (!(await listReviewSources(member.root).catch((): any[] => [])).includes((code.path as any))) continue;
       let loaded;
       try { loaded = await loadArtifact(member.root, code.path); }
       catch (error) { if (error.code === "ENOENT") continue; throw error; }
-      const diagrams = (loaded.diagrams ?? []).map((diagram) => ({ ...diagram, path: codeRefOf(code.repository, diagram.path) }));
+      const diagrams = (loaded.diagrams ?? []).map((diagram: any) => ({ ...diagram, path: codeRefOf(code.repository, diagram.path) }));
       send(response, 200, JSON.stringify({ ...loaded, diagrams, ref, path: ref, file: code.path, repository: code.repository }), "application/json; charset=utf-8");
       return;
     }
@@ -1092,13 +1092,13 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   // A code file that a clone holds but does not show answers 404 with why, so the page says the file is not shown rather than gone.
-  function withheldAnswer(read) {
+  function withheldAnswer(read: any) {
     const why = read.withheld === "binary" ? "it is a binary file" : "it is over 512 KiB";
     return { code: "file_not_shown", reason: read.withheld, message: `${read.path} is not available here because ${why}, which the review app does not show.` };
   }
 
   // The code routes of a workspace's page, which read the code clones Prism keeps and never answer a URL of a Git host.
-  async function serveCode(response, route, url) {
+  async function serveCode(response: any, route: string, url: any) {
     const repository = url.searchParams.get("repository");
     if (!workspace?.code || !repository || !(await storeRepositories()).includes(repository)) {
       sendJson(response, 404, { code: "repository_unknown", message: "The workspace has no repository of that name." });
@@ -1137,7 +1137,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     const own = await isStoreWithoutCheckout(projectRoot) ? [] : [{ root: projectRoot, repository: null }];
     const store = await recordStoreOf(projectRoot).catch(() => null);
     const folder = store?.external ? await realpath(store.base).catch(() => store.base) : null;
-    return checkoutsOnMachine([...own, ...await workspace.checkouts?.() ?? []], folder);
+    return checkoutsOnMachine([...own, ...await workspace.checkouts?.() ?? []], (folder as any));
   }
 
   // The roots of the checkouts whose components a page offers as index targets, or null for a checkout's own page.
@@ -1147,11 +1147,11 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
 
   // A workspace's Knowledge search: the store artifacts of every scope that match, the code of each component whose checkout here has a ready index,
   // and every other component the workspace knows with why the search left it out.
-  async function searchWorkspace(query) {
+  async function searchWorkspace(query: any) {
     const tokens = searchTokens(query);
     const stored = await workspaceStoreArtifacts(projectRoot);
     const checkouts = await machineCheckouts();
-    const known = await knownComponents({ checkouts, repositories: await storeRepositories(), scopes: stored?.scopes ?? [], clones: workspace.code ? (repository) => workspace.code.components(repository) : null });
+    const known = await knownComponents({ checkouts, repositories: (await storeRepositories() as any), scopes: stored?.scopes ?? [], clones: (workspace.code ? (repository: string) => workspace.code.components(repository) : null as any) });
     const checkedOut = new Set();
     for (const component of known) if (component.root !== null) checkedOut.add(component.repository);
     const leftOut = [];
@@ -1173,11 +1173,11 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
 
   // The code matches of one checkout's components whose index is ready, as search_repository_concepts answers them, each with its component,
   // and its other components, left out with no_index, or with search_failed when their search failed; a query of null searches nothing.
-  async function searchCheckoutCode(root, components, query) {
+  async function searchCheckoutCode(root: string, components: any, query: any) {
     const status = await readIndexingStatus(root, intelligenceDirectories()).catch(() => null);
-    const ready = components.filter((component) => componentIndexingStatus(status, component)?.state === "ready");
-    const leftOut = components.filter((component) => !ready.includes(component)).map((component) => ({ component: component.identity, reason: "no_index" }));
-    const code = [];
+    const ready = components.filter((component: any) => componentIndexingStatus(status, component)?.state === "ready");
+    const leftOut = components.filter((component: any) => !ready.includes(component)).map((component: any) => ({ component: component.identity, reason: "no_index" }));
+    const code: any[] = [];
     if (query === null || !ready.length) return { code, leftOut };
     const { searchRepositoryConcepts } = await import("../repository-intelligence/semantic-native-provider.mjs");
     const listed = listComponents(await readWorkflowConfig(root).catch(() => null));
@@ -1189,12 +1189,12 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       const paths = !declared ? null : folder !== "" ? [folder] : rootComponentPaths(await listReviewSources(root).catch(() => []), folders);
       try {
         if (declared && (paths === null || !paths.length)) throw new Error("The root component's files cannot be named in one search.");
-        const answer = await searchRepositoryConcepts({ projectRoot: root, query, ...(paths ? { filters: { paths } } : {}) });
+        const answer = await searchRepositoryConcepts(({ projectRoot: root, query, ...(paths ? { filters: { paths } } : {}) } as any));
         if (answer.status === "preparing") {
           leftOut.push({ component: component.identity, reason: "no_index" });
           continue;
         }
-        for (const result of answer.results ?? []) if ((result.component ?? component.identity) === component.identity) code.push({ ...result, component: component.identity });
+        for (const result of (answer.results ?? []) as any[]) if ((result.component ?? component.identity) === component.identity) code.push({ ...result, component: component.identity });
       } catch {
         leftOut.push({ component: component.identity, reason: "search_failed" });
       }
@@ -1216,9 +1216,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     if (!workspace?.code) return null;
     const known = new Set(await storeRepositories());
     return {
-      state: async (repository) => known.has(repository) ? workspace.code.state(repository) : { state: "off" },
-      reachable: async (repository, commit) => known.has(repository) ? workspace.code.reachable(repository, commit) : null,
-      blobs: async (repository, commit, paths) => known.has(repository) ? workspace.code.blobs(repository, commit, paths) : null
+      state: async (repository: string) => known.has(repository) ? workspace.code.state(repository) : { state: "off" },
+      reachable: async (repository: string, commit: string) => known.has(repository) ? workspace.code.reachable(repository, commit) : null,
+      blobs: async (repository: string, commit: string, paths: string[]) => known.has(repository) ? workspace.code.blobs(repository, commit, paths) : null
     };
   }
 
@@ -1229,11 +1229,11 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
 
   // What resolves the links of a scope's artifacts: the configured artifact kinds of a registered checkout of its repository, of the checkout the page reads through for the workspace scope, or else Prism's default paths,
   // the code repository its links to files name, that of the checkout the page reads through for the workspace scope or null without one, and the review sources registered checkouts of that repository list, or null with none.
-  async function linkContext(scope) {
+  async function linkContext(scope: any) {
     const members = await workspace?.checkouts?.() ?? [];
-    const reading = members.find((member) => member.root === projectRoot) ?? null;
+    const reading = members.find((member: any) => member.root === projectRoot) ?? null;
     const repository = scope.repository ?? reading?.repository ?? null;
-    const root = scope.repository ? members.find((member) => member.repository === scope.repository)?.root ?? null : projectRoot;
+    const root = scope.repository ? members.find((member: any) => member.repository === scope.repository)?.root ?? null : projectRoot;
     const config = root ? await readWorkflowConfig(root).catch(() => null) : null;
     const sources = repository === null ? null : (await codeSources()).get(repository) ?? null;
     const cloned = repository === null || !workspace?.code ? null : await workspace.code.defaultFiles(repository);
@@ -1241,7 +1241,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   // A workspace page's read of a store artifact by its ref, answered as a checkout's artifact read is, with its location, scope, links, and the count of links that resolve to nothing.
-  async function serveStoreArtifact(response, ref, commentOffset) {
+  async function serveStoreArtifact(response: any, ref: any, commentOffset: any) {
     const location = ref.startsWith(STORE_REF) ? ref.slice(STORE_REF.length) : null;
     let read = null;
     try {
@@ -1258,14 +1258,14 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       return;
     }
     const stored = await workspaceStoreArtifacts(projectRoot);
-    const held = new Set((stored?.entries ?? []).map((entry) => entry.location));
+    const held = new Set((stored?.entries ?? []).map((entry: any) => entry.location));
     const content = read.bytes.toString("utf8");
     // Only a Markdown artifact's text is rendered with links, as the page renders it.
-    const links = location.toLowerCase().endsWith(".md") ? resolveLinks({ content, location, ...await linkContext(read.scope), has: (candidate) => held.has(candidate) }) : [];
+    const links = location.toLowerCase().endsWith(".md") ? resolveLinks({ content, location, ...await linkContext(read.scope), has: (candidate: any) => held.has(candidate) }) : [];
     const { scope, version, accepted, changed, comments, totalComments, nextCommentOffset } = read;
     const below = location.slice(scopePrefix(scope).length);
     const artifact = { scope, version, accepted, changed, comments, totalComments, nextCommentOffset, target: `artifact:${scope.label}:${below}` };
-    const answer = { ref, path: ref, location, scope, content, modifiedAt: read.modifiedAt, artifact, links, unresolvedLinks: links.filter((link) => link.resolved === false).length };
+    const answer: any = { ref, path: ref, location, scope, content, modifiedAt: read.modifiedAt, artifact, links, unresolvedLinks: links.filter((link) => link.resolved === false).length };
     if (path.posix.extname(location).toLowerCase() === ".json") Object.assign(answer, { diagrams: [] }, await loadJsonArtifact(projectRoot, location, content));
     else answer.diagrams = await storeDiagrams(location, content, links, held);
     const view = read.path ? await loadDeclaredView(projectRoot, read.path).catch(() => null) : null;
@@ -1274,8 +1274,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   // The PlantUML diagrams a store artifact shows: the files its links name, and the diagram beside it of the same name, or itself when it is one.
-  async function storeDiagrams(location, content, links, held) {
-    const wanted = new Set(links.filter((link) => link.resolved && link.target.startsWith(STORE_REF) && link.target.toLowerCase().endsWith(".puml")).map((link) => link.target.slice(STORE_REF.length)));
+  async function storeDiagrams(location: any, content: any, links: any, held: any) {
+    const wanted = new Set(links.filter((link: any) => link.resolved && link.target.startsWith(STORE_REF) && link.target.toLowerCase().endsWith(".puml")).map((link: any) => link.target.slice(STORE_REF.length)));
     if (location.toLowerCase().endsWith(".puml")) wanted.add(location);
     else if (held.has(location.replace(/\.[^./]+$/, ".puml"))) wanted.add(location.replace(/\.[^./]+$/, ".puml"));
     const diagrams = [];
@@ -1287,11 +1287,11 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   // A workspace's tabs name store artifacts by their store location, so a tab stays the same artifact from every checkout of the workspace.
-  async function storeTabs(tabs, from = projectRoot) {
-    return workspace ? Promise.all(tabs.map((tab) => storeTabRef(from, tab))) : tabs;
+  async function storeTabs(tabs: any, from = projectRoot) {
+    return workspace ? Promise.all(tabs.map((tab: any) => storeTabRef(from, tab))) : tabs;
   }
 
-  async function storeRequest(request) {
+  async function storeRequest(request: any) {
     if (!workspace || !request || typeof request !== "object") return request;
     const named = { ...request };
     for (const key of ["openTabs", "agentTabs"]) if (Array.isArray(request[key])) named[key] = await storeTabs(request[key]);
@@ -1299,7 +1299,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     return named;
   }
 
-  async function assertAvailable(tabs, availableArtifacts) {
+  async function assertAvailable(tabs: any, availableArtifacts: any) {
     for (const tab of tabs) {
       if (!availableArtifacts.has(tab) && !(parseEntityRef(tab) && await entityExists(projectRoot, tab))) {
         throw new Error(`The artifact is not available for review: ${tab}`);
@@ -1308,13 +1308,13 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   // A tab on a record that Prism moved out of its legacy location follows the record to where it now lives.
-  async function followMovedRecords(available) {
+  async function followMovedRecords(available: any) {
     const moves = await movedRecordTabs(projectRoot, session.openTabs, available);
     if (!moves.size) return sessionSnapshot();
-    const follow = (tab) => moves.get(tab) ?? tab;
+    const follow = (tab: any) => moves.get(tab) ?? tab;
     const agentTabs = [...new Set(session.agentTabs.map(follow))];
     const previewTab = session.previewTab && follow(session.previewTab);
-    const groups = session.groups.map((group) => ({ ...group, tabs: group.tabs.map(follow) }));
+    const groups = session.groups.map((group: any) => ({ ...group, tabs: group.tabs.map(follow) }));
     return commitSession({ openTabs: [...new Set(session.openTabs.map(follow))], activeTab: session.activeTab && follow(session.activeTab), previewTab, agentTabs, groups, activeSource: session.activeSource });
   }
 
@@ -1322,7 +1322,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   // Reads and changes of the session run in the order they arrive, so a page that reloads right after a change reads that change,
   // however long the file listing that each of them waits on takes, as it does on a slow disk.
   let sessionWork = Promise.resolve();
-  function inSessionOrder(task) {
+  function inSessionOrder(task: any) {
     const run = sessionWork.then(task);
     sessionWork = run.catch(() => {});
     return run;
@@ -1333,12 +1333,12 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   // Every change goes through here, so grouped tabs always sit side by side and neither an agent tab nor a grouped tab is ever the preview.
-  function commitSession(proposed) {
+  function commitSession(proposed: any) {
     const arranged = arrangeGroups(proposed.openTabs, proposed.groups ?? session.groups);
     const grouped = new Set(arranged.groups.flatMap((group) => group.tabs));
     const previewTab = proposed.previewTab && !proposed.agentTabs.includes(proposed.previewTab) && !grouped.has(proposed.previewTab) ? proposed.previewTab : null;
     const next = { ...proposed, ...arranged, previewTab };
-    const changed = ["openTabs", "agentTabs"].some((key) => next[key].length !== session[key].length || next[key].some((tab, index) => tab !== session[key][index]))
+    const changed = ["openTabs", "agentTabs"].some((key) => next[key].length !== session[key].length || next[key].some((tab: any, index: number) => tab !== session[key][index]))
       || JSON.stringify(next.groups) !== JSON.stringify(session.groups)
       || next.activeTab !== session.activeTab || next.previewTab !== session.previewTab || next.activeSource !== session.activeSource;
     if (changed) {
@@ -1349,19 +1349,19 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   // The browser owns the preview tab: one replaceable tab for browsing, while kept and agent tabs stay open.
-  async function updateSession(given) {
+  async function updateSession(given: any) {
     const request = await storeRequest(given);
     const available = await reviewableFiles();
     await followMovedRecords(available);
     // A page that has not yet seen a record move still names its old path, which follows the record the same way.
     const moves = await movedRecordTabs(projectRoot, normalizeTabs(request.openTabs), available);
-    const follow = (tab) => typeof tab === "string" ? moves.get(tab) ?? tab : tab;
+    const follow = (tab: any) => typeof tab === "string" ? moves.get(tab) ?? tab : tab;
     const body = { ...request, openTabs: [...new Set(normalizeTabs(request.openTabs).map(follow))] };
     for (const key of ["activeTab", "previewTab"]) if (Object.hasOwn(request, key)) body[key] = follow(request[key]);
     if (Object.hasOwn(request, "agentTabs")) body.agentTabs = [...new Set(normalizeTabs(request.agentTabs).map(follow))];
     const requestedTabs = body.openTabs;
     // A tab that is already open may name a file that is gone, so the page can keep it open and offer to close it.
-    const added = requestedTabs.filter((tab) => !session.openTabs.includes(tab));
+    const added = requestedTabs.filter((tab: any) => !session.openTabs.includes(tab));
     await assertAvailable(added, added.length ? await reviewableFiles(added) : available);
     let nextActiveTab;
     if (Object.hasOwn(body, "activeTab")) {
@@ -1379,7 +1379,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       }
       previewTab = body.previewTab;
     }
-    let agentTabs = session.agentTabs.filter((tab) => requestedTabs.includes(tab));
+    let agentTabs = session.agentTabs.filter((tab: any) => requestedTabs.includes(tab));
     if (Object.hasOwn(body, "agentTabs")) {
       const requestedAgentTabs = normalizeTabs(body.agentTabs);
       if (requestedAgentTabs.some((tab) => !requestedTabs.includes(tab))) {
@@ -1387,7 +1387,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       }
       agentTabs = requestedAgentTabs;
     }
-    const groups = Object.hasOwn(body, "groups") ? checkGroups(body.groups, requestedTabs, follow, new Map(session.groups.filter((group) => group.opener).map((group) => [group.name, group.opener]))) : session.groups;
+    const groups = Object.hasOwn(body, "groups") ? checkGroups(body.groups, requestedTabs, follow, new Map(session.groups.filter((group: any) => group.opener).map((group: any) => [group.name, group.opener]))) : session.groups;
     if (requestedTabs.length === 0) {
       nextActiveTab = null;
     }
@@ -1398,7 +1398,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   }
 
   // get_review_url adds tabs the same way present_review does, so neither tool closes the human's tabs.
-  async function setOpenTabs(tabs, options) {
+  async function setOpenTabs(tabs: any, options: any) {
     return (await presentTabs(tabs, options)).openTabs;
   }
 
@@ -1408,13 +1408,13 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   // a tab already in another group moves into it, and tabs presented without a name keep the groups they are in.
   // by names the presenting agent as { holder, host, model }; the group records its harness, its model, and the slice of the live claim
   // that agent renewed last as the group's opener, and never the holder.
-  async function presentTabs(tabs, { group, from = projectRoot, by = null } = {}) {
+  async function presentTabs(tabs: any, { group, from = projectRoot, by = null }: any = {}) {
     const requestedTabs = [...new Set(await storeTabs(normalizeTabs(tabs), from))];
     const groupName = group === undefined || group === null ? null : groupNameOf(group);
-    let available = await reviewableFiles(requestedTabs);
+    let available = await reviewableFiles((requestedTabs as any));
     if (workspace && from !== projectRoot && requestedTabs.some((tab) => !available.has(tab) && !parseEntityRef(tab))) {
       useCheckout(from);
-      available = await reviewableFiles(requestedTabs);
+      available = await reviewableFiles((requestedTabs as any));
     }
     await assertAvailable(requestedTabs, available);
     await followMovedRecords(available);
@@ -1423,32 +1423,32 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         return commitSession({ ...session, activeTab: "attention", activeSource: "agent" });
       }
       // Attention opens in the preview tab, replacing whatever the preview showed.
-      const openTabs = [...session.openTabs.filter((tab) => tab !== session.previewTab), "attention"];
+      const openTabs = [...session.openTabs.filter((tab: any) => tab !== session.previewTab), "attention"];
       return commitSession({ openTabs, activeTab: "attention", previewTab: "attention", agentTabs: session.agentTabs, activeSource: "agent" });
     }
     const openTabs = [...session.openTabs, ...requestedTabs.filter((tab) => !session.openTabs.includes(tab))];
     const agentTabs = [...session.agentTabs, ...requestedTabs.filter((tab) => !session.agentTabs.includes(tab))];
     const previewTab = requestedTabs.includes(session.previewTab) ? null : session.previewTab;
-    const groups = groupName ? joinGroup(session.groups, groupName, requestedTabs, by ? await openerFor(by) : null) : session.groups;
+    const groups = groupName ? joinGroup(session.groups, groupName, requestedTabs, (by ? await openerFor(by) : null as any)) : session.groups;
     return commitSession({ openTabs, activeTab: requestedTabs[0], previewTab, agentTabs, groups, activeSource: "agent" });
   }
 
   // The opener of a group an agent presents: its harness and model, and the slice of its live claim renewed last, when it holds one.
-  async function openerFor(by) {
+  async function openerFor(by: any) {
     const holder = typeof by?.holder === "string" && by.holder ? by.holder : null;
-    let claim = null;
+    let claim: any = null;
     if (holder) {
       const read = () => withRecordReads(() => loadHeldClaims(projectRoot));
       const held = await (workspace ? asWorkspaceView(read) : read()).catch(() => ({ claims: [] }));
       const now = Date.now();
-      claim = held.claims.filter((entry) => entry.holder === holder && !entry.expired && Date.parse(entry.expiresAt) > now)
-        .sort((left, right) => Date.parse(right.renewedAt ?? right.claimedAt) - Date.parse(left.renewedAt ?? left.claimedAt))[0]?.ref ?? null;
+      claim = held.claims.filter((entry: any) => entry.holder === holder && !entry.expired && Date.parse(entry.expiresAt) > now)
+        .sort((left: any, right: any) => Date.parse(right.renewedAt ?? right.claimedAt) - Date.parse(left.renewedAt ?? left.claimedAt))[0]?.ref ?? null;
     }
     return openerOf({ host: by?.host, model: by?.model, claim });
   }
 
   // A workspace's review reads through one checkout of the workspace, whose source files, index, and configured paths the page shows.
-  function useCheckout(root) {
+  function useCheckout(root: string) {
     if (root === projectRoot) return;
     projectRoot = root;
     fingerprint = null;
@@ -1466,12 +1466,12 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
 
   // A page's reads resolve the record store and its folders once per request; the event streams stay open for the page's life, so they read afresh.
   // A workspace's page reads every scope's store artifacts in its libraries, and a checkout's own page reads the checkout's paths.
-  function handle(request, response, route, url) {
+  function handle(request: any, response: any, route: string, url: any) {
     const read = () => request.method !== "GET" || route.startsWith("/api/events") ? serve(request, response, route, url) : withRecordReads(() => serve(request, response, route, url));
     return workspace ? asWorkspaceView(read) : read();
   }
 
-  async function serve(request, response, route, url) {
+  async function serve(request: any, response: any, route: string, url: any) {
     if (await servePageRoute(request, response, route)) {
       // The page, its assets, and the preferences are the same for every page.
     } else if (route === "/api/events" && request.method === "GET") {
@@ -1497,15 +1497,15 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       let { artifacts, sources } = await listedFiles(projectRoot, session.openTabs);
       // A workspace's page lists every scope's store artifacts by store location in place of the checkout's paths of its own.
       const stored = workspace ? await workspaceStoreArtifacts(projectRoot) : null;
-      let storeIndex = null;
+      let storeIndex: any = null;
       if (stored) {
         const isArtifact = await artifactPathTest(projectRoot);
         storeIndex = await workspaceIndex(projectRoot, stored, scopeFilterOf(url), storeRepositories);
-        artifacts = [...artifacts.filter((file) => !isArtifact(file)), ...storeIndex.refs];
+        artifacts = [...artifacts.filter((file: string) => !isArtifact(file)), ...storeIndex.refs];
       }
       const available = new Set([...artifacts, ...sources, ...(storeIndex?.every ?? []), ...(workspace ? await codeRefs() : [])]);
       const snapshot = await followMovedRecords(available);
-      const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref) => entityExists(projectRoot, ref));
+      const missingTabs = await findMissingTabs(snapshot.openTabs, available, (ref: any) => entityExists(projectRoot, ref));
       // A workspace read through its store's clone alone has no checkout to name.
       const checkout = workspace && await isStoreWithoutCheckout(projectRoot) ? null : await readWorkspaceIdentity(projectRoot);
       const named = workspace ? { workspace: await workspace.describe(), checkout, storeRefs: await storeArtifactRefs(projectRoot), sync: await workspace.sync?.() ?? null, repositories: await codeRepositories() } : { workspace: checkout };
@@ -1520,7 +1520,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         sendJson(response, 404, { code: "slice_unknown", message: "The project has no slice of that initiative and slug." });
         return;
       }
-      sendJson(response, 200, await sliceFiles(projectRoot, parsed.id, parsed.slug, await sliceCode()));
+      sendJson(response, 200, await sliceFiles(projectRoot, parsed.id, parsed.slug, (await sliceCode() as any)));
     } else if (route === "/api/store/conflicts" && request.method === "GET") {
       // Saved local record versions are read-only here; a person redoes a lost change through an agent.
       send(response, 200, JSON.stringify({ conflicts: await listRecordStoreConflicts(projectRoot).catch(() => []) }), "application/json; charset=utf-8");
@@ -1567,7 +1567,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         return;
       }
       try {
-        const result = await applyAction({ projectRoot, target: body.target, action: body.action, input: body.input, revision: body.revision, confirmed: body.confirmed, via: "review-app", indexer, checkouts: await checkoutRoots() });
+        const result: any = await applyAction({ projectRoot, target: body.target, action: body.action, input: body.input, revision: body.revision, confirmed: body.confirmed, via: "review-app", indexer, checkouts: await checkoutRoots() });
         if (result.applied) forgetWorkspace();
         // A launch, stop, or resume also answers with the launched session it changed; an approval's or comment's artifact stays in the event alone.
         sendJson(response, 200, { applied: result.applied, actions: result.actions, ...(result.launch !== undefined ? { launch: result.launch } : {}) });
@@ -1597,7 +1597,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         sendJson(response, 200, { ref, kind: "code", data: { repositories } });
         return;
       }
-      const entity = await loadEntity(projectRoot, ref, { intelligenceDirectories: intelligenceDirectories() });
+      const entity: any = await loadEntity(projectRoot, ref, { intelligenceDirectories: intelligenceDirectories() });
       // A slice names work that exists only on the machine that holds it, unpushed or uncommitted, by its branch and host and never by its content.
       if (entity.kind === "slice") {
         const code = await sliceCode();
@@ -1659,7 +1659,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         send(response, 503, refusal);
         return;
       }
-      const { artifacts, sources } = await listedFiles(projectRoot, [artifactPath]);
+      const { artifacts, sources } = await listedFiles(projectRoot, [(artifactPath as any)]);
       if (!artifacts.includes(artifactPath) && !sources.includes(artifactPath)) {
         send(response, 404, "The file is not available for review.");
         return;
@@ -1710,7 +1710,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     notify,
     setOpenTabs,
     presentTabs,
-    reviewUrl(artifactPaths) {
+    reviewUrl(artifactPaths: any) {
       const [activeTab] = normalizeTabs(artifactPaths);
       return activeTab ? `${baseUrl}/review?artifact=${encodeURIComponent(activeTab)}` : `${baseUrl}/`;
     },
@@ -1728,14 +1728,14 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   };
 }
 
-export async function startReviewServer(options = {}) {
+export async function startReviewServer(options: any = {}) {
   const browserOpener = options.openBrowser ?? openBrowser;
   const projectRoot = await realpath(path.resolve(options.projectRoot ?? process.cwd()));
   // The workspace cache is shared by the process, so a new server starts from the records as they are, not as an earlier server read them within the cache window.
   forgetWorkspace();
   const token = randomBytes(24).toString("base64url");
   const prefix = `/session/${token}`;
-  let review;
+  let review: any;
   // A request answers a browser, never a tool call, so no store access in it moves a checkout's artifacts, even on a server that a tool call started.
   const server = createServer((request, response) => outsideToolCall(async () => {
     try {
@@ -1743,7 +1743,7 @@ export async function startReviewServer(options = {}) {
         send(response, 403, "Unknown host");
         return;
       }
-      const url = new URL(request.url, "http://127.0.0.1");
+      const url = new URL((request.url as any), "http://127.0.0.1");
       if (!url.pathname.startsWith(prefix)) {
         await serveOutsideSession(request, response, url.pathname);
         return;
@@ -1757,12 +1757,12 @@ export async function startReviewServer(options = {}) {
       }
     }
   }));
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(options.port ?? 0, "127.0.0.1", resolve);
   });
   const address = server.address();
-  const baseUrl = `http://127.0.0.1:${address.port}${prefix}`;
+  const baseUrl = `http://127.0.0.1:${(address as any).port}${prefix}`;
   const writeSessions = await createWriteSessions();
   review = createProjectReview({ projectRoot, baseUrl, writeSessions, ...(options.privateServer ? { privateServer: options.privateServer } : {}), ...(options.rebuildIndex ? { rebuildIndex: options.rebuildIndex } : {}) });
   return {
@@ -1773,7 +1773,7 @@ export async function startReviewServer(options = {}) {
     viewerCount: review.viewerCount,
     setOpenTabs: review.setOpenTabs,
     reviewUrl: review.reviewUrl,
-    async open(artifactPaths, options) {
+    async open(artifactPaths: any, options?: any) {
       const tabs = normalizeTabs(artifactPaths);
       await review.presentTabs(tabs, options);
       const url = review.reviewUrl(tabs);
@@ -1791,7 +1791,7 @@ export async function startReviewServer(options = {}) {
       review.closeViewers();
       // An open page reuses its keep-alive sockets to poll and to reopen its event stream, so a close that waited for them would last as long as the page.
       server.closeAllConnections?.();
-      return new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      return new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
   };
 }
