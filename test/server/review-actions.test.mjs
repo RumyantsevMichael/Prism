@@ -25,7 +25,7 @@ const KINDS = ["coordinator", "designImplementation", "codeReview", "securityRev
 const emptyEntry = () => ({ provider: null, ...Object.fromEntries(KINDS.map((kind) => [kind, { model: null, effort: null, typed: false }])) });
 const posixOnly = process.platform === "win32" ? "the stub hosts are POSIX scripts" : false;
 // An initiative lists the launch actions of launched sessions after its settings; these tests read the settings alone.
-const LAUNCHES = ["launch.claude-code", "launch.codex"];
+const LAUNCHES = ["launch.run"];
 const settingsOnly = (actions) => actions.filter((action) => action.group === "Initiative settings");
 
 async function setup(context, options) {

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { HOST_REQUEST_REFUSAL, HOSTS, hostDefinition, lineSplitter, resolveHost, strippedEnvironment } from "./launch-hosts.mjs";
+import { EFFORT_PATTERN, HOST_REQUEST_REFUSAL, HOSTS, hostDefinition, lineSplitter, MODEL_PATTERN, PROVIDER_PATTERN, resolveHost, strippedEnvironment } from "./launch-hosts.mjs";
 
 // The run options of a host, read from the host itself and mapped into one ordered shape: provider, model, and effort, each with
 // the host default first as a null value. Prism reads a host's report with no model turn and no kept session, keeps a report for
@@ -19,10 +19,8 @@ export const RUN_KINDS = Object.freeze([
 ]);
 export const PURPOSES = Object.freeze(["coordinator", "agents"]);
 
-// The name rules: a value that breaks one never reaches a host, and none admits a leading dash or whitespace.
-export const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/@\[\]+-]{0,199}$/;
-export const PROVIDER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-export const EFFORT_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/;
+// The name rules live beside the host commands, which check a launch's choice against them again.
+export { EFFORT_PATTERN, MODEL_PATTERN, PROVIDER_PATTERN };
 export const NAME_RULE_MESSAGES = Object.freeze({
   model: "A model name has 1 to 200 letters, digits, and . _ - : / @ [ ] +, and starts with a letter or digit.",
   provider: "A provider name has 1 to 64 letters, digits, and . _ -, and starts with a letter or digit.",

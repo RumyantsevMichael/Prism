@@ -4,7 +4,7 @@ import path from "node:path";
 import { withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { describeRecordStore } from "../workflow/record-store.mjs";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
-import { hostDefinition, redactSessionId, resumeCommandOf } from "./launch-hosts.mjs";
+import { checkedCoordinator, hostDefinition, redactSessionId, resumeCommandOf } from "./launch-hosts.mjs";
 
 // The record of each launched session lives in <review app folder>/launches/<launch id>/launch.json, private to the user.
 // The host session id lives only there, and a launch view carries it only in its resumeCommand: host text in its reason has the id replaced.
@@ -108,6 +108,14 @@ export async function readLaunchRecord(folder) {
   } catch {
     return null;
   }
+}
+
+/**
+ * The coordinator's choice that a launch record keeps, { provider, model, effort, typed }, which every run of the launch passes to
+ * its host; an earlier record without one reads as host defaults, and one that breaks the name rules reads as null and runs nothing.
+ */
+export function launchCoordinator(record) {
+  return checkedCoordinator(record?.coordinator);
 }
 
 export async function writeLaunchRecord(folder, record) {

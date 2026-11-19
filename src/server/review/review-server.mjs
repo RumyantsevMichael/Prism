@@ -781,6 +781,8 @@ const ACTION_STATUS = {
   launch_running: 409,
   launch_not_running: 409,
   no_host_session: 409,
+  choice_not_offered: 409,
+  invalid_choice: 409,
   supervision_lost: 409,
   stop_timeout: 409,
   launch_failed: 500

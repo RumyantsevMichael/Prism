@@ -190,7 +190,7 @@ function headControls(data, ctx, ids) {
   return `${lastRun}${totals}<prism-button id="${ids.launch}" size="sm" class="initiative-launch"><prism-icon name="play" size="xs"></prism-icon><span>Launch</span><prism-icon name="chevron-down" size="xs"></prism-icon></prism-button><prism-button size="sm" class="initiative-settings" data-initiative-settings-open><prism-icon name="settings" size="xs"></prism-icon><span>Settings</span></prism-button>`;
 }
 
-// The overlays the head's controls open: the run totals, the launch actions, and the settings dialog, which applies its changes together.
+// The overlays the head's controls open: the run totals, the one launch of the initiative's host with its settings, and the settings dialog, which applies its changes together.
 // Without a head the page shows its run totals in place and keeps only the dialog, which the jump palette opens.
 function overlays(data, ctx, ids, head) {
   const totals = head && data.runTotals?.initiative ? `<prism-popover class="initiative-totals-popover" for="${ids.totals}" heading="Run totals">${runTotalsTableHtml([{ totals: data.runTotals.initiative, scope: "initiative" }])}</prism-popover>` : "";

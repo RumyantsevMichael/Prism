@@ -253,8 +253,13 @@ It works on the initiative as an agent you started in a terminal would, and you 
 
 ### Launch an initiative
 
-**Launch** at the top of the initiative page opens **Launch an orchestration** with **Launch with Claude Code** and **Launch with Codex**, each started with its own **Launch** button; a slice page offers no launch.
-A launch action is unavailable with a reason such as `Claude Code was not found: no claude executable on PATH.` while its host's executable, `claude` or `codex`, is not on the review app's `PATH`, and with `A launched session of <initiative> is running on this machine.` while a launched session of the initiative runs on this computer.
+**Launch** at the top of the initiative page opens **Launch an orchestration** with one **Launch**, which starts a session of the initiative's **Host** setting with its other settings; a slice page offers no launch.
+With no host stored, the launch runs the first host found on this computer.
+The launch is unavailable with `No host that Prism supports was found on this computer. Prism supports Claude Code and Codex.` while neither `claude` nor `codex` is on the review app's `PATH`, with a reason such as `Codex was not found: no codex executable on PATH.` while the initiative's host is missing, and with `A launched session of <initiative> is running on this machine.` while a launched session of the initiative runs on this computer.
+Before it asks you anything, the launch checks the provider and every model and effort that **Models** keeps for the host against what the host on this computer reports, and refuses the first one the host does not offer with its field and reason, such as `Coordinator: Claude Code on this computer does not offer the model claude-opus-3.` or `Design and implementation: Prism kept the earlier model name Claude Opus 4.1, which Claude Code cannot take as a model.`; a launch whose choices are all host defaults asks the host nothing.
+The session runs with the coordinator's model and effort: Claude Code receives them as `--model <model>` and `--effort <effort>`, and Codex starts its thread with the model and provider and its turn with the effort, and each is left out for the host's default.
+A model name you typed reaches the host only as that model, and the session's prompt stays `/prism:orchestrate <initiative>`.
+A resume runs with the provider, model, and effort that the session was launched with, not with the settings at the time of the resume.
 Checkouts whose records live in the same place, such as two checkouts of one shared store, count as one initiative here, so only one launched session of an initiative runs on this computer at a time.
 Like every action, a launch needs a tab that can make changes.
 

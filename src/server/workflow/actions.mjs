@@ -522,8 +522,9 @@ const INDEX_REBUILD = {
   after: () => "started"
 };
 
-// Launched sessions: a launch per host on an initiative, and stop and resume on each launched session. Each runs through its own step
-// after the common checks, the launch and the person's resume behind the confirmation outside the page, and is recorded only once it took effect.
+// Launched sessions: one launch on an initiative, which runs the initiative's host, and stop and resume on each launched session. Each
+// runs through its own step after the common checks, the launch and the person's resume behind the confirmation outside the page, and
+// is recorded only once it took effect.
 const LAUNCH_GROUP = "Launched session";
 const launchBase = {
   group: LAUNCH_GROUP,
@@ -535,26 +536,67 @@ const launchBase = {
   revision: () => null
 };
 
-const LAUNCH_ACTIONS = HOSTS.map(({ host, label }) => ({
+const hostList = (labels) => (labels.length > 2 ? `${labels.slice(0, -1).join(", ")}, and ${labels.at(-1)}` : labels.join(" and "));
+const NO_HOST = `No host that Prism supports was found on this computer. Prism supports ${hostList(HOSTS.map(({ label }) => label))}.`;
+const launchHostOf = (context) => settingsOf(context).host ?? firstFoundHost(context);
+const notOffered = (label, reason) => fail("choice_not_offered", `${label}: ${reason}`);
+
+// The initiative's provider and every kind's choice for its host, checked against what the host reports, in field order: the
+// provider, then the kinds. A kept earlier name is refused without a read, and a host default, or a typed model without an
+// effort, needs none, so a launch whose choices are all host defaults reads no host.
+async function checkedLaunchChoices(context, host) {
+  const { label } = hostDefinition(host);
+  const entry = modelsOf(context)[host];
+  const { provider } = entry;
+  const report = async (selection) => {
+    const read = await context.readOptions({ host, ...selection });
+    if (read.state === "unavailable") throw fail("host_unavailable", read.reason);
+    return read;
+  };
+  if (provider !== null) {
+    const base = await report({ purpose: "coordinator" });
+    if (!optionOf(base, "provider")?.values.some((item) => item.value === provider)) throw notOffered("Provider", choiceReasons.provider(label, provider));
+  }
+  for (const { kind, label: kindLabel, purpose } of RUN_KINDS) {
+    const choice = entry[kind];
+    if (choice.earlier !== undefined) throw notOffered(kindLabel, earlierReason(label, choice.earlier));
+    if (choice.effort === null && (choice.model === null || choice.typed)) continue;
+    const read = await report({ purpose, provider, model: choice.model, effort: choice.effort, typed: choice.typed });
+    for (const id of ["model", "effort"]) {
+      const chosen = optionOf(read, id)?.chosen;
+      if (chosen?.state === "not-offered") throw notOffered(kindLabel, chosen.reason);
+    }
+  }
+  const { model, effort, typed } = entry.coordinator;
+  return { provider, model, effort, typed };
+}
+
+const LAUNCH_RUN = {
   ...launchBase,
-  id: `launch.${host}`,
+  id: "launch.run",
   kinds: ["initiative"],
-  label: `Launch with ${label}`,
-  effect: `Starts a headless ${label} session on this computer that runs the orchestrate skill for this initiative; you confirm it outside the browser unless you confirmed in the last 30 minutes.`,
+  label: "Launch",
+  effect: "Starts a headless session of this initiative's host on this computer with its settings; you confirm it outside the browser unless you confirmed in the last 30 minutes.",
   target: (context) => context.initiativeTarget,
   unavailable: (context) => {
+    if (!context.hosts.some((item) => item.available)) return NO_HOST;
+    const host = launchHostOf(context);
     const availability = context.hosts.find((item) => item.host === host);
-    if (!availability?.available) return availability?.reason ?? `${label} was not found.`;
+    if (!availability?.available) return availability?.reason ?? `${hostDefinition(host)?.label ?? host} was not found.`;
     return context.launchRunning ? launchRunningMessage(context.initiative) : null;
   },
   after: () => null,
   async launch({ projectRoot, context, env }) {
+    const host = launchHostOf(context);
+    // Every choice is checked before the confirmation, so a launch that would be refused asks nothing.
+    const coordinator = await checkedLaunchChoices(context, host);
     const checkout = await realpath(projectRoot);
     await confirmLaunch({ initiative: context.initiative, host, checkout, env });
-    const { launch } = await startLaunch({ projectRoot: checkout, initiative: context.initiative, host, env });
-    return { launch, after: { launch: launch.id, host }, initiative: context.initiative, started: launch.id };
+    const { launch } = await startLaunch({ projectRoot: checkout, initiative: context.initiative, host, coordinator, env });
+    const { provider, model, effort } = coordinator;
+    return { launch, after: { launch: launch.id, host, coordinator: { provider, model, effort } }, initiative: context.initiative, started: launch.id };
   }
-}));
+};
 
 const LAUNCH_STOP = {
   ...launchBase,
@@ -599,7 +641,7 @@ const LAUNCH_RESUME = {
 };
 
 /** Every action, in listing order; a later action joins by adding its definition here. */
-const ACTIONS = [...SETTING_ACTIONS, ...LAUNCH_ACTIONS, GATE_ANSWER, APPROVAL_ANSWER, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME];
+const ACTIONS = [...SETTING_ACTIONS, LAUNCH_RUN, GATE_ANSWER, APPROVAL_ANSWER, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME];
 
 /** The sentence on when an action's change takes effect, or null for an action the registry does not define. */
 export const actionEffect = (id) => ACTIONS.find((definition) => definition.id === id)?.effect ?? null;

@@ -8,7 +8,7 @@ import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { listInitiatives } from "../workflow/record-store.mjs";
 import { readRoadmap } from "../workflow/roadmap.mjs";
 import { readCoordinationState } from "../workflow/state.mjs";
-import { hostAvailability, hostDefinition, hostEnvironment, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
+import { checkedCoordinator, hostAvailability, hostDefinition, hostEnvironment, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
 import {
   LAUNCH_ID_PATTERN,
   LaunchError,
@@ -18,6 +18,7 @@ import {
   GATE_ID_PATTERN,
   gateFacts,
   lastRunStatus,
+  launchCoordinator,
   launchFolder,
   launchRunning,
   launchView,
@@ -130,10 +131,18 @@ async function startRun({ folder, record, env, cause }) {
   throw refuse("launch_failed", `${hostDefinition(record.host).label} could not be started: the supervisor did not start it within ${START_TIMEOUT_MS / 1000} seconds.`);
 }
 
-/** Starts a launched session's first run: { launch }, its view in state running. */
-export async function startLaunch({ projectRoot, initiative, host, env = process.env }) {
+const INVALID_CHOICE = "The coordinator's choice is not one Prism can pass to a host: each of its provider, model, and effort is a name that keeps its rule, or null for the host default.";
+const RECORDED_CHOICE_INVALID = "The session's recorded model choice is not one Prism can pass to a host, so it cannot be resumed.";
+
+/**
+ * Starts a launched session's first run with the coordinator's choice { provider, model, effort, typed }, each part null for the
+ * host default: { launch }, its view in state running. The launch record keeps the choice, and every resume runs with it.
+ */
+export async function startLaunch({ projectRoot, initiative, host, coordinator = null, env = process.env }) {
   const definition = hostDefinition(host);
   if (!definition) throw refuse("unknown_host", `Prism cannot launch ${String(host)}: the hosts are claude-code and codex.`);
+  const choice = checkedCoordinator(coordinator);
+  if (!choice) throw refuse("invalid_choice", INVALID_CHOICE);
   const checkout = await realpath(projectRoot);
   if (!(await initiativeExists(checkout, initiative))) throw refuse("unknown_initiative", `No initiative ${String(initiative)} exists in this checkout.`);
   const resolved = await resolveHost(host, env);
@@ -151,6 +160,7 @@ export async function startLaunch({ projectRoot, initiative, host, env = process
       store,
       createdAt: new Date().toISOString(),
       hostSessionId: host === "claude-code" ? randomUUID() : null,
+      coordinator: choice,
       runs: []
     };
     await writeLaunchRecord(folder, record);
@@ -172,12 +182,13 @@ async function resumeLocked(env, folder, id, cause) {
   if (launchRunning(record)) throw refuse("launch_running", "The session is running.");
   if (await otherRunning(env, { initiative: record.initiative, store: record.store, except: id })) throw refuse("launch_running", runningMessage(record.initiative));
   if (!validHostSessionId(record.hostSessionId)) throw refuse("no_host_session", "The session never reported its host session id, so it cannot be resumed.");
+  if (!launchCoordinator(record)) throw refuse("invalid_choice", RECORDED_CHOICE_INVALID);
   const resolved = await resolveHost(record.host, env);
   if (!resolved?.available) throw refuse("host_unavailable", resolved?.reason ?? `Unknown host ${record.host}.`);
   return startRun({ folder, record, env, cause: cause === "gate" ? "gate" : "person" });
 }
 
-/** Starts the next run of a launched session with the resume arguments, and answers its view in state running. */
+/** Starts the next run of a launched session with the resume arguments and the recorded coordinator choice, and answers its view in state running. */
 export async function resumeLaunch({ id, env = process.env, cause = "person" }) {
   if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) throw unknownLaunch(id);
   const folder = launchFolder(env, id);
@@ -196,6 +207,7 @@ export async function resumeRefusal({ id, env = process.env }) {
   if (launchRunning(record)) return "The session is running.";
   if (await otherRunning(env, { initiative: record.initiative, store: record.store, except: id })) return runningMessage(record.initiative);
   if (!validHostSessionId(record.hostSessionId)) return "The session never reported its host session id, so it cannot be resumed.";
+  if (!launchCoordinator(record)) return RECORDED_CHOICE_INVALID;
   const resolved = await resolveHost(record.host, env);
   return resolved?.available ? null : resolved?.reason ?? `Unknown host ${record.host}.`;
 }

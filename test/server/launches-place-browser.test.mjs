@@ -85,12 +85,12 @@ test("the place says nothing was launched yet, and the command palette lists it"
   assert.match(await page.locator("#artifact").innerText(), /Nothing launched on this computer yet\. Launch an initiative from its page\./);
 });
 
-test("the initiative page offers both launch actions with their availability", { skip: skipHere, timeout: 60000 }, async (t) => {
+test("the initiative page offers the one launch action of the initiative's host with its effect", { skip: skipHere, timeout: 60000 }, async (t) => {
   const s = await place(t, {});
   const page = await openPage(s.browser, reviewUrl(s.base, `initiative:${INITIATIVE}`));
   await waitForView(page);
-  assert.equal(await page.getByText("Launch with Claude Code").count() >= 1, true);
-  assert.equal(await page.getByText("Launch with Codex").count() >= 1, true);
+  assert.equal(await page.getByText("Starts a headless session of this initiative's host on this computer with its settings", { exact: false }).count() >= 1, true);
+  assert.equal(await page.getByText(/Launch with/).count(), 0, "no launch names a host of its own");
 });
 
 test("the initiative page shows how its latest launched run ended, a failed one with the host's error, and links to the place", { skip: skipHere, timeout: 60000 }, async (t) => {

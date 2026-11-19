@@ -62,7 +62,7 @@ test("the initiative page heads with its lane and rank, its state and intent, it
   assert.deepEqual(page.errors, []);
 });
 
-test("the run totals and Launch open popovers, and Launch offers both hosts with their availability", { skip, timeout: 60000 }, async (context) => {
+test("the run totals and Launch open popovers, and Launch offers the one launch of the initiative's host", { skip, timeout: 60000 }, async (context) => {
   const { base, browser } = await placesDemo(context);
   const page = await open(browser, base, INITIATIVE);
   const end = page.locator("#artifact [data-page-end]");
@@ -75,9 +75,9 @@ test("the run totals and Launch open popovers, and Launch offers both hosts with
   const launcher = page.getByRole("dialog", { name: "Launch an orchestration" });
   await launcher.waitFor();
   const text = await launcher.innerText();
-  assert.match(text, /Launch with Claude Code/);
-  assert.match(text, /Launch with Codex/);
-  assert.equal(await launcher.getByRole("button", { name: /^Launch with/ }).count(), 0, "each launch is pressed as Launch, since its heading already names the host");
+  assert.match(text, /Launch/);
+  assert.doesNotMatch(text, /Launch with/, "no launch names a host of its own");
+  assert.equal(await launcher.getByRole("button", { name: "Launch", exact: true }).count(), 1, "the one launch is pressed as Launch");
   assert.deepEqual(page.errors, []);
 });
 
@@ -103,7 +103,7 @@ test("a long reason or error under a launch never squeezes the host's name in th
     probe.remove();
     return { label: label.textContent, width: label.getBoundingClientRect().width, longestWord };
   }), long);
-  assert.equal(widths.length, 2, "both hosts are listed");
+  assert.equal(widths.length, 1, "the one launch is listed");
   for (const { label, width, longestWord } of widths) assert.ok(width >= longestWord, `"${label}" keeps whole words (${width}px for a ${longestWord}px word)`);
   assert.deepEqual(page.errors, []);
 });

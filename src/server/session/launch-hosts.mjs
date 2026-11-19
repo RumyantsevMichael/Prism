@@ -3,7 +3,9 @@ import { access, constants, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 // The hosts that a launched session runs, the commands Prism runs for them, and the readers of their output streams.
-// Nothing here takes a value from the review page except the initiative identifier, checked by the caller, and the host.
+// Nothing here takes a value from the review page except the initiative identifier, checked by the caller, the host, and the
+// coordinator's choice, which reaches a host only as the values of --model and --effort or of Codex's model, modelProvider, and
+// effort, and only once it keeps the name rules.
 
 // HOSTS is also the order of every list of hosts. Each host's optionsRead is how Prism reads its run options without a turn or a
 // kept session: Claude Code answers one initialize control request in a print-mode session that keeps no session and runs no
@@ -143,11 +145,46 @@ export async function hostAvailability({ env = process.env } = {}) {
   }));
 }
 
-/** The arguments of a run: Claude Code's launch or resume form with its session id, or Codex's app server. */
-export function hostArguments({ host, hostSessionId, resume }) {
+// The coordinator's choice of a launch: { provider, model, effort, typed }, each part null for the host default.
+export const HOST_DEFAULT_COORDINATOR = Object.freeze({ provider: null, model: null, effort: null, typed: false });
+// The name rules: a value that breaks one never reaches a host, and none admits a leading dash or white space.
+export const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/@\[\]+-]{0,199}$/;
+export const PROVIDER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+export const EFFORT_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/;
+const CHOICE_PARTS = Object.freeze(["provider", "model", "effort", "typed"]);
+
+/**
+ * The coordinator's choice in full, or null when it breaks the name rules: an object of at most provider, model, effort, and typed,
+ * each name null or matching its rule, which admits no leading dash or white space, so no host reads one as an option.
+ * A missing choice is the host default.
+ */
+export function checkedCoordinator(value) {
+  if (value === undefined || value === null) return { ...HOST_DEFAULT_COORDINATOR };
+  if (typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((key) => !CHOICE_PARTS.includes(key))) return null;
+  const part = (name, pattern) => {
+    const item = value[name] ?? null;
+    return item === null ? null : typeof item === "string" && pattern.test(item) ? item : undefined;
+  };
+  const choice = { provider: part("provider", PROVIDER_PATTERN), model: part("model", MODEL_PATTERN), effort: part("effort", EFFORT_PATTERN), typed: value.typed ?? false };
+  if (choice.provider === undefined || choice.model === undefined || choice.effort === undefined || typeof choice.typed !== "boolean") return null;
+  return { ...choice, typed: choice.typed && choice.model !== null };
+}
+
+function coordinatorOf(coordinator) {
+  const checked = checkedCoordinator(coordinator);
+  if (!checked) throw new Error("The coordinator's choice is not one Prism can pass to a host.");
+  return checked;
+}
+
+/**
+ * The arguments of a run: Claude Code's launch or resume form with its session id, followed by --model and --effort of the
+ * coordinator's choice, each left out for the host default, or Codex's app server, which takes the choice in its requests.
+ */
+export function hostArguments({ host, hostSessionId, resume, coordinator = null }) {
   if (host === "claude-code") {
     if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
-    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...CLAUDE_FLAGS];
+    const { model, effort } = coordinatorOf(coordinator);
+    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...CLAUDE_FLAGS, ...(model === null ? [] : ["--model", model]), ...(effort === null ? [] : ["--effort", effort])];
   }
   if (host === "codex") return ["app-server"];
   throw new Error(`Unknown host ${host}.`);
@@ -158,16 +195,22 @@ export function claudePrompt(initiative) {
   return { type: "user", message: { role: "user", content: `/prism:orchestrate ${initiative}` } };
 }
 
-/** The Codex request that opens the run's thread: thread/start for a launch, thread/resume with the kept thread id for a resume. */
-export function codexThreadRequest({ checkout, hostSessionId, resume }) {
-  if (!resume) return { method: "thread/start", params: { cwd: checkout, ...CODEX_POLICY } };
+/**
+ * The Codex request that opens the run's thread: thread/start for a launch, thread/resume with the kept thread id for a resume,
+ * each with the model and provider of the coordinator's choice, left out for the host default.
+ */
+export function codexThreadRequest({ checkout, hostSessionId, resume, coordinator = null }) {
+  const { model, provider } = coordinatorOf(coordinator);
+  const chosen = { ...(model === null ? {} : { model }), ...(provider === null ? {} : { modelProvider: provider }) };
+  if (!resume) return { method: "thread/start", params: { cwd: checkout, ...CODEX_POLICY, ...chosen } };
   if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
-  return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...CODEX_POLICY } };
+  return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...CODEX_POLICY, ...chosen } };
 }
 
-/** The Codex request that starts the run's one orchestrate turn. */
-export function codexTurnRequest({ threadId, initiative }) {
-  return { method: "turn/start", params: { threadId, input: [{ type: "text", text: `$prism:orchestrate ${initiative}` }] } };
+/** The Codex request that starts the run's one orchestrate turn, with the effort of the coordinator's choice, left out for the host default. */
+export function codexTurnRequest({ threadId, initiative, coordinator = null }) {
+  const { effort } = coordinatorOf(coordinator);
+  return { method: "turn/start", params: { threadId, input: [{ type: "text", text: `$prism:orchestrate ${initiative}` }], ...(effort === null ? {} : { effort }) } };
 }
 
 /** The stream-json line that Claude Code's own Stop button sends: an interrupt control request with a request id that Prism chooses. */
@@ -277,7 +320,7 @@ const digestKey = (id) => createHash("sha256").update(Buffer.from(id, "utf16le")
  * `interrupt()` stops the run the way the host's own Stop button does: it sends the host's interrupt while the input is open and
  * closes the input once the host has answered it, or at once for a Codex run that has not sent turn/start yet.
  */
-export function hostConversation(host, { initiative, checkout, hostSessionId = null, resume = false, send, closeInput, onSessionId = () => {} }) {
+export function hostConversation(host, { initiative, checkout, hostSessionId = null, resume = false, coordinator = null, send, closeInput, onSessionId = () => {} }) {
   const facts = { hostSessionId: null, turnId: null, refusals: [], refusalCount: 0, hostError: null };
   let inputOpen = true;
   const redact = (value) => redactSessionId(redactSessionId(value, hostSessionId), facts.hostSessionId);
@@ -385,7 +428,7 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
     const answered = (method, result) => {
       if (method === "initialize") {
         write({ jsonrpc: "2.0", method: "initialized", params: {} });
-        const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume });
+        const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume, coordinator });
         request(open, params);
         return;
       }
@@ -400,7 +443,7 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
           close();
           return;
         }
-        const { method: turn, params } = codexTurnRequest({ threadId, initiative });
+        const { method: turn, params } = codexTurnRequest({ threadId, initiative, coordinator });
         turnRequested = true;
         request(turn, params);
         return;
