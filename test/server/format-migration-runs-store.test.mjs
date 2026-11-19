@@ -14,7 +14,7 @@ const TERMS_TEXT = "# Payment terms\n\nTerms used by the payments team.\n\n| Ter
 const storeGit = (place, ...args) => execFileSync("git", args, { cwd: place.store, encoding: "utf8" });
 
 test("clauses 1, 3, 16, 17, 19, 21: an applied run writes a store requirement through the store, keeps its recorded status, makes the migrated text its accepted version, and commits it on its own", async (context) => {
-  const { place, call } = await runStore(context, { ...CONFORMING, [PATHS.requirements]: UNANCHORED });
+  const { place, call } = await runStore(context, { ...CONFORMING, [PATHS.requirements]: UNANCHORED }, { gitStore: true });
   const run = await runFor(call, PATHS.requirements);
   const record = await readRun(call, run);
   assert.equal(labelOf(record.set), "api", "the set belongs to the scope that holds its artifacts");

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -148,14 +148,19 @@ export async function runCheckout(context, files = CONFORMING, options = {}) {
 }
 
 /**
- * A store workspace with the checkout `api` whose files the first tool call moves into the repository scope `api`,
+ * A store workspace, a Git repository when gitStore is true, with the checkout `api` whose files the first tool call moves into the repository scope `api`,
  * and one Prism server that sees the stub hosts: { place, root, call, hosts }.
  */
-export async function runStore(context, files = CONFORMING, { store, ...options } = {}) {
+export async function runStore(context, files = CONFORMING, { store, gitStore = false, ...options } = {}) {
   isolated ??= isolateGit();
   await isolated;
   const hosts = await stubHosts(context, options);
   const place = await workspace(context);
+  // A store that is a Git repository, with sync off, where an applied run's commit can be read.
+  if (gitStore) {
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: place.store, stdio: "pipe" });
+    execFileSync("git", ["commit", "-q", "--allow-empty", "-m", "init"], { cwd: place.store, stdio: "pipe" });
+  }
   const root = await checkout(place, "api", { paths: [...STORE_PATHS], components: [...COMPONENTS], files, ...(store === undefined ? {} : { store }) });
   const prism = await prismServer(context, root, { appFolder: hosts.app, env: hosts.env });
   return { place, root, call: wrapped(prism), hosts };

@@ -93,7 +93,7 @@ test("clauses 11, 12, 14, 16: unknown values are points the run asks about once,
   const proposed = await call("propose_migration", auditProposal(run, { asked }));
   assert.equal(proposed.refused, false, proposed.text);
   const points = proposed.value.migration.points;
-  assert.ok(points.length >= 6, "Pattern, Rationale, and the three empty sections are unknown");
+  assert.equal(points.length, 5, "Pattern, Rationale, and the three empty sections are unknown");
   for (const point of points) {
     assert.match(point.id, /^p\d+$/);
     assert.equal(point.kind, "unknown");
