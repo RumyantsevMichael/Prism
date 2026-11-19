@@ -5,7 +5,7 @@ import { linkedPaths } from "./artifact-status.mjs";
 import { inArtifactStore } from "./record-store.mjs";
 import { readStoreArtifact } from "./store-artifacts.mjs";
 
-// Work that cites an artifact that breaks its format is refused, whole, so that a nonconforming artifact is migrated before new work builds on it.
+// Work that cites an artifact that breaks its format is refused, whole, with the state of its format migration, so that new work builds only on conforming artifacts.
 
 export class ArtifactCitationError extends Error {
   constructor(artifacts) {
@@ -20,10 +20,24 @@ const storeOwn = (action) => action();
 const labelOf = (scope) => scope === null || scope === undefined ? null : scope.label;
 const named = (artifact) => labelOf(artifact.scope) === null ? artifact.path : `${artifact.path} in scope ${labelOf(artifact.scope)}`;
 
+// One sentence on the state of an artifact's format migration, which never offers or asks for one.
+function migrationSentence(artifact) {
+  const migration = artifact.migration;
+  if (!migration) return artifact.type === "feature"
+    ? "Prism does not migrate feature files, so bring it into its format in a change of its own."
+    : "Prism has not started its format migration yet.";
+  switch (migration.status) {
+    case "asking": return `Its format migration ${migration.run} waits for your answers on Attention.`;
+    case "waiting-for-host": return `Its format migration ${migration.run} waits for an available host.`;
+    case "failed": return `Its format migration ${migration.run} failed: ${migration.reason ?? "no reason was recorded."} Run it again from Attention.`;
+    default: return `Prism is migrating it into its format in the run ${migration.run}.`;
+  }
+}
+
 function refusalMessage(artifacts) {
   const lines = artifacts.map((artifact) => {
     const rules = [...new Set(artifact.findings.map((finding) => finding.rule))].join(", ");
-    return `${named(artifact)} breaks ${rules}. Ask for a migration of ${named(artifact)} in a session of its own.`;
+    return `${named(artifact)} breaks ${rules}. ${migrationSentence(artifact)}`;
   });
   return `The update cites ${artifacts.length === 1 ? "an artifact that breaks its format" : "artifacts that break their formats"}, so nothing changed: ${lines.join(" ")}`;
 }
@@ -49,7 +63,7 @@ async function sliceDocument(root, file) {
  * `documents` slice.md paths whose Markdown links cite the copy in the document's scope, else the only seen copy, else every copy,
  * and `files` paths cited as they are, such as frozen feature files. A path that check_artifacts would not list as an artifact, such as a README.md, a diagram, or a file too deep below its folder, or that holds no file, cites nothing.
  * Only the cited paths are read from the store, so the check costs what the operation cites, not what the store holds.
- * Returns [{ path, scope, type, conforms, findings }] as check_artifacts lists them.
+ * Returns [{ path, scope, type, conforms, findings, migration }] as check_artifacts lists them, after the check started a run for each new set.
  */
 export async function citedArtifacts(projectRoot, { references = [], documents = [], files = [] } = {}) {
   if (!references.length && !documents.length && !files.length) return [];
@@ -87,12 +101,12 @@ export async function citedArtifacts(projectRoot, { references = [], documents =
   return checkTargets(root, store, [...targets.values()], { refusing: storeOwn });
 }
 
-// An unknown value does not refuse work that cites its artifact, so an artifact whose only findings are unknown values counts as conforming here.
-const citedBreak = (artifact) => !artifact.conforms && artifact.findings.some((finding) => !finding.rule.endsWith(".unknown"));
+// A <type>.unknown finding breaks a cited artifact like any other, while an unknown value that is no finding, as in a Draft requirement file or a Proposed ADR, breaks nothing.
+const citedBreak = (artifact) => !artifact.conforms || artifact.findings.length > 0;
 
-/** The artifact_nonconforming refusal of the cited artifacts that break their formats, or null when every one conforms. */
+/** The artifact_nonconforming refusal of the cited artifacts that break their formats, each with the state of its migration, or null when every one conforms. */
 export function refuseNonconforming(artifacts) {
-  const broken = artifacts.filter(citedBreak).map((artifact) => ({ path: artifact.path, scope: artifact.scope, type: artifact.type, findings: artifact.findings }));
+  const broken = artifacts.filter(citedBreak).map((artifact) => ({ path: artifact.path, scope: artifact.scope, type: artifact.type, findings: artifact.findings, migration: artifact.migration ?? null }));
   return broken.length ? new ArtifactCitationError(broken) : null;
 }
 

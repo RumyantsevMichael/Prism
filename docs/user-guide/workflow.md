@@ -106,13 +106,26 @@ The refusal is `artifact_nonconforming`, and it applies to these requests:
 - Adding a roadmap entry with `update_roadmap`, for each requirement file the entry references, and updating one, for each requirement file the update adds to the entry's references.
 
 Prism checks what a request cites before anything else except its arguments, and a refused request changes nothing.
-The refusal lists each artifact with its path, its scope, its type, and its findings, and its message names each artifact with its broken rule ids and ends with `Ask for a migration of <path> in a session of its own.`
-Only a file that `check_artifacts` lists as an artifact is cited, so a link to a `README.md`, a diagram, or a file more than four folders below its configured folder refuses nothing.
-A cited file that does not exist, and a value written as `unknown`, refuse nothing, and records that already cite a nonconforming artifact still load.
+The refusal lists each artifact with its path, its scope, its type, its findings, and `migration`, the state of its format migration run as `check_artifacts` reports it, or null.
+Its message names each artifact with its broken rule ids, followed by one sentence on the state of its migration:
 
-To go on, ask an agent for a format migration of that artifact in a session of its own, and send the refused request again once the migration is applied.
+| State of the migration | Sentence |
+| --- | --- |
+| `starting`, `running`, or `continuing` | `Prism is migrating it into its format in the run <run id>.` |
+| `asking` | `Its format migration <run id> waits for your answers on Attention.` |
+| `waiting-for-host` | `Its format migration <run id> waits for an available host.` |
+| `failed` | `Its format migration <run id> failed: <reason> Run it again from Attention.` |
+| No run, for a feature file | `Prism does not migrate feature files, so bring it into its format in a change of its own.` |
+| No run otherwise | `Prism has not started its format migration yet.` |
+
+The refusal never asks for or offers a migration, since Prism starts the run of a nonconforming requirement file, ADR, or glossary by itself when it checks what the request cites.
+Only a file that `check_artifacts` lists as an artifact is cited, so a link to a `README.md`, a diagram, or a file more than four folders below its configured folder refuses nothing.
+A value written as `unknown` refuses work that cites a requirement file that is not a Draft or an ADR that is not Proposed, like any other `<type>.unknown` finding, while an `unknown` value in a Draft requirement file or a Proposed ADR refuses nothing.
+A cited file that does not exist refuses nothing, and records that already cite a nonconforming artifact still load.
+
+To go on, send the refused request again once the artifact's migration is applied, answer the run's question on Attention when it asks, or bring a feature file into its format in a change of its own.
 With a record store, a requirement reference cites every copy that a scope the checkout sees holds at its path, and a link in a `slice.md` cites the copy in that `slice.md`'s scope, else the only copy a seen scope holds, else every copy.
-The message then names a store artifact as `<path> in scope <label>` and ends with `Ask for a migration of <path> in scope <label> in a session of its own.`, so ask for the migration of the copy in that scope.
+The message then names a store artifact as `<path> in scope <label>`, followed by the state of that copy's migration.
 
 ### Format migrations
 

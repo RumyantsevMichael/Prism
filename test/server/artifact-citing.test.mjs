@@ -27,6 +27,9 @@ const roadmap = async (call, operations) => {
   return call("update_roadmap", { expectedRevision: current.value?.revision ?? null, operations });
 };
 
+// The sentence that ends each cited artifact's part of the refusal: the state of its format migration, never an offer of one.
+const MIGRATION_STATE = /Prism is migrating it into its format in the run run-[0-9a-f]{16}\.|Its format migration run-[0-9a-f]{16} (waits for your answers on Attention|waits for an available host|failed: .*? Run it again from Attention)\.|Prism does not migrate feature files, so bring it into its format in a change of its own\.|Prism has not started its format migration yet\./;
+
 function assertRefused(result, file, rule) {
   assert.equal(result.value?.code, "artifact_nonconforming", result.text);
   const artifact = result.value.artifacts.find((entry) => entry.path === file);
@@ -36,7 +39,8 @@ function assertRefused(result, file, rule) {
   assert.ok(artifact.findings.some((finding) => finding.rule === rule), rule);
   assert.match(result.text, new RegExp(file.replace(/[./]/g, "\\$&")));
   assert.match(result.text, new RegExp(rule.replace(/\./g, "\\.")));
-  assert.match(result.text, new RegExp(`Ask for a migration of ${file.replace(/[./]/g, "\\$&")} in a session of its own\\.`));
+  assert.match(result.text, new RegExp(`${file.replace(/[./]/g, "\\$&")} breaks [^\\n]*\\. (${MIGRATION_STATE.source})`));
+  assert.doesNotMatch(result.text, /Ask for a migration|in a session of its own/);
 }
 
 test("clauses 24, 26: creating an initiative that cites a nonconforming requirement is refused and changes nothing", async (context) => {
@@ -79,8 +83,10 @@ test("clauses 25, 26: a design whose slice.md links a nonconforming ADR, or whos
   assert.equal(accepted.value?.code ?? null, null, accepted.text);
 });
 
-test("clause 27: a missing requirement file and an unknown value do not refuse, and a record that already cites a nonconforming file still loads", async (context) => {
-  const { root, call } = await formatServer(context, { ...FILES, "docs/requirements/partial.md": CONFORMING[PATHS.requirements].replace("Created: 2026-09-02", "Created: unknown") });
+test("clause 27: a missing requirement file and an unknown value in a Draft do not refuse, and a record that already cites a nonconforming file still loads", async (context) => {
+  const draft = CONFORMING[PATHS.requirements].replace("Status: Approved", "Status: Draft").replace("Approved: 2026-09-04", "Approved: n/a").replace("Rationale: A request that retries forever holds a connection that other requests need.", "Rationale: unknown");
+  assert.notEqual(draft, CONFORMING[PATHS.requirements]);
+  const { root, call } = await formatServer(context, { ...FILES, "docs/requirements/partial.md": draft });
   const created = await initiative(call, [{ op: "create", slug: "retries", title: "Retries", requirements: ["gone.md§1", "partial.md§1"] }]);
   assert.equal(created.value?.code ?? null, null, created.text);
   const record = JSON.parse(await read(root, ".prism/initiatives/retries/initiative.json"));

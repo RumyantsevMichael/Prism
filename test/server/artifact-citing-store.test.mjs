@@ -25,14 +25,15 @@ async function project(context) {
   return { root, call };
 }
 
-test("clauses 26, 56: a refusal names a nonconforming store artifact by path and scope and offers its migration in that scope", async (context) => {
+test("clauses 26, 56: a refusal names a nonconforming store artifact by path and scope with the state of its migration", async (context) => {
   const { call } = await project(context);
   const refused = await initiative(call, [{ op: "create", slug: "retries", title: "Retries", requirements: ["old.md§1"] }]);
   assert.equal(refused.value?.code, "artifact_nonconforming", refused.text);
   const [artifact] = refused.value.artifacts;
   assert.deepEqual([artifact.path, labelOf(artifact), artifact.type, Object.hasOwn(artifact, "legacy")], [OLD, "api", "requirements", false]);
   assert.ok(artifact.findings.some((finding) => finding.rule === "requirements.header"));
-  assert.match(refused.text, /Ask for a migration of docs\/requirements\/old\.md in scope api in a session of its own\./);
+  assert.match(refused.text, /docs\/requirements\/old\.md in scope api breaks [^\n]*\. (Prism is migrating it into its format in the run run-[0-9a-f]{16}|Prism has not started its format migration yet)\./);
+  assert.doesNotMatch(refused.text, /Ask for a migration|in a session of its own/);
   assert.equal((await call("get_initiative", { initiative: "retries" })).value.exists, false, "nothing changed");
 });
 
