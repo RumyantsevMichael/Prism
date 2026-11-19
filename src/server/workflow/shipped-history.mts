@@ -253,7 +253,7 @@ export async function writeHistoryMarks(projectRoot: string, initiative: string,
       }
       if (await inArtifactStore(projectRoot, document.path)) {
         // The store's checked update writes the mark only over the content that was read, so a change that a sync brought meanwhile is never overwritten.
-        const { written } = await writeArtifactText(projectRoot, document.path, (stored) => stored === document.content ? next : undefined);
+        const { written } = await writeArtifactText(projectRoot, document.path, (stored: any) => stored === document.content ? next : undefined);
         if (!written) {
           problems.push({ path: document.path, reason: "it changed after it was read, so it was not marked and its recorded content is the content read" });
           continue;

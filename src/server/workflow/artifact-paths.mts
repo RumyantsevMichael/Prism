@@ -237,4 +237,4 @@ export function locationArtifact(location: unknown): { scope: Scope; kind: strin
 }
 
 /** Whether an artifact kind may live in a scope: every kind in every scope, except the roadmap view, which lives only in the workspace scope. */
-export const kindInScope = (kind: string, scope: Scope) => kind !== "roadmap" || scope.kind === "workspace";
+export const kindInScope = (kind: string, scope: Pick<Scope, "kind">) => kind !== "roadmap" || scope.kind === "workspace";

@@ -129,7 +129,7 @@ test("the orchestrate skill and the user guide ask to commit history marks only 
   const guide = await readFile(path.join(ROOT, "docs/user-guide/workflow.md"), "utf8");
   assert.doesNotMatch(guide, /^Commit the marked documents\.$/m);
   assert.match(guide, /^In a project without a record store, commit the marked documents\.$/m);
-  for (const file of ["src/server/workflow/roadmap.mjs", "src/server/workflow/initiative.mjs", "src/server/mcp.mjs", "src/server/conservation/conservation-tools.mts"]) {
+  for (const file of ["src/server/workflow/roadmap.mts", "src/server/workflow/initiative.mts", "src/server/mcp.mjs", "src/server/conservation/conservation-tools.mts"]) {
     assert.doesNotMatch(await readFile(path.join(ROOT, file), "utf8"), /to commit apart from the task's changes\./, file);
   }
 });
