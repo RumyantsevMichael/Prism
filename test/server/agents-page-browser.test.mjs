@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { agentsProject, askAsLaunch, holderOf, INITIATIVE, plannedSlices, writeClaim } from "./fixtures/agents.mjs";
 import { launch as launchBrowser, openPage, reviewUrl, skip, waitForView } from "./fixtures/kit-browser.mjs";
+import { startActionReview } from "./fixtures/review-actions.mjs";
 import { settled } from "./fixtures/wait.mjs";
 
 // The Agents page, in place of Launched sessions: one table row per agent in shared columns, grouped by what needs the person, with
@@ -35,11 +36,15 @@ async function busy(t) {
   await writeClaim(s.root, INITIATIVE, "naming", { label: "Michael on work-mac", host: "Claude Code", model: "Opus 5", activity: "design", minutesLeft: -120 });
   const browser = await launchBrowser(t);
   // A tab that Prism opened holds a write session from the grant in its URL fragment; a plain review URL only reads.
+  // The project's server already spent its one browser open on the fixture's write session and refuses another while that open's lease
+  // lasts, so a write tab comes from its own review server over the same project, whose first open issues a fresh grant.
   const open = async (ref = "agents", { write = false, viewport = { width: 1440, height: 900 } } = {}) => {
     let url = reviewUrl(s.base, ref);
     if (write) {
-      await s.review.open([]);
-      const granted = new URL(s.opened.at(-1));
+      const tab = await startActionReview(t, s.root);
+      await tab.review.open([]);
+      assert.equal(tab.opened.length, 1, "the tab's own server opens the browser once, with a grant");
+      const granted = new URL(tab.opened.at(-1));
       url = `${granted.origin}${granted.pathname.replace(/\/$/, "")}/review?artifact=${encodeURIComponent(ref)}${granted.hash}`;
     }
     const page = await openPage(browser, url, { viewport });
