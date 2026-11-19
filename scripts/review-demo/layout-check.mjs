@@ -140,7 +140,7 @@ try {
         "project menu": ["attention", () => page.click("#project-button")],
         "index panel": ["attention", () => page.click("#indexing-button")],
         // Each overlay opens the way a reader opens it, through its kit control.
-        "who's working": ["attention", () => page.locator("header").getByRole("button", { name: /working/ }).click()],
+        "agents menu": ["attention", () => page.locator("header").getByRole("button", { name: /^Agents:/ }).click()],
         "navigation drawer": ["roadmap", async () => {
           const navigation = page.locator("header").getByRole("button", { name: "Navigation", exact: true });
           if (await navigation.isVisible()) await navigation.click();

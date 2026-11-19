@@ -1,6 +1,6 @@
 // The top bar's agents button and its short menu, read from api/agents: the button counts the working agents and marks failed and waiting launched sessions,
 // and the menu lists only the launched sessions that need the person, counts the rest, and leads to the Agents page. Nothing here takes, releases, or renews a claim.
-import { hostText, runningText, stateOf, workText } from "./agents.js";
+import { hostText, stateOf, workText } from "./agents.js";
 import { createPoller } from "./poller.js";
 import { badge, escapeHtml } from "./util.js";
 
@@ -13,6 +13,14 @@ const COUNT_LINKS = Object.freeze([
   ["Expired claims", "expired", "clock", "agents:expired"]
 ]);
 
+/** A running time in its largest unit, as the menu has room for: `8s`, `41m`, or `2h 05m`. */
+export function shortRunningText(ms) {
+  const total = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+  if (total < 60) return `${total}s`;
+  if (total < 3600) return `${Math.floor(total / 60)}m`;
+  return `${Math.floor(total / 3600)}h ${String(Math.floor((total % 3600) / 60)).padStart(2, "0")}m`;
+}
+
 const ticking = (entry) => entry.state === "running" || entry.state === "waiting";
 
 /** The second line of a row: the harness or Agent, the model, and what the session works on. */
@@ -24,7 +32,7 @@ function rowHtml(entry, now) {
   const [words, tone] = stateOf(entry);
   const answer = entry.action === "answer";
   const action = answer ? '<prism-button slot="action" size="sm" variant="primary" data-menu-action="answer" text="Answer"></prism-button>' : '<prism-button slot="action" size="sm" variant="ghost" data-menu-action="open" text="Open"></prism-button>';
-  return `<prism-row icon="play" tone="${escapeHtml(tone)}" data-menu-agent="${escapeHtml(entry.id)}">${escapeHtml(entry.name ?? "")}<span slot="description" data-menu-description>${escapeHtml(rowDescription(entry, now))}</span>${badge(words, tone).replace("<prism-badge", '<prism-badge slot="kind"')}<span slot="time" data-menu-time>${escapeHtml(runningText(entry.launch?.runningMs ?? 0))}</span>${action}</prism-row>`;
+  return `<prism-row icon="play" tone="${escapeHtml(tone)}" data-menu-agent="${escapeHtml(entry.id)}">${escapeHtml(entry.name ?? "")}<span slot="description" data-menu-description>${escapeHtml(rowDescription(entry, now))}</span>${badge(words, tone).replace("<prism-badge", '<prism-badge slot="kind"')}<span slot="time" data-menu-time>${escapeHtml(shortRunningText(entry.launch?.runningMs ?? 0))}</span>${action}</prism-row>`;
 }
 
 /**
@@ -67,7 +75,7 @@ export function createAgentsMenu({ button, popover, onOpen, onAnswer, onOpenAgen
       const entry = agents.find((item) => item.id === row.dataset.menuAgent);
       if (!entry) continue;
       const time = row.querySelector("[data-menu-time]");
-      const text = runningText((entry.launch?.runningMs ?? 0) + (ticking(entry) ? now - fetchedAt : 0));
+      const text = shortRunningText((entry.launch?.runningMs ?? 0) + (ticking(entry) ? now - fetchedAt : 0));
       if (time && time.textContent !== text) time.textContent = text;
       const description = row.querySelector("[data-menu-description]");
       const words = rowDescription(entry, now);
