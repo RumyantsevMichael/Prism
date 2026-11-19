@@ -12,7 +12,8 @@ import path from "node:path";
 import { COMMENTS_PER_ARTIFACT_MAX, finishUnfinishedMoves, nameToolCallRoot, outsideToolCall, recordStoreOf, recordStoreSummary, restoreMigrationReports, takeMigrationReports, toolCallContext, withToolCall } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
 import { confirmSavedConflicts, releaseSavedConflicts, takeSavedConflicts } from "./workflow/record-store-sync.mjs";
-import { callSessionId, configureClaims, harnessName, withCallSession, withClaimAgent } from "./workflow/slice-claims.mjs";
+import { callIsMainAgent, callSessionId, claimHolder, claimHost, configureClaims, harnessName, withCallSession, withClaimAgent } from "./workflow/slice-claims.mjs";
+import { readAgentModel } from "./session/agent-models.mjs";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
 import {
   listRepositoryIntelligenceProviders,
@@ -205,8 +206,14 @@ function requestedTabs(argumentsValue) {
 }
 
 // An agent may name the tab group its presented tabs join, such as the piece of work they belong to.
-function requestedGroup(argumentsValue) {
-  return Object.hasOwn(argumentsValue, "group") ? { group: argumentsValue.group } : {};
+// A named group also names the presenting agent, so the review app shows who opened it: the holder finds the agent's claim, and the model is
+// recorded only when the call is positively the session's main agent's, as a claim records it.
+async function requestedGroup(argumentsValue) {
+  if (!Object.hasOwn(argumentsValue, "group")) return {};
+  if (argumentsValue.group === null || argumentsValue.group === undefined) return { group: argumentsValue.group };
+  const holder = claimHolder();
+  const model = callIsMainAgent() ? await readAgentModel(holder).catch(() => null) : null;
+  return { group: argumentsValue.group, by: { holder, ...(claimHost() ? { host: claimHost() } : {}), ...(model ? { model } : {}) } };
 }
 
 // A session that fell back to its own review server tells the agent, so two review pages for one project reach the user as a known cause.
@@ -1582,7 +1589,7 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
     return { content: [{ type: "text", text: reviewContent(url, review) }], structuredContent: { url, ...await reviewSessionContent(review), ...privateServerContent(review) } };
   }
   if (name === "present_review") {
-    const opened = await review.open(requestedTabs(argumentsValue), requestedGroup(argumentsValue));
+    const opened = await review.open(requestedTabs(argumentsValue), await requestedGroup(argumentsValue));
     return { content: [{ type: "text", text: reviewContent(opened.url, review) }], structuredContent: { ...opened, ...await reviewSessionContent(review), ...privateServerContent(review) } };
   }
   if (name === "list_reviewable_artifacts") {

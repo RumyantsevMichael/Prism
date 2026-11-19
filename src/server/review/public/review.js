@@ -638,7 +638,33 @@ function renderTabs() {
     const agent = agentTabs.includes(path);
     const tip = [missing ? missingNotice(path, { entity, label: title }).tooltip : full, preview ? PREVIEW_TIP : "", agent ? "Presented by the agent." : ""].filter(Boolean).join(" ");
     return { value: path, label: title, tip, selected: path === selectedPath, preview, agent, missing, code, group: groupOf.get(path) ?? null };
-  }), { groups: tabGroups });
+  }), { groups: tabGroups.map((group) => ({ name: group.name, collapsed: group.collapsed, opener: groupOpener(group) })) });
+}
+
+// A group an agent presented shows who opened it before its name: the avatar of the claim that agent held, live or lapsed, while the claim
+// index has it, and otherwise the agent's avatar with its harness and model; the strip keeps each avatar while nothing about it changes.
+const openerAvatars = new Map();
+function groupOpener(group) {
+  const by = group.opener;
+  if (!by?.agent) return null;
+  const claim = by.claim ? claimIndex?.claimFor(by.claim) ?? null : null;
+  const kind = [by.host ?? claim?.host ?? "Agent", by.model ?? claim?.model].filter(Boolean).join(" · ");
+  const text = claim ? `${kind}, ${claim.activity === "design" ? "designing" : "implementing"} ${claim.sliceTitle}` : kind;
+  const key = JSON.stringify([kind, claim && [claim.ref, claim.label, claim.activity, claim.claimedAt, claim.renewedAt, claim.expiresAt]]);
+  let held = openerAvatars.get(group.name);
+  if (held?.key !== key) {
+    const element = claim ? claimElement(claim, "avatar") : document.createElement("prism-avatar");
+    if (!claim) {
+      element.setAttribute("kind", "agent");
+      element.setAttribute("size", "sm");
+      element.setAttribute("name", kind);
+      element.setAttribute("tip", `Opened by ${kind}`);
+    }
+    held = { key, element };
+    openerAvatars.set(group.name, held);
+  }
+  for (const name of openerAvatars.keys()) if (!tabGroups.some((each) => each.name === name)) openerAvatars.delete(name);
+  return { text, element: held.element };
 }
 
 tabStrip.addEventListener("prism-select", (event) => openRef(event.detail?.value));
@@ -655,7 +681,8 @@ function moveTabs(order, groups) {
   openTabs = [...known, ...openTabs.filter((path) => !known.includes(path))];
   if (Array.isArray(groups)) {
     const collapsed = new Map(tabGroups.map((group) => [group.name, group.collapsed]));
-    tabGroups = groups.filter((group) => collapsed.has(group.name)).map((group) => ({ name: group.name, tabs: group.tabs.filter((path) => openTabs.includes(path)), collapsed: collapsed.get(group.name) }));
+    const openers = new Map(tabGroups.filter((group) => group.opener).map((group) => [group.name, group.opener]));
+    tabGroups = groups.filter((group) => collapsed.has(group.name)).map((group) => ({ name: group.name, tabs: group.tabs.filter((path) => openTabs.includes(path)), collapsed: collapsed.get(group.name), ...(openers.has(group.name) ? { opener: openers.get(group.name) } : {}) }));
   }
   renderTabs();
   void saveSession().catch((error) => showToast(error.message));
@@ -3093,6 +3120,7 @@ async function initialize() {
     onChange: () => {
       navigationKey = "";
       renderNavigation();
+      renderTabs();
       void agentsMenu?.refresh();
     }
   });

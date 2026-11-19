@@ -16,22 +16,25 @@ export function groupToneOf(name) {
 export class PrismDocTabGroup extends Base {
   static tag = "prism-doc-tab-group";
   static styles = ["prism-doc-tab-group.css"];
-  static observedAttributes = ["collapsed", "current", "count", "tone"];
+  static observedAttributes = ["collapsed", "current", "count", "tone", "opener"];
   static catalog = {
-    purpose: "The head of a named group of tabs in a prism-doc-tabs strip: a name in the group's color on a pale wash of it, and a count that collapse and expand the group, and a close button for the group's tabs.",
+    purpose: "The head of a named group of tabs in a prism-doc-tabs strip: who opened the group in the room before its name, a name in the group's color on a pale wash of it, and a count that collapse and expand the group, and a close button for the group's tabs.",
     options: [
       { name: "name", values: ["text"], default: "", description: "The group's name, also its visible text; the strip sends it in its group events." },
       { name: "tone", values: GROUP_TONES, default: "from the name", description: "The group's color; without it, the name picks one, so a group keeps its color everywhere." },
       { name: "collapsed", values: ["boolean"], default: "false", description: "The group shows only its head and its selected tab." },
-      { name: "count", values: ["number"], default: "0", description: "How many tabs the group holds, shown while it is collapsed and told to assistive technology." }
+      { name: "count", values: ["number"], default: "0", description: "How many tabs the group holds, shown while it is collapsed and told to assistive technology." },
+      { name: "opener", values: ["text"], default: "", description: "Who opened the group, such as the agent that presented its tabs, told to assistive technology after the group's name." },
+      { name: "slot opener", values: ["element"], default: "", description: "A small avatar of who opened the group, such as a prism-claim avatar or a prism-avatar, shown in the room before the name that the close button's room at the end mirrors." }
     ],
-    states: ["expanded", "collapsed", "tones", "long-name"],
+    states: ["expanded", "collapsed", "tones", "long-name", "opened-by-agent"],
     keyboard: ["Inside prism-doc-tabs, arrow keys reach the head like a tab; Enter or Space collapses or expands the group.", "Tab from the focused head reaches its close button.", "Ctrl+Shift+ArrowLeft and ArrowRight, or Cmd+Shift on a Mac, move the whole group one place."]
   };
 
   constructor() {
     super();
     this.root = shadow(this, PrismDocTabGroup.styles, `<div class="group" part="group">
+      <span class="lead" part="lead"><slot name="opener"></slot></span>
       <span class="head" part="head" role="button" tabindex="-1" aria-expanded="true"><span class="name"><slot></slot></span><span class="count"></span></span>
       <prism-button class="close" data-action="close-group" size="sm" variant="ghost" tip="Close the group's tabs"><prism-icon name="close" size="xs"></prism-icon></prism-button>
     </div>`);
@@ -77,7 +80,8 @@ export class PrismDocTabGroup extends Base {
     const tabs = `${count} ${count === 1 ? "tab" : "tabs"}`;
     if (!GROUP_TONES.includes(this.getAttribute("tone"))) setAttribute(this, "tone", groupToneOf(this.name));
     setAttribute(this.head, "aria-expanded", String(!this.collapsed));
-    setAttribute(this.head, "aria-label", `${this.name}, group of ${tabs}`);
+    const opener = (this.getAttribute("opener") ?? "").trim();
+    setAttribute(this.head, "aria-label", `${this.name}, group of ${tabs}${opener ? `, opened by ${opener}` : ""}`);
     setAttribute(this.head, "tabindex", current ? "0" : "-1");
     setAttribute(this.close, "tabindex", current ? null : "-1");
     setAttribute(this.close, "label", `Close the ${tabs} of ${this.name}`);

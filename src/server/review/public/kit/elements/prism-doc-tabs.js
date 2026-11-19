@@ -25,7 +25,7 @@ export class PrismDocTabs extends Base {
     purpose: "The strip of open documents above a page: one tab per open page with one selected, named groups of tabs that collapse, tabs that do not fit scroll inside the strip, and the selected tab stays in view.",
     options: [
       { name: "label", values: ["text"], default: "", description: "The tablist's accessible name." },
-      { name: "setTabs(tabs, { groups })", values: ["method"], default: "", description: "Gives the strip its tabs as [{ value, label, text, tip, selected, preview, agent, missing, code, group }] in order, with a group's tabs side by side, and its groups as [{ name, collapsed, tone }], where a group without a tone takes its name's tone unless an earlier group has it, and then the next free one, keeping the element and the focus of each tab that stays." },
+      { name: "setTabs(tabs, { groups })", values: ["method"], default: "", description: "Gives the strip its tabs as [{ value, label, text, tip, selected, preview, agent, missing, code, group }] in order, with a group's tabs side by side, and its groups as [{ name, collapsed, tone, opener }], where opener { text, element } names who opened the group and gives the small avatar its head shows before the name, and where a group without a tone takes its name's tone unless an earlier group has it, and then the next free one, keeping the element and the focus of each tab that stays." },
       { name: "prism-select", values: ["event"], default: "", description: "A click, Enter, or Space on a tab; detail.value names its page." },
       { name: "prism-tab-keep", values: ["event"], default: "", description: "A double click on a tab, or Ctrl+Enter or Cmd+Enter on the focused tab; detail.value names its page." },
       { name: "prism-tab-close", values: ["event"], default: "", description: "The close button or a middle click on a tab; detail.value names its page." },
@@ -199,8 +199,24 @@ export class PrismDocTabs extends Base {
         setAttribute(head, "tone", tone);
         setAttribute(head, "count", String(counts.get(name)));
         head.toggleAttribute("collapsed", Boolean(group.collapsed));
-        setAttribute(head, "tip", `${name}, ${counts.get(name)} ${counts.get(name) === 1 ? "tab" : "tabs"}`);
-        if (head.textContent !== name) head.textContent = name;
+        const opener = typeof group.opener?.text === "string" && group.opener.text.trim() ? group.opener : null;
+        setAttribute(head, "opener", opener?.text.trim() ?? null);
+        setAttribute(head, "tip", `${name}, ${counts.get(name)} ${counts.get(name) === 1 ? "tab" : "tabs"}${opener ? `, opened by ${opener.text.trim()}` : ""}`);
+        const words = [...head.childNodes].filter((node) => node.nodeType === 3);
+        if (words.map((node) => node.textContent).join("") !== name) {
+          for (const node of words) node.remove();
+          head.append(name);
+        }
+        // Who opened the group shows as the element the page gives, in the head's opener slot; the page keeps the same element while nothing about the opener changes.
+        const shown = [...head.children].find((node) => node.slot === "opener") ?? null;
+        const avatar = opener?.element?.nodeType === 1 ? opener.element : null;
+        if (shown !== avatar) {
+          shown?.remove();
+          if (avatar) {
+            avatar.slot = "opener";
+            head.prepend(avatar);
+          }
+        }
         next.push(head);
       }
       const tab = existing.get(entry.value) ?? this.ownerDocument.createElement("prism-doc-tab");

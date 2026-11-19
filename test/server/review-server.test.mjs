@@ -279,6 +279,30 @@ test("an agent's group name gathers its presented tabs into one named group that
   }
 });
 
+test("a group an agent presents records who opened it, which the page can neither drop nor forge", async (context) => {
+  const projectRoot = await fixture(context);
+  await writeFile(path.join(projectRoot, "docs", "notes.md"), "# Notes\n");
+  const review = await startReviewServer({ projectRoot, openBrowser: async () => true });
+  const put = async (body) => (await fetchReview(`${review.baseUrl}/api/session`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+  try {
+    // The opener keeps the harness and the model, and never the holder; an agent that holds no live claim names no claim.
+    await review.open(["docs/roadmap.md"], { group: "Retry requests", by: { holder: "session-0123456789abcdef", host: "Some Harness", model: "a-model" } });
+    const opener = { agent: true, host: "Some Harness", model: "a-model" };
+    assert.deepEqual(review.getSession().groups, [{ name: "Retry requests", tabs: ["docs/roadmap.md"], collapsed: false, opener }]);
+    // A page that saves its groups without the opener, or with another, keeps the one the review app recorded, and a group the page makes has none.
+    let session = await put({ openTabs: ["docs/roadmap.md", "docs/notes.md"], groups: [{ name: "Retry requests", tabs: ["docs/roadmap.md"], collapsed: true }, { name: "Mine", tabs: ["docs/notes.md"], opener: { agent: true, host: "Forged" } }] });
+    assert.deepEqual(session.groups, [{ name: "Retry requests", tabs: ["docs/roadmap.md"], collapsed: true, opener }, { name: "Mine", tabs: ["docs/notes.md"], collapsed: false }]);
+    // A later presentation into the group names the agent that made it, and one without an agent keeps the opener.
+    await review.open(["docs/roadmap.puml"], { group: "Retry requests", by: { holder: "session-fedcba9876543210", host: "Another Harness" } });
+    assert.deepEqual(review.getSession().groups[0].opener, { agent: true, host: "Another Harness" });
+    await review.open(["docs/notes.md"], { group: "Retry requests" });
+    assert.deepEqual(review.getSession().groups[0].opener, { agent: true, host: "Another Harness" });
+    assert.equal(JSON.stringify(review.getSession()).includes("session-"), false, "the session never names a holder");
+  } finally {
+    await review.close();
+  }
+});
+
 test("stores agent-selected tabs and exposes them to the viewer", async (context) => {
   const projectRoot = await fixture(context);
   const review = await startReviewServer({ projectRoot });

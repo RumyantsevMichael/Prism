@@ -152,6 +152,20 @@ prism-option {
   box-sizing: border-box;
 }
 
+/* ---------- Text that is not for copying: controls, navigation, and marks ----------
+   A press, a double click, or a drag on a control, a navigation item, or a status mark does not select its text, as in a desktop application;
+   records, documents, code, identifiers, figures, messages, and fields stay selectable. Shadow content takes its host's value. */
+
+:where(prism-button, prism-tab, prism-tabs, prism-doc-tab, prism-doc-tab-group, prism-doc-tabs, prism-menu, prism-menu-group, prism-menu-item,
+  prism-rail, prism-rail-item, prism-segmented, prism-choice-option, prism-listbox, prism-list-item, prism-tree-item, prism-inbox-item,
+  prism-count-link, prism-breadcrumbs, prism-contents, prism-stepper, prism-step, prism-chip, prism-badge, prism-status, prism-phase,
+  prism-severity, prism-slice-bar, prism-meter, prism-spinner, prism-avatar, prism-icon, prism-kbd, prism-tooltip, prism-resizer,
+  prism-maximize, prism-agent-summary),
+.prism-disclosure-toggle {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 /* ---------- Kit buttons and tabs: the element is the control's box ---------- */
 
 prism-button:focus-visible {

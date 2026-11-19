@@ -22,8 +22,7 @@
   gap: var(--prism-space-1);
   width: 100%;
   min-width: 0;
-  /* The start keeps the room the close button and its gap take at the end, as a tab's does. */
-  padding: 0 var(--prism-space-2) 0 calc(var(--prism-space-2) + var(--prism-doc-tab-slot) + var(--prism-space-1));
+  padding: 0 var(--prism-space-2);
   background: var(--prism-doc-tab-group-tint);
   white-space: nowrap;
   cursor: pointer;
@@ -53,6 +52,18 @@
 /* Under the pointer the wash gains an outline in the group's color, so the head reads as the control it is. */
 :host(:hover) .group {
   box-shadow: inset 0 0 0 var(--prism-stroke) var(--prism-doc-tab-group-color);
+}
+
+/* The start keeps a room as wide as the close button's at the end, as a tab's does, and who opened the group takes it at the small avatar size. */
+.lead {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--prism-doc-tab-slot);
+}
+
+::slotted([slot="opener"]) {
+  --prism-avatar-size: var(--prism-avatar-size-sm);
 }
 
 .name {
