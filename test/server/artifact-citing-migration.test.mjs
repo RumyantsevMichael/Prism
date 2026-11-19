@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CONFORMING, FEATURE, PATHS, REQUIREMENT, write } from "./fixtures/artifact-formats.mjs";
-import { AUDIT, AUDIT_SOURCE, auditProposal, listedTools, readRun, runCheckout, runFor, waitFor } from "./fixtures/format-migration-runs.mjs";
+import { AUDIT, AUDIT_SOURCE, auditProposal, listedTools, readRun, runCheckout, runFor } from "./fixtures/format-migration-runs.mjs";
 
 // Work that cites a nonconforming artifact is refused with the artifact, its broken rules, and the state of its format migration, and never offers a migration.
 
@@ -63,9 +63,12 @@ test("clause 2: a refusal after the run failed gives its reason and says to run 
 });
 
 test("clause 2: a refusal while no host is available says the run waits for one", async (context) => {
-  const { call } = await runCheckout(context, { ...CONFORMING, [PATHS.requirements]: UNANCHORED }, { hosts: [] });
+  const { root, call } = await runCheckout(context, { ...CONFORMING, [PATHS.requirements]: UNANCHORED }, { hosts: [] });
   const run = await runFor(call, PATHS.requirements);
-  await waitFor(async () => (await readRun(call, run)).status === "waiting-for-host" || null, { what: "the run waiting for a host" });
+  // The run's record is put in waiting-for-host directly, since launching a run, which sets it when no host is available, is migration-launch's work.
+  const { setRunStatus } = await import("../../dist/server/workflow/migration-runs.mjs");
+  await setRunStatus(root, run, "waiting-for-host", { reason: "No host is available on this machine: no host is installed." });
+  assert.equal((await readRun(call, run)).status, "waiting-for-host");
   const refused = await cite(call, "retries.md§1");
   const artifact = refusedFor(refused, PATHS.requirements);
   assert.equal(artifact.migration.status, "waiting-for-host");
