@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { escapes, launch, openPage, skip, waitForView } from "./fixtures/kit-browser.mjs";
-import { INITIATIVE, runOptionsReview } from "./fixtures/run-options-hosts.mjs";
+import { startActionReview } from "./fixtures/review-actions.mjs";
+import { INITIATIVE, runOptionsFixture } from "./fixtures/run-options-hosts.mjs";
 import { settled } from "./fixtures/wait.mjs";
 
 // Requirements: docs/requirements/launch-run-configuration.md §4, §6, §11, §12, §13, §14, §16, §17, and docs/requirements/initiative-settings.md §10.
@@ -39,8 +40,11 @@ const storedModels = async (root) => {
 
 /** The initiative page in a tab that Prism opened, which holds the write grant, with its Settings dialog open. */
 async function settingsDialog(t, { hosts, viewport, before } = {}) {
-  const s = await runOptionsReview(t, hosts ? { hosts } : {});
+  const fixture = await runOptionsFixture(t, hosts ? { hosts } : {});
+  fixture.useAsProcessEnv();
+  const s = { ...fixture, ...(await startActionReview(t, fixture.root)) };
   if (before) await before(s);
+  // Prism opens the page once, and the tab itself exchanges the grant in its URL, as a tab Prism opens for a person does.
   await s.review.open([TARGET]);
   const page = await openPage(await launch(t), s.opened.at(-1), viewport ? { viewport } : {});
   await waitForView(page);
@@ -67,7 +71,7 @@ async function openPicker(page, scope, label, heading = `${label} model`) {
   return popover;
 }
 const optionNames = (popover) => popover.getByRole("option").allInnerTexts().then((texts) => texts.map((text) => text.split("\n")[0].trim()));
-const efforts = (popover) => popover.getByRole("group", { name: "Effort" }).getByRole("button").allInnerTexts().then((texts) => texts.map((text) => text.trim()));
+const efforts = (popover) => popover.getByRole("group", { name: "Effort" }).locator("prism-button").allInnerTexts().then((texts) => texts.map((text) => text.trim()));
 const pressedEffort = (popover) => popover.getByRole("group", { name: "Effort" }).locator("prism-button[pressed=true]").innerText().then((text) => text.trim());
 const applyAll = async (s) => {
   const apply = s.dialog.locator("[data-settings-apply]");
