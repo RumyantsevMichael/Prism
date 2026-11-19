@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { escapes, launch, openPage, skip, waitForView } from "./fixtures/kit-browser.mjs";
-import { runOptionsReview } from "./fixtures/run-options-hosts.mjs";
+import { startActionReview } from "./fixtures/review-actions.mjs";
+import { runOptionsFixture } from "./fixtures/run-options-hosts.mjs";
 import { settled } from "./fixtures/wait.mjs";
 
 // Requirements: docs/requirements/launched-sessions.md §24, and docs/requirements/launch-run-configuration.md §16.
@@ -18,7 +19,10 @@ const skipHere = skip || (process.platform === "win32" ? "the stub hosts are POS
 
 /** The review page in a tab that Prism opened, which holds the write grant, with the app's Settings at Prism's own runs. */
 async function section(t, { hosts, viewport } = {}) {
-  const s = await runOptionsReview(t, hosts ? { hosts } : {});
+  const fixture = await runOptionsFixture(t, hosts ? { hosts } : {});
+  fixture.useAsProcessEnv();
+  const s = { ...fixture, ...(await startActionReview(t, fixture.root)) };
+  // Prism opens the page once, and the tab itself exchanges the grant in its URL, as a tab Prism opens for a person does.
   await s.review.open([]);
   const granted = new URL(s.opened.at(-1));
   const page = await openPage(await launch(t), `${granted.origin}${granted.pathname.replace(/\/$/, "")}/review?artifact=attention${granted.hash}`, viewport ? { viewport } : {});
