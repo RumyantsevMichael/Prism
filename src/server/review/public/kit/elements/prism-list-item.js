@@ -6,7 +6,7 @@ import { unwatchShortening, watchShortening } from "../shorten.js";
 export class PrismListItem extends Base {
   static tag = "prism-list-item";
   static tooltipBoundary = true;
-  static observedAttributes = ["selected", "active", "current"];
+  static observedAttributes = ["selected", "active", "current", "disabled"];
   static catalog = {
     purpose: "One option of a prism-listbox: its text on one line and its kind from children with slot=\"meta\"; with a detail it reads as two lines beside an icon, and a <mark> in its text highlights a match.",
     options: [
@@ -15,9 +15,10 @@ export class PrismListItem extends Base {
       { name: "slot=\"meta\"", values: ["children"], default: "", description: "Quieter text after the option, such as its kind." },
       { name: "slot=\"icon\"", values: ["children"], default: "", description: "A prism-icon before the option's text, which takes the accent while the option is active." },
       { name: "slot=\"detail\"", values: ["children"], default: "", description: "A quieter second line under the option's text, such as where a result belongs." },
-      { name: "current", values: ["boolean"], default: "false", description: "Shows the option as the one Enter would choose while no option is active; a listbox with first-current sets it." }
+      { name: "current", values: ["boolean"], default: "false", description: "Shows the option as the one Enter would choose while no option is active; a listbox with first-current sets it." },
+      { name: "disabled", values: ["boolean"], default: "false", description: "The option shows quieter and cannot be chosen; the arrow keys pass over it. Exposed as aria-disabled." }
     ],
-    states: ["default", "active", "selected", "meta", "two-line", "highlight"],
+    states: ["default", "active", "selected", "meta", "two-line", "highlight", "disabled"],
     keyboard: ["The listbox moves the active option; Enter or a click chooses it."]
   };
 
@@ -35,6 +36,7 @@ export class PrismListItem extends Base {
 
   attributeChangedCallback() {
     setAttribute(this, "aria-selected", String(this.hasAttribute("selected")));
+    setAttribute(this, "aria-disabled", this.hasAttribute("disabled") ? "true" : null);
   }
 
   build() {
@@ -57,6 +59,7 @@ export class PrismListItem extends Base {
     place();
     this.children$ = new MutationObserver(place);
     this.children$.observe(this, { childList: true });
+    for (const region of Object.values(regions)) this.children$.observe(region, { childList: true });
   }
 
   get value() {

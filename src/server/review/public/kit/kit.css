@@ -1442,6 +1442,16 @@ prism-list-item[active] {
   display: none;
 }
 
+/* A disabled option shows quieter and takes no hover. */
+prism-list-item[disabled] {
+  color: var(--prism-color-ink-faint);
+  cursor: default;
+}
+
+prism-list-item[disabled]:hover {
+  background: transparent;
+}
+
 /* A first-current listbox shows its first option as the one Enter chooses until the keys move. */
 prism-list-item[current] {
   background: var(--prism-color-selected);
@@ -1873,6 +1883,120 @@ prism-popover:focus-visible {
 
 .prism-popover-body > :last-child {
   margin-bottom: 0;
+}
+
+/* ---------- prism-picker: a label, one field-like button with the value and its detail, a hint or error, and a popover to choose in ---------- */
+
+prism-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+prism-picker [hidden] {
+  display: none !important;
+}
+
+.prism-picker-label {
+  min-width: 0;
+  color: var(--prism-color-ink);
+  font-size: var(--prism-font-size-md);
+  font-weight: var(--prism-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+/* The button reads as a field, in the field's box: the value and its detail start at the left and shorten, and the chevron ends it. */
+.prism-picker-button {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  height: var(--prism-control-height);
+  padding: 0 var(--prism-space-3) 0 var(--prism-space-4);
+  text-align: start;
+  cursor: pointer;
+}
+
+.prism-picker-button:hover:not(:disabled) {
+  background: var(--prism-color-hover);
+}
+
+.prism-picker-button:focus-visible {
+  outline: none;
+  border-color: var(--prism-color-accent);
+  box-shadow: 0 0 0 var(--prism-stroke) var(--prism-color-accent);
+}
+
+.prism-picker-button:disabled {
+  cursor: default;
+}
+
+.prism-picker-button > .prism-picker-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-picker-button > :is(prism-spinner, prism-icon) {
+  flex: none;
+}
+
+.prism-picker-chevron {
+  color: var(--prism-color-ink-muted);
+}
+
+.prism-picker-display {
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.prism-picker-separator,
+.prism-picker-detail {
+  color: var(--prism-color-ink-muted);
+}
+
+.prism-picker-hint,
+.prism-picker-error {
+  min-width: 0;
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.prism-picker-error {
+  color: var(--prism-color-danger);
+  font-weight: var(--prism-font-weight-medium);
+}
+
+/* The popover: the filter, the options in a list that scrolls on its own, then the empty text or the extra controls. */
+.prism-picker-popover .prism-popover-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--prism-space-3);
+}
+
+.prism-picker-options {
+  max-height: calc(10 * var(--prism-control-height));
+}
+
+.prism-picker-empty,
+.prism-picker-extra {
+  min-width: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+}
+
+.prism-picker-empty > *,
+.prism-picker-extra > * {
+  margin: 0;
+}
+
+.prism-picker-extra {
+  display: grid;
+  gap: var(--prism-space-2);
+  color: var(--prism-color-ink);
 }
 
 /* ---------- prism-disclosure: a quiet toggle and the content it shows ---------- */
