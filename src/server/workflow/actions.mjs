@@ -582,8 +582,9 @@ const LAUNCH_RUN = {
   effect: "Starts a headless session of this initiative's host on this computer with its settings; you confirm it outside the browser unless you confirmed in the last 30 minutes.",
   target: (context) => context.initiativeTarget,
   unavailable: (context) => {
-    if (context.coordination.exists && !context.coordination.valid) return UNREADABLE_STATE;
+    // The missing hosts read no setting, so they answer first, also while the state reads invalid.
     if (!context.hosts.some((item) => item.available)) return NO_HOST;
+    if (context.coordination.exists && !context.coordination.valid) return UNREADABLE_STATE;
     const host = launchHostOf(context);
     const availability = context.hosts.find((item) => item.host === host);
     if (!availability?.available) return availability?.reason ?? `${hostDefinition(host)?.label ?? host} was not found.`;

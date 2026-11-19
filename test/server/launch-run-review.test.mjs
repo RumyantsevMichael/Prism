@@ -73,8 +73,8 @@ async function stateFileHolding(folders, marker) {
   return null;
 }
 
-test("a launch on an initiative whose coordination state reads invalid is refused before any host read, confirmation, or start", { skip: posixOnly }, async (t) => {
-  const s = await runOptionsReview(t);
+// Writes a coordination state that names host codex and a coordinator model that breaks the model rule, so the state reads invalid.
+async function invalidState(s) {
   const { readCoordinationState, updateCoordinationState } = await import("../../dist/server/workflow/state.mjs");
   await updateCoordinationState({ projectRoot: s.root, initiative: INITIATIVE, expectedRevision: null, changes: { settings: { host: "codex" } } });
   const file = await stateFileHolding([s.root, process.env.PLUGIN_DATA], "\"host\": \"codex\"");
@@ -83,6 +83,11 @@ test("a launch on an initiative whose coordination state reads invalid is refuse
   stored.settings.models = { codex: { coordinator: { model: "--dangerously-bypass-approvals-and-sandbox" } } };
   await writeFile(file, JSON.stringify(stored));
   assert.equal((await readCoordinationState({ projectRoot: s.root, initiative: INITIATIVE })).valid, false);
+}
+
+test("a launch on an initiative whose coordination state reads invalid is refused before any host read, confirmation, or start", { skip: posixOnly }, async (t) => {
+  const s = await runOptionsReview(t);
+  await invalidState(s);
   const reason = "This initiative's saved settings cannot be read, so Prism cannot tell which host, models, and efforts to launch with.";
   const action = actionOf(await listing(s.base, `initiative:${INITIATIVE}`, s.headers), "launch.run");
   assert.deepEqual([action.available, action.reason], [false, reason]);
@@ -90,6 +95,18 @@ test("a launch on an initiative whose coordination state reads invalid is refuse
   assert.deepEqual([refused.status, refused.json.code, refused.json.message], [409, "action_unavailable", reason]);
   assert.deepEqual(s.optionReads(), [], "no host was read");
   assert.deepEqual(s.dialogs(), [], "no confirmation was asked");
+  assert.deepEqual(s.runs(), [], "no host started");
+  assert.deepEqual(await readdir(path.join(s.app, "launches")).catch(() => []), [], "no launch record was written");
+});
+
+test("with no supported host found the launch names the hosts Prism supports, also while the coordination state reads invalid", { skip: posixOnly }, async (t) => {
+  const s = await runOptionsReview(t, { hosts: [] });
+  await invalidState(s);
+  const reason = "No host that Prism supports was found on this computer. Prism supports Claude Code and Codex.";
+  const action = actionOf(await listing(s.base, `initiative:${INITIATIVE}`, s.headers), "launch.run");
+  assert.deepEqual([action.available, action.reason], [false, reason]);
+  const refused = await apply(s.base, { action: "launch.run", target: `initiative:${INITIATIVE}`, input: {}, revision: null }, s.headers);
+  assert.deepEqual([refused.status, refused.json.code, refused.json.message], [409, "action_unavailable", reason]);
   assert.deepEqual(s.runs(), [], "no host started");
   assert.deepEqual(await readdir(path.join(s.app, "launches")).catch(() => []), [], "no launch record was written");
 });
