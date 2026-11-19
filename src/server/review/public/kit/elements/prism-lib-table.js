@@ -8,7 +8,7 @@ export class PrismLibTable extends Base {
     purpose: "A library table: one bordered list of records with a head row, rows whose cells line up in the columns the page sets in --prism-lib-columns, and group heads with a count and, when the group comes from somewhere, its source; in a phone-width window, or when the table itself is narrower than 600px, a record keeps its title on its own line and the rest on the line below.",
     options: [
       { name: ".prism-lib-row", values: ["children"], default: "", description: "A row of cells; with is-head it names the columns in small capitals and is hidden from assistive technology with aria-hidden." },
-      { name: ".prism-lib-title", values: ["children"], default: "", description: "A record's title cell: a .prism-lib-kind glyph and a link that wraps when it is long." },
+      { name: ".prism-lib-title", values: ["children"], default: "", description: "A record's title cell: a .prism-lib-kind glyph, a link that wraps when it is long, and optionally a prism-badge after it that keeps its width beside the title's first line." },
       { name: ".prism-lib-cell", values: ["children"], default: "", description: "A quiet cell in the table's smaller muted text; is-detail makes it smaller still." },
       { name: ".prism-lib-group", values: ["children"], default: "", description: "A group head: a .prism-lib-group-name heading with its count and, when the group has one, a .prism-lib-group-source at its end." },
       { name: ".prism-lib-nothing", values: ["children"], default: "", description: "The line of a group without records." },

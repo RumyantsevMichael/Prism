@@ -58,11 +58,14 @@ export function outline(side) {
     const box = element.getBoundingClientRect();
     return box.width > 0 && box.height > 0;
   };
+  // A format mark says that a record breaks its format, which only the app's data decides, so the outline leaves out every marked element and its contents.
+  const marked = (element) => element.hasAttribute?.("data-format-mark") ?? false;
   // Every element below a root in document order, through open shadow roots.
   const deep = (root) => {
     const found = [];
     const visit = (node) => {
       for (const child of node.children ?? []) {
+        if (marked(child)) continue;
         found.push(child);
         if (child.shadowRoot) visit(child.shadowRoot);
         visit(child);
@@ -73,7 +76,9 @@ export function outline(side) {
   };
   const deepAll = (root, selector) => deep(root).filter((element) => element.matches(selector));
   const firstVisible = (root, selector) => deepAll(root, selector).find(visible) ?? null;
-  const text = (element) => (element?.textContent ?? "").replace(/\s+/g, " ").trim();
+  // An element's text as textContent reads it, without the text of any format mark inside it.
+  const unmarkedText = (node) => node.nodeType === Node.TEXT_NODE ? node.data : node.nodeType === Node.ELEMENT_NODE && marked(node) ? "" : [...node.childNodes].map(unmarkedText).join("");
+  const text = (element) => (element ? unmarkedText(element) : "").replace(/\s+/g, " ").trim();
   const nameOf = (element) => (element.getAttribute("aria-label") || element.getAttribute("label") || element.getAttribute("title") || text(element)).trim();
   const placeName = (element) => nameOf(element).split(",")[0].trim();
   const canvas = document.createElement("canvas");
@@ -136,11 +141,11 @@ export function outline(side) {
     const kinds = [];
     const drawn = row.querySelector(":scope > .prism-tree-row") ?? row;
     for (const child of drawn.children) {
-      if (!visible(child)) continue;
+      if (!visible(child) || marked(child)) continue;
       if (child.classList.contains("prism-tree-start")) {
         if ([...child.children].some(visible)) kinds.push("glyph");
       } else if (child.classList.contains("prism-tree-end")) {
-        for (const end of child.children) if (visible(end)) kinds.push(kindOf(end));
+        for (const end of child.children) if (visible(end) && !marked(end)) kinds.push(kindOf(end));
       } else kinds.push(kindOf(child));
     }
     return kinds;
@@ -151,7 +156,7 @@ export function outline(side) {
   for (const element of sidebar ? deepAll(sidebar, `h3, [role=heading][aria-level="3"], ${side.row}`) : []) {
     if (!visible(element)) continue;
     if (!element.matches(side.row)) {
-      const label = [...element.childNodes].filter((node) => !(node.nodeType === 1 && node.matches(".count, .prism-group-count, .badge, prism-badge"))).map((node) => node.textContent).join(" ").replace(/\s+/g, " ").trim();
+      const label = [...element.childNodes].filter((node) => !(node.nodeType === 1 && node.matches(".count, .prism-group-count, .badge, prism-badge"))).map(unmarkedText).join(" ").replace(/\s+/g, " ").trim();
       group = { heading: label, count: hasCount(element), optional: element.hasAttribute("data-optional"), fixed: [], first: null };
       groups.push(group);
       continue;

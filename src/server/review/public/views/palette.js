@@ -2,6 +2,7 @@
 // Prism's records named by title and kind, a slice's result carrying its claim, full-text matches in Prism's documents, and repository files.
 // Filters above the results narrow them to one kind; above 720px a preview of the current result sits beside them, and a footer names the keys and the count.
 import { claimElement } from "./claim-index.js";
+import { formatBadgeElement } from "./format-marks.js";
 
 const KIND_ORDER = ["action", "place", "slice", "initiative", "requirement", "decision", "record", "term", "file"];
 // Requirements, decisions, and Prism's other records read as documents, so they share one group.
@@ -190,8 +191,11 @@ export function createPalette({ dialog, field, results, preview, scopes = null, 
     const claim = entry.kind === "slice" ? claimFor(entry.ref) : null;
     // The holder's name stays in the row's text, so a reader of the list hears who holds the slice.
     const detail = [detailOf(entry), claim ? claim.label : ""].filter(Boolean).join(" · ");
-    if (detail) {
+    // A requirement or decision that breaks its format carries its mark at the start of its second line, which a phone keeps too.
+    const mark = entry.kind === "requirement" || entry.kind === "decision" ? formatBadgeElement(entry.format) : null;
+    if (detail || mark) {
       const line = node("span", "palette-detail", detail);
+      if (mark) line.prepend(mark, " ");
       line.slot = "detail";
       // A file's path is quoted as it is.
       if (entry.kind === "file") line.dataset.codeSubject = "";

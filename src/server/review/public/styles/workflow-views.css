@@ -477,6 +477,15 @@
   min-width: 0;
 }
 
+/* A document that breaks its format shows its findings in a notice between its header and the document. */
+.document-notice {
+  margin-bottom: var(--prism-space-5);
+}
+
+.document-notice .format-findings {
+  margin: var(--prism-space-2) 0 0;
+}
+
 .format-finding-message {
   flex: 1 1 16rem;
   min-width: 0;

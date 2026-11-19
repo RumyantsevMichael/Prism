@@ -3,6 +3,7 @@ import { renderView } from "./views/registry.js";
 import { closeEvidence, openEvidence } from "./views/evidence.js";
 import { ENTITY_LABELS, entityLabel, KNOWLEDGE_PAGES, parseEntityRef, recordKind, recordLabel, renderEntity } from "./views/entities.js";
 import { createPalette } from "./views/palette.js";
+import { formatBadgeElement, formatBanner } from "./views/format-marks.js";
 import { highlight, highlightLines, languageOf } from "./views/highlight.js";
 import { anchorTarget, decorateDocuments, HEADING_PREFIX, LINE_RANGE, markCurrentSection, renderText, revealInDocument } from "./views/markdown.js";
 import { createLinkPreview } from "./views/preview.js";
@@ -1769,7 +1770,10 @@ function knowledgeMatches(query) {
     const group = knowledgeResults.groups.find((entry) => entry.kind === kind);
     if (!group?.results.length) continue;
     // A glossary term opens the Glossary, so it is never marked as the open page.
-    const rows = group.results.map((result) => treeItem(result.ref, result.title, { selected: kind !== "glossary-term" && selectedPath === result.ref, start: [navIcon(icon)], tip: result.title }));
+    const rows = group.results.map((result) => {
+      const mark = kind === "glossary-term" ? null : formatBadgeElement(formatOf(result.ref));
+      return treeItem(result.ref, result.title, { selected: kind !== "glossary-term" && selectedPath === result.ref, start: [navIcon(icon)], end: mark ? [mark] : [], tip: result.title });
+    });
     parts.push(section(label), tree(label, rows));
   }
   return parts;
@@ -2277,6 +2281,7 @@ async function showArtifact(path) {
         ${source ? "<prism-chip>Read-only</prism-chip>" : structured ? "" : `<prism-chip>${diagramLabel}</prism-chip>`}
       </div>
     </header>
+    ${formatBanner(data.format)}
     ${artifactReviewHtml(data, state)}
     <div class="document-history" data-shipped-history>${documentHistoryHtml(path)}</div>
     ${documentCard}`;
@@ -2334,6 +2339,7 @@ function viewContext(path, state) {
     lane: pendingLane?.path === path ? pendingLane.lane : null,
     // Touched by my work reads the slice in the selected tab, or else the one selected last, and passes its answer back for the sidebar's count.
     touchedSlice: () => lastSlice,
+    formatOf,
     fetchTouched: async (slice) => (await touchedAnswer(slice)).answer,
     onTouched: (slice, answer) => noteTouched(slice, answer),
     escapeHtml,
@@ -2405,6 +2411,13 @@ function viewContext(path, state) {
       void showArtifact(path);
     }
   };
+}
+
+// The format mark of a record the review app lists, by its ref: each requirement and decision of the index and the glossary carry theirs, and any other ref none.
+function formatOf(ref) {
+  if (!ref) return null;
+  if (navigation.glossary?.path === ref) return navigation.glossary.format ?? null;
+  return (navigation.index ?? []).find((entry) => entry.ref === ref && (entry.kind === "requirement" || entry.kind === "decision"))?.format ?? null;
 }
 
 function paletteEntries() {

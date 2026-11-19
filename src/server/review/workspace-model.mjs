@@ -42,6 +42,41 @@ export function forgetWorkspace() {
   memo.clear();
 }
 
+/** The format mark of a checked artifact: null while it conforms, else { rules, findings } with its sorted rule ids and its findings as check_artifacts reports them. */
+export const formatMark = (artifact) => !artifact || artifact.conforms ? null : { rules: [...new Set(artifact.findings.map((finding) => finding.rule))].sort(), findings: artifact.findings };
+
+const scopeKey = (scope) => scope === null || scope === undefined ? "" : typeof scope === "string" ? scope : scope.label ?? "";
+
+// A lookup of the format mark of each checked artifact by path and scope: markOf(path, scope) is its mark, or null for a conforming or unchecked file.
+function markLookup(artifacts) {
+  const marks = new Map(artifacts.map((artifact) => [`${scopeKey(artifact.scope)}\0${artifact.path}`, formatMark(artifact)]));
+  return (file, scope = null) => marks.get(`${scopeKey(scope)}\0${file}`) ?? null;
+}
+
+const marksKey = (projectRoot) => `format-marks:${projectRoot}`;
+
+/**
+ * The format marks of the project's artifacts, shared for the cache window, so the lists of one request check each artifact once;
+ * a project whose artifacts cannot be checked marks nothing.
+ */
+export function loadFormatMarks(projectRoot) {
+  return remember(marksKey(projectRoot), async () => {
+    try { return markLookup((await checkArtifacts({ projectRoot, startRuns: false })).artifacts); }
+    catch { return () => null; }
+  });
+}
+
+/** The format mark of one artifact by path and, for a store artifact, its scope, checked afresh: null while it conforms or is no artifact that check_artifacts lists. */
+export async function loadFormatMark(projectRoot, file, scope = null) {
+  try {
+    const label = scopeKey(scope);
+    const [artifact] = (await checkArtifacts({ projectRoot, paths: [label ? { path: file, scope: label } : file], startRuns: false })).artifacts;
+    return formatMark(artifact);
+  } catch {
+    return null;
+  }
+}
+
 export const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary", "launches"]);
 const SECTION_LABELS = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary", launches: "Launched sessions" });
 
@@ -461,6 +496,8 @@ async function computeLibrary(projectRoot, kind) {
   await walk(projectRoot, directory, 4, (name) => name.endsWith(".md") && name.toLowerCase() !== "readme.md", files, LIBRARY_LIMIT);
   const references = kind === "requirements" ? await initiativeReferences(projectRoot, config) : new Map();
   const recorded = await recordedStatuses(projectRoot, directory);
+  const scopes = await storeScopes(projectRoot, directory);
+  const markOf = await loadFormatMarks(projectRoot);
   const entries = [];
   for (const file of files) {
     const source = await readText(projectRoot, file);
@@ -474,10 +511,21 @@ async function computeLibrary(projectRoot, kind) {
       created: fields.created,
       approved: fields.approved,
       topic: relative.includes("/") ? relative.split("/")[0] : null,
+      scope: scopes?.get(file) ?? null,
+      format: markOf(file, scopes?.get(file) ?? null),
       ...(kind === "requirements" ? { assignedTo: references.get(file) ?? [] } : {})
     });
   }
   return { kind, directory, entries };
+}
+
+// The scope that holds each store artifact below a folder, the first by label where several do, or null when the project names no store or the store cannot be read.
+async function storeScopes(projectRoot, directory) {
+  const stored = await listStoreArtifacts(projectRoot, directory).catch(() => null);
+  if (!stored) return null;
+  const byPath = new Map();
+  for (const entry of stored) if (!byPath.has(entry.path)) byPath.set(entry.path, entry.scope);
+  return byPath;
 }
 
 // The recorded statuses of a store's requirements or ADRs by path, or null when the project names no store or the store cannot be read.
@@ -494,7 +542,8 @@ export async function loadGlossary(projectRoot) {
   const config = await readWorkflowConfig(projectRoot);
   const glossaryPath = config.paths.glossary;
   const content = glossaryPath ? await readText(projectRoot, glossaryPath) : null;
-  return { path: glossaryPath, exists: content !== null, content };
+  const format = content === null ? null : (await loadFormatMarks(projectRoot))(glossaryPath, (await storeScopes(projectRoot, path.posix.dirname(glossaryPath)))?.get(glossaryPath) ?? null);
+  return { path: glossaryPath, exists: content !== null, content, format };
 }
 
 
@@ -561,6 +610,8 @@ async function loadFormats(projectRoot) {
   let artifacts = [];
   try {
     artifacts = (await checkArtifacts({ projectRoot })).artifacts;
+    // The lists of the same request mark artifacts from this check rather than checking them again.
+    memo.set(marksKey(projectRoot), { at: Date.now(), value: Promise.resolve(markLookup(artifacts)) });
   } catch {
     artifacts = [];
   }
@@ -949,7 +1000,7 @@ async function searchIndex(projectRoot, config, roadmap, glossary, libraries = {
   for (const kind of ["requirements", "decisions"]) {
     const library = libraries[kind];
     if (library?.error) throw library.error;
-    for (const entry of (library ? library.value : await loadLibrary(projectRoot, kind)).entries) entries.push({ ref: entry.path, label: entry.title, kind: kind === "requirements" ? "requirement" : "decision", detail: entry.status ?? entry.path });
+    for (const entry of (library ? library.value : await loadLibrary(projectRoot, kind)).entries) entries.push({ ref: entry.path, label: entry.title, kind: kind === "requirements" ? "requirement" : "decision", detail: entry.status ?? entry.path, format: entry.format ?? null });
   }
   for (const term of glossaryTerms(glossary.content)) entries.push({ ref: "glossary", label: term, kind: "term", detail: "Glossary" });
   return entries;
@@ -1026,7 +1077,8 @@ async function computeNavigation(projectRoot) {
     roadmap: { exists: roadmap.exists ?? false, error: roadmap.error ?? null, valid: roadmap.valid ?? false },
     attention: { needsYou: attention.needsYou.length, gates: attention.gateCount, answered: attention.answered.length, watch: attention.watch.length },
     initiatives: listedInitiatives,
-    glossary: { path: glossary.path, exists: glossary.exists },
+    // The glossary's entry carries its format mark, as each requirement and decision of the index does, so every list marks a record by its ref.
+    glossary: { path: glossary.path, exists: glossary.exists, format: glossary.format ?? null },
     library: {
       ...Object.fromEntries(Object.entries(readable).map(([kind, library]) => [kind, library.entries.length])),
       terms: glossaryTerms(glossary.content).length,

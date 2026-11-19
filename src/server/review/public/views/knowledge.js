@@ -1,5 +1,6 @@
 import { agoText, exactTime } from "../kit/claim-time.js";
 import { artifactLink, bindLinks, emptyState, escapeHtml, pageSub, setPageSub } from "./util.js";
+import { formatBadge } from "./format-marks.js";
 
 // Knowledge's two entry points: Touched by my work, the records behind the open slice, and Changed this week, the records changed in the last 7 days.
 
@@ -20,33 +21,34 @@ const GROUPS = Object.freeze({
 
 export const NO_SLICE = "This page lists the records behind the slice you have open. Open a slice to see them.";
 
-function statusChip(status) {
+export function statusChip(status) {
   if (!status) return "";
   const tone = STATUS_TONES[String(status).toLowerCase().split(/\s/)[0]] ?? "neutral";
   return `<prism-chip tone="${tone}">${escapeHtml(status)}</prism-chip>`;
 }
 
-// A record's title links to its page; its kind's icon leads the row and its kind is also said in words.
-function titleCell(record, ctx) {
+// A record's title links to its page; its kind's icon leads the row and its kind is also said in words, and a file that breaks its format carries its mark after the title.
+export function titleCell(record, ctx) {
   const [, icon] = KINDS[record.kind] ?? ["", "file"];
-  return `<span class="prism-lib-title"><prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon>${artifactLink(record.ref, ctx, record.title)}</span>`;
+  const format = record.format !== undefined ? record.format : ctx.formatOf?.(record.ref) ?? null;
+  return `<span class="prism-lib-title"><prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon>${artifactLink(record.ref, ctx, record.title)}${formatBadge(format)}</span>`;
 }
 
 const kindText = (record) => KINDS[record.kind]?.[0] ?? record.kind;
 
 // The kit's library table: a head row of column names, then rows, and group heads with their count and where the group comes from.
-function head(columns) {
+export function head(columns) {
   return `<div class="prism-lib-row is-head" aria-hidden="true">${columns.map((column) => `<span>${escapeHtml(column)}</span>`).join("")}</div>`;
 }
 
-function groupHead(label, count, source = "") {
+export function groupHead(label, count, source = "") {
   return `<div class="prism-lib-group"><h2 class="prism-lib-group-name">${escapeHtml(label)} <prism-badge tone="neutral">${count}</prism-badge></h2>${source ? `<span class="prism-lib-group-source">${escapeHtml(source)}</span>` : ""}</div>`;
 }
 
 // A quiet cell holds a value in the table's smaller muted text, and a detail cell a still smaller one; a plain cell keeps its content's own look.
-const cell = (html, detail = false) => `<span class="prism-lib-cell${detail ? " is-detail" : ""}">${html}</span>`;
-const plain = (html) => `<span>${html}</span>`;
-const table = (className, html) => `<prism-lib-table class="${className}">${html}</prism-lib-table>`;
+export const cell = (html, detail = false) => `<span class="prism-lib-cell${detail ? " is-detail" : ""}">${html}</span>`;
+export const plain = (html) => `<span>${html}</span>`;
+export const table = (className, html) => `<prism-lib-table class="${className}">${html}</prism-lib-table>`;
 
 /**
  * The records behind one slice, grouped by why they are listed, from `/api/touched` for the slice; `answer` is that response or null without a slice.

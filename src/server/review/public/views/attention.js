@@ -5,6 +5,7 @@ import { isExpired } from "./claim-index.js";
 import { notifyControl } from "./attention-signal.js";
 import { currentPhase } from "./slice.js";
 import { timeLeft } from "../kit/claim-time.js";
+import { findingsList, formatBadge } from "./format-marks.js";
 
 const GATE_LABELS = {
   "visual-review": "Visual review",
@@ -690,15 +691,12 @@ function renderAnswered(container, answered, ctx) {
 const formatTitle = (item) => `${escapeHtml(item.label)} · ${escapeHtml(plural(item.count, "file"))} ${item.count === 1 ? "breaks" : "break"} the format`;
 const formatSummary = (item) => item.earlier ? `${item.earlier} of them ${item.earlier === 1 ? "keeps" : "keep"} an earlier Prism format.` : "None of them keeps a Prism format.";
 
-// A finding that an agent reported is its own plain text, shown as written and never read for code subjects or markup.
-const findingMessage = (finding) => String(finding.rule ?? "").endsWith(".reported") ? escapeHtml(finding.message) : messageHtml(finding.message);
-
-// One nonconforming artifact: its path, the scope that holds it, and each broken rule with its message and line.
+// One nonconforming artifact: its path with its format mark, the scope that holds it, and each broken rule with its message and line.
 function formatArtifact(artifact) {
   const scope = artifact.scope?.label ?? null;
-  const findings = (artifact.findings ?? []).map((finding) => `<li class="format-finding"><prism-chip tone="warning" data-code-subject>${escapeHtml(finding.rule)}</prism-chip><span class="format-finding-message">${findingMessage(finding)}${Number.isInteger(finding.line) ? ` <span class="muted">· line ${finding.line}</span>` : ""}</span></li>`).join("");
+  const mark = formatBadge({ rules: [...new Set((artifact.findings ?? []).map((finding) => finding.rule))].sort() });
   const earlier = artifact.earlierFormat ? `Keeps format version ${artifact.earlierFormat.version}` : "Keeps no Prism format";
-  return `<prism-row wrap icon="document" tone="warning"><span data-code-subject>${escapeHtml(artifact.path)}</span><span slot="description">${escapeHtml(earlier)} · ${plural((artifact.findings ?? []).length, "finding")}</span><span slot="detail"><ul class="format-findings">${findings}</ul></span><prism-chip slot="kind"${scope ? ' tip="The record store scope that holds this file"' : ' tip="A file in this checkout"'}>${escapeHtml(scope ? `Scope ${scope}` : "Checkout")}</prism-chip></prism-row>`;
+  return `<prism-row wrap icon="document" tone="warning"><span data-code-subject>${escapeHtml(artifact.path)}</span> ${mark}<span slot="description">${escapeHtml(earlier)} · ${plural((artifact.findings ?? []).length, "finding")}</span><span slot="detail">${findingsList(artifact.findings)}</span><prism-chip slot="kind"${scope ? ' tip="The record store scope that holds this file"' : ' tip="A file in this checkout"'}>${escapeHtml(scope ? `Scope ${scope}` : "Checkout")}</prism-chip></prism-row>`;
 }
 
 function formatGroup(label, note, artifacts) {

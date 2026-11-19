@@ -1,3 +1,5 @@
+import { formatBadge } from "./format-marks.js";
+
 export const EVIDENCE_ID = /^[a-f0-9]{64}$/;
 
 export function escapeHtml(value) {
@@ -192,14 +194,19 @@ export function documentTitle(path, ctx) {
 
 // A requirement reference keeps its anchor, so the link opens and previews the requirement's own section; it reads as the requirement and its file's title.
 export function requirementLinks(references, ctx, { icon = null } = {}) {
+  const marked = new Set();
   return references.map((reference) => {
     const [file, anchor] = reference.split("#");
+    // A file that breaks its format is marked once, after its first link.
+    const format = marked.has(file) ? null : ctx.formatOf?.(file) ?? null;
+    marked.add(file);
+    const mark = format ? ` ${formatBadge(format)}` : "";
     const title = documentTitle(file, ctx);
     const label = anchor ? `Requirement ${anchor} · ${title}` : `${title} · Requirements`;
     const glyph = icon ? `<prism-icon name="${escapeHtml(icon)}" size="xs"></prism-icon> ` : "";
     return ctx.hasArtifact(file)
-      ? `<prism-chip interactive tone="accent" data-artifact="${escapeHtml(file)}"${anchor ? ` data-doc-anchor="${escapeHtml(anchor)}"` : ""}>${glyph}${escapeHtml(label)}</prism-chip>`
-      : `<prism-chip>${glyph}${escapeHtml(label)}</prism-chip>`;
+      ? `<prism-chip interactive tone="accent" data-artifact="${escapeHtml(file)}"${anchor ? ` data-doc-anchor="${escapeHtml(anchor)}"` : ""}>${glyph}${escapeHtml(label)}</prism-chip>${mark}`
+      : `<prism-chip>${glyph}${escapeHtml(label)}</prism-chip>${mark}`;
   }).join(" ");
 }
 

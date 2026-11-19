@@ -18,7 +18,7 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { entityContext, entityExists, forgetWorkspace, loadClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords } from "./workspace-model.mjs";
+import { entityContext, entityExists, forgetWorkspace, loadClaims, loadEntity, loadFormatMark, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords } from "./workspace-model.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
 import { listLaunches } from "../session/launched-sessions.mjs";
@@ -1151,6 +1151,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         send(response, 404, "The file is not available for review.");
         return;
       }
+      // A requirement, decision, glossary, or feature file that breaks its format carries its mark, which the page shows above the document.
+      loaded = { ...loaded, format: await loadFormatMark(projectRoot, artifactPath, loaded.artifact?.scope ?? null) };
       send(response, 200, JSON.stringify(loaded), "application/json; charset=utf-8");
     } else if (wantsPage(request) && !/^\/(api|kit|styles|views|vendor)\//.test(route)) {
       // A page address the app no longer has, such as one from an earlier release, opens the project's start page instead of a line of text.
