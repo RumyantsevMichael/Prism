@@ -159,6 +159,8 @@ test("§24 §25 a launched session keeps its start, running time, exit status, t
   assert.match(shown, new RegExp(`claude --resume ${s.runs("claude")[0].argv[3]}`), "the terminal command that continues it");
   assert.match(shown, new RegExp(s.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "the folder to run it in");
   assert.equal(await details.getByRole("button", { name: "Copy" }).count(), 1);
+  // The session's own actions load after its details unfold, so wait for Resume before counting it.
+  await details.getByRole("button", { name: /^Resume/ }).first().waitFor({ state: "attached" });
   assert.equal(await details.getByRole("button", { name: /^Resume/ }).count(), 1, "the resume action of the launched session");
   const runningRow = row(page, `launch:${s.running}`);
   assert.equal(await runningRow.locator("code", { hasText: "codex resume" }).count(), 0, "no terminal command while it runs");
