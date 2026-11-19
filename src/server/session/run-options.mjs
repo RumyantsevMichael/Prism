@@ -4,6 +4,9 @@ import { HOST_REQUEST_REFUSAL, HOSTS, hostDefinition, lineSplitter, resolveHost,
 // The run options of a host, read from the host itself and mapped into one ordered shape: provider, model, and effort, each with
 // the host default first as a null value. Prism reads a host's report with no model turn and no kept session, keeps a report for
 // REPORT_TTL_MS per host, executable, checkout, and provider, and shares a read in flight; a failed read is not kept.
+// A read is bounded: a host that sends more than MAX_REPORT_BYTES, or lists more than MAX_REPORT_MODELS models or
+// MAX_REPORT_PROVIDERS providers, answers failed, and a kept report holds only the fields the adapters map, with each name and
+// description cut to NAME_MAX and DESCRIPTION_MAX characters and at most MAX_MODEL_LEVELS effort levels per model.
 // Nothing here passes a value to a host's command line: a read runs only the fixed arguments of the host's optionsRead.
 
 /** The kinds of run choice, in order, with their labels and the purpose whose options they choose from. */
@@ -101,13 +104,18 @@ export function runOptionsQuery(searchParams) {
 }
 
 export const REPORT_TTL_MS = 10 * 60 * 1000;
-const KEPT_REPORTS = 64;
+const KEPT_REPORTS = 16;
 // A host still running this long after its input closed is ended.
 const EXIT_GRACE_MS = 5000;
 const KILL_GRACE_MS = 2000;
-const MAX_REPORT_LINE_BYTES = 8 * 1024 * 1024;
+const MAX_REPORT_BYTES = 4 * 1024 * 1024;
 const MAX_MODEL_PAGES = 100;
+const MAX_REPORT_MODELS = 1000;
+const MAX_REPORT_PROVIDERS = 100;
+const MAX_MODEL_LEVELS = 16;
 const HOST_TEXT_MAX = 300;
+const NAME_MAX = 100;
+const DESCRIPTION_MAX = 300;
 
 /** The read time from PRISM_RUN_OPTIONS_TIMEOUT_MS: 200 to 60000 milliseconds, 20000 by default. */
 export function readTimeoutMs(env = process.env) {
@@ -122,6 +130,9 @@ const text = (value) => (typeof value === "string" ? value : "");
 const hostText = (value) => text(value).replace(/\s+/g, " ").trim().slice(0, HOST_TEXT_MAX).replace(/\.+$/, "");
 const failed = (message) => ({ state: "failed", message: hostText(message) || "it gave no reason" });
 const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const cutName = (value) => text(value).slice(0, NAME_MAX);
+const cutDescription = (value) => text(value).slice(0, DESCRIPTION_MAX);
+const tooMany = (count, max, what) => (count > max ? `it listed more than ${max} ${what}` : null);
 
 const reports = new Map();
 
@@ -200,9 +211,19 @@ function readHost(resolved, { checkout, env, provider }) {
       let event;
       try { event = JSON.parse(line); } catch { return; }
       if (isObject(event)) conversation.event(event, { send, done: finish, fail: (message) => finish(failed(message)) });
-    }, MAX_REPORT_LINE_BYTES);
+    }, MAX_REPORT_BYTES);
     child.stdin.on("error", () => {});
-    child.stdout.on("data", (chunk) => splitter.push(chunk));
+    let bytes = 0;
+    child.stdout.on("data", (chunk) => {
+      if (settled) return;
+      bytes += chunk.length;
+      if (bytes > MAX_REPORT_BYTES) {
+        finish(failed(`it sent more than ${MAX_REPORT_BYTES / (1024 * 1024)} MiB`));
+        end();
+        return;
+      }
+      splitter.push(chunk);
+    });
     child.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk.toString("utf8")}`.slice(-2000); });
     child.on("error", (error) => {
       exited = exited || child.exitCode !== null || child.signalCode !== null;
@@ -236,7 +257,10 @@ function claudeConversation(optionsRead) {
         fail("its answer holds no model list");
         return;
       }
-      done({ state: "ready", models: models.filter(isObject) });
+      const listed = models.filter(isObject);
+      const excess = tooMany(listed.length, MAX_REPORT_MODELS, "models");
+      if (excess) fail(excess);
+      else done({ state: "ready", models: listed.map(keptClaudeModel) });
     }
   };
 }
@@ -292,8 +316,14 @@ function codexConversation(optionsRead, provider) {
           fail("its provider list has an unexpected shape");
           return;
         }
-        report.providers = result.data.filter(isObject);
-        report.defaultProviderId = typeof result.defaultProviderId === "string" ? result.defaultProviderId : null;
+        const listed = result.data.filter(isObject);
+        const excess = tooMany(listed.length, MAX_REPORT_PROVIDERS, "providers");
+        if (excess) {
+          fail(excess);
+          return;
+        }
+        report.providers = listed.map((entry) => ({ id: validProvider(entry.id) ? entry.id : null, name: cutName(entry.name) }));
+        report.defaultProviderId = validProvider(result.defaultProviderId) ? result.defaultProviderId : null;
         listModels(null);
         return;
       }
@@ -302,7 +332,13 @@ function codexConversation(optionsRead, provider) {
           fail("its model list has an unexpected shape");
           return;
         }
-        report.models.push(...result.data.filter(isObject));
+        const listed = result.data.filter(isObject);
+        const excess = tooMany(report.models.length + listed.length, MAX_REPORT_MODELS, "models");
+        if (excess) {
+          fail(excess);
+          return;
+        }
+        report.models.push(...listed.map(keptCodexModel));
         const cursor = result.nextCursor;
         if (typeof cursor === "string" && cursor && !seenCursors.has(cursor) && pages < MAX_MODEL_PAGES) {
           seenCursors.add(cursor);
@@ -312,6 +348,32 @@ function codexConversation(optionsRead, provider) {
         done(report);
       }
     }
+  };
+}
+
+// The fields of a listed model that the adapters map, with each name and description cut and its effort levels bounded; a model
+// value that breaks the model rule is kept as null, so the adapters leave it out.
+function keptClaudeModel(entry) {
+  return {
+    value: validModel(entry.value) ? entry.value : null,
+    displayName: cutName(entry.displayName),
+    description: cutDescription(entry.description),
+    supportsEffort: entry.supportsEffort !== false,
+    supportedEffortLevels: Array.isArray(entry.supportedEffortLevels) ? entry.supportedEffortLevels.filter(validEffort).slice(0, MAX_MODEL_LEVELS) : []
+  };
+}
+
+function keptCodexModel(entry) {
+  const value = typeof entry.model === "string" ? entry.model : entry.id;
+  const levels = Array.isArray(entry.supportedReasoningEfforts) ? entry.supportedReasoningEfforts.filter((level) => isObject(level) && validEffort(level.reasoningEffort)) : [];
+  return {
+    model: validModel(value) ? value : null,
+    displayName: cutName(entry.displayName),
+    description: cutDescription(entry.description),
+    hidden: entry.hidden === true,
+    isDefault: entry.isDefault === true,
+    defaultReasoningEffort: validEffort(entry.defaultReasoningEffort) ? entry.defaultReasoningEffort : null,
+    supportedReasoningEfforts: levels.slice(0, MAX_MODEL_LEVELS).map((level) => ({ reasoningEffort: level.reasoningEffort, description: cutDescription(level.description) }))
   };
 }
 
@@ -348,12 +410,11 @@ const ADAPTERS = {
           values: named.map((entry) => ({ value: entry.id, name: text(entry.name) || entry.id, description: "" }))
         };
       }
-      const valueOf = (entry) => (typeof entry.model === "string" ? entry.model : entry.id);
       const models = raw.models
-        .filter((entry) => entry.hidden !== true && validModel(valueOf(entry)))
+        .filter((entry) => entry.hidden !== true && validModel(entry.model))
         .map((entry) => ({
-          value: valueOf(entry),
-          name: text(entry.displayName) || valueOf(entry),
+          value: entry.model,
+          name: text(entry.displayName) || entry.model,
           description: text(entry.description),
           levels: (Array.isArray(entry.supportedReasoningEfforts) ? entry.supportedReasoningEfforts : []).filter(isObject).map((level) => ({ value: level.reasoningEffort, description: text(level.description) })),
           defaultEffort: typeof entry.defaultReasoningEffort === "string" ? entry.defaultReasoningEffort : null,
@@ -399,7 +460,8 @@ function buildReport(definition, { purpose, provider, model, effort, typed }, ra
   // and every level the host lists for a typed, unlisted, or host default model.
   const effortModel = model === null ? mapped.defaultModel : listed;
   const levels = !ready ? [] : effortModel ? effortModel.levels : mapped.allLevels;
-  const efforts = rankEfforts(levels).map(({ value, description }) => ({ value, name: effortName(value), description }));
+  // A typed or host default model may gather the levels of every listed model, so the answer keeps the lowest MAX_MODEL_LEVELS.
+  const efforts = rankEfforts(levels).slice(0, MAX_MODEL_LEVELS).map(({ value, description }) => ({ value, name: effortName(value), description }));
   const modelName = listed?.name ?? model ?? mapped.defaultModel?.name ?? "The host's default model";
   const effortChoice = effort === null || efforts.some((entry) => entry.value === effort) ? offered(effort) : notOffered(effort, choiceReasons.effort(modelName, effort));
   options.push({ id: "effort", name: "Effort", kind: "effort", values: [hostDefault(adapter.effortDefault(effortModel)), ...efforts], chosen: effortChoice });

@@ -286,6 +286,7 @@ Codex is asked through `codex app-server` for its providers and its visible mode
 Either way, the host runs in the checkout's folder without the variables of an agent session, starts no model turn, so it spends no usage, keeps no session in its history, and runs none of your hooks or MCP servers.
 The review app closes the host's input once it has the answer, and ends a host that still runs 5 seconds later.
 A host that gives no answer within 20 seconds is ended and reported as `<host> did not report its run options: it gave no answer within 20 seconds.`; set `PRISM_RUN_OPTIONS_TIMEOUT_MS` for the review app to wait from 200 to 60000 milliseconds instead.
+A host that sends more than 4 MiB, or lists more than 1000 models or 100 providers, is reported as failed with that reason, and the review app shows at most 100 characters of each name, 300 of each description, and 16 effort levels for a model.
 A host's answer is kept for 10 minutes per checkout, and per provider for Codex, while an answer that failed is asked for again next time.
 The review app leaves out every option that it does not know or that changes how the host grants permissions, so those stay at the host's own values.
 
