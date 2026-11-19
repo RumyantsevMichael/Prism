@@ -64,7 +64,7 @@ test("kit controls, navigation, and marks select no text, while content and fiel
     region.innerHTML = html;
     document.body.prepend(region);
   }, CONTROLS + CONTENT);
-  await page.waitForTimeout(300);
+  await page.waitForFunction(() => document.querySelector("#fixture prism-doc-tab")?.shadowRoot?.querySelector(".text") && document.querySelector("#fixture .prism-disclosure-toggle"));
   const used = await usedSelect(page);
   for (const tag of ["prism-button", "prism-tabs", "prism-doc-tabs", "prism-chip", "prism-badge", "prism-kbd", "prism-segmented"]) assert.equal(used[tag], "none", `${tag} selects no text`);
   for (const tag of ["prism-doc", "prism-code", "prism-stat", "prism-banner", "prism-field"]) assert.notEqual(used[tag], "none", `${tag} stays selectable`);
