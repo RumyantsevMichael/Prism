@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 import { CONFORMING, GLOSSARY, PATHS, REQUIREMENT } from "./fixtures/artifact-formats.mjs";
 import { labelOf, otherCheckout, storeProject, storeRead, storeWrite } from "./fixtures/artifact-formats-store.mjs";
@@ -15,6 +17,12 @@ async function checked(call, args = {}) {
 }
 
 const keyOf = (entry) => [entry.type, entry.path, labelOf(entry)];
+
+// A nonconforming store file arrives as another machine's sync would bring it, since every write of a requirement, ADR, or glossary through Prism is checked against its format.
+async function storeFile(place, location, text) {
+  await mkdir(path.dirname(path.join(place.store, location)), { recursive: true });
+  await writeFile(path.join(place.store, location), text);
+}
 
 test("clauses 48, 49: a store project's check reads its moved requirements, ADRs, and glossary from the store and its feature files from the checkout, each named by path and scope", async (context) => {
   const { call } = await storeProject(context, { ...CONFORMING, "docs/requirements/old.md": BROKEN });
@@ -34,7 +42,8 @@ test("clauses 48, 49: a store project's check reads its moved requirements, ADRs
 
 test("clause 49: an artifact written to the store after the move is checked, and every scope the checkout sees is listed, ordered by type, path, and scope label", async (context) => {
   const { place, call } = await storeProject(context);
-  await storeWrite(call, "docs/requirements/billing/invoices.md", BROKEN, { scope: "component", component: "billing" });
+  await storeRead(call, PATHS.requirements);
+  await storeFile(place, "artifacts/repositories/api/components/billing/requirements/billing/invoices.md", BROKEN);
   const web = await otherCheckout(context, place);
   await storeWrite(web.call, "docs/requirements/shared.md", REQUIREMENT, { scope: "workspace" });
   // A new file with no folder below the kind folder is created in the workspace unless a scope is named, so web names its own.
@@ -56,7 +65,8 @@ test("clause 50: a given path that two scopes hold is refused as ambiguous until
   // api's first tool call moves its files into scope api before the workspace holds the same paths, which would keep them in the checkout.
   await storeRead(call, PATHS.glossary);
   const web = await otherCheckout(context, place);
-  await storeWrite(web.call, PATHS.glossary, GLOSSARY.replace("Terms used across the payments client.", "Terms used across the workspace."), { scope: "workspace" });
+  // Its sources are only in api's scope, so the workspace copy breaks the glossary format.
+  await storeFile(place, "artifacts/glossary.md", GLOSSARY.replace("Terms used across the payments client.", "Terms used across the workspace."));
   const ambiguous = await call("check_artifacts", { paths: [PATHS.glossary] });
   assert.equal(ambiguous.value?.code, "artifact_ambiguous", ambiguous.text);
   assert.deepEqual([...ambiguous.value.scopes].sort(), ["api", "workspace"]);
@@ -77,12 +87,13 @@ test("clause 51: an unavailable store refuses the check with the store's refusal
 });
 
 test("clause 52: a glossary source counts by its recorded status, not by its Status: line", async (context) => {
-  const { call } = await storeProject(context);
+  const { place, call } = await storeProject(context);
   // Written Approved through update_artifact, the new requirement is recorded Draft until a person approves it at a gate.
   await storeWrite(call, "docs/requirements/written.md", REQUIREMENT);
   assert.equal((await storeRead(call, "docs/requirements/written.md")).status, "Draft");
   const current = await storeRead(call, PATHS.glossary);
-  await storeWrite(call, PATHS.glossary, current.content.replace("Source: [retries.md§1](requirements/retries.md#1)", "Source: [written.md§1](requirements/written.md#1)"), { expectedVersion: current.version });
+  // A glossary that cites a Draft requirement breaks its format, so it arrives in the store's files.
+  await storeFile(place, "artifacts/repositories/api/glossary.md", current.content.replace("Source: [retries.md§1](requirements/retries.md#1)", "Source: [written.md§1](requirements/written.md#1)"));
   const [entry] = (await checked(call, { paths: [PATHS.glossary] })).artifacts;
   assert.ok(entry.findings.some((finding) => finding.rule === "glossary.source-decided" && /Draft/.test(finding.message)), JSON.stringify(entry.findings));
   const requirement = (await checked(call, { paths: ["docs/requirements/written.md"] })).artifacts[0];
@@ -96,7 +107,8 @@ test("clauses 53, 54: each glossary a checkout sees is checked on its own, and i
   const web = await otherCheckout(context, place);
   // The workspace holds a Draft copy of the requirement that api's own copy holds Approved, and a workspace glossary cites it.
   await storeWrite(web.call, PATHS.requirements, draft, { scope: "workspace" });
-  await storeWrite(web.call, PATHS.glossary, GLOSSARY, { scope: "workspace" });
+  // The workspace glossary cites that Draft copy, so it breaks its format and arrives in the store's files.
+  await storeFile(place, "artifacts/glossary.md", GLOSSARY);
   const value = await checked(call, { type: "glossary" });
   assert.deepEqual(value.artifacts.map(keyOf), [["glossary", PATHS.glossary, "api"], ["glossary", PATHS.glossary, "workspace"]]);
   const [own, shared] = value.artifacts;

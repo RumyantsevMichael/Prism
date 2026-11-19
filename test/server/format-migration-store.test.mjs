@@ -1,14 +1,20 @@
 import assert from "node:assert/strict";
-import { readdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { CONFORMING, GLOSSARY, PATHS } from "./fixtures/artifact-formats.mjs";
+import { CONFORMING, GLOSSARY, PATHS, REQUIREMENT } from "./fixtures/artifact-formats.mjs";
 import { labelOf, storeProject, storeRead, storeWrite } from "./fixtures/artifact-formats-store.mjs";
 import { browserRequest, exists, reviewBrowser } from "./fixtures/workspace-artifacts.mjs";
 
 // Format migrations of store artifacts: named by path and scope, checked against recorded statuses, and applied through Prism's store writes.
 
 const AUDIT = "docs/requirements/audit.md";
+
+// A nonconforming store file arrives as another machine's sync would bring it, since every write of a requirement through Prism is checked against its format.
+async function storeFile(place, location, text) {
+  await mkdir(path.dirname(path.join(place.store, location)), { recursive: true });
+  await writeFile(path.join(place.store, location), text);
+}
 const AUDIT_SOURCE = "# Audit log\n\nStatus: Approved\nCreated: 2026-08-01\nApproved: 2026-08-02\n\n## 1\n\nThe system shall record every administrative action.\n";
 const auditContent = (status = "Approved", approved = "2026-08-02") => `# Audit log
 
@@ -83,9 +89,9 @@ test("clauses 48, 57, 58, 59: an in-place migration of a store requirement names
 });
 
 test("clause 59: content whose Status: line differs from the recorded status is refused as a changed decision", async (context) => {
-  const { call } = await project(context);
-  // Written Approved through update_artifact, the new file is recorded Draft until a person approves it at its gate.
-  await storeWrite(call, "docs/requirements/unapproved.md", AUDIT_SOURCE);
+  const { place, call } = await project(context);
+  // Brought into the workspace scope's files with no status record, the file is recorded Draft until a person approves it at its gate, whatever its Status: line says.
+  await storeFile(place, "artifacts/requirements/unapproved.md", AUDIT_SOURCE);
   const refused = await call("propose_migration", auditProposal(auditContent(), "docs/requirements/unapproved.md"));
   assert.equal(refused.value?.code, "migration_changes_decision", refused.text);
   assert.deepEqual(refused.value.changed.find((change) => change.field === "Status"), { field: "Status", before: "Draft", after: "Approved" });
@@ -98,11 +104,12 @@ test("clause 58: a store artifact changed through update_artifact since the prop
   const { migration } = (await call("propose_migration", auditProposal())).value;
   await answer(migration.id, { decision: "accept" });
   const current = await storeRead(call, AUDIT);
-  await storeWrite(call, AUDIT, `${current.content}\nA later line.\n`, { expectedVersion: current.version });
+  // The change writes content that conforms to the format, which every write through update_artifact is checked against.
+  await storeWrite(call, AUDIT, REQUIREMENT, { expectedVersion: current.version });
   const stale = await call("apply_migration", { id: migration.id });
   assert.equal(stale.value?.code, "migration_stale", stale.text);
   assert.match(stale.text, /docs\/requirements\/audit\.md/);
-  assert.equal((await storeRead(call, AUDIT)).content, `${current.content}\nA later line.\n`, "nothing is written");
+  assert.equal((await storeRead(call, AUDIT)).content, REQUIREMENT, "nothing is written");
 });
 
 test("clauses 57, 58, 60: a checkout source migrates into a store glossary, its accepted removal removes the checkout file, and the record lives apart from the move's folders", async (context) => {

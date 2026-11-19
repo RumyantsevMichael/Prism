@@ -82,7 +82,8 @@ Each scope's glossary is checked on its own, so one term id in two glossaries is
 ### Writes that break a format
 
 In a project with a record store, Prism checks every write it makes to a requirement file, ADR, or glossary against the current format, as `check_artifacts` would check the content it leaves.
-This covers an agent's `update_artifact` write or edit, a person's approval in the review browser, which rewrites the file's `Status:` and `Approved:` lines, a ship that sets ADRs Accepted, and the store target of a format migration.
+This covers an agent's `update_artifact` write or edit, a person's approval in the review browser, which rewrites the file's `Status:` and `Approved:` lines, and a ship that sets ADRs Accepted.
+`apply_migration` checks each target of a format migration, in the store and in the checkout, as its proposal was checked: `unknown` values aside, and the migration's own glossary source counted as decided.
 A write whose content breaks the format is refused with `artifact_nonconforming`, which names each artifact, its scope, and its broken rule ids, and the refused update, approval, or ship changes nothing.
 A new requirement file is recorded as Draft whatever its `Status:` line says, so it may hold `unknown` values, while approving a file that still holds one is refused and its question stays open.
 Removing a file, moving it to another scope, and the move of a checkout's files into the store keep the bytes as they are and are not checked, so a moved file that breaks its format shows its findings in its new scope.

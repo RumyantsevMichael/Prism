@@ -665,6 +665,9 @@ export async function applyMigration({ projectRoot, id }) {
     const config = await readWorkflowConfig(root);
     const { source, target, content, removeSource, targetDone, sourceDone, stale } = await applyState(root, config, record);
     if (stale.length) throw fail("migration_stale", `${stale.map(label).join(" and ")} changed since the format migration ${id} was proposed, so it does not apply; propose it again from the current ${stale.length === 1 ? "file" : "files"}.`, { paths: stale.map(named) });
+    // A checkout target is checked as the proposal was before anything applies: unknown values aside and this migration's own glossary source decided.
+    // A store target takes the same check inside the store's update, which refuses before it changes anything.
+    if (!target.store && !targetDone) await checkCheckoutTarget(root, record, target, content);
     const written = [], removed = [];
     const stored = [];
     const storeRemoved = (entry) => ({ path: source.path, scope: entry?.scope ?? source.scope, ...(entry?.removedComments ? { removedComments: entry.removedComments } : {}) });
@@ -700,6 +703,19 @@ export async function applyMigration({ projectRoot, id }) {
     await writeRecord(root, recordKey(id), serialize({ ...record, appliedAt, written, removed }));
     return { written, removed, acceptedBy: record.answer.by, acceptedAt: record.answer.at };
   }, fail));
+}
+
+async function checkCheckoutTarget(root, record, target, content) {
+  const { checkArtifactContent, checkoutSourceLookup } = await import("./artifact-check.mjs");
+  const applied = record.type === "glossary" ? await appliedMigrationIds(root) : new Set();
+  const result = await checkArtifactContent({
+    path: target.path, type: record.type, bytes: Buffer.from(content, "utf8"), status: null,
+    lookup: record.type === "glossary" ? checkoutSourceLookup(root) : null,
+    appliedMigration: (id) => id === record.id || applied.has(id), unknownAside: true
+  });
+  if (result.conforms) return;
+  const rules = [...new Set(result.findings.map((finding) => finding.rule))].join(", ");
+  throw fail("artifact_nonconforming", `The format migration ${record.id} would leave ${label(target)} breaking ${rules}, so nothing of it applied: ${result.findings.map((finding) => finding.message).join(" ")}`, { artifacts: [{ ...named(target), type: record.type, findings: result.findings }] });
 }
 
 /**

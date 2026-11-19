@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 import { CONFORMING, PATHS, REQUIREMENT } from "./fixtures/artifact-formats.mjs";
 import { labelOf, otherCheckout, storeProject, storeRead, storeWrite } from "./fixtures/artifact-formats-store.mjs";
@@ -8,19 +11,28 @@ import { browserRequest, reviewBrowser } from "./fixtures/workspace-artifacts.mj
 
 const OLD = "docs/requirements/old.md";
 const BROKEN = "# Old notes\n\nThe client retries.\n";
+// The workspace scope's copy of OLD in the store's files.
+const WORKSPACE_OLD = "artifacts/requirements/old.md";
+
+// A nonconforming store file arrives as another machine's sync would bring it, since every write of a requirement through Prism is checked against its format.
+async function storeFile(place, location, text) {
+  await mkdir(path.dirname(path.join(place.store, location)), { recursive: true });
+  await writeFile(path.join(place.store, location), text);
+  return `sha256:${createHash("sha256").update(text).digest("hex")}`;
+}
 
 async function served(context) {
   const { place, root, call } = await storeProject(context, { ...CONFORMING, [OLD]: BROKEN });
   // api's first tool call moves its checkout artifacts into scope api before the workspace holds the same path, which would keep them in the checkout.
   await storeRead(call, PATHS.requirements);
-  // The workspace scope holds another nonconforming copy at the same path, written from a checkout that does not see api's scope.
+  // The workspace scope holds another nonconforming copy at the same path, which a checkout that does not see api's scope reads.
   const web = await otherCheckout(context, place);
-  await storeWrite(web.call, OLD, `${BROKEN}\nThe server logs.\n`, { scope: "workspace" });
+  await storeFile(place, WORKSPACE_OLD, `${BROKEN}\nThe server logs.\n`);
   const review = await reviewBrowser(context, root);
   const attention = async () => (await browserRequest(review, "/api/entity?ref=attention")).body.data;
   const listing = (target) => browserRequest(review, `/api/actions?target=${encodeURIComponent(target)}`);
   const apply = (body) => browserRequest(review, "/api/actions/apply", { method: "POST", body });
-  return { root, call, web, attention, listing, apply };
+  return { place, root, call, web, attention, listing, apply };
 }
 
 test("clauses 17, 55: Attention lists each nonconforming store artifact by path and scope, one entry per scope that holds it", async (context) => {
@@ -50,11 +62,11 @@ test("clause 55: a legacy mark covers the store copy it names by scope label and
 });
 
 test("clause 55: a legacy mark keeps covering a store copy after an update_artifact change, and an option names no copy that conforms", async (context) => {
-  const { web, attention, listing, apply } = await served(context);
+  const { place, web, attention, listing, apply } = await served(context);
   const mark = (await listing("artifacts:requirements")).body.actions.find((action) => action.id === "artifacts.mark-legacy");
   assert.equal((await apply({ action: "artifacts.mark-legacy", target: "artifacts:requirements", input: { paths: [`workspace:${OLD}`] }, revision: mark.revision, confirmed: true })).status, 200);
   const current = await storeRead(web.call, OLD);
-  const changed = await storeWrite(web.call, OLD, `${current.content}A later line.\n`, { expectedVersion: current.version });
+  const changed = { version: await storeFile(place, WORKSPACE_OLD, `${current.content}A later line.\n`) };
   assert.equal((await attention()).formats[0].legacy.count, 1, "a changed copy stays covered");
   await storeWrite(web.call, OLD, REQUIREMENT, { expectedVersion: changed.version });
   const fixed = (await attention()).formats[0];

@@ -388,6 +388,9 @@ export async function checkArtifactContent({ path: file, type, bytes, status = n
   return { conforms, findings, unknowns };
 }
 
+/** The lookup of a checkout glossary's sources, read from the checkout at root. */
+export const checkoutSourceLookup = (root) => checkoutLookup(root);
+
 /** The lookup of a store glossary's sources in the scope chain of its scope, over copiesOf(file), which lists { scope, bytes, status } for each copy. */
 export const storeSourceLookup = (scope, copiesOf) => storeLookup(scope, copiesOf);
 

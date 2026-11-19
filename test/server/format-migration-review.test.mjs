@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { CONFORMING, FEATURE, formatServer, read, write } from "./fixtures/artifact-formats.mjs";
-import { labelOf, otherCheckout, storeProject, storeRead, storeWrite } from "./fixtures/artifact-formats-store.mjs";
+import { labelOf, storeProject, storeRead } from "./fixtures/artifact-formats-store.mjs";
 import { defer } from "./fixtures/teardown.mjs";
 
 // Format migrations stay inside the project, invent no decision or wording, keep a pending migration's wait open on a failed read, keep a named target scope, and complete a retried apply.
@@ -19,6 +19,12 @@ const { waitForUserGates } = await import("../../dist/server/workflow/gate-wait.
 test.after(() => rm(privateData, { recursive: true, force: true }));
 
 const AUDIT = "docs/requirements/audit.md";
+// A nonconforming store file arrives as another machine's sync would bring it, since every write of a requirement through Prism is checked against its format.
+async function storeFile(place, location, text) {
+  await mkdir(path.dirname(path.join(place.store, location)), { recursive: true });
+  await writeFile(path.join(place.store, location), text);
+}
+
 const DRAFT_SOURCE = "# Audit log\n\nStatus: Draft\nCreated: 2026-08-01\n\n## 1\n\nThe system shall record every administrative action.\n";
 const content = ({ status = "Draft", approved = "unknown", requirement = "The system shall record every administrative action." } = {}) => `# Audit log
 
@@ -143,8 +149,7 @@ test("a target at the source's path in another named scope is read as its own ta
   const { place, call } = await storeProject(context, { ...CONFORMING, [AUDIT]: content({ status: "Approved", approved: "2026-08-02" }) });
   const repository = await storeRead(call, AUDIT);
   assert.equal(repository.status, "Approved", JSON.stringify(repository));
-  const web = await otherCheckout(context, place);
-  await storeWrite(web.call, AUDIT, DRAFT_SOURCE, { scope: "workspace" });
+  await storeFile(place, "artifacts/requirements/audit.md", DRAFT_SOURCE);
   const result = await call("propose_migration", proposal({ path: AUDIT, scope: "workspace" }, { path: AUDIT, scope: "repository" }, { content: content({ status: "Approved", approved: "2026-08-02" }) }));
   const migration = result.value?.migration;
   assert.ok(migration, result.text);
@@ -249,18 +254,19 @@ test("two concurrent proposals of one target record one pending migration", asyn
 const SCENARIOS = "docs/requirements/retry-scenarios.md";
 const FEATURE_TARGET = "docs/Features/F-retry-scenarios.feature";
 async function storeSourceAccepted(context, target = FEATURE_TARGET) {
-  const { root, call } = await storeProject(context, { ...CONFORMING, [SCENARIOS]: FEATURE });
+  const { place, root, call } = await storeProject(context, { ...CONFORMING, [SCENARIOS]: FEATURE });
   const source = await storeRead(call, SCENARIOS);
   const proposed = await call("propose_migration", { type: "feature", source: SCENARIOS, target, content: FEATURE, summary: "Moves the retry scenarios into a feature file.", leftovers: [] });
   const id = proposed.value?.migration?.id;
   assert.ok(id, proposed.text);
   await answer(root, id, { decision: "accept", removeSource: "on" });
-  return { root, call, id, source };
+  return { place, root, call, id, source };
 }
 
 test("a store source of a checkout target that changed after acceptance refuses the apply before the checkout is written, and releases the target", async (context) => {
-  const { root, call, id, source } = await storeSourceAccepted(context);
-  await storeWrite(call, SCENARIOS, `${source.content}\n      And the client logs the failure\n`, { expectedVersion: source.version });
+  const { place, root, call, id, source } = await storeSourceAccepted(context);
+  // The source is a feature file under the Requirements path, which breaks the requirement format, so its change arrives in the store's files.
+  await storeFile(place, "artifacts/repositories/api/requirements/retry-scenarios.md", `${source.content}\n      And the client logs the failure\n`);
   const applied = await call("apply_migration", { id });
   assert.equal(applied.value?.code, "migration_stale", applied.text);
   assert.equal(await exists(path.join(root, FEATURE_TARGET)), false, "the checkout target is not written");

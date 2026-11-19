@@ -178,11 +178,11 @@ test("clause 28: a checkout file whose path the workspace scope holds stays in t
   const place = await workspace(context);
   const web = await checkout(place, "web");
   const onWeb = await server(context, place, web);
-  await writeArtifact(onWeb, "docs/requirements/shared.md", "# Shared for the workspace\n");
+  await writeArtifact(onWeb, "docs/requirements/shared.md", requirementFile("Shared for the workspace"));
   const api = await checkout(place, "api", { files: { "docs/requirements/shared.md": "# Shared in api\n" } });
   const onApi = await server(context, place, api);
   const access = await onApi.call("get_artifact", { path: "docs/requirements/shared.md" });
-  assert.equal(ok(access).content, "# Shared for the workspace\n");
+  assert.equal(ok(access).content, requirementFile("Shared for the workspace"));
   assert.equal(await text(path.join(api, "docs/requirements/shared.md")), "# Shared in api\n");
   assert.equal(await exists(scoped(place.store, "requirements/shared.md")), false);
   assert.match(notes(access), /workspace_holds/);
@@ -221,7 +221,7 @@ test("clause 28: a checkout file whose path breaks the artifact name form stays 
 test("clause 28: a checkout file whose path collides in letter case with a stored path or another checkout file stays in the checkout and is reported as name_conflict", async (context) => {
   const place = await workspace(context);
   const web = await checkout(place, "web");
-  await writeArtifact(await server(context, place, web), "docs/requirements/Shared.md", "# Shared for the workspace\n");
+  await writeArtifact(await server(context, place, web), "docs/requirements/Shared.md", requirementFile("Shared for the workspace"));
   const colliding = {
     "docs/requirements/shared.md": "# Shared in api\n",
     ...(WINDOWS ? {} : { "docs/plans/reports/Notes.md": "# Notes in one case\n", "docs/plans/reports/notes.md": "# Notes in another case\n" })
@@ -232,7 +232,7 @@ test("clause 28: a checkout file whose path collides in letter case with a store
   assert.deepEqual(ok(access).artifacts.map((entry) => [entry.path, entry.scope.label]), [["docs/plans/reports/slice.md", "api"], ["docs/requirements/Shared.md", "workspace"]]);
   assert.equal(await text(scoped(place.store, "plans/reports/slice.md")), "# Reports\n", "a file beside them that collides with nothing still moves");
   assert.equal(await exists(path.join(api, "docs/plans/reports/slice.md")), false);
-  assert.equal(await text(path.join(place.store, "artifacts", "requirements", "Shared.md")), "# Shared for the workspace\n");
+  assert.equal(await text(path.join(place.store, "artifacts", "requirements", "Shared.md")), requirementFile("Shared for the workspace"));
 
   const report = notes(access);
   assert.match(report, /name_conflict/);

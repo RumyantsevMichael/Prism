@@ -4,7 +4,7 @@ import { ADR, CONFORMING, GLOSSARY, PATHS, REFERENCES, REQUIREMENT, checked, ent
 
 // The glossary format: a stable identity, a standalone definition, and a decided source for every term, through check_artifacts.
 
-const RULES = ["glossary.definition", "glossary.fields", "glossary.identity", "glossary.purpose", "glossary.source", "glossary.source-decided", "glossary.source-withdrawn", "glossary.text", "glossary.title"];
+const RULES = ["glossary.definition", "glossary.fields", "glossary.identity", "glossary.purpose", "glossary.reported", "glossary.source", "glossary.source-decided", "glossary.source-withdrawn", "glossary.text", "glossary.title", "glossary.unknown"];
 
 async function glossaryEntry(context, glossary, extra = {}) {
   const { call } = await formatServer(context, { ...CONFORMING, [PATHS.glossary]: glossary, ...extra });

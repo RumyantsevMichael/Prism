@@ -756,6 +756,8 @@ export async function applyAction({ projectRoot, target, action, input, revision
       if (error?.code === "artifact_changed") throw fail("artifact_changed", APPROVAL_CHANGED);
       if (error?.code === "invalid_answer") throw fail("invalid_input", error.message, { field: null });
       if (error?.code === "approval_ambiguous") throw fail("approval_ambiguous", error.message, { reason: error.message });
+      // An approval that would leave the file breaking its format conflicts with the file as it is, and the gate stays pending.
+      if (error?.code === "artifact_nonconforming") throw fail("artifact_nonconforming", error.message, { reason: error.message });
       throw storeRefused(error) ? storeRefusal(error) : error;
     });
   } else if (parsed.kind === "migration") {
