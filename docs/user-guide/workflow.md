@@ -83,7 +83,7 @@ Each scope's glossary is checked on its own, so one term id in two glossaries is
 
 In a project with a record store, Prism checks every write it makes to a requirement file, ADR, or glossary against the current format, as `check_artifacts` would check the content it leaves.
 This covers an agent's `update_artifact` write or edit, a person's approval in the review browser, which rewrites the file's `Status:` and `Approved:` lines, and a ship that sets ADRs Accepted.
-`apply_migration` checks each target of a format migration, in the store and in the checkout, as its proposal was checked: `unknown` values aside, and the migration's own glossary source counted as decided.
+A format migration run checks each target it would write, in the store and in the checkout, as a write is checked, with the run's own glossary sources counted as decided.
 A write whose content breaks the format is refused with `artifact_nonconforming`, which names each artifact, its scope, and its broken rule ids, and the refused update, approval, or ship changes nothing.
 A new requirement file is recorded as Draft whatever its `Status:` line says, so it may hold `unknown` values, while approving a file that still holds one is refused and its question stays open.
 Removing a file, moving it to another scope, and the move of a checkout's files into the store keep the bytes as they are and are not checked, so a moved file that breaks its format shows its findings in its new scope.
@@ -117,35 +117,58 @@ The message then names a store artifact as `<path> in scope <label>` and ends wi
 
 ### Format migrations
 
-A format migration converts one artifact that breaks its format, or a file that holds such content, into its format, and applies only after a person accepts it.
+A format migration converts one artifact that breaks its format into its format.
 It is not the move of a checkout's files into a record store.
-Ask an agent for one when `check_artifacts` or Attention reports an artifact that breaks its format, when Prism refuses work with `artifact_nonconforming`, or when an agent offers one because it found a break that the check did not report.
-The agent runs the `prism:migrate-artifact` skill for one artifact per session and, when commits are on, commits the checkout files it writes or removes in a commit of their own.
-In other work, agents report an artifact that breaks its format and leave it unchanged.
-An agent proposes it with `propose_migration`, passing the type, the source and the target, the whole migrated content, a summary of what changes and why, and leftovers: each statement of the source that the content does not keep, with a proposed home such as the project instructions.
-The target lies under the type's configured path, and equals the source for a format migration in place.
-A checkout source or target whose path passes through a symbolic link is refused with `artifact_outside`, and one that is no regular file with `invalid_path`, when it is proposed and again when it is applied, so a format migration never touches a file outside the project.
+Prism migrates requirement files, ADRs, and glossaries by itself, in format migration runs, and never migrates a feature file.
+
+Whenever Prism checks a project's artifacts, through `check_artifacts`, Attention, `report_format_finding`, or the check of work that cites an artifact, it starts one run for each new set apart from that check.
+A set is the requirement files, ADRs, or glossaries of one type in one scope that break the current version of their format and that no earlier run holds at their current version.
+Checking again starts no second run of a set, while an artifact that changes is held by no run at its new version, so the next check starts a run for it.
+`check_artifacts` lists, for each artifact, `migration`: the run that holds it at its current version, with its status and its failure or waiting reason, or null.
+A run's status is `starting`, `running`, `waiting-for-host`, `asking`, `continuing`, `applied`, or `failed`, and only `applied` and `failed` end it.
+A run's `cause` is `format-update` when every artifact of its set conforms to an earlier version of its format, and `findings` otherwise.
+Read a run with `get_migration_run`, which lists its set with each artifact's current findings, its format migrations, its question, the person's answers, its result, and its failure.
+A run is never a roadmap entry, an initiative, a slice, a claim, or a gate.
+Launching a session for each run on an available host is Planned; until then an agent that works a run calls the run's tools itself.
+
+The session of a run proposes one format migration for each artifact of the set with `propose_migration`, passing the run, the type, the source and the target, the whole migrated content, a summary of what changes and why, and leftovers: each statement of the source that the content does not keep, with a proposed home such as the project instructions.
+The target lies under the type's configured path, and equals the source for a format migration in place, and a source that is no artifact of the run's set is refused with `invalid_input`.
+A checkout source or target whose path passes through a symbolic link is refused with `artifact_outside`, and one that is no regular file with `invalid_path`, when it is proposed and again when the run applies, so a format migration never touches a file outside the project.
 Prism splits the source into statements, each sentence of a paragraph, list item, blockquote line, or table cell and each fenced code block, and refuses a proposal with `migration_unaccounted` when a statement appears in neither the content, a leftover, nor a conflict.
 It refuses with `migration_invented` a statement of the content that is no statement of the source or the target, compared whole, so a sentence cut short counts as invented, while the format's structure, its default values, `unknown`, links, and dates from the source's Git history count as no statements.
-A value that neither the source nor its Git history gives is written as `unknown`, and the migration lists each one.
+It refuses with `migration_misplaced` a statement that the content moves to a section that does not correspond to the one it came from, as the format reference's corresponding sections list them.
+A value that neither the source nor its Git history gives is written as `unknown`, and content that breaks its format other than through `unknown` values is refused with `artifact_nonconforming`.
 A status or a Created, Approved, or Accepted date counts only when it is the type's new status, the source or the target states it in that same field, or the date comes from the source's Git history.
-Content that breaks its format is refused with `artifact_nonconforming`.
 When the source or the target is Approved or Accepted, content that changes its status, its Created or Approved date, or drops an identity, such as a requirement section number or a glossary term id, is refused with `migration_changes_decision`.
 A target that already exists keeps each of its entries, a requirement section, a glossary term, or a feature Rule, unchanged: the source's differing version of an entry goes under `conflicts`, and content that changes a target entry is refused with `migration_conflict`.
-A second proposal for a target whose format migration is still waiting for an answer, or is accepted and can still apply, is refused with `migration_pending`, also when both proposals arrive at once.
+A target that another open run's proposal holds, or that another source's proposal in the same run writes, is refused with `migration_pending`, and a new proposal of a source replaces the run's earlier proposal of it.
 
-The person answers the format migration in the review browser, where they accept or decline it, choose the target's or the source's version of each conflicting entry, and for a separate source choose whether to remove it, which is off by default.
-The agent waits with `wait_for_user_gate` and `migration`, reads the format migration with `get_migration`, and applies an accepted one with `apply_migration`.
-Applying writes the content with each chosen entry, writes the migration's id after each glossary `Source: migration`, so the term's source is the applied format migration, and removes a separate source only when the person accepted its removal.
-It refuses a format migration that was not accepted with `migration_not_accepted`, one whose source or target changed since the proposal with `migration_stale`, and one already applied with `migration_applied`.
-A stale format migration no longer holds its target, so a new one can be proposed from the current files.
-Applying checks the format migration's record again as a proposal checks its input, and refuses with `invalid_input` a source or target path that leaves the project or a target outside the type's configured path, and with `record_invalid` a record whose content, paths, conflicts, or diffs changed after the person answered, so it writes and removes only what the person accepted.
-An apply that stopped part way, after writing the target, completes when it is run again: a target that already holds the migration's content and a removed source count as done, and the format migration is then recorded as applied.
-A store source of a checkout target is removed before the target is written, so a change to that source in the store refuses the apply before anything is written.
+Each proposal lists its points: each leftover, each source entry that the target holds with other text, and Prism's own points, one for each `unknown` value of the content, one for each conflict, and one for removing a separate source.
+The proposal settles a leftover or such an entry under `settled`, with the reason it loses nothing, or asks the person under `asked`, with its recommendation, and Prism's own points are always asked.
+A point that is neither settled nor asked refuses the proposal with `migration_unsettled`, which lists the points, after every other check.
+An `unknown` point says whether the target may keep the value unknown, which only a Draft requirement file or a Proposed ADR may.
+
+Once every artifact of the set has a proposal, the session calls `finish_migration_run`.
+When nothing was asked, Prism applies the run without a person.
+Otherwise it asks the person once, with every asked point of the run and each recommendation, and the run waits as `asking`; answering the question in the review browser is Planned.
+A run that asked once and still holds an unanswered point when it finishes again fails with `The run asked again after the person answered.`
+A run that cannot migrate its set is failed with `fail_migration_run` and a reason.
+
+A run applies all its format migrations or none.
+It writes each migration's content with the person's chosen values and entries and with the migration's id after each glossary `Source: migration`, so the term's source is the run's format migration, and removes a separate source only when the person chose to remove it.
+A source or target that changed since its proposal, a target that the write check refuses, or a target that cannot be written fails the run with that reason and changes nothing, so a failed run applies nothing, and a checkout file the run wrote before a later step failed is put back.
+The write check of a run is strict: `unknown` stays only in a target that will be a Draft requirement file or a Proposed ADR.
+A run's record that changed after its proposals were checked, or whose paths leave the project, is refused with `record_invalid` or `invalid_input` and applies nothing.
+A checkout file that a run writes or removes is left uncommitted in the working tree, for you to commit.
+Applying drops the reported findings of each artifact the run wrote.
 
 In a project whose `.prism/workflow.md` names a record store, a requirement, ADR, or glossary target is a store artifact, and a source under a store artifact path is one too, while feature files and every other file stay in the checkout.
-A store target's `Status:` line must equal the status Prism recorded for it, or for a new one the recorded status of a store source of the same type, else `Draft` for a requirement and `Proposed` for an ADR, and applying writes and removes store artifacts through the store's own checks, so their comments, recorded statuses, and accepted versions stay as `update_artifact` keeps them.
-Prism keeps each format migration as a record under `format-migrations/`, in the store when one is configured and under `.prism/` otherwise.
+A store target's `Status:` line must equal the status Prism recorded for it, or for a new one the recorded status of a store source of the same type, else `Draft` for a requirement and `Proposed` for an ADR.
+A run writes every store target and removes every store source it removes in one checked store update, so their comments, recorded statuses, and identities stay as `update_artifact` keeps them.
+An Approved or Accepted store artifact keeps its status, and its migrated bytes become its accepted version, which `get_artifact` attributes to the run as `acceptedFrom`.
+In a store that is a Git checkout, the run's store change is a commit of its own, `prism: format migration <run id>`, made without a person after the store's earlier changes; with store sync on, the sync pushes it.
+With store sync on, a new run is confirmed with the store's remote, so a run of the same set that another machine recorded first is the one that stands, and an unreachable remote starts no run until the next check.
+Prism keeps each run under `format-migrations/`, in the store when one is configured, where its sync shares it, and under `.prism/format-migrations/` otherwise, where it stays on this machine and Git ignores it.
 
 ## Verification
 

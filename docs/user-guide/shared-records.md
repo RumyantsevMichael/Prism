@@ -100,7 +100,7 @@ Store sync is on by default for a remote store, so Prism keeps the clone in step
 
 `- Store sync: off` keeps the clone but never fetches, commits, or pushes after the first clone.
 Prism never deletes, replaces, or rewrites the history of a clone it made.
-Prism shares the regular files at the paths it writes in a store: the records under `initiatives/`, `roadmap.json`, the registrations under `repositories/`, the migration files under `migrations/`, the ledgers of moved artifacts under `artifact-migrations/`, the format migrations under `format-migrations/`, the reported format findings under `format-findings/`, the artifacts under `artifacts/` whose every name follows the artifact name form, the comments on them under `artifact-comments/`, the legacy marks under `legacy-marks/`, and the store's `.gitignore` and `.gitattributes`.
+Prism shares the regular files at the paths it writes in a store: the records under `initiatives/`, `roadmap.json`, the registrations under `repositories/`, the migration files under `migrations/`, the ledgers of moved artifacts under `artifact-migrations/`, the format migration runs under `format-migrations/`, the reported format findings under `format-findings/`, the artifacts under `artifacts/` whose every name follows the artifact name form, the comments on them under `artifact-comments/`, the legacy marks under `legacy-marks/`, and the store's `.gitignore` and `.gitattributes`.
 It also shares a `README`, `README.md`, `README.txt`, `LICENSE`, `LICENSE.md`, `LICENSE.txt`, or `COPYING` at the store's root, spelled exactly so, which Prism never reads.
 Prism uses Git in the store only to keep these files' bytes: the clone and every sync write each file as the remote's branch holds it, and every commit holds each file as it is on disk.
 So no `.gitignore` or `.gitattributes` line, in the store or in your Git configuration, and no line-ending setting such as `core.autocrlf`, changes what Prism commits, merges, or writes.
@@ -190,7 +190,7 @@ Every kind of file that a store shares has a size limit well above the largest f
 | Comment | `artifact-comments/<location>/<name>.json` | 64 KiB |
 | Move ledger | `artifact-migrations/<name>.json` | 16 MiB |
 | Record migration file | `migrations/<name>.json` | 16 MiB |
-| Format migration | `format-migrations/<id>.json` | 16 MiB |
+| Format migration run | `format-migrations/<run id>.json` | 16 MiB |
 | Reported format finding | `format-findings/<id>.json` | 64 KiB |
 | Registration | `repositories/<repository>.json` | 64 KiB |
 | Legacy mark | `legacy-marks/<id>.json` | 4 MiB |
