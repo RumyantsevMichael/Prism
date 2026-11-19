@@ -9,19 +9,20 @@ const ACTIVITIES = ["design", "implementation"];
 
 export class PrismClaim extends Base {
   static tag = "prism-claim";
-  static observedAttributes = ["label", "host", "activity", "claimed-at", "renewed-at", "expires-at", "variant"];
+  static observedAttributes = ["label", "host", "model", "activity", "claimed-at", "renewed-at", "expires-at", "variant"];
   static catalog = {
     purpose: "Shows which agent holds a slice, for what activity, and how long its claim has left; an expired claim says how long ago it lapsed. It is read-only and holds no control.",
     options: [
       { name: "label", values: ["text"], default: "", description: "The holder's label, as the claim records it; every holder is an agent." },
       { name: "host", values: ["text"], default: "", description: "The harness the agent runs in, such as Claude Code or Codex, shown in place of the word Agent; without it the claim says Agent." },
+      { name: "model", values: ["text"], default: "", description: "The model the claim records for its agent, shown after the harness or Agent as <host or Agent> · <model>; without it the claim names no model." },
       { name: "activity", values: ACTIVITIES, default: "implementation", description: "What the holder is doing, in words with a facet in the design or build phase color." },
       { name: "claimed-at", values: ["time"], default: "", description: "When the claim started; a strip shows it as since <time>." },
       { name: "renewed-at", values: ["time"], default: "", description: "When the claim was last renewed; the strip's lease meter runs from it to expires-at." },
       { name: "expires-at", values: ["time"], default: "", description: "When the claim lapses; the time left shows in words and updates every minute." },
       { name: "variant", values: VARIANTS, default: "inline", description: "avatar shows only the avatar with the text as its tooltip, inline adds the holder, activity, and time left with the exact times as its tooltip, and strip is a full-width band that adds since, the last renewal, how long ago it was claimed, and the lease meter, with the exact times as its tooltip too." }
     ],
-    states: ["avatar", "inline", "strip", "expired", "expired-strip"],
+    states: ["avatar", "inline", "strip", "expired", "expired-strip", "model"],
     keyboard: ["A claim takes no keys; an avatar claim's text is its accessible description, and a shortened inline claim joins the Tab order to show its full text."]
   };
 
@@ -52,12 +53,14 @@ export class PrismClaim extends Base {
     return (this.getAttribute("label") ?? "").trim();
   }
 
-  /** What kind of holder this is: the harness the agent runs in when the claim names one, else Agent. */
+  /** What kind of holder this is: the harness the agent runs in when the claim names one, else Agent, and the model when the claim records one. */
   get kind() {
-    return (this.getAttribute("host") ?? "").trim() || "Agent";
+    const host = (this.getAttribute("host") ?? "").trim() || "Agent";
+    const model = (this.getAttribute("model") ?? "").trim();
+    return model ? `${host} · ${model}` : host;
   }
 
-  /** The claim's text in one line: the holder, its harness or Agent, the activity, and the time left. */
+  /** The claim's text in one line: the holder, its harness or Agent and model, the activity, and the time left. */
   get tooltipText() {
     return [this.label, this.kind, this.activity, timeLeft(this.getAttribute("expires-at")).text].filter(Boolean).join(" · ");
   }
