@@ -149,7 +149,8 @@ async function seenArtifact(projectRoot, parsed) {
 }
 
 // Reads what a target's actions need: the initiative's coordination state and record, the index component, the approval gate, the store artifact, or the launched session, and refuses a target that does not exist.
-async function readTarget(projectRoot, parsed, indexer, state = undefined, env = process.env, checkouts = null) {
+// readOptions, when given, is the run options reader of the apply that reads the target again, so its reads are not repeated.
+async function readTarget(projectRoot, parsed, indexer, state = undefined, env = process.env, checkouts = null, readOptions = null) {
   if (parsed.kind === "artifact") {
     const artifact = await seenArtifact(projectRoot, parsed);
     if (!artifact) throw unknownTarget(parsed.reference);
@@ -187,7 +188,7 @@ async function readTarget(projectRoot, parsed, indexer, state = undefined, env =
   // The host setting names each host this computer lacks, and the models setting checks a change against its host's report.
   if (parsed.kind === "initiative" || parsed.kind === "slice") {
     context.hosts = await hostAvailability({ env });
-    context.readOptions = runOptionsReader(projectRoot, env);
+    context.readOptions = readOptions ?? runOptionsReader(projectRoot, env);
   }
   if (parsed.kind === "initiative") context.launchRunning = await initiativeRunning({ projectRoot, initiative: parsed.initiative, env });
   if (parsed.kind === "slice" && !(record?.slices && Object.hasOwn(record.slices, parsed.slice))) throw unknownTarget(parsed.reference);
@@ -271,7 +272,8 @@ function compactModels(value) {
   return compact;
 }
 
-// Reads a host's run options for the checkout; one apply keeps what it read, so its checks under the state lock read nothing again.
+// Reads a host's run options for the checkout and keeps each read: one apply shares one reader between its check on the state as read
+// and its check under the state lock, which takes the same values and so reuses the first check's reads and starts no host.
 function runOptionsReader(projectRoot, env) {
   const reads = new Map();
   return (selection) => {
@@ -771,7 +773,8 @@ export async function applyAction({ projectRoot, target, action, input, revision
   const parsed = parseTarget(target);
   if (!parsed) throw unknownTarget(target);
   const definition = definitionsFor(parsed.kind).find((item) => item.id === action);
-  const read = await readTarget(projectRoot, parsed, indexer, undefined, env, checkouts);
+  const readOptions = runOptionsReader(projectRoot, env);
+  const read = await readTarget(projectRoot, parsed, indexer, undefined, env, checkouts, readOptions);
   if (!definition) throw fail("unknown_action", `The target ${target} has no action ${JSON.stringify(String(action ?? ""))}.`);
   const request = { revision, input, confirmed };
   const entryOf = async (checked, context) => ({
@@ -828,7 +831,7 @@ export async function applyAction({ projectRoot, target, action, input, revision
   } else {
     // The checks repeat under the state lock on the state it holds, so a change that lands between the read above and the write is never overwritten.
     const written = await recordPersonAction({ projectRoot, initiative: parsed.initiative, prepare: async (coordination) => {
-      const context = await readTarget(projectRoot, parsed, indexer, coordination, env, checkouts);
+      const context = await readTarget(projectRoot, parsed, indexer, coordination, env, checkouts, readOptions);
       const checked = await check(definition, context, request);
       if (!checked) return null;
       const entry = await entryOf(checked, context);
