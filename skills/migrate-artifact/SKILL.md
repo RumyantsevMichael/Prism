@@ -1,27 +1,25 @@
 ---
 name: migrate-artifact
-description: "Convert one requirement file, ADR, glossary, or feature file, or a file that holds such content, into its Prism artifact format through a format migration that a person accepts in the review browser, keeping every statement or listing it as a leftover. Use when a person asks for an artifact's migration or accepts an offer of it."
-argument-hint: '[artifact path]'
+description: "Carry out one format migration run that Prism started: convert each requirement file, ADR, or glossary of the run's set into its Prism artifact format, keeping every statement or giving it a home, and finish or fail the run. Use only when a prompt names such a run by its id."
+argument-hint: '[run id]'
 sdm: "0.3"
 ---
 
-# Migrate an artifact
+# Carry out a format migration run
 
-A [format migration](../workflow/SKILL.md#common-terms) converts one artifact per session into its [artifact format](../workflow/SKILL.md#common-terms) and applies only after a person accepts it.
+A [format migration](../workflow/SKILL.md#common-terms) run is Prism's own upkeep: Prism starts it for a set of artifacts that break their [artifact format](../workflow/SKILL.md#common-terms) and launches this session with the run's id as its only instruction.
+This session proposes one format migration per artifact of the set and ends the run; Prism applies it without a person when nothing is lost or invented, and otherwise puts the asked points to the person once and continues this session with the answers.
 It is not the move of a checkout's files into the store.
 
 ## 1. Prepare
 
-1. Read the project's Prism configuration and instructions for the configured paths and whether commits are on.
-2. Agree with the person on the one artifact to migrate, its type, and its target: the source itself for a migration in place, or a path under the type's configured path.
+1. Read the project's Prism configuration and instructions for the configured paths.
+2. Call `get_migration_run` with the run id for its set, status, earlier proposals, question, and answers.
 3. Read the target format's reference: the [requirement format](../write-requirements/references/requirement-format.md), the [ADR format](../write-adr/references/adr-format.md), the [glossary format](../workflow/references/glossary-format.md), or the [feature format](../write-feature/references/feature-format.md).
-4. Call `check_artifacts` for the source when it lies under a configured path, and for an existing target, to learn their findings.
-5. Read the source and an existing target, each [store artifact](../workflow/SKILL.md#common-terms) through `get_artifact`.
-6. Read the source file's Git history, such as `git log --follow --format=%as -- <path>`, for dates that the source does not state.
+4. For each artifact of the set, read it and any existing target, each [store artifact](../workflow/SKILL.md#common-terms) through `get_artifact` with its scope, and its current findings from the run.
+5. Read each source file's Git history, such as `git log --follow --format=%as -- <path>`, for dates that the source does not state.
 
-When the person asks for several artifacts, migrate one and offer a fresh session for each other.
-
-## 2. Write the content
+## 2. Write each artifact's content
 
 1. Write the whole artifact in the target format, keeping each source statement verbatim in the place the format gives it.
 2. When neither the source nor its Git history gives a required value, write `unknown`.
@@ -34,13 +32,19 @@ When the person asks for several artifacts, migrate one and offer a fresh sessio
   - Add a statement that neither the source nor an existing target makes.
   - Change a decided status, date, or identity.
 
-## 3. Propose, wait, and apply
+## 3. Propose each artifact
 
-1. Call `propose_migration` with the type, the source, the target, the content, a plain-language summary of what changes and why, the leftovers, and any conflicts.
-2. When it refuses, correct the content, leftovers, or conflicts from the statements, entries, or fields it lists and propose again.
-3. Tell the person to answer the format migration in the review browser, where they see its diff, leftovers, unknown values, and conflicts.
-4. Call `wait_for_user_gate` with the migration's id as `migration`.
-5. When the person declines, revise from the note and propose again if it asks for changes, otherwise stop.
-6. When the person accepts, call `apply_migration` with the id, and when it refuses with `migration_stale`, read the changed files again and propose anew.
-7. When commits are on, commit only the checkout paths that `apply_migration` lists as written or removed, in a commit of its own, since store artifacts need no commit.
-8. Return the migration id, the written and removed artifacts, and each leftover with its proposed home.
+1. Call `propose_migration` with the run, the type, the source, the target, the content, a plain-language summary of what changes and why, the leftovers, and any conflicts.
+2. When it refuses with statements, entries, or fields, correct the content, leftovers, or conflicts from what it lists and propose again.
+3. When it refuses with `migration_unsettled`, name each listed point under `settled` with the reason that it loses nothing, or under `asked` with Prism's recommendation, and propose again.
+4. Settle a leftover or entry point only when its statement keeps its meaning in the content or in its home, and ask every other point.
+5. Give an asked `unknown` point's recommendation as the value itself, one line of at most 500 characters, which the person can accept as it stands.
+6. Ask about a separate source's removal only once every source statement has a home in the content or the leftover list, and recommend its removal.
+
+## 4. End the run
+
+1. When the run holds answers, apply each one: place each answered leftover in the section that its answer names, and propose that artifact again with the same points, while Prism itself writes each answered value and conflict choice.
+2. Once every artifact of the set has a proposal, call `finish_migration_run`.
+3. When it refuses with `migration_run_incomplete`, propose each artifact it lists, then finish again.
+4. When an artifact cannot be migrated without losing or inventing a statement, call `fail_migration_run` with the reason in plain language.
+5. Return the run id, its status, and each leftover with its home.

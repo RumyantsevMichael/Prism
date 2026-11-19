@@ -141,9 +141,19 @@ A run's status is `starting`, `running`, `waiting-for-host`, `asking`, `continui
 A run's `cause` is `format-update` when every artifact of its set conforms to an earlier version of its format, and `findings` otherwise.
 Read a run with `get_migration_run`, which lists its set with each artifact's current findings, its format migrations, its question, the person's answers, its result, and its failure.
 A run is never a roadmap entry, an initiative, a slice, a claim, or a gate.
-Launching a session for each run on an available host is Planned; until then an agent that works a run calls the run's tools itself.
 
-The session of a run proposes one format migration for each artifact of the set with `propose_migration`, passing the run, the type, the source and the target, the whole migrated content, a summary of what changes and why, and leftovers: each statement of the source that the content does not keep, with a proposed home such as the project instructions.
+Prism launches each new run's session on this computer at once, without asking, as a [launched session](review-browser.md#launched-sessions) of the checkout whose check found the set.
+The host is the first of Claude Code and Codex whose executable, `claude` or `codex`, is on the `PATH` of the Prism server that started the run, and it uses its own default model.
+The session's only prompt is `/prism:migrate-artifact <run id>` for Claude Code, or `$prism:migrate-artifact <run id>` for Codex, so no artifact text reaches its command line or prompt.
+Once the host started, the run is `running` and `get_migration_run` names the session as `launch` with its id and host, and no second session of the run starts while it runs.
+When no host is available, the run waits as `waiting-for-host` with the reason `No host is available on this machine:` and each host's reason, and the next check of the project on a computer where a host is available launches it.
+When a run's session ends, by its exit, a host error, or a stop, while the run is still `starting`, `running`, or `continuing`, the run fails with `The run's session ended before the run finished:` and the session's last reason, and applies nothing.
+A session that ends after its run asked its question leaves the run `asking`.
+Once the person answers, Prism continues the run, resuming its session with the same prompt, or launching a new one on an available host when it cannot be resumed.
+A failed run can run again as a new run with the cause `rerun`, which holds the artifacts of the failed run's set that still break their format.
+No Prism tool that an agent calls starts, continues, or runs again a run's session.
+
+The session of a run follows the `migrate-artifact` skill and proposes one format migration for each artifact of the set with `propose_migration`, passing the run, the type, the source and the target, the whole migrated content, a summary of what changes and why, and leftovers: each statement of the source that the content does not keep, with a proposed home such as the project instructions.
 The target lies under the type's configured path, and equals the source for a format migration in place, and a source that is no artifact of the run's set is refused with `invalid_input`.
 A checkout source or target whose path passes through a symbolic link is refused with `artifact_outside`, and one that is no regular file with `invalid_path`, when it is proposed and again when the run applies, so a format migration never touches a file outside the project.
 Prism splits the source into statements, each sentence of a paragraph, list item, blockquote line, or table cell and each fenced code block, and refuses a proposal with `migration_unaccounted` when a statement appears in neither the content, a leftover, nor a conflict.

@@ -232,6 +232,7 @@ In a repository without components, the root component's rebuild prepares the ch
 
 A launched session is a headless Claude Code or Codex session that runs Prism's orchestrate skill for one initiative on this computer, started from the review page.
 It works on the initiative as an agent you started in a terminal would, and you watch, stop, and resume it from the page.
+Prism also launches a session of its own for each [format migration run](workflow.md#format-migrations), without asking and without the dialog, which runs Prism's `migrate-artifact` skill for that run alone.
 
 ### Launch an initiative
 
@@ -268,7 +269,7 @@ The host's session id stays in that record on this computer: no shared record, h
 
 Open **Launched sessions** from the Jump palette, where its detail reads `Headless sessions on this computer`, or at the address `review?artifact=launches`.
 It lists every launched session on this computer whose checkout shares this checkout's records, the most recently launched first.
-Each session shows its initiative's title, which opens the initiative page, the host, when it was launched, its running time, which counts every second while a run runs, its state, the reason for the state, how its last run ended, and its **Stop** and **Resume** actions.
+Each session shows its initiative's title, which opens the initiative page, or `Format migration <run id>` for a format migration run's session, the host, when it was launched, its running time, which counts every second while a run runs, its state, the reason for the state, how its last run ended, and its **Stop** and **Resume** actions.
 **Runs** shows how many times the session ran when it ran more than once.
 While no run runs and the host reported its session id, the session also shows the command that continues it in a terminal, `claude --resume <session id>` or `codex resume <thread id>`, with the folder to run it in, and **Copy** copies the command.
 The place reads the list again every 5 seconds and after each action you apply there.
