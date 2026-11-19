@@ -539,6 +539,9 @@ const launchBase = {
 const hostList = (labels) => (labels.length > 2 ? `${labels.slice(0, -1).join(", ")}, and ${labels.at(-1)}` : labels.join(" and "));
 const NO_HOST = `No host that Prism supports was found on this computer. Prism supports ${hostList(HOSTS.map(({ label }) => label))}.`;
 const launchHostOf = (context) => settingsOf(context).host ?? firstFoundHost(context);
+// A state that exists but reads invalid hides the host and the models chosen for the launch, and its history cannot record one, so
+// the launch is unavailable until the state reads again rather than running another host or other choices than the ones saved.
+const UNREADABLE_STATE = "This initiative's saved settings cannot be read, so Prism cannot tell which host, models, and efforts to launch with.";
 const notOffered = (label, reason) => fail("choice_not_offered", `${label}: ${reason}`);
 
 // The initiative's provider and every kind's choice for its host, checked against what the host reports, in field order: the
@@ -579,6 +582,7 @@ const LAUNCH_RUN = {
   effect: "Starts a headless session of this initiative's host on this computer with its settings; you confirm it outside the browser unless you confirmed in the last 30 minutes.",
   target: (context) => context.initiativeTarget,
   unavailable: (context) => {
+    if (context.coordination.exists && !context.coordination.valid) return UNREADABLE_STATE;
     if (!context.hosts.some((item) => item.available)) return NO_HOST;
     const host = launchHostOf(context);
     const availability = context.hosts.find((item) => item.host === host);
