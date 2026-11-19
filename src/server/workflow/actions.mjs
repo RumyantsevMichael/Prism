@@ -287,7 +287,7 @@ const RUN_CHOICE_HINTS = {
   designImplementation: "Writes each slice's design, tests and code.",
   codeReview: "Reviews each finished slice.",
   securityReview: "Reviews slices that touch access, secrets or other trust boundaries.",
-  gateSummary: "Turns the design's tests into the short examples you read at the design gate."
+  gateSummary: "Turns the design's tests into the short summaries you read at the design gate."
 };
 const PROVIDER_HINT = "Where the host sends its model requests; only some hosts offer a choice.";
 
