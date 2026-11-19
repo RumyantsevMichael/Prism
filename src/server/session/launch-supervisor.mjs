@@ -62,7 +62,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
     await failStart("The session never reported its host session id, so it cannot be resumed.");
     return;
   }
-  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume });
+  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, env });
   const number = record.runs.length + 1;
   const graceMs = stopGraceMs(env);
   let stderr = Buffer.alloc(0);
@@ -76,6 +76,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
       checkout: record.checkout,
       hostSessionId: record.hostSessionId,
       resume,
+      env,
       send: (message) => child.stdin.write(`${JSON.stringify(message)}\n`),
       closeInput: () => child.stdin.end(),
       onSessionId: (id) => update((current) => { if (!current.hostSessionId) current.hostSessionId = id; }),
@@ -187,7 +188,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
           if (!run) return;
           // The id is replaced before the line is cut, so no cut leaves part of it behind.
           const last = redactSessionId(lines.at(-1) ?? null, current.hostSessionId);
-          Object.assign(run, { endedAt, model: facts.model, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, refusalCount: facts.refusalCount, hostError: facts.hostError, stderr: last?.slice(0, 300) ?? null });
+          Object.assign(run, { endedAt, model: facts.model, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, refusalCount: facts.refusalCount, hostError: facts.hostError, usage: facts.usage, stderr: last?.slice(0, 300) ?? null });
           if (!run.stopRequestedAt && request) run.stopRequestedAt = new Date(requestTime(request)).toISOString();
         });
         resolve();

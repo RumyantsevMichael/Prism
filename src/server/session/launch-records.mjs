@@ -289,9 +289,9 @@ function stateOf(record, status, label, gates) {
  * names the host session id.
  * gates is gateFacts of the launch as the page's checkout reads its initiative's coordination state; without it no gate is counted.
  */
-export function launchView(record, { now = Date.now(), gates = null } = {}) {
+export function launchView(record, { now = Date.now(), gates = null, env = process.env } = {}) {
   const status = lastRunStatus(record, now);
-  const label = hostDefinition(record.host)?.label ?? record.host;
+  const label = hostDefinition(record.host, env)?.label ?? record.host;
   const facts = { waiting: gates?.waiting === true, answerWaits: status !== "running" && gates?.answerWaits === true };
   const { state, reason: hostText } = stateOf(record, status, label, facts);
   const reason = redactSessionId(hostText, record.hostSessionId);
@@ -304,7 +304,7 @@ export function launchView(record, { now = Date.now(), gates = null } = {}) {
   }, 0);
   const ended = [...record.runs].reverse().find((run) => run.endedAt);
   const exit = status === "lost" ? null : ended?.exit ? { code: ended.exit.code ?? null, signal: ended.exit.signal ?? null } : null;
-  const command = status === "running" ? null : resumeCommandOf(record.host, record.hostSessionId);
+  const command = status === "running" ? null : resumeCommandOf(record.host, record.hostSessionId, env);
   const last = record.runs.at(-1);
   const end = status === "ended" || status === "lost" ? lastEnd(record, status) : Number.NaN;
   const holder = typeof record.hostSessionId === "string" ? sessionHolder({ CLAUDE_CODE_SESSION_ID: record.hostSessionId }) : null;

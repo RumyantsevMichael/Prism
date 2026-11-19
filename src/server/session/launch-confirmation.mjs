@@ -333,7 +333,7 @@ function runDialog(dialog) {
  * The order is the open window, another open dialog, the cool-down after a refusal, a missing dialog, then the dialog itself.
  */
 export async function confirmLaunch({ initiative, host, checkout, env = process.env, platform = process.platform, now = Date.now() }) {
-  const definition = hostDefinition(host);
+  const definition = hostDefinition(host, env);
   if (!definition) throw new LaunchError("unknown_host", `Prism cannot launch the host ${host}.`);
   // The initiative is shown in the dialog, so only a slug reaches it.
   if (typeof initiative !== "string" || !SLUG_PATTERN.test(initiative)) throw new LaunchError("unknown_initiative", `Prism cannot launch the initiative ${String(initiative)}.`);

@@ -8,7 +8,7 @@ import { SLUG_PATTERN } from "../workflow/initiative-graph.mjs";
 import { listInitiatives } from "../workflow/record-store.mjs";
 import { readRoadmap } from "../workflow/roadmap.mjs";
 import { readCoordinationState } from "../workflow/state.mjs";
-import { hostAvailability, hostDefinition, hostEnvironment, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
+import { hostAvailability, hostDefinition, hostEnvironment, launchHosts, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
 import {
   LAUNCH_ID_PATTERN,
   LaunchError,
@@ -94,7 +94,7 @@ async function startRun({ folder, record, env, cause }) {
   // The view as of the host's start, so a run that already ended still answers as the running session it was.
   const startedView = (current, run) => {
     const started = { ...current, runs: current.runs.map((entry) => (entry === run ? { ...entry, endedAt: null, exit: null, heartbeatAt: run.startedAt, supervisorPid: process.pid } : entry)) };
-    return launchView(started, { now: Date.parse(run.startedAt) });
+    return launchView(started, { now: Date.parse(run.startedAt), env });
   };
   const deadline = Date.now() + START_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -106,7 +106,7 @@ async function startRun({ folder, record, env, cause }) {
     if (gone) {
       const last = await readLaunchRecord(folder);
       if (last?.startFailure?.token === token) throw refuse("launch_failed", last.startFailure.message);
-      if (!last?.runs.some((entry) => entry.token === token)) throw refuse("launch_failed", `${hostDefinition(record.host).label} could not be started: ${gone}.`);
+      if (!last?.runs.some((entry) => entry.token === token)) throw refuse("launch_failed", `${hostDefinition(record.host, env)?.label ?? record.host} could not be started: ${gone}.`);
       continue;
     }
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
@@ -127,13 +127,13 @@ async function startRun({ folder, record, env, cause }) {
   if (!gone && supervisor.pid) {
     try { process.kill(supervisor.pid, "SIGTERM"); } catch {}
   }
-  throw refuse("launch_failed", `${hostDefinition(record.host).label} could not be started: the supervisor did not start it within ${START_TIMEOUT_MS / 1000} seconds.`);
+  throw refuse("launch_failed", `${hostDefinition(record.host, env)?.label ?? record.host} could not be started: the supervisor did not start it within ${START_TIMEOUT_MS / 1000} seconds.`);
 }
 
 /** Starts a launched session's first run: { launch }, its view in state running. */
 export async function startLaunch({ projectRoot, initiative, host, env = process.env }) {
-  const definition = hostDefinition(host);
-  if (!definition) throw refuse("unknown_host", `Prism cannot launch ${String(host)}: the hosts are claude-code and codex.`);
+  const definition = hostDefinition(host, env);
+  if (!definition) throw refuse("unknown_host", `Prism cannot launch ${String(host)}: the hosts are ${launchHosts(env).map((item) => item.host).join(", ")}.`);
   const checkout = await realpath(projectRoot);
   if (!(await initiativeExists(checkout, initiative))) throw refuse("unknown_initiative", `No initiative ${String(initiative)} exists in this checkout.`);
   const resolved = await resolveHost(host, env);
@@ -364,7 +364,7 @@ export async function stopLaunch({ id, env = process.env }) {
     const record = await readLaunchRecord(folder);
     if (!record) throw unknown();
     const current = record.runs.find((entry) => entry.token === run.token);
-    if (current?.endedAt) return launchView(current.stopRequestedAt ? record : await markStopped(env, folder, run.token) ?? record);
+    if (current?.endedAt) return launchView(current.stopRequestedAt ? record : await markStopped(env, folder, run.token) ?? record, { env });
     if (lastRunStatus(record) === "lost") throw refuse("supervision_lost", SUPERVISION_LOST);
     if (Date.now() >= deadline) throw refuse("stop_timeout", `The session did not stop within ${Math.ceil((grace + STOP_SETTLE_MS) / 1000)} seconds; its supervisor keeps ending it.`);
     await new Promise((resolve) => setTimeout(resolve, POLL_MS * 4));
@@ -384,7 +384,7 @@ export async function listLaunches({ projectRoot, env = process.env, now = Date.
     }
     return pendingOf.get(initiative);
   };
-  const viewOf = async (folder, record) => launchView(record, { now: at, gates: gateFacts(await readGateRecord(folder), await pending(record.initiative)) });
+  const viewOf = async (folder, record) => launchView(record, { now: at, env, gates: gateFacts(await readGateRecord(folder), await pending(record.initiative)) });
   const launches = [];
   const candidates = [];
   for (const { folder, record } of await listLaunchRecords(env)) {
