@@ -5,7 +5,7 @@ import test from "node:test";
 import { skip, stateFileNames } from "./fixtures/kit-browser.mjs";
 import { repainted } from "./fixtures/wait.mjs";
 import { choosePlace, drawer, open, PLACES, placesDemo, sidebar } from "./fixtures/places-browser.mjs";
-import { messageHtml } from "../../src/server/review/public/views/util.js";
+import { messageHtml } from "../../dist/server/review/public/views/util.js";
 
 // A warning that names a Prism file shows the name as code, so the sidebars keep it informative without leaking a state path as prose.
 

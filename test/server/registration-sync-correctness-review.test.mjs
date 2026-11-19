@@ -4,8 +4,8 @@ import { access, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { cancelRecordSyncs } from "../../src/server/workflow/record-store-sync.mjs";
-import { checkRepositoryName } from "../../src/server/workflow/repository-names.mjs";
+import { cancelRecordSyncs } from "../../dist/server/workflow/record-store-sync.mjs";
+import { checkRepositoryName } from "../../dist/server/workflow/repository-names.mjs";
 
 // Review proofs for the registration-sync slice (correctness lane): no check accepts a registration that is not yet confirmed.
 const environment = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-registration-sync-review-env-")));
@@ -61,7 +61,7 @@ test("a check does not accept a registration that another check has written but 
 });
 
 // The same check in another process, as a second server sharing the store folder runs it: { repository } or { code }.
-const moduleUrl = new URL("../../src/server/workflow/repository-names.mjs", import.meta.url).href;
+const moduleUrl = new URL("../../dist/server/workflow/repository-names.mjs", import.meta.url).href;
 const checkElsewhere = (checkout, store) => new Promise((resolve, reject) => {
   const script = `import { checkRepositoryName } from ${JSON.stringify(moduleUrl)};
 const fail = (code, message) => Object.assign(new Error(message), { code });
