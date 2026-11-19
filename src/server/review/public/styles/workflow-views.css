@@ -432,7 +432,7 @@
   padding: var(--prism-space-4);
 }
 
-/* The format findings page: one panel per format, its files by kind of break, each finding's rule and message, and its legacy marks. */
+/* The format findings page: one panel per format, its files by kind of break, and each finding's rule and message. */
 .format-panels {
   display: grid;
   gap: var(--prism-space-6);
@@ -481,10 +481,6 @@
   flex: 1 1 16rem;
   min-width: 0;
   overflow-wrap: anywhere;
-}
-
-.legacy-dialog-effect {
-  margin: 0 0 var(--prism-space-4);
 }
 
 .attention-list-foot {

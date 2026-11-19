@@ -1,9 +1,6 @@
 import { randomBytes } from "node:crypto";
 import os from "node:os";
 import { realpath } from "node:fs/promises";
-import { ARTIFACT_TYPES } from "./artifact-formats.mjs";
-import { checkArtifacts } from "./artifact-check.mjs";
-import { artifactKey, legacyLookup, markLegacy, readLegacySets, removeLegacy } from "./artifact-marks.mjs";
 import { listComponents } from "./components.mjs";
 import { appendIndexHistory } from "./index-history.mjs";
 import { readInitiativeWithClaims } from "./initiative.mjs";
@@ -38,7 +35,6 @@ import {
 
 const GATE_ID = /^gate-[0-9a-f]{8,32}$/;
 const APPROVAL_ID = /^approval-[0-9a-f]{8,32}$/;
-const LEGACY_ID = /^legacy-[0-9a-f]{8,32}$/;
 const TEXT_LIMIT = 200;
 const NOTE_LIMIT = 4000;
 // A scope label is workspace, a repository name, or <repository>/<component>, and neither a label nor an artifact path holds a ":".
@@ -83,10 +79,6 @@ export function parseTarget(reference) {
   if (match && APPROVAL_ID.test(match[1])) return { kind: "approval", reference, gate: match[1] };
   match = /^artifact:([^:]+):([^:]+)$/.exec(reference);
   if (match && SCOPE_LABEL.test(match[1])) return { kind: "artifact", reference, scope: match[1], path: match[2] };
-  match = /^artifacts:(.+)$/.exec(reference);
-  if (match && ARTIFACT_TYPES.includes(match[1])) return { kind: "artifacts", reference, type: match[1] };
-  match = /^legacy:(.+)$/.exec(reference);
-  if (match && LEGACY_ID.test(match[1])) return { kind: "legacy", reference, set: match[1] };
   match = /^launch:(.+)$/.exec(reference);
   if (match && LAUNCH_ID_PATTERN.test(match[1])) return { kind: "launch", reference, launch: match[1] };
   match = /^index:([^/]+)\/([^/]+)$/.exec(reference);
@@ -142,19 +134,6 @@ async function seenArtifact(projectRoot, parsed) {
 
 // Reads what a target's actions need: the initiative's coordination state and record, the index component, the approval gate, the store artifact, or the launched session, and refuses a target that does not exist.
 async function readTarget(projectRoot, parsed, indexer, state = undefined, env = process.env) {
-  if (parsed.kind === "artifacts") {
-    // The type's artifacts that break its format and that no legacy set covers, each named by its artifact key.
-    const checked = await checkArtifacts({ projectRoot, type: parsed.type, legacyOf: legacyLookup(await readLegacySets(projectRoot)) }).catch((error) => {
-      throw ["ArtifactCheckError", "ArtifactError", "RecordStoreError"].includes(error?.name) && typeof error.code === "string" ? storeRefusal(error) : error;
-    });
-    const unmarked = checked.artifacts.filter((artifact) => !artifact.conforms && artifact.legacy === null);
-    return { ...parsed, unmarked };
-  }
-  if (parsed.kind === "legacy") {
-    const set = (await readLegacySets(projectRoot)).find((entry) => entry.id === parsed.set);
-    if (!set) throw unknownTarget(parsed.reference);
-    return { ...parsed, legacySet: set };
-  }
   if (parsed.kind === "artifact") {
     const artifact = await seenArtifact(projectRoot, parsed);
     if (!artifact) throw unknownTarget(parsed.reference);
@@ -377,44 +356,6 @@ const ARTIFACT_COMMENT = {
   after: (values, context) => ({ version: context.artifact.version, line: commentLine(values.line), text: values.text })
 };
 
-// A legacy mark leaves a person's nonconforming artifacts as they are and stops counting them on Attention, until the mark is removed.
-const ARTIFACTS_MARK_LEGACY = {
-  id: "artifacts.mark-legacy",
-  kinds: ["artifacts"],
-  label: "Mark as legacy",
-  group: "Format findings",
-  effect: "Stops counting the chosen files on Attention, also after they change, until the mark is removed; the files themselves do not change.",
-  target: (context) => context.reference,
-  fields: (context) => [choices("paths", "Files", context.unmarked.map((artifact) => option(artifactKey(artifact), artifactKey(artifact), artifact.findings.map((finding) => finding.rule).filter((rule, index, rules) => rules.indexOf(rule) === index).join(", ") || null)), { required: true })],
-  value: () => null,
-  context: () => null,
-  recommended: () => null,
-  confirm: () => ({ field: null, values: [], message: "The chosen files stop counting on Attention until someone removes the mark." }),
-  revision: () => null,
-  unavailable: (context) => context.unmarked.length ? null : "No file of this kind breaks its format without a legacy mark.",
-  after: (values, context) => ({ paths: values.paths.map((key) => {
-    const artifact = context.unmarked.find((entry) => artifactKey(entry) === key);
-    return { path: artifact.path, scope: artifact.scope === null ? null : artifact.scope.label };
-  }) })
-};
-
-const ARTIFACTS_REMOVE_LEGACY = {
-  id: "artifacts.remove-legacy",
-  kinds: ["legacy"],
-  label: "Remove the mark",
-  group: "Format findings",
-  effect: "The files of this set count on Attention again while they break their format.",
-  target: (context) => context.reference,
-  fields: () => [],
-  value: () => null,
-  context: () => null,
-  recommended: () => null,
-  confirm: () => null,
-  revision: () => null,
-  unavailable: () => null,
-  after: () => "removed"
-};
-
 const INDEX_REBUILD = {
   id: "index.rebuild",
   kinds: ["index"],
@@ -509,7 +450,7 @@ const LAUNCH_RESUME = {
 };
 
 /** Every action, in listing order; a later action joins by adding its definition here. */
-const ACTIONS = [...SETTING_ACTIONS, ...LAUNCH_ACTIONS, GATE_ANSWER, APPROVAL_ANSWER, ARTIFACT_COMMENT, ARTIFACTS_MARK_LEGACY, ARTIFACTS_REMOVE_LEGACY, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME];
+const ACTIONS = [...SETTING_ACTIONS, ...LAUNCH_ACTIONS, GATE_ANSWER, APPROVAL_ANSWER, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME];
 
 /** The sentence on when an action's change takes effect, or null for an action the registry does not define. */
 export const actionEffect = (id) => ACTIONS.find((definition) => definition.id === id)?.effect ?? null;
@@ -719,17 +660,6 @@ export async function applyAction({ projectRoot, target, action, input, revision
       if (error?.code === "version_conflict") throw fail("stale_revision", "The file changed since the page read it.", { current: view(definition, { ...read, artifact: { ...artifact, version: error.version ?? null } }) });
       throw storeRefused(error) ? storeRefusal(error) : error;
     });
-  } else if (parsed.kind === "artifacts" || parsed.kind === "legacy") {
-    const checked = check(definition, read, request);
-    applied = await entryOf(checked, read);
-    // A legacy set records the applying checkout's Git identity as it is, with a null name where Git names no user, since the mark changes no artifact.
-    const written = parsed.kind === "artifacts"
-      ? await markLegacy(projectRoot, { type: parsed.type, artifacts: checked.after.paths, by: applied.by })
-      : await removeLegacy(projectRoot, { id: parsed.set, by: applied.by });
-    if (!written) throw unknownTarget(target);
-    applied = { ...applied, after: parsed.kind === "artifacts" ? { set: written.id, paths: checked.after.paths } : "removed" };
-    const actions = parsed.kind === "artifacts" ? (await listActions({ projectRoot, target, indexer, env })).actions : [];
-    return { applied, actions, legacy: written };
   } else if (parsed.kind === "index") {
     const checked = check(definition, read, request);
     if (checked) {

@@ -5,7 +5,6 @@ import { isExpired } from "./claim-index.js";
 import { notifyControl } from "./attention-signal.js";
 import { currentPhase } from "./slice.js";
 import { timeLeft } from "../kit/claim-time.js";
-import { readOnlyNotice } from "./actions.js";
 
 const GATE_LABELS = {
   "visual-review": "Visual review",
@@ -707,131 +706,24 @@ function formatGroup(label, note, artifacts) {
   return `<section class="format-group"><h4 class="format-group-label label-caps"><span>${escapeHtml(label)}</span> <prism-badge tone="warning">${artifacts.length}</prism-badge></h4><p class="format-group-note muted">${escapeHtml(note)}</p><div class="prism-rows" role="list" aria-label="${escapeHtml(label)}">${artifacts.map(formatArtifact).join("")}</div></section>`;
 }
 
-function authorName(by) {
-  return by?.name ?? by?.email ?? "someone whose Git names no user";
-}
-
-// One legacy set: who marked it and when, how many of its files still break the format, and the way to remove the mark.
-function legacySet(set, writable) {
-  writable = writable === true;
-  return `<prism-row icon="clock" tone="neutral">Marked by ${escapeHtml(authorName(set.by))}<span slot="description">${escapeHtml(plural(set.count, "file"))}${set.by?.checkout ? ` · ${escapeHtml(set.by.checkout)}` : ""}</span><time slot="time" datetime="${escapeHtml(set.at)}"${Number.isFinite(Date.parse(set.at)) ? ` tip="${escapeHtml(new Date(set.at).toLocaleString())}"` : ""}>${escapeHtml(shortAgo(set.at))}</time><prism-button slot="action" size="sm" data-remove-legacy="${escapeHtml(set.id)}"${writable ? "" : " disabled"}>Remove the mark</prism-button></prism-row>`;
-}
-
-// A format's panel: its count, its artifacts by kind of break, its legacy sets, and the action that marks some of them as legacy.
-function formatPanel(entry, writable) {
-  writable = writable === true;
+// A format's panel: its count and its artifacts by kind of break.
+function formatPanel(entry) {
   const earlier = entry.artifacts.filter((artifact) => artifact.earlierFormat);
   const foreign = entry.artifacts.filter((artifact) => !artifact.earlierFormat);
-  const legacy = entry.legacy.count
-    ? `<section class="format-group"><h4 class="format-group-label label-caps"><span>Legacy</span> <prism-badge>${entry.legacy.count}</prism-badge></h4><p class="format-group-note muted">These files break the format and stay as they are; they count again when their mark is removed.</p><div class="prism-rows" role="list" aria-label="Legacy marks of ${escapeHtml(entry.label)}">${entry.legacy.sets.map((set) => legacySet(set, writable)).join("")}</div></section>`
-    : "";
-  const mark = entry.count ? `<prism-button slot="tools" size="sm" data-mark-legacy="${escapeHtml(entry.type)}"${writable ? "" : " disabled"}>Mark as legacy</prism-button>` : "";
-  return `<prism-panel class="view-section format-panel" heading="${escapeHtml(entry.label)}" level="3" eyebrow="${escapeHtml(`Format version ${entry.version} · ${plural(entry.count, "file")} to look at`)}">${mark}
+  return `<prism-panel class="view-section format-panel" heading="${escapeHtml(entry.label)}" level="3" eyebrow="${escapeHtml(`Format version ${entry.version} · ${plural(entry.count, "file")} to look at`)}">
     ${formatGroup("Earlier Prism format", `These files keep an earlier version of the format; a format migration brings them to version ${entry.version}.`, earlier)}
     ${formatGroup("No Prism format", "These files keep no version of the format; a format migration rewrites them into it, keeping every statement.", foreign)}
-    ${entry.count ? "" : `<p class="muted">Every file of this kind either keeps the format or is marked as legacy.</p>`}
-    ${legacy}
   </prism-panel>`;
 }
 
-// The choice of files to mark, in a kit dialog outside the page, since its checkboxes are native controls of the kit's choice.
-function chooseLegacy(listing, ctx) {
-  const action = (listing.actions ?? []).find((item) => item.id === "artifacts.mark-legacy");
-  const field = action?.fields?.find((item) => item.name === "paths");
-  return new Promise((resolve) => {
-    if (!action?.available || !field) {
-      ctx.showToast?.(action?.reason ?? "Nothing of this kind can be marked as legacy now.");
-      resolve(null);
-      return;
-    }
-    const dialog = document.createElement("prism-dialog");
-    dialog.className = "legacy-dialog";
-    dialog.setAttribute("heading", "Mark as legacy");
-    dialog.setAttribute("size", "lg");
-    dialog.innerHTML = `<p class="legacy-dialog-effect">${escapeHtml(action.effect)}</p>
-      <prism-choice multiple label="${escapeHtml(field.label)}" data-legacy-choice>${field.options.map((option) => `<prism-choice-option value="${escapeHtml(option.value)}"><span data-code-subject>${escapeHtml(option.label)}</span>${option.consequence ? `<span slot="detail">Breaks ${escapeHtml(option.consequence)}</span>` : ""}</prism-choice-option>`).join("")}</prism-choice>
-      <p class="action-hint" data-legacy-hint aria-live="polite">Choose at least one file.</p>
-      <prism-button slot="footer" data-legacy-cancel>Cancel</prism-button>
-      <prism-button slot="footer" variant="primary" data-legacy-confirm disabled>Mark as legacy</prism-button>`;
-    document.body.append(dialog);
-    const choice = dialog.querySelector("[data-legacy-choice]");
-    const confirm = dialog.querySelector("[data-legacy-confirm]");
-    const hint = dialog.querySelector("[data-legacy-hint]");
-    let chosen = null;
-    choice.addEventListener("change", () => {
-      const count = choice.values.length;
-      confirm.toggleAttribute("disabled", count === 0);
-      hint.textContent = count ? `${plural(count, "file")} chosen.` : "Choose at least one file.";
-    });
-    confirm.addEventListener("click", () => {
-      chosen = choice.values;
-      dialog.close();
-    });
-    dialog.querySelector("[data-legacy-cancel]").addEventListener("click", () => dialog.close());
-    dialog.addEventListener("prism-close", () => {
-      dialog.remove();
-      resolve(chosen?.length ? { action, paths: chosen } : null);
-    }, { once: true });
-    dialog.show();
-  });
-}
-
-async function markLegacy(type, ctx) {
-  const target = `artifacts:${type}`;
-  let listing;
-  try { listing = await ctx.actionApi.list(target); }
-  catch (error) { ctx.showToast?.(error.message); return; }
-  const picked = await chooseLegacy(listing, ctx);
-  if (!picked) return;
-  const answer = await ctx.actionApi.apply({ action: picked.action.id, target, input: { paths: picked.paths }, revision: picked.action.revision, confirmed: true });
-  ctx.showToast?.(answer.status === 200 ? `Marked ${plural(picked.paths.length, "file")} as legacy.` : answer.json?.message ?? "The files were not marked.");
-  ctx.rerender?.();
-}
-
-async function removeMark(id, ctx) {
-  const target = `legacy:${id}`;
-  let listing;
-  try { listing = await ctx.actionApi.list(target); }
-  catch (error) { ctx.showToast?.(error.message); return; }
-  const action = (listing.actions ?? []).find((item) => item.id === "artifacts.remove-legacy");
-  if (!action?.available) { ctx.showToast?.(action?.reason ?? "The mark can no longer be removed."); return; }
-  const answer = await ctx.actionApi.apply({ action: action.id, target, input: {}, revision: action.revision });
-  ctx.showToast?.(answer.status === 200 ? "Removed the legacy mark; its files count again." : answer.json?.message ?? "The mark was not removed.");
-  ctx.rerender?.();
-}
-
-// The format findings page: every format whose files break it or are marked as legacy, and the actions on them.
+// The format findings page: every format whose files break it.
 function renderFormats(container, data, ctx) {
   const filter = data.filter;
   filterLine(container, `${filter.label} · ${filter.items.length} of ${filter.total} ${filter.total === 1 ? "item" : "items"}`, ctx);
-  const shown = (data.formats ?? []).filter((entry) => entry.count || entry.legacy.count);
-  // Until a listing says whether this tab can write, the actions show disabled and the read-only notice waits.
-  const draw = (writable) => {
-    container.innerHTML = shown.length
-      ? `${writable === false ? readOnlyNotice() : ""}<div class="format-panels">${shown.map((entry) => formatPanel(entry, writable)).join("")}</div>`
-      : `<div class="attention-nothing">${emptyState("Every file keeps its format", "No requirement, decision, glossary, or feature file breaks its Prism format.")}</div>`;
-  };
-  draw(ctx.state.formatsWritable ?? null);
-  // A redraw of the same container replaces its handler, so one click starts one action.
-  if (container.formatsClick) container.removeEventListener("click", container.formatsClick);
-  container.formatsClick = (event) => {
-    const mark = event.target.closest?.("prism-button[data-mark-legacy]");
-    if (mark && !mark.disabled) void markLegacy(mark.dataset.markLegacy, ctx);
-    const remove = event.target.closest?.("prism-button[data-remove-legacy]");
-    if (remove && !remove.disabled) void removeMark(remove.dataset.removeLegacy, ctx);
-  };
-  container.addEventListener("click", container.formatsClick);
-  // Whether this tab can write comes with any listing, so the actions are enabled once one is read.
-  const first = shown.find((entry) => entry.count)?.type ?? null;
-  const probe = first ? `artifacts:${first}` : shown[0]?.legacy.sets[0] ? `legacy:${shown[0].legacy.sets[0].id}` : null;
-  if (probe && ctx.actionApi) {
-    void ctx.actionApi.list(probe).then((listing) => {
-      const writable = listing.writable === true;
-      if (writable === ctx.state.formatsWritable || !container.isConnected) return;
-      ctx.state.formatsWritable = writable;
-      draw(writable);
-    }, () => {});
-  }
+  const shown = (data.formats ?? []).filter((entry) => entry.count);
+  container.innerHTML = shown.length
+    ? `<div class="format-panels">${shown.map(formatPanel).join("")}</div>`
+    : `<div class="attention-nothing">${emptyState("Every file keeps its format", "No requirement, decision, glossary, or feature file breaks its Prism format.")}</div>`;
 }
 
 export function render(container, entity, ctx) {

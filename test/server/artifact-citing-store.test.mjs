@@ -30,7 +30,7 @@ test("clauses 26, 56: a refusal names a nonconforming store artifact by path and
   const refused = await initiative(call, [{ op: "create", slug: "retries", title: "Retries", requirements: ["old.md§1"] }]);
   assert.equal(refused.value?.code, "artifact_nonconforming", refused.text);
   const [artifact] = refused.value.artifacts;
-  assert.deepEqual([artifact.path, labelOf(artifact), artifact.type, artifact.legacy], [OLD, "api", "requirements", false]);
+  assert.deepEqual([artifact.path, labelOf(artifact), artifact.type, Object.hasOwn(artifact, "legacy")], [OLD, "api", "requirements", false]);
   assert.ok(artifact.findings.some((finding) => finding.rule === "requirements.header"));
   assert.match(refused.text, /Ask for a migration of docs\/requirements\/old\.md in scope api in a session of its own\./);
   assert.equal((await call("get_initiative", { initiative: "retries" })).value.exists, false, "nothing changed");

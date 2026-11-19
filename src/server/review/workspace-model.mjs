@@ -17,7 +17,6 @@ import { readPublishedUnits } from "../repository-intelligence/index-status.mjs"
 import { parseStoreJson } from "../workflow/store-json.mjs";
 import { checkArtifacts } from "../workflow/artifact-check.mjs";
 import { ARTIFACT_FORMATS } from "../workflow/artifact-formats.mjs";
-import { legacyLookup, readLegacySets } from "../workflow/artifact-marks.mjs";
 import { recordChanges } from "./record-changes.mjs";
 import { shippedActionReason, shippedDecision, shippedHistory, shippedHistoryLabel } from "../workflow/shipped-history.mjs";
 
@@ -555,32 +554,26 @@ export async function loadAttention(projectRoot) {
 const FORMAT_LABELS = Object.freeze({ requirements: "Requirements", adr: "Decisions", glossary: "Glossary", feature: "Feature files" });
 
 /**
- * Attention's format entries, one per format: the artifacts that break it and no legacy set covers, how many of them conform to an earlier format,
- * and the legacy sets that cover artifacts that still break it, each with how many; a project whose artifacts cannot be checked shows no findings.
+ * Attention's format entries, one per format: every artifact that breaks it, and how many of them conform to an earlier format;
+ * a project whose artifacts cannot be checked shows no findings.
  */
 async function loadFormats(projectRoot) {
-  let sets = [];
   let artifacts = [];
   try {
-    sets = await readLegacySets(projectRoot);
-    artifacts = (await checkArtifacts({ projectRoot, legacyOf: legacyLookup(sets) })).artifacts;
+    artifacts = (await checkArtifacts({ projectRoot })).artifacts;
   } catch {
     artifacts = [];
   }
   return ARTIFACT_FORMATS.map((format) => {
     const broken = artifacts.filter((artifact) => artifact.type === format.type && !artifact.conforms);
-    const unmarked = broken.filter((artifact) => artifact.legacy === null);
-    const marked = broken.filter((artifact) => artifact.legacy !== null);
-    const covered = sets.filter((set) => set.type === format.type).map((set) => ({ id: set.id, by: set.by, at: set.at, count: marked.filter((artifact) => artifact.legacy.set === set.id).length })).filter((set) => set.count > 0);
     return {
       type: format.type,
       label: FORMAT_LABELS[format.type],
       version: format.version,
       reference: format.reference,
-      count: unmarked.length,
-      earlier: unmarked.filter((artifact) => artifact.earlierFormat !== null).length,
-      artifacts: unmarked.map((artifact) => ({ path: artifact.path, scope: artifact.scope, findings: artifact.findings, earlierFormat: artifact.earlierFormat })),
-      legacy: { count: marked.length, sets: covered }
+      count: broken.length,
+      earlier: broken.filter((artifact) => artifact.earlierFormat !== null).length,
+      artifacts: broken.map((artifact) => ({ path: artifact.path, scope: artifact.scope, findings: artifact.findings, earlierFormat: artifact.earlierFormat }))
     };
   });
 }
@@ -783,7 +776,7 @@ async function attentionPage(projectRoot, page) {
   const shown = work ? items.filter(({ item }) => item.initiative?.id === work[1]) : items.filter((entry) => entry.kind === page);
   let label = PLACE_PAGE_LABELS.attention[page];
   if (work) label = shown[0]?.item.initiative.title ?? (await loadRoadmapView(projectRoot).catch(() => ({ items: [] }))).items.find((item) => item.id === work[1])?.title ?? work[1];
-  // The format findings page also carries every format's entry, with its artifacts and legacy sets.
+  // The format findings page also carries every format's entry, with its artifacts.
   return { filter: { key: page, label, total: items.length, items: shown }, ...(page === "formats" ? { formats: attention.formats } : {}) };
 }
 

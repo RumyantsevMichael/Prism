@@ -11,7 +11,6 @@ const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-c
 process.env.PLUGIN_DATA = privateData;
 process.env.PRISM_REVIEW_APP_DIR = path.join(privateData, "app");
 delete process.env.CLAUDE_PLUGIN_DATA;
-const { applyAction, listActions } = await import("../../dist/server/workflow/actions.mjs");
 test.after(() => rm(privateData, { recursive: true, force: true }));
 
 const OLD = "docs/requirements/old.md";
@@ -33,7 +32,7 @@ function assertRefused(result, file, rule) {
   const artifact = result.value.artifacts.find((entry) => entry.path === file);
   assert.ok(artifact, `${file} is named`);
   assert.equal(typeof artifact.type, "string");
-  assert.equal(typeof artifact.legacy, "boolean");
+  assert.equal(Object.hasOwn(artifact, "legacy"), false);
   assert.ok(artifact.findings.some((finding) => finding.rule === rule), rule);
   assert.match(result.text, new RegExp(file.replace(/[./]/g, "\\$&")));
   assert.match(result.text, new RegExp(rule.replace(/\./g, "\\.")));
@@ -78,16 +77,6 @@ test("clauses 25, 26: a design whose slice.md links a nonconforming ADR, or whos
   assertRefused(await propose(["test/retries.test.mjs", "docs/Features/F-broken.feature"]), "docs/Features/F-broken.feature", "feature.header");
   const accepted = await propose(["test/retries.test.mjs", PATHS.feature]);
   assert.equal(accepted.value?.code ?? null, null, accepted.text);
-});
-
-test("clause 26: a legacy mark does not let work cite the artifact", async (context) => {
-  const { root, call } = await formatServer(context, FILES);
-  const listed = await listActions({ projectRoot: root, target: "artifacts:requirements" });
-  const mark = listed.actions.find((action) => action.id === "artifacts.mark-legacy");
-  await applyAction({ projectRoot: root, target: "artifacts:requirements", action: "artifacts.mark-legacy", input: { paths: [OLD] }, revision: mark.revision, confirmed: true });
-  const refused = await initiative(call, [{ op: "create", slug: "retries", title: "Retries", requirements: ["old.md§1"] }]);
-  assertRefused(refused, OLD, "requirements.header");
-  assert.equal(refused.value.artifacts.find((entry) => entry.path === OLD).legacy, true);
 });
 
 test("clause 27: a missing requirement file and an unknown value do not refuse, and a record that already cites a nonconforming file still loads", async (context) => {

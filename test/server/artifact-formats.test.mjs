@@ -57,7 +57,7 @@ test("clauses 11, 13: without paths every artifact of the configured folders is 
   for (const entry of value.artifacts) {
     assert.equal(entry.conforms, true, entry.path);
     assert.equal(entry.earlierFormat, null);
-    assert.equal(entry.legacy, null);
+    assert.equal(Object.hasOwn(entry, "legacy"), false);
     assert.ok(Number.isInteger(entry.version));
   }
 });

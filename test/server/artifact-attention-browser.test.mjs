@@ -46,7 +46,7 @@ test("clause 19: the Format findings page lists each format with its count, its 
   assert.equal(await view.getByText("docs/requirements/old-a.md", { exact: false }).first().isVisible(), true);
   assert.equal(await view.getByText("requirements.header", { exact: false }).first().isVisible(), true, "the broken rule is named");
   assert.equal(await view.getByText("docs/ADRs/old/plain.md", { exact: false }).first().isVisible(), true);
-  assert.equal(await view.getByText(/Mark as legacy/).first().isVisible(), true, "the legacy action is offered");
+  assert.equal(await view.getByText(/Mark as legacy/).count(), 0, "no legacy action is offered");
   assert.deepEqual(await offKit(page, "#artifact"), [], "every control on the page is a kit element");
   assert.deepEqual(page.errors, []);
 });

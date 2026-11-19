@@ -23,7 +23,7 @@ const named = (artifact) => labelOf(artifact.scope) === null ? artifact.path : `
 function refusalMessage(artifacts) {
   const lines = artifacts.map((artifact) => {
     const rules = [...new Set(artifact.findings.map((finding) => finding.rule))].join(", ");
-    return `${named(artifact)} breaks ${rules}${artifact.legacy ? ", and is marked legacy, which does not let work cite it" : ""}. Ask for a migration of ${named(artifact)} in a session of its own.`;
+    return `${named(artifact)} breaks ${rules}. Ask for a migration of ${named(artifact)} in a session of its own.`;
   });
   return `The update cites ${artifacts.length === 1 ? "an artifact that breaks its format" : "artifacts that break their formats"}, so nothing changed: ${lines.join(" ")}`;
 }
@@ -49,7 +49,7 @@ async function sliceDocument(root, file) {
  * `documents` slice.md paths whose Markdown links cite the copy in the document's scope, else the only seen copy, else every copy,
  * and `files` paths cited as they are, such as frozen feature files. A path that check_artifacts would not list as an artifact, such as a README.md, a diagram, or a file too deep below its folder, or that holds no file, cites nothing.
  * Only the cited paths are read from the store, so the check costs what the operation cites, not what the store holds.
- * Returns [{ path, scope, type, conforms, findings, legacy }] as check_artifacts lists them, legacy its mark or null.
+ * Returns [{ path, scope, type, conforms, findings }] as check_artifacts lists them.
  */
 export async function citedArtifacts(projectRoot, { references = [], documents = [], files = [] } = {}) {
   if (!references.length && !documents.length && !files.length) return [];
@@ -90,9 +90,9 @@ export async function citedArtifacts(projectRoot, { references = [], documents =
 // An unknown value does not refuse work that cites its artifact, so an artifact whose only findings are unknown values counts as conforming here.
 const citedBreak = (artifact) => !artifact.conforms && artifact.findings.some((finding) => !finding.rule.endsWith(".unknown"));
 
-/** The artifact_nonconforming refusal of the cited artifacts that break their formats, legacy or not, or null when every one conforms. */
+/** The artifact_nonconforming refusal of the cited artifacts that break their formats, or null when every one conforms. */
 export function refuseNonconforming(artifacts) {
-  const broken = artifacts.filter(citedBreak).map((artifact) => ({ path: artifact.path, scope: artifact.scope, type: artifact.type, findings: artifact.findings, legacy: artifact.legacy !== null }));
+  const broken = artifacts.filter(citedBreak).map((artifact) => ({ path: artifact.path, scope: artifact.scope, type: artifact.type, findings: artifact.findings }));
   return broken.length ? new ArtifactCitationError(broken) : null;
 }
 
