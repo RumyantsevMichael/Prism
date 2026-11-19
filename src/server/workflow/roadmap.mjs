@@ -20,7 +20,7 @@ import { mergeHistory, mergeKeyed, mergeOrder, mergeScalars, MergeConflict, pars
 import { ComponentError, listComponents, listsComponents, readComponents } from "./components.mjs";
 import { latestDependentsRun, verifiedAt } from "./slice-design.mjs";
 import { initiativePlan } from "./ship-standing.mjs";
-import { acceptLinkedAdrs, unlinkedAdrs } from "./store-artifacts.mjs";
+import { acceptLinkedAdrs, linkedAdrProblems, unlinkedAdrs } from "./store-artifacts.mjs";
 import { proposeComponents } from "./workspace-manifests.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 import { documentDigests, entryShippedDecision, hasOpenWork, openWork, openWorkMessage, readSliceDocuments, recordEarlierShips, ShippedHistoryError, writeHistoryMarks } from "./shipped-history.mjs";
@@ -410,6 +410,8 @@ const dependentsMessage = (scopes) => `The initiative cannot ship while the depe
 
 const unlinkedMessage = (adrs) => `The initiative cannot ship while a Proposed ADR cites its requirements and no slice.md links it, since the ship would leave that ADR Proposed: ${adrs.map((adr) => `${adr.path} in scope ${adr.scope} (cites ${adr.requirements.join(", ")})`).join("; ")}. Link each ADR that the initiative's contract relies on from the slice.md that relies on it with update_artifact, so the person sees it at the correctness gate and the ship accepts it, then ask a new correctness gate and ship; an ADR of another initiative is linked from that initiative's slice.md.`;
 
+const ambiguousMessage = (adrs, outcome) => `A link in a slice.md could name ADRs at the same path in two or more scopes, none of them the scope of that slice.md, so the ship cannot tell which one it accepts${outcome}: ${adrs.map((adr) => `${adr.path} in scopes ${adr.scopes.join(", ")}`).join("; ")}. Keep the ADR in one of those scopes, or keep the slice.md in the scope of the one it means, then ask a new correctness gate and ship.`;
+
 const withoutGates = (work, exempt) => exempt.size ? { ...work, gates: work.gates.filter((gate) => !exempt.has(gate.id)) } : work;
 
 // Open work refuses ship before any leaf check, so it is reported whether or not the leaves are done or the initiative record is readable.
@@ -434,7 +436,7 @@ function confirmingGates(config, state, ship) {
   return new Set(newest ? [newest.id] : []);
 }
 
-// The facts of an initiative and what keeps it from shipping: blocker is null, { leaves: true } while a leaf is not done, { open } for open work, { fixes } for unfinished fixes, { problem } for an invalid declaration, { scopes } for blocked dependents, or { unlinked } for Proposed ADRs that cite its requirements and that no slice.md links.
+// The facts of an initiative and what keeps it from shipping: blocker is null, { leaves: true } while a leaf is not done, { open } for open work, { fixes } for unfinished fixes, { problem } for an invalid declaration, { scopes } for blocked dependents, { unlinked } for Proposed ADRs that cite its requirements and that no slice.md links, or, read for readyToShip only, { ambiguous } or { linkProblem } for linked ADRs that the ship would refuse.
 // ship is { afterGate } when a ship asks, so the gate it names is the one pending gate that is not open work, with or without a record store.
 async function deriveItem(projectRoot, config, item, ship = null) {
   const base = { id: item.id, band: item.band, state: "envisioned", readyToShip: false, progress: null, active: [], diagnostics: [] };
@@ -487,6 +489,19 @@ async function deriveItem(projectRoot, config, item, ship = null) {
     const { plan } = await initiativePlan(projectRoot, item.id);
     const adrs = await unlinkedAdrs(projectRoot, plan, Array.isArray(item.requirements) ? item.requirements : []);
     if (adrs.length) return { derived: { ...derived, readyToShip: false, diagnostics: [...derived.diagnostics, { code: "adr_unlinked", message: unlinkedMessage(adrs), adrs }] }, blocker: { unlinked: adrs } };
+    // A ship then reads the ADRs that its slice.md files link, refusing a link it cannot resolve to one scope or a slice.md it cannot read, so readyToShip reads them as it does.
+    // A ship makes this read itself after it checks its gate, so its own refusals keep their order.
+    if (!ship && plan !== null) {
+      let ambiguous;
+      try {
+        ({ ambiguous } = await linkedAdrProblems(projectRoot, plan));
+      } catch (error) {
+        if (error?.code !== "artifact_too_large") throw error;
+        const problem = { code: error.code, message: error.message, ...(typeof error.path === "string" ? { path: error.path, scope: error.scope?.label ?? null } : {}) };
+        return { derived: { ...derived, readyToShip: false, diagnostics: [...derived.diagnostics, problem] }, blocker: { linkProblem: problem } };
+      }
+      if (ambiguous.length) return { derived: { ...derived, readyToShip: false, diagnostics: [...derived.diagnostics, { code: "adr_ambiguous", message: ambiguousMessage(ambiguous, ""), adrs: ambiguous }] }, blocker: { ambiguous } };
+    }
   }
   return { derived, blocker: null };
 }
@@ -716,8 +731,7 @@ async function acceptShippedAdrs(resolved, shipped, at) {
     throw unconfirmed(`The correctness gate ${outcome.gate} was asked before what the ship accepts: since then ${changesText(outcome.changed)}, so the person has not confirmed the initiative as it stands; ask a new one.`, { afterGate: outcome.gate, changed: outcome.changed });
   }
   if (outcome.refused === "adr_ambiguous") {
-    const named = outcome.adrs.map((adr) => `${adr.path} in scopes ${adr.scopes.join(", ")}`).join("; ");
-    throw fail("adr_ambiguous", `A link in a slice.md could name ADRs at the same path in two or more scopes, none of them the scope of that slice.md, so the ship cannot tell which one it accepts and nothing changed: ${named}. Keep the ADR in one of those scopes, or keep the slice.md in the scope of the one it means, then ask a new correctness gate and ship.`, { adrs: outcome.adrs });
+    throw fail("adr_ambiguous", ambiguousMessage(outcome.adrs, " and nothing changed"), { adrs: outcome.adrs });
   }
   if (outcome.refused === "adr_pending") {
     const named = outcome.adrs.map((adr) => `${adr.path} in scope ${adr.scope.label} (${adr.gates.join(", ")})`).join("; ");

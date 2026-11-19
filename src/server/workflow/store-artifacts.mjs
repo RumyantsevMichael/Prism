@@ -1842,6 +1842,21 @@ export async function unlinkedAdrs(projectRoot, plan, requirements) {
 }
 
 /**
+ * What keeps a ship of an initiative from reading the ADRs that its slice.md files link, read as the ship reads them and changing nothing, so readyToShip refuses what the ship refuses:
+ * { ambiguous } lists { path, scopes } for each link that could name ADRs in two or more scopes, none of them its slice.md's, sorted by path,
+ * and a slice.md above an artifact's bound, or whose syntax the link reader stops on, refuses with artifact_too_large as the ship does.
+ */
+export async function linkedAdrProblems(projectRoot, plan) {
+  return refusing(async () => {
+    const { kinds } = await configuration(projectRoot);
+    const seen = await seenScopes(projectRoot);
+    const wide = await planSeen(seen, plan);
+    const { ambiguous } = await planLinkedAdrs(seen, wide, kinds, await readPlanSlices(wide, plan), { strict: true, resolve: manyReads(seen) });
+    return { ambiguous };
+  });
+}
+
+/**
  * What a ship of an initiative would read in the store now, as a correctness gate records it: { slices, repositories, adrs }.
  * slices lists the slice.md files as { scope, path, version }, repositories the repositories that each slice's links resolve in as { folder, repositories },
  * and adrs every ADR that the ship would accept as { scope, path, version }, each list sorted, so a ship compares them with what it accepts.
