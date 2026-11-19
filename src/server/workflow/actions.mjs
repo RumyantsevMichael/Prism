@@ -563,25 +563,27 @@ const notOffered = (label, reason) => fail("choice_not_offered", `${label}: ${re
 
 // The initiative's provider and every kind's choice for its host, checked against what the host reports, in field order: the
 // provider, then the kinds. A kept earlier name is refused without a read, and a host default, or a typed model without an
-// effort, needs none, so a launch whose choices are all host defaults reads no host.
+// effort, needs none, so a launch whose choices are all host defaults reads no host. A read that failed offers only the host
+// defaults, so the field that needed it is refused with the read's own reason rather than as a choice the host does not offer.
 async function checkedLaunchChoices(context, host) {
   const { label } = hostDefinition(host);
   const entry = modelsOf(context)[host];
   const { provider } = entry;
-  const report = async (selection) => {
+  const report = async (fieldLabel, selection) => {
     const read = await context.readOptions({ host, ...selection });
     if (read.state === "unavailable") throw fail("host_unavailable", read.reason);
+    if (read.state === "failed") throw notOffered(fieldLabel, read.reason);
     return read;
   };
   if (provider !== null) {
-    const base = await report({ purpose: "coordinator" });
+    const base = await report("Provider", { purpose: "coordinator" });
     if (!optionOf(base, "provider")?.values.some((item) => item.value === provider)) throw notOffered("Provider", choiceReasons.provider(label, provider));
   }
   for (const { kind, label: kindLabel, purpose } of RUN_KINDS) {
     const choice = entry[kind];
     if (choice.earlier !== undefined) throw notOffered(kindLabel, earlierReason(label, choice.earlier));
     if (choice.effort === null && (choice.model === null || choice.typed)) continue;
-    const read = await report({ purpose, provider, model: choice.model, effort: choice.effort, typed: choice.typed });
+    const read = await report(kindLabel, { purpose, provider, model: choice.model, effort: choice.effort, typed: choice.typed });
     for (const id of ["model", "effort"]) {
       const chosen = optionOf(read, id)?.chosen;
       if (chosen?.state === "not-offered") throw notOffered(kindLabel, chosen.reason);
