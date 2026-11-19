@@ -32,12 +32,6 @@ function sleep(milliseconds, signal) {
 }
 
 export function answerText(gate) {
-  if (gate.kind === "migration") {
-    const { decision, note, conflicts, removeSource } = gate.answer;
-    const chosen = Object.entries(conflicts ?? {}).map(([entry, side]) => `${entry}: ${side}`);
-    const applies = decision === "accept" ? " Apply it with apply_migration." : " It does not apply.";
-    return `The user answered format migration ${gate.id} in the review browser: ${decision === "accept" ? "accepted" : "declined"}.${chosen.length ? ` Conflicts: ${chosen.join(", ")}.` : ""}${decision === "accept" && removeSource ? " The separate source is removed when it applies." : ""}${note ? ` Note: ${note}` : ""}${applies}`;
-  }
   const { choice, note } = gate.answer;
   const label = choice === null ? "a free answer" : gate.options?.find((option) => option.id === choice)?.label ?? choice;
   const recorded = gate.kind === "approval" ? choice === "approve" ? ` Prism recorded ${gate.status} for ${gate.artifact ?? "the artifact"} and rewrote its status lines in the store.` : ` The recorded status of ${gate.artifact ?? "the artifact"} stays as it was.` : "";
@@ -49,14 +43,7 @@ export function answerText(gate) {
  * where an answered approval gate stays listed with its answer and a superseded one is gone.
  */
 // After the first read an artifact wait reads leniently, so an artifact removed, moved out of the checkout's view, or out of the given scope has no gates left and the wait ends as resolved.
-export function gateSource({ projectRoot, initiative, artifact, scope, migration }) {
-  // A format migration's answer lives in its own record, whose one gate carries the migration's id.
-  if (typeof migration === "string" && migration) {
-    return async () => {
-      const { migrationGates } = await import("./format-migrations.mjs");
-      return migrationGates(projectRoot, migration);
-    };
-  }
+export function gateSource({ projectRoot, initiative, artifact, scope }) {
   if (typeof artifact === "string" && artifact) {
     let since = false;
     return async () => {
@@ -68,7 +55,7 @@ export function gateSource({ projectRoot, initiative, artifact, scope, migration
       return gates.map((gate) => ({ ...gate, artifact }));
     };
   }
-  if (typeof initiative !== "string" || !initiative) throw new Error("Pass the initiative whose coordination state holds the gates, the artifact whose approval gates to wait on, or the format migration whose answer to wait on.");
+  if (typeof initiative !== "string" || !initiative) throw new Error("Pass the initiative whose coordination state holds the gates, or the artifact whose approval gates to wait on.");
   return async () => (await readCoordinationState({ projectRoot, initiative })).state?.pending ?? [];
 }
 
@@ -113,16 +100,14 @@ export async function waitForUserGates(input) {
   return result;
 }
 
-async function waitOnGates({ projectRoot, initiative, artifact, scope, migration, gateIds, maxWaitMinutes = DEFAULT_WAIT_MINUTES, signal, onProgress, heartbeatMs = 60000, pollMs = POLL_MS, settleMs = SETTLE_MS, knownEntries, notices = null, watchChanges = false, leaseMs = Math.max(HOLD_LEASE_MS, 10 * pollMs) }) {
+async function waitOnGates({ projectRoot, initiative, artifact, scope, gateIds, maxWaitMinutes = DEFAULT_WAIT_MINUTES, signal, onProgress, heartbeatMs = 60000, pollMs = POLL_MS, settleMs = SETTLE_MS, knownEntries, notices = null, watchChanges = false, leaseMs = Math.max(HOLD_LEASE_MS, 10 * pollMs) }) {
   if (!Array.isArray(gateIds) || !gateIds.length || gateIds.length > MAX_WAIT_GATES || gateIds.some((id) => typeof id !== "string" || !id)) {
     throw new Error(`Pass one to ${MAX_WAIT_GATES} gate ids.`);
   }
   if (typeof maxWaitMinutes !== "number" || !(maxWaitMinutes > 0) || maxWaitMinutes > MAX_WAIT_MINUTES) {
     throw new Error(`The maxWaitMinutes argument must be greater than 0 and at most ${MAX_WAIT_MINUTES}.`);
   }
-  // A format migration's wait reads its record as an artifact wait reads a status record: it takes no notices and never ends on the person's changes.
-  const readArtifactGates = typeof migration === "string" && migration ? gateSource({ projectRoot, migration })
-    : typeof artifact === "string" && artifact ? gateSource({ projectRoot, artifact, scope }) : null;
+  const readArtifactGates = typeof artifact === "string" && artifact ? gateSource({ projectRoot, artifact, scope }) : null;
   if (readArtifactGates) notices = null;
   else gateSource({ projectRoot, initiative }); // throws without an initiative
   const ids = [...new Set(gateIds)];

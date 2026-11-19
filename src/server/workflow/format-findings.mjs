@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { ArtifactCheckError, contentVersion, reportedKey, resolveArtifacts, targetBytes } from "./artifact-check.mjs";
-import { listFormatFindingRecords, readRecord, withRecordLock, writeRecord } from "./record-store.mjs";
+import { ArtifactCheckError, checkTargets, contentVersion, reportedKey, resolveArtifacts, targetBytes } from "./artifact-check.mjs";
+import { listFormatFindingRecords, readRecord, removeRecord, withRecordLock, writeRecord } from "./record-store.mjs";
 import { parseStoreJson } from "./store-json.mjs";
 
 // Format findings that an agent reports: a break of an artifact's format that the check does not see, recorded against the artifact's version, never a change to the artifact.
@@ -38,12 +38,12 @@ const plain = (record) => ({ path: record.path, scope: record.scope, type: recor
  */
 export async function reportFormatFinding({ projectRoot, artifact, message, line }) {
   const given = checkedInput({ artifact, message, line });
-  const { root, targets } = await resolveArtifacts({ projectRoot, paths: [given.artifact] });
+  const { root, store, targets } = await resolveArtifacts({ projectRoot, paths: [given.artifact] });
   const target = targets[0];
   const version = contentVersion(await targetBytes(root, target));
   const record = { path: target.path, scope: target.scope, type: target.type, rule: `${target.type}.reported`, line: given.line, message: given.message, version };
   const id = findingId(record);
-  return withRecordLock(root, findingKey(id), async () => {
+  const reported = await withRecordLock(root, findingKey(id), async () => {
     const existing = await readRecord(root, findingKey(id));
     if (existing.bytes !== null) {
       try { return { finding: plain(parseStoreJson(existing.bytes.toString("utf8"))) }; }
@@ -53,6 +53,20 @@ export async function reportFormatFinding({ projectRoot, artifact, message, line
     await writeRecord(root, findingKey(id), `${JSON.stringify(finding, null, 2)}\n`);
     return { finding: plain(finding) };
   }, fail);
+  // The reported artifact no longer conforms, so the check that follows the report starts a run for its set when no run holds it yet.
+  checkTargets(root, store, targets).catch(() => {});
+  return reported;
+}
+
+/** Drop the reported findings of the given artifacts, each { path, scope }, as a format migration run that rewrote them does. */
+export async function dropReportedFindings(projectRoot, artifacts) {
+  if (!artifacts.length) return;
+  const named = new Set(artifacts.map((artifact) => `${artifact.scope?.label ?? ""}\0${artifact.path}`));
+  for (const { id, bytes } of await listFormatFindingRecords(projectRoot)) {
+    let record;
+    try { record = parseStoreJson(bytes.toString("utf8")); } catch { continue; }
+    if (wellFormed(record) && named.has(`${record.scope?.label ?? ""}\0${record.path}`)) await removeRecord(projectRoot, findingKey(id));
+  }
 }
 
 const wellFormed = (record) => record !== null && typeof record === "object" && typeof record.path === "string" && typeof record.version === "string" && typeof record.rule === "string"

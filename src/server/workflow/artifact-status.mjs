@@ -121,14 +121,23 @@ export const answerFields = (gate) => ({ gate: gate.id, status: gate.status, cho
 /** The fields that get_artifact returns from a status record for an artifact whose bytes have version. */
 export function statusFields(kind, record, version) {
   const answered = latestAnsweredGate(record);
+  const from = acceptedFrom(record);
   return {
     ...(hasStatus(kind) ? { status: record.status } : {}),
     acceptedVersion: record.acceptedVersion,
     changedSinceAccepted: record.acceptedVersion !== version,
+    ...(from ? { acceptedFrom: from } : {}),
     ...(record.approval ? { approval: record.approval } : {}),
     ...(record.acceptance ? { acceptance: record.acceptance } : {}),
     ...(answered ? { latestAnswer: answerFields(answered) } : {})
   };
+}
+
+// The format migration run that recorded the accepted version, as { migration, at }, when the latest history item that set that version is a run's: null otherwise.
+function acceptedFrom(record) {
+  if (record.acceptedVersion === null) return null;
+  const item = [...record.history].reverse().find((entry) => isRecord(entry) && entry.acceptedVersion === record.acceptedVersion);
+  return item?.event === "migrated" && typeof item.migration === "string" ? { migration: item.migration, at: typeof item.at === "string" ? item.at : null } : null;
 }
 
 /** A mismatch between the written and the recorded status, as { written, recorded, message }, or null when they agree or the kind has no status. */

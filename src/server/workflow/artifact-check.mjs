@@ -238,10 +238,11 @@ async function storeRefusing(action) {
  * Checks the project's artifacts: { formats, artifacts }.
  * In a project with a record store, requirements, ADRs, and glossaries are read from every scope the checkout sees, and feature files from the checkout.
  * `legacyOf(path, type, scope)` returns the legacy mark that covers an artifact, by default from the project's legacy sets, and `appliedMigration(id)` whether a format migration was applied, by default as the project's migration records say.
+ * Each artifact carries `migration`, the state of the latest format migration run whose set holds it at its current version, and the check starts a run for each new set apart from itself unless startRuns is false.
  */
-export async function checkArtifacts({ projectRoot, paths, type, legacyOf, appliedMigration }) {
+export async function checkArtifacts({ projectRoot, paths, type, legacyOf, appliedMigration, startRuns = true }) {
   const { root, store, targets } = await resolveArtifacts({ projectRoot, paths, type });
-  const artifacts = await checkTargets(root, store, targets, { legacyOf, appliedMigration });
+  const artifacts = await checkTargets(root, store, targets, { legacyOf, appliedMigration, startRuns, complete: paths === undefined && type === undefined });
   return { formats: ARTIFACT_FORMATS.map((entry) => ({ type: entry.type, version: entry.version, reference: entry.reference })), artifacts };
 }
 
@@ -338,11 +339,11 @@ export async function artifactSources(root, { refusing = storeRefusing, paths = 
  * the artifacts as check_artifacts lists them. `legacyOf` defaults to the project's legacy sets, `appliedMigration` to the project's applied format migrations,
  * and `refusing` turns the store's refusals into check refusals by default, while a caller that passes the store's own refusals on gives `(action) => action()`.
  */
-export async function checkTargets(root, store, targets, { legacyOf, appliedMigration, refusing = storeRefusing } = {}) {
+export async function checkTargets(root, store, targets, { legacyOf, appliedMigration, refusing = storeRefusing, startRuns = true, complete = false } = {}) {
   legacyOf ??= legacyLookup(await refusing(() => readLegacySets(root)));
-  // A migration <id> source is decided once that format migration was applied, whichever checkout applied it, as the project's migration records say.
+  // A migration <id> source is decided once that format migration's run applied it, whichever checkout applied it, as the project's run records say.
+  const { allRuns, appliedMigrationIds, migrationStates, startMigrationRuns } = await import("./migration-runs.mjs");
   if (appliedMigration === undefined) {
-    const { appliedMigrationIds } = await import("./format-migrations.mjs");
     const applied = await refusing(() => appliedMigrationIds(root));
     appliedMigration = (id) => applied.has(id);
   }
@@ -352,8 +353,10 @@ export async function checkTargets(root, store, targets, { legacyOf, appliedMigr
   const { reportedFindings } = await import("./format-findings.mjs");
   const reported = targets.length ? await refusing(() => reportedFindings(root)) : new Map();
   const artifacts = [];
+  const versions = [];
   for (const target of targets) {
     const bytes = await targetBytes(root, target);
+    versions.push(contentVersion(bytes));
     let result;
     if (target.type === "glossary") {
       // A glossary's findings depend on the files its sources name, so it is checked afresh each time.
@@ -366,9 +369,23 @@ export async function checkTargets(root, store, targets, { legacyOf, appliedMigr
     const own = reported.get(reportedKey(target.path, target.scope, contentVersion(bytes))) ?? [];
     if (own.length) result = { ...result, conforms: false, findings: [...result.findings, ...own] };
     const legacy = result.conforms ? null : legacyOf(target.path, target.type, target.scope) ?? null;
-    artifacts.push({ path: target.path, scope: target.scope, type: target.type, version: result.version, conforms: result.conforms, findings: result.findings, unknowns: result.unknowns, earlierFormat: result.earlierFormat, legacy });
+    artifacts.push({ path: target.path, scope: target.scope, type: target.type, version: result.version, conforms: result.conforms, findings: result.findings, unknowns: result.unknowns, earlierFormat: result.earlierFormat, legacy, migration: null });
   }
+  if (!artifacts.length) return artifacts;
+  const checked = artifacts.map((artifact, index) => ({ ...artifact, formatVersion: artifact.version, version: versions[index] }));
+  const states = migrationStates(await refusing(() => allRuns(root)), checked);
+  for (const [index, state] of states.entries()) artifacts[index].migration = state;
+  // A set holds every nonconforming artifact of its type and scope, so a check of some artifacts starts runs from a check of all of them, apart from itself.
+  if (startRuns && complete) startMigrationRuns(root, checked).catch(() => {});
+  else if (startRuns && checked.some((artifact) => !artifact.conforms)) checkAllLater(root);
   return artifacts;
+}
+
+const fullChecks = new Set();
+function checkAllLater(root) {
+  if (fullChecks.has(root)) return;
+  fullChecks.add(root);
+  setImmediate(() => checkArtifacts({ projectRoot: root }).catch(() => {}).finally(() => fullChecks.delete(root)));
 }
 
 /** The key of an artifact version's reported findings: its scope label, path, and version. */

@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { CONFORMING, GLOSSARY, PATHS, REQUIREMENT } from "./fixtures/artifact-formats.mjs";
+import { CONFORMING, REQUIREMENT } from "./fixtures/artifact-formats.mjs";
 import { labelOf, storeProject, storeRead, storeWrite } from "./fixtures/artifact-formats-store.mjs";
-import { browserRequest, exists, reviewBrowser } from "./fixtures/workspace-artifacts.mjs";
+import { waitFor } from "./fixtures/format-migration-runs.mjs";
+import { exists } from "./fixtures/workspace-artifacts.mjs";
 
-// Format migrations of store artifacts: named by path and scope, checked against recorded statuses, and applied through Prism's store writes.
+// Format migrations of store artifacts: named by path and scope, checked against recorded statuses, and applied through Prism's store writes when their run finishes.
 
 const AUDIT = "docs/requirements/audit.md";
 
@@ -51,40 +52,51 @@ Rationale: unknown
 
 Related: n/a
 `;
-const auditProposal = (content = auditContent(), source = AUDIT) => ({ type: "requirements", source, target: source, content, summary: "Adds the format's sections and fields around the one obligation and marks the values the file never gave as unknown.", leftovers: [] });
-const TERMS = "docs/notes/terms.md";
-const TERMS_TEXT = "# Payment terms\n\nTerms used by the payments team.\n\n| Term | Definition |\n| --- | --- |\n| Backoff | The wait between two attempts. |\n";
-const BACKOFF = `<a id="backoff"></a>\n## Backoff\n\nThe wait between two attempts.\n\nSource: migration\n`;
+const auditProposal = (run, content = auditContent(), source = AUDIT) => ({ run, type: "requirements", source, target: source, content, summary: "Adds the format's sections and fields around the one obligation and marks the values the file never gave as unknown.", leftovers: [] });
 
 async function project(context) {
-  const { place, root, call } = await storeProject(context, { ...CONFORMING, [AUDIT]: AUDIT_SOURCE, [TERMS]: TERMS_TEXT });
+  const { place, root, call } = await storeProject(context, { ...CONFORMING, [AUDIT]: AUDIT_SOURCE });
   await storeRead(call, AUDIT);
-  const review = await reviewBrowser(context, root);
-  const answer = async (id, input) => {
-    const listed = await browserRequest(review, `/api/actions?target=${encodeURIComponent(`migration:${id}`)}`);
-    const action = listed.body.actions?.find((entry) => entry.id === "migration.answer");
-    assert.ok(action, `the migration lists its answer action: ${JSON.stringify(listed.body)}`);
-    const applied = await browserRequest(review, "/api/actions/apply", { method: "POST", body: { action: "migration.answer", target: `migration:${id}`, input, revision: action.revision, confirmed: true } });
-    assert.equal(applied.status, 200, JSON.stringify(applied.body));
-  };
-  return { place, root, call, answer };
+  return { place, root, call };
 }
 
-test("clauses 48, 57, 58, 59: an in-place migration of a store requirement names it by path and scope and applies through the store, keeping its recorded status and accepted version", async (context) => {
-  const { root, call, answer } = await project(context);
-  const before = await storeRead(call, AUDIT);
-  const proposed = await call("propose_migration", auditProposal());
+// The run that Prism started for a store artifact, once check_artifacts names it.
+const runOf = async (call, file) => (await waitFor(async () => (await call("check_artifacts", {})).value.artifacts.find((artifact) => artifact.path === file)?.migration ?? null, { what: `a run of ${file}` })).run;
+
+// A proposal with each of its unknown points asked.
+async function propose(call, args) {
+  const bare = await call("propose_migration", args);
+  if (bare.value?.code !== "migration_unsettled") return bare;
+  return call("propose_migration", { ...args, asked: bare.value.points.map((point) => ({ point, recommendation: "Ask the owner." })) });
+}
+
+// The person's answers to a run's question, as the review app records them in the store, with the run continuing.
+async function answer(place, run, answers) {
+  const file = path.join(place.store, "format-migrations", `${run}.json`);
+  const record = JSON.parse(await readFile(file, "utf8"));
+  const at = new Date().toISOString();
+  record.answers = Object.fromEntries(Object.entries(answers).map(([point, value]) => [point, { ...value, by: { name: "Ada Reviewer" }, at }]));
+  record.status = "continuing";
+  await writeFile(file, `${JSON.stringify(record, null, 2)}\n`);
+}
+
+test("clauses 48, 57, 58, 60: an in-place migration of a store requirement names it by path and scope, lives under the store's format-migrations/, and applies through the store with the person's values", async (context) => {
+  const { place, root, call } = await project(context);
+  const run = await runOf(call, AUDIT);
+  const proposed = await propose(call, auditProposal(run));
   const migration = proposed.value?.migration;
   assert.ok(migration, proposed.text);
   assert.deepEqual([migration.source.path, labelOf(migration.source), migration.target.path, labelOf(migration.target)], [AUDIT, "api", AUDIT, "api"]);
-  await answer(migration.id, { decision: "accept" });
-  const applied = await call("apply_migration", { id: migration.id });
-  assert.equal(applied.value?.code ?? null, null, applied.text);
-  assert.deepEqual(applied.value.written.map((entry) => [entry.path, labelOf(entry)]), [[AUDIT, "api"]]);
+  assert.ok((await readdir(path.join(place.store, "format-migrations"))).includes(`${run}.json`), "the run lives under the store's format-migrations/");
+  assert.equal((await call("finish_migration_run", { run })).value.run.status, "asking");
+  await answer(place, run, Object.fromEntries(migration.points.map((point) => [point.id, { choice: "value", value: point.field === "Pattern" ? "Ubiquitous" : "Settled by the team." }])));
+  const finished = (await call("finish_migration_run", { run })).value.run;
+  assert.equal(finished.status, "applied", JSON.stringify(finished.failure));
   const after = await storeRead(call, AUDIT);
-  assert.equal(after.content, auditContent());
+  assert.match(after.content, /^Pattern: Ubiquitous$/m);
+  assert.doesNotMatch(after.content, /unknown/);
   assert.equal(after.status, "Approved", "the recorded status stays");
-  assert.equal(after.acceptedVersion, before.acceptedVersion, "a migration changes no accepted version");
+  assert.deepEqual([after.acceptedVersion, after.acceptedFrom?.migration], [after.version, run], "the migrated text is the accepted version, attributed to the run");
   assert.equal(await exists(path.join(root, AUDIT)), false, "nothing is written into the checkout");
 });
 
@@ -92,45 +104,27 @@ test("clause 59: content whose Status: line differs from the recorded status is 
   const { place, call } = await project(context);
   // Brought into the workspace scope's files with no status record, the file is recorded Draft until a person approves it at its gate, whatever its Status: line says.
   await storeFile(place, "artifacts/requirements/unapproved.md", AUDIT_SOURCE);
-  const refused = await call("propose_migration", auditProposal(auditContent(), "docs/requirements/unapproved.md"));
+  const file = "docs/requirements/unapproved.md";
+  const run = await runOf(call, file);
+  const refused = await call("propose_migration", auditProposal(run, auditContent(), file));
   assert.equal(refused.value?.code, "migration_changes_decision", refused.text);
   assert.deepEqual(refused.value.changed.find((change) => change.field === "Status"), { field: "Status", before: "Draft", after: "Approved" });
-  const kept = await call("propose_migration", auditProposal(auditContent("Draft", "n/a"), "docs/requirements/unapproved.md"));
-  assert.equal(kept.value?.migration?.status, "pending", kept.text);
+  const kept = await propose(call, auditProposal(run, auditContent("Draft", "n/a"), file));
+  assert.equal(kept.value?.migration?.status, "proposed", kept.text);
+  assert.ok(kept.value.migration.points.every((point) => point.allowsUnknown === true), "a Draft target may keep unknown values");
 });
 
-test("clause 58: a store artifact changed through update_artifact since the proposal makes the migration stale", async (context) => {
-  const { call, answer } = await project(context);
-  const { migration } = (await call("propose_migration", auditProposal())).value;
-  await answer(migration.id, { decision: "accept" });
+test("clauses 18, 58: a store artifact changed through update_artifact since the proposal fails the run and changes nothing", async (context) => {
+  const { place, call } = await project(context);
+  const run = await runOf(call, AUDIT);
+  const { migration } = (await propose(call, auditProposal(run))).value;
+  assert.equal((await call("finish_migration_run", { run })).value.run.status, "asking");
+  await answer(place, run, Object.fromEntries(migration.points.map((point) => [point.id, { choice: "value", value: point.field === "Pattern" ? "Ubiquitous" : "Settled by the team." }])));
   const current = await storeRead(call, AUDIT);
   // The change writes content that conforms to the format, which every write through update_artifact is checked against.
   await storeWrite(call, AUDIT, REQUIREMENT, { expectedVersion: current.version });
-  const stale = await call("apply_migration", { id: migration.id });
-  assert.equal(stale.value?.code, "migration_stale", stale.text);
-  assert.match(stale.text, /docs\/requirements\/audit\.md/);
+  const finished = (await call("finish_migration_run", { run })).value.run;
+  assert.equal(finished.status, "failed");
+  assert.match(finished.failure.reason, /docs\/requirements\/audit\.md/);
   assert.equal((await storeRead(call, AUDIT)).content, REQUIREMENT, "nothing is written");
-});
-
-test("clauses 57, 58, 60: a checkout source migrates into a store glossary, its accepted removal removes the checkout file, and the record lives apart from the move's folders", async (context) => {
-  const { place, root, call, answer } = await project(context);
-  const proposed = await call("propose_migration", { type: "glossary", source: TERMS, target: PATHS.glossary, content: `${GLOSSARY}\n${BACKOFF}`, summary: "Moves the payments team's one term into the glossary.", leftovers: [{ statement: "Terms used by the payments team.", home: "Dropped: the glossary keeps its own purpose." }] });
-  const migration = proposed.value?.migration;
-  assert.ok(migration, proposed.text);
-  assert.deepEqual([migration.source, labelOf(migration.target)], [{ path: TERMS, scope: null }, "api"]);
-  const stored = await readdir(path.join(place.store, "format-migrations"));
-  assert.ok(stored.some((name) => name.startsWith(migration.id)), `the record is under format-migrations/: ${stored}`);
-  for (const folder of ["migrations", "artifact-migrations"]) {
-    const names = await readdir(path.join(place.store, folder)).catch(() => []);
-    for (const name of names) assert.doesNotMatch(await readFile(path.join(place.store, folder, name), "utf8"), new RegExp(migration.id), `${folder}/${name}`);
-  }
-  await answer(migration.id, { decision: "accept", removeSource: "on" });
-  const applied = await call("apply_migration", { id: migration.id });
-  assert.equal(applied.value?.code ?? null, null, applied.text);
-  assert.deepEqual(applied.value.written.map((entry) => [entry.path, labelOf(entry)]), [[PATHS.glossary, "api"]]);
-  assert.deepEqual(applied.value.removed, [{ path: TERMS, scope: null }]);
-  assert.equal(await exists(path.join(root, TERMS)), false);
-  assert.match((await storeRead(call, PATHS.glossary)).content, new RegExp(`^Source: migration ${migration.id}$`, "m"));
-  const [entry] = (await call("check_artifacts", { paths: [PATHS.glossary] })).value.artifacts;
-  assert.deepEqual(entry.findings, [], "an applied migration is a decided source");
 });

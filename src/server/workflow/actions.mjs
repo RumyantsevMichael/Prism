@@ -13,7 +13,6 @@ import { REPOSITORY_NAME } from "./repository-names.mjs";
 import { readRoadmap } from "./roadmap.mjs";
 import { shippedActionReason, shippedDecision } from "./shipped-history.mjs";
 import { INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction } from "./state.mjs";
-import { answerMigration, readMigrationForAnswer } from "./format-migrations.mjs";
 import { ambiguousApprovalMessage, answerArtifactApproval, commentOnArtifact, pendingApprovalGates, storeArtifactTarget } from "./store-artifacts.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
@@ -40,7 +39,6 @@ import {
 const GATE_ID = /^gate-[0-9a-f]{8,32}$/;
 const APPROVAL_ID = /^approval-[0-9a-f]{8,32}$/;
 const LEGACY_ID = /^legacy-[0-9a-f]{8,32}$/;
-const MIGRATION_ID = /^migration-[0-9a-f]{8,64}$/;
 const TEXT_LIMIT = 200;
 const NOTE_LIMIT = 4000;
 // A scope label is workspace, a repository name, or <repository>/<component>, and neither a label nor an artifact path holds a ":".
@@ -89,8 +87,6 @@ export function parseTarget(reference) {
   if (match && ARTIFACT_TYPES.includes(match[1])) return { kind: "artifacts", reference, type: match[1] };
   match = /^legacy:(.+)$/.exec(reference);
   if (match && LEGACY_ID.test(match[1])) return { kind: "legacy", reference, set: match[1] };
-  match = /^migration:(.+)$/.exec(reference);
-  if (match && MIGRATION_ID.test(match[1])) return { kind: "migration", reference, migration: match[1] };
   match = /^launch:(.+)$/.exec(reference);
   if (match && LAUNCH_ID_PATTERN.test(match[1])) return { kind: "launch", reference, launch: match[1] };
   match = /^index:([^/]+)\/([^/]+)$/.exec(reference);
@@ -158,14 +154,6 @@ async function readTarget(projectRoot, parsed, indexer, state = undefined, env =
     const set = (await readLegacySets(projectRoot)).find((entry) => entry.id === parsed.set);
     if (!set) throw unknownTarget(parsed.reference);
     return { ...parsed, legacySet: set };
-  }
-  if (parsed.kind === "migration") {
-    // A format migration lives in its own record, in the record store when one is configured.
-    const read = await readMigrationForAnswer(projectRoot, parsed.migration).catch((error) => {
-      throw typeof error?.code === "string" && error.name === "FormatMigrationError" ? storeRefusal(error) : error;
-    });
-    if (!read) throw unknownTarget(parsed.reference);
-    return { ...parsed, migrationRecord: read.record, migrationRevision: read.revision };
   }
   if (parsed.kind === "artifact") {
     const artifact = await seenArtifact(projectRoot, parsed);
@@ -364,40 +352,6 @@ const APPROVAL_ANSWER = {
   change: undefined
 };
 
-// A format migration is answered once: accept or decline, a choice between the target's and the source's entry for each conflict, and for a separate source whether to remove it.
-const MIGRATION_ANSWER = {
-  id: "migration.answer",
-  kinds: ["migration"],
-  label: "Answer",
-  group: "Format migration",
-  effect: "Records your answer; an accepted format migration is applied by the agent that proposed it, and a declined one changes nothing.",
-  target: (context) => context.reference,
-  fields: (context) => {
-    const record = context.migrationRecord;
-    const fields = [choice("decision", "Answer", [option("accept", "Accept", "The agent applies the format migration as shown."), option("decline", "Decline", "Nothing changes.")], { required: true })];
-    for (const conflict of record.conflicts ?? []) {
-      fields.push(choice(`conflict:${conflict.entry}`, `Keep ${conflict.entry}`, [option("target", "The target's entry"), option("source", "The source's entry")]));
-    }
-    // A separate source stays unless the person turns its removal on.
-    if (record.separateSource === true) fields.push(field("removeSource", "toggle", "Remove the source", { options: [option("off", "Off", "The source file stays as it is."), option("on", "On", "The source file is removed when the migration applies.")] }));
-    fields.push(text("note", "Note", NOTE_LIMIT, { multiline: true }));
-    return fields;
-  },
-  value: () => null,
-  context: (context) => context.migrationRecord.summary ?? null,
-  recommended: () => null,
-  confirm: () => null,
-  revision: (context) => context.migrationRevision,
-  unavailable: (context) => context.migrationRecord.answer ? "The format migration already has an answer." : null,
-  unavailableCode: (context) => context.migrationRecord.answer ? "already_answered" : "action_unavailable",
-  after: (values, context) => ({
-    decision: values.decision,
-    conflicts: Object.fromEntries((context.migrationRecord.conflicts ?? []).map((conflict) => [conflict.entry, values[`conflict:${conflict.entry}`] ?? "target"])),
-    removeSource: values.removeSource === "on",
-    note: values.note ?? null
-  })
-};
-
 // A comment names a line by its number, so it is refused unless it is decimal digits naming a whole number of at least 1.
 function commentLine(value) {
   const line = /^[0-9]+$/.test(value ?? "") ? Number(value) : NaN;
@@ -555,7 +509,7 @@ const LAUNCH_RESUME = {
 };
 
 /** Every action, in listing order; a later action joins by adding its definition here. */
-const ACTIONS = [...SETTING_ACTIONS, ...LAUNCH_ACTIONS, GATE_ANSWER, APPROVAL_ANSWER, MIGRATION_ANSWER, ARTIFACT_COMMENT, ARTIFACTS_MARK_LEGACY, ARTIFACTS_REMOVE_LEGACY, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME];
+const ACTIONS = [...SETTING_ACTIONS, ...LAUNCH_ACTIONS, GATE_ANSWER, APPROVAL_ANSWER, ARTIFACT_COMMENT, ARTIFACTS_MARK_LEGACY, ARTIFACTS_REMOVE_LEGACY, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME];
 
 /** The sentence on when an action's change takes effect, or null for an action the registry does not define. */
 export const actionEffect = (id) => ACTIONS.find((definition) => definition.id === id)?.effect ?? null;
@@ -693,14 +647,6 @@ async function authorOf(projectRoot) {
   return { name, email, checkout: checkoutLabel(identity).slice(0, 400) };
 }
 
-// The author Git would record for a commit in the checkout, from its configuration or its environment: { name, email }, each null when Git names none.
-async function gitAuthorIdentity(projectRoot) {
-  const result = await runGit(projectRoot, ["var", "GIT_AUTHOR_IDENT"]);
-  const match = result.ok ? /^(.*?)\s*<([^>]*)>/.exec(result.text.trim()) : null;
-  const clean = (value) => (value ?? "").replace(/\s+/g, " ").trim().slice(0, 200) || null;
-  return { name: clean(match?.[1]), email: clean(match?.[2]) };
-}
-
 // Checks one request against a target read: the action, the revision, availability, the input, and confirmation, in that order.
 // It answers null for an input equal to the current value, and otherwise the definition, its view, and the value to set.
 function check(definition, context, { revision, input, confirmed }) {
@@ -760,19 +706,6 @@ export async function applyAction({ projectRoot, target, action, input, revision
       if (error?.code === "artifact_nonconforming") throw fail("artifact_nonconforming", error.message, { reason: error.message, artifacts: error.artifacts });
       throw storeRefused(error) ? storeRefusal(error) : error;
     });
-  } else if (parsed.kind === "migration") {
-    const checked = check(definition, read, request);
-    applied = await entryOf(checked, read);
-    // The answer records the checkout's Git identity, as Git would author a commit, so a name from Git's environment counts too; a checkout whose Git names no one is refused rather than recording an anonymous answer.
-    if (!applied.by.name) applied.by = { ...applied.by, ...await gitAuthorIdentity(projectRoot) };
-    if (!applied.by.name) throw fail("author_unknown", "Git names no user.name for this checkout, so the answer cannot record who accepted it; set one with git config user.name and answer again.");
-    // The record's lock repeats the answered and revision checks, so an answer that lands after the read above is refused, never overwritten.
-    await answerMigration(projectRoot, parsed.migration, { ...checked.after, by: applied.by }, { revision: read.migrationRevision }).catch((error) => {
-      if (error?.code === "already_answered") throw fail("already_answered", error.message, { reason: error.message });
-      if (error?.code === "stale_revision") throw fail("stale_revision", error.message);
-      if (error?.code === "migration_unknown") throw unknownTarget(target);
-      throw typeof error?.code === "string" && error.name === "FormatMigrationError" ? storeRefusal(error) : error;
-    });
   } else if (parsed.kind === "artifact") {
     const checked = check(definition, read, request);
     applied = await entryOf(checked, read);
@@ -817,8 +750,6 @@ export async function applyAction({ projectRoot, target, action, input, revision
   }
   // An answered approval gate leaves its artifact's pending gates, so its target has no actions left, and the result names the artifact the answer applied to.
   if (parsed.kind === "approval") return { applied, actions: [], artifact: { path: read.gateRecord.artifact.path, scope: read.gateRecord.artifact.scope } };
-  // An answered format migration lists its answer action as unavailable, and the result names the migration's target artifact.
-  if (parsed.kind === "migration") return { applied, actions: (await listActions({ projectRoot, target, indexer, env })).actions, artifact: { path: read.migrationRecord.target.path, scope: read.migrationRecord.target.scope } };
   // A comment leaves its artifact unchanged, so the target lists its action again, and the result names the artifact it commented on.
   if (parsed.kind === "artifact") return { applied, actions: [view(definition, read)], artifact: { path: read.artifact.path, scope: read.artifact.scope }, comment: stored.id };
   const actions = (await listActions({ projectRoot, target, indexer, env })).actions;

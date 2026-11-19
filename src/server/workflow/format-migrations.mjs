@@ -4,18 +4,22 @@ import { lstat, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { renameWhenFree, writeAtomically } from "./artifact-store.mjs";
-import { ARTIFACT_FORMATS, ARTIFACT_TYPES, inspectArtifact } from "./artifact-formats.mjs";
+import { ARTIFACT_FORMATS, ARTIFACT_TYPES, corresponds, inspectArtifact } from "./artifact-formats.mjs";
 import { artifactLocations, artifactTypeOf } from "./artifact-check.mjs";
 import { artifactAddress } from "./artifact-paths.mjs";
 import { newStatus } from "./artifact-status.mjs";
-import { listFormatMigrationRecords, readRecord, withRecordLock, writeRecord } from "./record-store.mjs";
-import { applyStoreMigration, storeArtifactCopy } from "./store-artifacts.mjs";
+import { dropReportedFindings } from "./format-findings.mjs";
+import { OPEN_STATUSES, allRuns, appliedMigrationIds, artifactName, requireOpen, scopeInputOf, shownMigration, storedRun, withRunLock, writeRun } from "./migration-runs.mjs";
+import { commitStoreFiles, syncRecordStoreNow } from "./record-store-sync.mjs";
+import { applyStoreRun, storeArtifactCopy, storeSyncBase } from "./store-artifacts.mjs";
 import { normalizeStatement, splitStatements } from "./statements.mjs";
-import { parseStoreJson } from "./store-json.mjs";
 import { artifactKinds, readWorkflowConfig } from "./workflow-config.mjs";
 
-// Format migrations: a proposal converts one artifact into its format, accounting for every statement of its source, and applies only after a person accepts it at its gate.
-// They are records of their own under format-migrations/, apart from the move of a checkout's files into a record store, which artifact-migration.mjs performs.
+export { appliedMigrationIds };
+
+// Format migrations: within a migration run that Prism started for a set of nonconforming artifacts, a proposal converts one artifact into its format,
+// accounting for every statement of its source, and the run applies all its proposals together, without a person when nothing is lost or invented.
+// They live in their run's record under format-migrations/, apart from the move of a checkout's files into a record store, which artifact-migration.mjs performs.
 
 const run = promisify(execFile);
 const CONTENT_MAX = 1024 * 1024;
@@ -23,7 +27,6 @@ const SUMMARY_MAX = 2000;
 const HOME_MAX = 500;
 const LEFTOVERS_MAX = 2000;
 const CONFLICTS_MAX = 500;
-const ID = /^migration-[0-9a-f]{8,64}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const UNKNOWN = "unknown";
 const LINK_LIST = /^\[[^\]]*\]\([^)\s]+\)(\s*,\s*\[[^\]]*\]\([^)\s]+\))*\.?$/;
@@ -50,24 +53,22 @@ export class FormatMigrationError extends Error {
 }
 
 const fail = (code, message, details) => new FormatMigrationError(code, message, details);
+const storeRefusing = async (action) => {
+  try { return await action(); }
+  catch (error) {
+    if (error?.name === "FormatMigrationError") throw error;
+    if (["ArtifactError", "RecordStoreError", "ComponentError", "ArtifactCheckError"].includes(error?.name) && typeof error.code === "string") {
+      throw fail(error.code, error.message, Object.fromEntries(["store", "scopes", "path", "component", "components", "artifacts"].filter((key) => error[key] !== undefined).map((key) => [key, error[key]])));
+    }
+    throw error;
+  }
+};
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const formatOf = (type) => ARTIFACT_FORMATS.filter((entry) => entry.type === type).at(-1);
 const label = (entry) => entry.scope === null ? entry.path : `${entry.path} in scope ${entry.scope.label}`;
 const named = ({ path: file, scope }) => ({ path: file, scope });
 const sameScope = (left, right) => (left?.label ?? null) === (right?.label ?? null);
 const versionOf = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-
-// The store's and the store artifacts' own refusals reach the caller as migration refusals with the same code, message, and details.
-async function storeRefusing(action) {
-  try { return await action(); }
-  catch (error) {
-    if (error instanceof FormatMigrationError) throw error;
-    if (["ArtifactError", "RecordStoreError", "ComponentError", "ArtifactCheckError"].includes(error?.name) && typeof error.code === "string") {
-      throw fail(error.code, error.message, Object.fromEntries(["store", "scopes", "path", "component", "components"].filter((key) => error[key] !== undefined).map((key) => [key, error[key]])));
-    }
-    throw error;
-  }
-}
 
 // ---- Input ----
 
@@ -91,9 +92,10 @@ function artifactInput(value, name) {
 
 function proposalInput(input) {
   if (!isRecord(input)) throw fail("invalid_input", "propose_migration takes an object of arguments.");
-  const allowed = ["projectRoot", "type", "source", "target", "content", "summary", "leftovers", "conflicts"];
+  const allowed = ["projectRoot", "run", "type", "source", "target", "content", "summary", "leftovers", "conflicts", "settled", "asked"];
   const extra = Object.keys(input).filter((key) => !allowed.includes(key));
   if (extra.length) throw fail("invalid_input", `propose_migration takes no ${extra.join(", ")}.`);
+  if (typeof input.run !== "string" || !input.run) throw fail("invalid_input", "run must be the id of the format migration run that the proposal belongs to, run- and 16 hexadecimal digits.");
   if (!ARTIFACT_TYPES.includes(input.type)) throw fail("invalid_input", `type must be one of ${ARTIFACT_TYPES.join(", ")}.`);
   if (typeof input.content !== "string" || Buffer.byteLength(input.content, "utf8") > CONTENT_MAX) throw fail("invalid_input", "content must be the whole migrated artifact as text of at most 1 MiB.");
   if (typeof input.summary !== "string" || input.summary.trim().length < 1 || input.summary.length > SUMMARY_MAX) throw fail("invalid_input", `summary must be plain text of 1 to ${SUMMARY_MAX} characters on what changes and why.`);
@@ -113,7 +115,10 @@ function proposalInput(input) {
     return { entry: entry.entry, content: entry.content };
   });
   if (new Set(conflicts.map((entry) => entry.entry)).size !== conflicts.length) throw fail("invalid_input", "Each entry may have at most one conflict.");
-  return { type: input.type, source: artifactInput(input.source, "source"), target: artifactInput(input.target, "target"), content: input.content, summary: input.summary, leftovers, conflicts };
+  return {
+    run: input.run, type: input.type, source: artifactInput(input.source, "source"), target: artifactInput(input.target, "target"), content: input.content, summary: input.summary, leftovers, conflicts,
+    settled: pointList(input.settled, "settled", "reason").map(({ point, text }) => ({ point, text })), asked: pointList(input.asked, "asked", "recommendation").map(({ point, text }) => ({ point, text }))
+  };
 }
 
 // ---- Artifacts ----
@@ -339,63 +344,110 @@ export function unifiedDiff(before, after, { from = "a", to = "b", context = 3 }
   return `${out.join("\n")}\n`;
 }
 
-// ---- Records ----
+// ---- Points ----
 
-const recordKey = (id) => ({ kind: "format-migration", id });
+const POINT_KINDS = new Set(["leftover", "entry", "unknown", "conflict", "remove-source"]);
+// Derived points are Prism's own, from the content, the conflicts, and a separate source: each is asked, never settled.
+const DERIVED = new Set(["unknown", "conflict", "remove-source"]);
+const TEXT_MAX = 500;
 
-async function readMigrationRecord(root, id) {
-  if (typeof id !== "string" || !ID.test(id)) return null;
-  const read = await readRecord(root, recordKey(id));
-  if (read.bytes === null) return null;
-  return { record: parseStoreJson(read.bytes.toString("utf8")), revision: versionOf(read.bytes) };
+// The identity of a point within one migration, by its kind and the detail that names it.
+function pointKey(point) {
+  if (point.kind === "leftover") return `leftover\0${normalizeStatement(point.statement ?? "")}`;
+  if (point.kind === "entry" || point.kind === "conflict") return `${point.kind}\0${point.entry}`;
+  if (point.kind === "unknown") return `unknown\0${point.line}\0${point.field}`;
+  return point.kind;
 }
 
-async function storedMigration(root, id) {
-  const read = await storeRefusing(() => readMigrationRecord(root, id));
-  if (!read) throw fail("migration_unknown", `No format migration has the id ${JSON.stringify(String(id ?? ""))}.`, { id });
-  return read;
-}
-
-const serialize = (record) => `${JSON.stringify(record, null, 2)}\n`;
-
-async function allMigrations(root) {
-  const found = [];
-  for (const { bytes } of await listFormatMigrationRecords(root)) {
-    try {
-      const record = parseStoreJson(bytes.toString("utf8"));
-      if (isRecord(record) && typeof record.id === "string") found.push(record);
-    } catch {
-      // A damaged record names no migration.
-    }
-  }
-  return found;
-}
-
-/** The ids of the applied format migrations that the project's records hold, in the record store when one is configured, whichever checkout applied them. */
-export async function appliedMigrationIds(projectRoot) {
-  return new Set((await allMigrations(projectRoot)).filter((record) => typeof record.appliedAt === "string").map((record) => record.id));
-}
-
-const statusOf = (record) => typeof record.appliedAt === "string" ? "applied" : record.answer ? record.answer.decision === "accept" ? "accepted" : "declined" : "pending";
-
-// A migration as a reader gets it, without the content and versions that only applying it needs.
-function shown(record, { full = true } = {}) {
-  const { content, versions, sourceInput, targetInput, answerDigest, ...rest } = record;
-  const value = { ...rest, status: statusOf(record) };
-  if (!full) { delete value.answer; delete value.appliedAt; }
+// A point as settled and asked name it: { kind, ...detail }, where only the detail that names it counts.
+function pointReference(value, name) {
+  if (!isRecord(value) || !POINT_KINDS.has(value.kind)) throw fail("invalid_input", `${name} must be a point { kind, ...detail } as a migration_unsettled refusal lists it, with kind leftover, entry, unknown, conflict, or remove-source.`);
+  const extra = Object.keys(value).filter((key) => !["kind", "statement", "entry", "line", "field", "allowsUnknown", "id", "settled", "asked"].includes(key));
+  if (extra.length) throw fail("invalid_input", `${name} takes no ${extra.join(", ")}.`);
+  if (value.kind === "leftover" && typeof value.statement !== "string") throw fail("invalid_input", `${name} is a leftover point, which names its statement.`);
+  if ((value.kind === "entry" || value.kind === "conflict") && typeof value.entry !== "string") throw fail("invalid_input", `${name} is an ${value.kind} point, which names its entry.`);
+  if (value.kind === "unknown" && (!Number.isInteger(value.line) || typeof value.field !== "string")) throw fail("invalid_input", `${name} is an unknown point, which names its line and field.`);
   return value;
+}
+
+function pointList(value, name, textName) {
+  const given = value ?? [];
+  if (!Array.isArray(given) || given.length > LEFTOVERS_MAX) throw fail("invalid_input", `${name} must be a list of at most ${LEFTOVERS_MAX} { point, ${textName} } entries.`);
+  return given.map((entry, index) => {
+    if (!isRecord(entry) || Object.keys(entry).some((key) => !["point", textName].includes(key))) throw fail("invalid_input", `${name}[${index}] must be { point, ${textName} }.`);
+    const text = entry[textName];
+    if (typeof text !== "string" || text.trim().length < 1 || text.length > TEXT_MAX) throw fail("invalid_input", `${name}[${index}].${textName} must be text of 1 to ${TEXT_MAX} characters.`);
+    return { point: pointReference(entry.point, `${name}[${index}].point`), text };
+  });
+}
+
+const pointDetail = ({ id, settled, asked, ...detail }) => detail;
+
+// ---- Sections ----
+
+// The headings that hold each line of a text, by 1-based line: { h2, h3 }, each a heading's text without its # marks, or null before the first one.
+function sectionsOf(text) {
+  const lines = text.split(/\r?\n/);
+  const held = [null];
+  let h2 = null, h3 = null;
+  for (const line of lines) {
+    const heading = /^\s{0,3}(#{2,3})\s+(.*?)\s*#*\s*$/.exec(line);
+    if (heading) {
+      if (heading[1].length === 2) { h2 = heading[2]; h3 = null; } else h3 = heading[2];
+    }
+    held.push({ h2, h3, line });
+  }
+  return held;
+}
+
+// A table row's first cell, or a list item's leading name, which a glossary term heading also takes.
+function leadingName(line) {
+  if (/^\s*\|/.test(line)) return normalizeStatement(line.trim().replace(/^\|/, "").split("|")[0] ?? "");
+  const item = /^\s*(?:[-*+]|\d+[.)])\s+(.*)$/.exec(line);
+  if (!item) return null;
+  const name = /^(?:\*\*|__)?(.+?)(?:\*\*|__)?\s*(?::|\s[-–—]\s)/.exec(item[1]);
+  return name ? normalizeStatement(name[1]) : null;
+}
+
+/**
+ * The source statements that the content moves to a section that does not correspond to the one they came from, as [{ text, line, from, to }],
+ * or to a section other than the one a person's answer named; statements the content does not hold are placed elsewhere and not compared here.
+ */
+function misplacedStatements(type, sourceText, content, statements, { named = new Map() } = {}) {
+  const sourceSections = sectionsOf(sourceText);
+  const contentSections = sectionsOf(content);
+  const contentStatements = statementsOf(type, content).map((statement) => ({ ...statement, normalized: normalizeStatement(statement.text) }));
+  const headings = contentSections.slice(1).map((entry, index) => ({ ...entry, number: index + 1 })).filter((entry) => /^\s{0,3}#{2,3}\s/.test(entry.line));
+  const misplaced = [];
+  for (const statement of statements) {
+    const value = normalizeStatement(statement.text);
+    let places = contentStatements.filter((item) => item.normalized === value).map((item) => contentSections[item.line]?.h2 ?? null);
+    if (!places.length) places = contentStatements.filter((item) => item.normalized.includes(value)).map((item) => contentSections[item.line]?.h2 ?? null);
+    if (!places.length) places = headings.filter((entry) => normalizeStatement(entry.line.replace(/^\s*#+\s*/, "")) === value).map((entry) => entry.line.replace(/^\s*#+\s*/, "").trim());
+    if (!places.length) continue;
+    const held = sourceSections[statement.line] ?? { h2: null, h3: null, line: "" };
+    const from = [held.h2, held.h3, ...(type === "glossary" ? [leadingName(held.line)] : [])].filter((entry, index) => index === 0 || entry);
+    const wanted = named.get(value);
+    const fits = (to) => wanted !== undefined ? to !== null && normalizeStatement(to).toLowerCase() === normalizeStatement(wanted).toLowerCase() : from.some((section) => corresponds(type, section, to));
+    if (places.some(fits)) continue;
+    misplaced.push({ text: statement.text, line: statement.line, from: held.h2, to: places[0] });
+  }
+  return misplaced;
 }
 
 // ---- Proposing ----
 
 /**
- * Propose a format migration of one artifact: every source statement must occur in the content, a leftover, or a conflict, no content statement may be invented,
- * the content must conform, keep the decisions of an Approved or Accepted source or target and the entries of an existing target, and no migration of the target may be pending.
- * Returns { migration } with the pending migration as get_migration returns it, without its answer.
+ * Propose a format migration of one artifact of a run's set: every source statement must occur in the content, a leftover, a conflict, or a source entry that means the same as the target's,
+ * no content statement may be invented, a moved statement must land in a corresponding section, the content must conform apart from unknown values,
+ * keep the decisions of an Approved or Accepted source or target and the entries of an existing target, and every point must be settled or asked.
+ * A proposal of a source replaces the run's earlier proposal of it. Returns { migration } as get_migration_run lists it.
  */
 export async function proposeMigration(input) {
   const given = proposalInput(input);
   const root = await realpath(input.projectRoot);
+  const known = await storedRun(root, given.run);
+  requireOpen(known);
   const config = await readWorkflowConfig(root);
   const locations = artifactLocations(config);
   const { type } = given;
@@ -404,6 +456,9 @@ export async function proposeMigration(input) {
   const targetInStore = hasStore && type !== "feature" && storePath(config, given.target.path);
   const sourceInStore = hasStore && storePath(config, given.source.path);
   const source = await readArtifact(root, config, given.source, { store: sourceInStore });
+  if (!known.set.artifacts.some((artifact) => artifact.path === source.path && sameScope(artifact.scope, source.scope))) {
+    throw fail("invalid_input", `The source ${label(source)} is no artifact of the format migration run ${known.id}, whose set holds ${known.set.artifacts.map(artifactName).join(", ")}.`, { path: source.path });
+  }
   if (source.text === null) throw fail("artifact_missing", `The source ${label(source)} does not exist.`, { path: source.path });
   // Only a target named as the source is, by path, scope, and component, is the source itself; a target at the source's path in another named scope is read as a target of its own.
   const inPlace = given.source.path === given.target.path && given.source.scope === given.target.scope && given.source.component === given.target.component && sourceInStore === targetInStore;
@@ -413,22 +468,24 @@ export async function proposeMigration(input) {
   const existing = separateSource && target.text !== null ? target : null;
   const content = given.content;
 
-  // The check for a migration that holds the target and the write of the new record run under one lock of the target, so two concurrent proposals of it record one pending migration.
-  return storeRefusing(() => withRecordLock(root, targetLockKey(target), async () => {
-    // A pending migration of the same target holds it, and so does an accepted one that is not applied yet while it can still apply, since a stale one never can.
-    let holding = null;
-    for (const record of await allMigrations(root)) {
-      if (record.target?.path !== target.path || !sameScope(record.target?.scope, target.scope)) continue;
-      const status = statusOf(record);
-      if (status === "pending" || (status === "accepted" && await appliable(root, config, record))) { holding = record; break; }
+  return storeRefusing(() => withRunLock(root, known.id, async () => {
+    const run = await storedRun(root, known.id);
+    requireOpen(run);
+    // Another open run's proposal of the target holds it, and so does another source's proposal of it in this run, since each proposal holds the whole target.
+    const holds = (migration) => migration.target.path === target.path && sameScope(migration.target.scope, target.scope);
+    const ownOther = run.migrations.find((migration) => holds(migration) && !(migration.source.path === source.path && sameScope(migration.source.scope, source.scope)));
+    if (ownOther) throw fail("migration_pending", `The format migration ${ownOther.id} of ${label(ownOther.source)} in this run already writes ${label(target)}, so another source cannot be migrated into it in the same run.`, { id: ownOther.id, run: run.id });
+    for (const other of await allRuns(root)) {
+      if (other.id === run.id || !OPEN_STATUSES.has(other.status) && other.status !== "asking" && other.status !== "waiting-for-host") continue;
+      const holding = other.migrations.find(holds);
+      if (holding) throw fail("migration_pending", `The format migration ${holding.id} of the open run ${other.id} writes ${label(target)}, so this run cannot propose another one until that run ends.`, { id: holding.id, run: other.id });
     }
-    if (holding) throw fail("migration_pending", `The format migration ${holding.id} of ${label(target)} is still ${statusOf(holding)}, so another one cannot be proposed until it is ${statusOf(holding) === "accepted" ? "applied" : "answered"}.`, { id: holding.id });
 
     // The content conforms to its format, unknown values aside.
     const checked = findingsOf(type, content);
     if (checked.findings.length) {
       const rules = [...new Set(checked.findings.map((finding) => finding.rule))].join(", ");
-      throw fail("artifact_nonconforming", `The content breaks the ${type} format of ${label(target)} (${rules}), so it cannot be proposed: ${checked.findings.map((finding) => finding.message).join(" ")}`, { artifacts: [{ ...named(target), type, findings: checked.findings, legacy: null }] });
+      throw fail("artifact_nonconforming", `The content breaks the ${type} format of ${label(target)} (${rules}), so it cannot be proposed: ${checked.findings.map((finding) => finding.message).join(" ")}`, { artifacts: [{ ...named(target), type, findings: checked.findings }] });
     }
 
     // A decided source or target keeps its status, dates, and identities.
@@ -436,7 +493,6 @@ export async function proposeMigration(input) {
     const note = (change) => { if (!changed.some((item) => item.field === change.field && item.before === change.before)) changed.push(change); };
     const decidedStatus = (artifact) => artifact.store ? artifact.status : headerValue(artifact.text, "Status");
     for (const before of [source, existing].filter(Boolean)) {
-      if (!["requirements", "adr", "glossary", "feature"].includes(type)) continue;
       const status = decidedStatus(before);
       if (status !== "Approved" && status !== "Accepted") continue;
       for (const field of ["Status", "Created", "Approved"]) {
@@ -449,17 +505,19 @@ export async function proposeMigration(input) {
       for (const id of identities(type, before.text)) if (!kept.has(id)) note({ field: "identity", before: id, after: null });
     }
     // A store target's Status: line is its recorded status, which only a person's answer at a gate changes.
+    let expectedStatus = null;
     if (targetInStore && (type === "requirements" || type === "adr")) {
-      const expected = target.text !== null ? target.status : source.store && source.text !== null && source.status !== null && storeKindOfPath(config, source.path) === STORE_KINDS[type] ? source.status : newStatus(STORE_KINDS[type]);
+      expectedStatus = target.text !== null ? target.status : source.store && source.text !== null && source.status !== null && storeKindOfPath(config, source.path) === STORE_KINDS[type] ? source.status : newStatus(STORE_KINDS[type]);
       const written = headerValue(content, "Status");
-      if (expected !== null && written !== expected) note({ field: "Status", before: expected, after: written });
+      if (expectedStatus !== null && written !== expectedStatus) note({ field: "Status", before: expectedStatus, after: written });
     }
     if (changed.length) {
       throw fail("migration_changes_decision", `The content changes what a person decided for ${label(source)}${existing ? ` or ${label(existing)}` : ""}: ${changed.map((change) => `${change.field} ${JSON.stringify(change.before)} to ${JSON.stringify(change.after)}`).join(", ")}. Keep the status, the Created and Approved dates, and every identity as recorded; only a person's answer at a gate changes them.`, { changed });
     }
 
-    // The entries of an existing target stay unchanged, and the source's differing version of one goes under conflicts.
+    // The entries of an existing target stay unchanged, and the source's differing version of one goes under conflicts or is a point that says it means the same.
     const conflicts = [];
+    const entryPoints = [];
     if (existing && entriesOf(type, existing.text).length) {
       const targetEntries = entriesOf(type, existing.text);
       const contentEntries = entriesOf(type, content);
@@ -481,6 +539,10 @@ export async function proposeMigration(input) {
         if (wrong.length) parts.push(`the ${wrong.length === 1 ? "conflict" : "conflicts"} ${wrong.join(", ")} ${wrong.length === 1 ? "names" : "name"} no entry of the target or ${wrong.length === 1 ? "does" : "do"} not hold one conforming entry of that identity`);
         throw fail("migration_conflict", `The proposal for ${label(target)} conflicts with the target's entries: ${parts.join("; ")}.`, { entries: [...new Set([...rewritten, ...wrong])] });
       }
+      for (const entry of entriesOf(type, source.text)) {
+        const held = targetEntries.find((item) => item.id === entry.id);
+        if (held && !sameEntry(held.text, entry.text) && !conflicts.some((conflict) => conflict.entry === entry.id)) entryPoints.push(entry);
+      }
     } else if (given.conflicts.length) {
       throw fail("migration_conflict", `The target ${label(target)} holds no entries, so the conflicts ${given.conflicts.map((conflict) => conflict.entry).join(", ")} name no entry of it.`, { entries: given.conflicts.map((conflict) => conflict.entry) });
     }
@@ -491,9 +553,11 @@ export async function proposeMigration(input) {
       if (!normalizedSource.includes(normalizeStatement(leftover.statement))) throw fail("invalid_input", `leftovers[${index}].statement is not a statement of the source ${label(source)}: ${JSON.stringify(leftover.statement)}.`);
     }
 
-    // Every source statement occurs in the content, a leftover, or a conflict.
+    // Every source statement occurs in the content, a leftover, a conflict, or a source entry that a point says means the same as the target's.
+    const inEntryPoint = (statement) => entryPoints.some((entry) => statement.line - 1 >= entry.from && statement.line - 1 < entry.to);
+    const statements = sourceStatements(type, source.text);
     const placed = [normalizeStatement(content), ...given.leftovers.map((leftover) => normalizeStatement(leftover.statement)), ...conflicts.map((conflict) => normalizeStatement(conflict.source))];
-    const unaccounted = sourceStatements(type, source.text).filter((statement) => !placed.some((text) => text.includes(normalizeStatement(statement.text))));
+    const unaccounted = statements.filter((statement) => !inEntryPoint(statement) && !placed.some((text) => text.includes(normalizeStatement(statement.text))));
     if (unaccounted.length) {
       throw fail("migration_unaccounted", `${unaccounted.length === 1 ? "A statement" : `${unaccounted.length} statements`} of ${label(source)} ${unaccounted.length === 1 ? "occurs" : "occur"} in neither the content, a leftover, nor a conflict: ${unaccounted.map((statement) => `line ${statement.line}: ${JSON.stringify(statement.text)}`).join("; ")}. Place each one, or list it as a leftover with its proposed home.`, { statements: unaccounted.map(({ text, line }) => ({ text, line })) });
     }
@@ -509,224 +573,226 @@ export async function proposeMigration(input) {
       throw fail("migration_invented", `${invented.length === 1 ? "A statement" : `${invented.length} statements`} of the content ${invented.length === 1 ? "occurs" : "occur"} in neither ${label(source)} nor the target: ${invented.map((statement) => `line ${statement.line}: ${JSON.stringify(statement.text)}`).join("; ")}. Write only what the source says, and mark a value that neither the source nor its Git history gives as unknown.`, { statements: invented.map(({ text, line }) => ({ text, line })) });
     }
 
-    const id = `migration-${randomBytes(8).toString("hex")}`;
-    const record = {
-      id, type, source: named(source), target: named(target), separateSource, summary: given.summary,
+    // A statement the content moves lands in the section that corresponds to its source section.
+    // A leftover that the person's answer placed in a named section must land there.
+    const answered = new Map();
+    const before = run.migrations.find((migration) => migration.source.path === source.path && sameScope(migration.source.scope, source.scope));
+    for (const point of before?.points ?? []) {
+      const answer = run.answers?.[point.id];
+      if (point.kind === "leftover" && isRecord(answer) && typeof answer.value === "string" && answer.value.trim()) answered.set(normalizeStatement(point.statement), answer.value.replace(/^#+\s*/, ""));
+    }
+    const misplaced = misplacedStatements(type, source.text, content, statements.filter((statement) => !inEntryPoint(statement)), { named: answered });
+    if (misplaced.length) {
+      throw fail("migration_misplaced", `${misplaced.length === 1 ? "A statement" : `${misplaced.length} statements`} of ${label(source)} ${misplaced.length === 1 ? "moves" : "move"} to a section that does not correspond to the one ${misplaced.length === 1 ? "it comes" : "they come"} from: ${misplaced.map((statement) => `line ${statement.line}: ${JSON.stringify(statement.text)} from ${statement.from === null ? "the text before the first section" : statement.from} to ${statement.to === null ? "the text before the first section" : statement.to}`).join("; ")}. Keep each one in the section of the format that corresponds to its own, or list it as a leftover.`, { statements: misplaced });
+    }
+
+    // Every point is settled or asked: leftovers and source entries that mean the same may be either, and Prism's derived points are always asked.
+    const allowsUnknown = (type === "requirements" && (expectedStatus ?? headerValue(content, "Status")) === "Draft") || (type === "adr" && (expectedStatus ?? headerValue(content, "Status")) === "Proposed");
+    const points = [
+      ...given.leftovers.map((leftover) => ({ kind: "leftover", statement: leftover.statement })),
+      ...entryPoints.map((entry) => ({ kind: "entry", entry: entry.id })),
+      ...checked.unknowns.map((unknown) => ({ kind: "unknown", line: unknown.line, field: unknown.field, allowsUnknown })),
+      ...conflicts.map((conflict) => ({ kind: "conflict", entry: conflict.entry })),
+      ...(separateSource ? [{ kind: "remove-source" }] : [])
+    ];
+    const keys = new Map(points.map((point) => [pointKey(point), point]));
+    for (const [name, list] of [["settled", given.settled], ["asked", given.asked]]) {
+      for (const [index, item] of list.entries()) if (!keys.has(pointKey(item.point))) throw fail("invalid_input", `${name}[${index}].point names no point of this proposal; the points are ${points.map((point) => JSON.stringify(point)).join(", ") || "none"}.`);
+    }
+    const settledBy = new Map(given.settled.map((item) => [pointKey(item.point), item.text]));
+    const askedBy = new Map(given.asked.map((item) => [pointKey(item.point), item.text]));
+    const unsettled = points.filter((point) => {
+      const key = pointKey(point);
+      if (DERIVED.has(point.kind)) return !askedBy.has(key) || settledBy.has(key);
+      return !askedBy.has(key) && !settledBy.has(key);
+    });
+    if (unsettled.length) {
+      throw fail("migration_unsettled", `${unsettled.length === 1 ? "A point" : `${unsettled.length} points`} of the proposal for ${label(source)} ${unsettled.length === 1 ? "is" : "are"} neither settled nor asked: ${unsettled.map((point) => JSON.stringify(point)).join(", ")}. Settle a leftover or an entry under settled with the reason it loses nothing, or ask the person under asked with your recommendation; an unknown value, a conflict, and a separate source's removal are always asked.`, { points: unsettled });
+    }
+
+    // A replacing proposal of the source keeps its migration's id and each point's id, so a person's view of the run stays stable.
+    const earlier = run.migrations.find((migration) => migration.source.path === source.path && sameScope(migration.source.scope, source.scope));
+    let nextPoint = Number.isInteger(run.nextPoint) && run.nextPoint > 0 ? run.nextPoint : 1;
+    const earlierIds = new Map((earlier?.points ?? []).map((point) => [pointKey(point), point.id]));
+    const shownPoints = points.map((point) => {
+      const key = pointKey(point);
+      const id = earlierIds.get(key) ?? `p${nextPoint++}`;
+      return { id, ...point, settled: settledBy.has(key) ? { reason: settledBy.get(key) } : null, asked: askedBy.has(key) ? { recommendation: askedBy.get(key) } : null };
+    });
+    const migration = {
+      id: earlier?.id ?? `migration-${randomBytes(8).toString("hex")}`, run: run.id, type, source: named(source), target: named(target), separateSource, summary: given.summary,
       diff: unifiedDiff(source.text, content, { from: `a/${source.path}`, to: `b/${target.path}` }),
       targetDiff: existing ? unifiedDiff(existing.text, content, { from: `a/${target.path}`, to: `b/${target.path}` }) : null,
-      leftovers: given.leftovers, unknowns: checked.unknowns, conflicts, proposedAt: new Date().toISOString(), answer: null, appliedAt: null,
-      content, versions: { source: source.version, target: target.version },
-      sourceInput: { store: source.store }, targetInput: { store: target.store }
+      leftovers: given.leftovers, unknowns: checked.unknowns, conflicts, points: shownPoints, status: "proposed", proposedAt: new Date().toISOString(),
+      content, versions: { source: source.version, target: target.version }, sourceStore: source.store, targetStore: target.store
     };
-    await writeRecord(root, recordKey(id), serialize(record));
-    return { migration: shown(record, { full: false }) };
-  }, fail));
+    migration.digest = proposedDigest(migration);
+    const migrations = earlier ? run.migrations.map((item) => item === earlier ? migration : item) : [...run.migrations, migration];
+    await writeRun(root, { ...run, migrations, nextPoint });
+    return { migration: shownMigration(migration) };
+  }));
 }
-
-// The lock that serializes the proposals of one target: a format-migration key of eight hexadecimal digits, which no generated migration id has.
-const targetLockKey = (target) => recordKey(`migration-${createHash("sha256").update(JSON.stringify([target.path, target.scope?.label ?? null])).digest("hex").slice(0, 8)}`);
 
 const storeKindOfPath = (config, file) => artifactAddress(artifactKinds(config), file)?.kind ?? null;
 
-/** A format migration with its answer and appliedAt: { migration }, refused with migration_unknown for an unknown id. */
-export async function getMigration({ projectRoot, id }) {
-  const root = await realpath(projectRoot);
-  const { record } = await storedMigration(root, id);
-  return { migration: shown(record) };
-}
-
-// ---- Answering ----
-
-/** A migration as the review app's action reads it: { record, revision }, or null for an unknown id. */
-export async function readMigrationForAnswer(projectRoot, id) {
-  return storeRefusing(() => readMigrationRecord(projectRoot, id));
-}
-
-/**
- * Record a person's answer to a pending migration under the record's lock: { decision, conflicts, removeSource, note, by }, with conflicts by entry.
- * A migration that already has an answer is refused with already_answered, and revision, when given, must name the record the page read.
- */
-export async function answerMigration(projectRoot, id, { decision, conflicts = {}, removeSource = false, note = null, by }, { revision = null } = {}) {
-  const root = await realpath(projectRoot);
-  await storedMigration(root, id);
-  return storeRefusing(() => withRecordLock(root, recordKey(id), async () => {
-    const { record, revision: current } = await storedMigration(root, id);
-    if (record.answer) throw fail("already_answered", `The format migration ${id} already has an answer.`);
-    if (revision !== null && revision !== current) throw fail("stale_revision", "The migration changed since the page read it.");
-    const answer = {
-      decision,
-      conflicts: Object.fromEntries((record.conflicts ?? []).map((conflict) => [conflict.entry, conflicts[conflict.entry] === "source" ? "source" : "target"])),
-      removeSource: record.separateSource === true && removeSource === true,
-      note: note ?? null,
-      by,
-      at: new Date().toISOString()
-    };
-    // The answer is bound to what the person was shown and accepted, so apply refuses a record that changed after it.
-    const next = { ...record, answer, answerDigest: answeredDigest(record) };
-    await writeRecord(root, recordKey(id), serialize(next));
-    return { migration: shown(next) };
-  }, fail));
-}
-
-/**
- * The gates a wait reads for a migration: one entry with its id and its answer once a person answered, or none for an id that no record holds.
- * A failed read, such as an unavailable store or a damaged record, throws with the store's own refusal, so a wait refuses on its first read and keeps polling after it.
- */
-export async function migrationGates(projectRoot, id) {
-  const read = await storeRefusing(() => readMigrationRecord(projectRoot, id));
-  if (read && !isRecord(read.record)) throw fail("record_invalid", `The format migration record ${id} holds no migration.`, { id });
-  if (!read) return [];
-  const { record } = read;
-  return [{ id: record.id, kind: "migration", question: `Accept the format migration of ${label(record.target)}? ${record.summary}`, migration: record.id, answer: record.answer ?? null }];
-}
+// What a proposal's checks passed: its type, artifacts, content, conflicts, leftovers, points, and the versions it was proposed from, so an apply refuses a record changed after them.
+const proposedDigest = (migration) => versionOf(Buffer.from(JSON.stringify([migration.type, migration.source, migration.target, migration.separateSource, migration.content, migration.conflicts, migration.leftovers, migration.points.map(pointDetail), migration.versions]), "utf8"));
 
 // ---- Applying ----
 
 // Each glossary source written as migration alone names the migration it came from.
 const withMigrationId = (type, text, id) => type !== "glossary" ? text : text.replace(/^(Source:.*)$/gm, (line) => line.replace(/(^Source:\s*|,\s*)migration(?![\w-]|\s+migration-)/g, `$1migration ${id}`));
 
-// What a person's answer accepted: the migration's type, artifacts, content, conflicts, leftovers, diffs, and the versions it was proposed from.
-const answeredDigest = (record) => versionOf(Buffer.from(JSON.stringify([record.type, record.source, record.target, record.separateSource, record.content, record.conflicts, record.leftovers, record.diff, record.targetDiff, record.versions]), "utf8"));
+// The content with each unknown value that a person answered with a value in its place, from the last line up so earlier lines keep their numbers.
+function withAnsweredValues(content, points, answers) {
+  const lines = content.split("\n");
+  const answered = points.filter((point) => point.kind === "unknown" && answers[point.id]?.choice === "value" && typeof answers[point.id].value === "string").sort((left, right) => right.line - left.line);
+  for (const point of answered) {
+    const index = point.line - 1;
+    const value = answers[point.id].value;
+    const line = lines[index] ?? "";
+    const field = /^([A-Z][A-Za-z ]*:\s*)unknown\s*$/.exec(line);
+    if (field) lines.splice(index, 1, ...`${field[1]}${value}`.split("\n"));
+    else if (line.trim() === UNKNOWN) lines.splice(index, 1, ...value.split("\n"));
+  }
+  return lines.join("\n");
+}
 
 const SCOPE_KINDS = new Set(["workspace", "repository", "component"]);
 
-/**
- * The record's source and target as a proposal would place them now, since a record is untrusted when it applies: another checkout or a store's remote may have written it.
- * Each path is checked as a proposal checks it, the target must lie under the type's configured path, and whether each is a store artifact comes from the configuration, never from the record.
- * Returns { sourceStore, targetStore }; a record that fails is refused with invalid_input or record_invalid.
- */
-function placedRecord(config, record) {
-  if (!ARTIFACT_TYPES.includes(record.type)) throw fail("record_invalid", `The format migration record ${record.id} names no artifact type.`, { id: record.id });
-  for (const [name, entry] of [["source", record.source], ["target", record.target]]) {
-    if (!isRecord(entry) || relativePath(entry.path, `The record's ${name}`) !== entry.path) throw fail("invalid_input", `The ${name} of the format migration record ${record.id} is no project-relative path inside the project.`, { id: record.id });
-    if (entry.scope !== null && !(isRecord(entry.scope) && SCOPE_KINDS.has(entry.scope.kind))) throw fail("record_invalid", `The ${name} of the format migration record ${record.id} names no scope.`, { id: record.id });
+// A migration's source and target as a proposal would place them now, since a record is untrusted when it applies: another checkout or a store's remote may have written it.
+function placed(config, migration) {
+  if (!ARTIFACT_TYPES.includes(migration.type)) throw fail("record_invalid", `The format migration ${migration.id} names no artifact type.`, { id: migration.id });
+  for (const [name, entry] of [["source", migration.source], ["target", migration.target]]) {
+    if (!isRecord(entry) || relativePath(entry.path, `The record's ${name}`) !== entry.path) throw fail("invalid_input", `The ${name} of the format migration ${migration.id} is no project-relative path inside the project.`, { id: migration.id });
+    if (entry.scope !== null && !(isRecord(entry.scope) && SCOPE_KINDS.has(entry.scope.kind))) throw fail("record_invalid", `The ${name} of the format migration ${migration.id} names no scope.`, { id: migration.id });
   }
-  if (artifactTypeOf(artifactLocations(config), record.target.path) !== record.type) throw fail("invalid_input", `The target ${record.target.path} of the format migration ${record.id} lies under no configured path of the type ${record.type}.`, { path: record.target.path });
+  if (artifactTypeOf(artifactLocations(config), migration.target.path) !== migration.type) throw fail("invalid_input", `The target ${migration.target.path} of the format migration ${migration.id} lies under no configured path of the type ${migration.type}.`, { path: migration.target.path });
   const hasStore = (config.workspace?.store ?? null) !== null;
-  const targetStore = hasStore && record.type !== "feature" && storePath(config, record.target.path);
-  const sourceStore = hasStore && storePath(config, record.source.path);
-  for (const [name, entry, store] of [["source", record.source, sourceStore], ["target", record.target, targetStore]]) {
-    if (store !== (entry.scope !== null)) throw fail("record_invalid", `The ${name} of the format migration record ${record.id} is placed where Prism does not keep ${entry.path}.`, { id: record.id });
+  const targetStore = hasStore && migration.type !== "feature" && storePath(config, migration.target.path);
+  const sourceStore = hasStore && storePath(config, migration.source.path);
+  for (const [name, entry, store] of [["source", migration.source, sourceStore], ["target", migration.target, targetStore]]) {
+    if (store !== (entry.scope !== null)) throw fail("record_invalid", `The ${name} of the format migration ${migration.id} is placed where Prism does not keep ${entry.path}.`, { id: migration.id });
   }
-  const separate = !(record.source.path === record.target.path && sameScope(record.source.scope, record.target.scope) && sourceStore === targetStore);
-  if (record.separateSource !== separate) throw fail("record_invalid", `The format migration record ${record.id} does not say whether its source is separate as its paths do.`, { id: record.id });
+  const separate = !(migration.source.path === migration.target.path && sameScope(migration.source.scope, migration.target.scope) && sourceStore === targetStore);
+  if (migration.separateSource !== separate) throw fail("record_invalid", `The format migration ${migration.id} does not say whether its source is separate as its paths do.`, { id: migration.id });
   return { sourceStore, targetStore };
 }
 
 /**
- * The state an accepted migration applies from: its checked source and target as they are now, the content to write, and which parts an earlier apply already did.
- * stale lists the source or target that changed since the proposal other than as this migration changes it.
+ * Apply every migration of a run, or none: a source or target that changed since its proposal refuses with migration_stale naming the paths,
+ * each checkout target passes the write check before it is written, every store target is written and each store source the person chose to remove is removed in one checked store update,
+ * and a checkout target written before a later step failed is restored. A run that applied store artifacts syncs the store's earlier changes first and then commits exactly its files
+ * with the message prism: format migration <run id>, while its checkout files stay uncommitted. Returns the run's result, one entry per migration.
  */
-async function applyState(root, config, record) {
-  const { sourceStore, targetStore } = placedRecord(config, record);
-  if (record.answer?.decision === "accept" && record.answerDigest !== answeredDigest(record)) throw fail("record_invalid", `The format migration record ${record.id} changed after a person answered it, so it does not apply; propose it again.`, { id: record.id });
-  const read = (entry, store) => readArtifact(root, config, { path: entry.path, ...(store ? scopeInputOf(entry.scope) : {}) }, { store });
-  const source = await read(record.source, sourceStore);
-  const target = record.separateSource ? await read(record.target, targetStore) : source;
-  let content = record.content;
-  for (const conflict of record.conflicts ?? []) {
-    if (record.answer?.conflicts?.[conflict.entry] === "source") content = replaceEntry(record.type, content, conflict.entry, conflict.source) ?? content;
-  }
-  content = withMigrationId(record.type, content, record.id);
-  const removeSource = record.separateSource && record.answer?.removeSource === true;
-  // An earlier apply that failed part way, after writing the target or removing the source, left them as this apply would: such a target and source are done, not stale, so a retry completes and records appliedAt.
-  // A store source of a checkout target is removed before the target takes its name, so its removal alone is done.
-  const targetDone = target.version === versionOf(Buffer.from(content, "utf8"));
-  const sourceDone = removeSource && source.version === null && (targetDone || (source.store && !target.store));
+export async function applyRun(root, run, at) {
+  const config = await readWorkflowConfig(root);
+  const answers = run.answers ?? {};
+  const own = new Set(run.migrations.map((migration) => migration.id));
+  const applied = await appliedMigrationIds(root);
+  const decided = (id) => own.has(id) || applied.has(id);
+  const plans = [];
   const stale = [];
-  if (source.version !== record.versions.source && !sourceDone && !(!record.separateSource && targetDone)) stale.push(source);
-  if (record.separateSource && target.version !== record.versions.target && !targetDone) stale.push(target);
-  return { source, target, content, removeSource, targetDone, sourceDone, stale };
-}
-
-// Whether an accepted migration can still apply, so it holds its target: a record that changed or went stale never can.
-async function appliable(root, config, record) {
-  try { return (await applyState(root, config, record)).stale.length === 0; }
-  catch (error) {
-    if (error instanceof FormatMigrationError && ["record_invalid", "invalid_input", "artifact_outside", "invalid_path", "scope_invalid"].includes(error.code)) return false;
-    throw error;
+  for (const migration of run.migrations) {
+    const { sourceStore, targetStore } = placed(config, migration);
+    if (migration.digest !== proposedDigest(migration)) throw fail("record_invalid", `The format migration ${migration.id} of the run ${run.id} changed after its proposal was checked, so the run applies nothing; propose it again.`, { id: migration.id });
+    const readOf = (entry, store) => readArtifact(root, config, { path: entry.path, ...(store ? scopeInputOf(entry.scope) : {}) }, { store });
+    const source = await readOf(migration.source, sourceStore);
+    const target = migration.separateSource ? await readOf(migration.target, targetStore) : source;
+    if (source.version !== migration.versions.source) stale.push(source);
+    if (migration.separateSource && target.version !== migration.versions.target) stale.push(target);
+    let content = withAnsweredValues(migration.content, migration.points, answers);
+    for (const conflict of migration.conflicts ?? []) {
+      const point = migration.points.find((item) => item.kind === "conflict" && item.entry === conflict.entry);
+      if (point && answers[point.id]?.choice === "source") content = replaceEntry(migration.type, content, conflict.entry, conflict.source) ?? content;
+    }
+    content = withMigrationId(migration.type, content, migration.id);
+    const removal = migration.points.find((point) => point.kind === "remove-source");
+    const removeSource = migration.separateSource && removal !== undefined && answers[removal.id]?.choice === "remove";
+    plans.push({ migration, source, target, content, removeSource });
   }
-}
+  if (stale.length) throw fail("migration_stale", `${stale.map(label).join(" and ")} changed since ${stale.length === 1 ? "its" : "their"} format migration was proposed, so the run ${run.id} applied nothing.`, { paths: stale.map(named) });
 
-/**
- * Apply an accepted format migration: write the content with each conflict's chosen entry and the migration's id after each migration source that stands alone,
- * remove a separate source only when the answer accepted its removal, and record appliedAt.
- * The record's paths are checked again and its answer must match what the person accepted, so nothing is written or removed outside the project or beyond that answer.
- * A store target or source changes only through Prism's store writes; returns { written, removed, acceptedBy, acceptedAt }.
- */
-export async function applyMigration({ projectRoot, id }) {
-  const root = await realpath(projectRoot);
-  await storedMigration(root, id);
-  return storeRefusing(() => withRecordLock(root, recordKey(id), async () => {
-    const { record } = await storedMigration(root, id);
-    if (typeof record.appliedAt === "string") throw fail("migration_applied", `The format migration ${id} was applied at ${record.appliedAt}.`);
-    if (record.answer?.decision !== "accept") throw fail("migration_not_accepted", record.answer ? `A person declined the format migration ${id}, so it does not apply.` : `The format migration ${id} has no answer yet: a person accepts it on its page in the review browser first.`);
-    if (record.id !== id) throw fail("record_invalid", `The format migration record ${id} names another migration.`, { id });
-    const config = await readWorkflowConfig(root);
-    const { source, target, content, removeSource, targetDone, sourceDone, stale } = await applyState(root, config, record);
-    if (stale.length) throw fail("migration_stale", `${stale.map(label).join(" and ")} changed since the format migration ${id} was proposed, so it does not apply; propose it again from the current ${stale.length === 1 ? "file" : "files"}.`, { paths: stale.map(named) });
-    // A checkout target is checked as the proposal was before anything applies: unknown values aside and this migration's own glossary source decided.
-    // A store target takes the same check inside the store's update, which refuses before it changes anything.
-    if (!target.store && !targetDone) await checkCheckoutTarget(root, record, target, content);
-    const written = [], removed = [];
-    const stored = [];
-    const storeRemoved = (entry) => ({ path: source.path, scope: entry?.scope ?? source.scope, ...(entry?.removedComments ? { removedComments: entry.removedComments } : {}) });
-    if (target.store && targetDone) {
-      written.push(named(target));
-      if (removeSource && source.store && !sourceDone) removed.push(storeRemoved((await applyStoreRemove(root, source))[0]));
-      else if (sourceDone && source.store) removed.push(named(source));
-    } else if (target.store) {
-      const storeRemove = removeSource && source.store ? { path: source.path, scope: source.scope, expectedVersion: source.version } : null;
-      const status = record.type === "requirements" || record.type === "adr" ? headerValue(content, "Status") : null;
+  // Each checkout target passes the write check before anything is written, strictly: unknown only where the target will be a Draft requirement file or a Proposed ADR.
+  const { checkArtifactContent, checkoutSourceLookup } = await import("./artifact-check.mjs");
+  const refused = [];
+  for (const plan of plans.filter((item) => !item.target.store)) {
+    const result = await checkArtifactContent({
+      path: plan.target.path, type: plan.migration.type, bytes: Buffer.from(plan.content, "utf8"), status: null,
+      lookup: plan.migration.type === "glossary" ? checkoutSourceLookup(root) : null, appliedMigration: decided
+    });
+    if (!result.conforms) refused.push({ ...named(plan.target), type: plan.migration.type, findings: result.findings });
+  }
+  if (refused.length) throw nonconforming(run, refused);
+
+  // Checkout targets are written first, each restorable, then the store's one checked update, and checkout sources are removed only once everything else applied.
+  const restore = [];
+  const storePlans = plans.filter((plan) => plan.target.store || (plan.removeSource && plan.source.store));
+  const store = storePlans.length ? await storeSyncBase(root) : null;
+  let files = [];
+  try {
+    for (const plan of plans.filter((item) => !item.target.store)) {
+      restore.push({ path: plan.target.path, bytes: plan.target.bytes });
+      await writeCheckoutTarget(root, run.id, plan.target.path, plan.content);
+    }
+    if (storePlans.length) {
+      // The store's earlier changes are committed first, so the run's own commit holds its files alone.
+      if (store?.sync) await syncRecordStoreNow(store.base);
+      const writes = plans.filter((plan) => plan.target.store).map((plan) => ({
+        path: plan.target.path, scope: plan.target.scope, content: plan.content, expectedVersion: plan.target.version,
+        status: plan.migration.type === "requirements" || plan.migration.type === "adr" ? headerValue(plan.content, "Status") : null
+      }));
+      const removes = plans.filter((plan) => plan.removeSource && plan.source.store).map((plan) => ({ path: plan.source.path, scope: plan.source.scope, expectedVersion: plan.source.version }));
       try {
-        stored.push(...await applyStoreMigration(root, { target: { path: target.path, scope: target.scope, content, expectedVersion: target.version, status }, remove: storeRemove, migration: id }));
+        ({ files } = await applyStoreRun(root, { writes, removes, appliedMigration: decided, acceptedFrom: { migration: run.id, at } }));
       } catch (error) {
-        if (error?.code === "version_conflict") throw fail("migration_stale", `${label(target)}${storeRemove ? ` or ${label(source)}` : ""} changed in the record store since the format migration ${id} was proposed, so it does not apply; propose it again.`, { paths: [named(target), ...(storeRemove ? [named(source)] : [])] });
+        if (error?.code === "version_conflict") throw fail("migration_stale", `A store artifact of the run ${run.id} changed since its format migration was proposed, so the run applied nothing.`, { paths: [...writes, ...removes].map(({ path: file, scope }) => ({ path: file, scope })) });
+        if (error?.code === "artifact_nonconforming") throw nonconforming(run, error.artifacts ?? [], error.message);
         throw error;
       }
-      const entry = stored.find((item) => item.path === target.path && !item.removed);
-      written.push({ path: target.path, scope: entry?.scope ?? target.scope });
-      for (const item of stored.filter((entry) => entry.removed)) removed.push({ path: item.path, scope: item.scope, ...(item.removedComments ? { removedComments: item.removedComments } : {}) });
-    } else {
-      // A store source of a checkout target is removed only once the target's content is written beside it, and before that content takes the target's name,
-      // so a failed checkout write keeps the store source and a store change refuses the apply before the checkout target appears.
-      const removeStore = async () => { if (removeSource && source.store) removed.push(sourceDone ? named(source) : storeRemoved((await applyStoreRemove(root, source))[0])); };
-      if (targetDone) await removeStore();
-      else await writeCheckoutTarget(root, id, target.path, content, removeStore);
-      written.push({ path: target.path, scope: null });
     }
-    if (removeSource && !source.store) {
-      if (await checkoutFile(root, source.path)) await rm(path.join(root, source.path), { force: true });
-      removed.push({ path: source.path, scope: null });
-    }
-    const appliedAt = new Date().toISOString();
-    await writeRecord(root, recordKey(id), serialize({ ...record, appliedAt, written, removed }));
-    return { written, removed, acceptedBy: record.answer.by, acceptedAt: record.answer.at };
-  }, fail));
+  } catch (error) {
+    for (const item of restore.reverse()) await restoreCheckoutFile(root, item).catch(() => {});
+    throw error;
+  }
+  for (const plan of plans.filter((item) => item.removeSource && !item.source.store)) {
+    if (await checkoutFile(root, plan.source.path)) await rm(path.join(root, plan.source.path), { force: true });
+  }
+  // The run's store change is a commit of its own; the accepted copies, kept by their hash for every artifact alike, follow in the sync's usual commit.
+  if (store && files.length) {
+    const commit = { message: `prism: format migration ${run.id}`, files: files.filter((file) => !file.startsWith("artifact-accepted/")) };
+    // A store whose sync is off is committed to only when it is a Git checkout, and nothing is pushed.
+    if (store.sync) await syncRecordStoreNow(store.base, { commit });
+    else await commitStoreFiles(store.base, commit).catch(() => false);
+  }
+  const written = plans.map((plan) => plan.target).concat(plans.filter((plan) => plan.removeSource).map((plan) => plan.source));
+  await dropReportedFindings(root, written.map(named)).catch(() => {});
+  return plans.map(({ migration }) => ({
+    migration: migration.id, source: migration.source, target: migration.target, diff: migration.diff, summary: migration.summary,
+    settled: migration.points.filter((point) => point.settled).map((point) => ({ point: point.id, reason: point.settled.reason })),
+    answered: migration.points.filter((point) => point.asked && isRecord(answers[point.id])).map((point) => ({ point: point.id, choice: answers[point.id].choice ?? null, value: answers[point.id].value ?? null, by: answers[point.id].by ?? null, at: answers[point.id].at ?? null }))
+  }));
 }
 
-async function checkCheckoutTarget(root, record, target, content) {
-  const { checkArtifactContent, checkoutSourceLookup } = await import("./artifact-check.mjs");
-  const applied = record.type === "glossary" ? await appliedMigrationIds(root) : new Set();
-  const result = await checkArtifactContent({
-    path: target.path, type: record.type, bytes: Buffer.from(content, "utf8"), status: null,
-    lookup: record.type === "glossary" ? checkoutSourceLookup(root) : null,
-    appliedMigration: (id) => id === record.id || applied.has(id), unknownAside: true
-  });
-  if (result.conforms) return;
-  const rules = [...new Set(result.findings.map((finding) => finding.rule))].join(", ");
-  throw fail("artifact_nonconforming", `The format migration ${record.id} would leave ${label(target)} breaking ${rules}, so nothing of it applied: ${result.findings.map((finding) => finding.message).join(" ")}`, { artifacts: [{ ...named(target), type: record.type, findings: result.findings }] });
+function nonconforming(run, artifacts, message = null) {
+  const lines = artifacts.map((artifact) => `${label(artifact)} breaks ${[...new Set(artifact.findings.map((finding) => finding.rule))].join(", ")}: ${artifact.findings.map((finding) => finding.message).join(" ")}`);
+  return fail("artifact_nonconforming", `The write check refuses what the run ${run.id} would write, so it applied nothing: ${message ?? lines.join(" ")}`, { artifacts });
+}
+
+// A checkout file put back as it was before the run wrote it, or removed when the run created it.
+async function restoreCheckoutFile(root, { path: file, bytes }) {
+  if (bytes === null) await rm(path.join(root, file), { force: true });
+  else await writeAtomically(path.join(root, file), bytes);
 }
 
 /**
- * Writes a checkout target through a temporary file beside it in its symlink-checked folder, and runs beforePlacing between that write and the rename that places it,
- * so a refusal of beforePlacing or a failed write leaves the target as it was and removes the temporary file.
+ * Writes a checkout target through a temporary file beside it in its symlink-checked folder, so a failed write leaves the target as it was and removes the temporary file.
  * A filesystem failure is refused with target_unwritable rather than reaching the caller as a raw error.
  */
-async function writeCheckoutTarget(root, id, file, content, beforePlacing) {
-  const unwritable = (error) => error instanceof FormatMigrationError ? error
+async function writeCheckoutTarget(root, id, file, content) {
+  const unwritable = (error) => error instanceof FormatMigrationError || error?.name === "FormatMigrationError" ? error
     : typeof error?.code === "string" && error.syscall !== undefined
-      ? fail("target_unwritable", `${file} cannot be written in the checkout (${error.code}), so the format migration ${id} changed nothing; make its folder writable and apply it again.`, { path: file })
+      ? fail("target_unwritable", `${file} cannot be written in the checkout (${error.code}), so the format migration run ${id} changed nothing; make its folder writable and run it again.`, { path: file })
       : error;
   const parts = file.split("/").slice(0, -1);
   try {
@@ -735,31 +801,16 @@ async function writeCheckoutTarget(root, id, file, content, beforePlacing) {
       const info = await lstat(path.join(root, ...parts.slice(0, index))).catch((error) => { if (error.code === "ENOENT") return null; throw error; });
       if (info === null) break;
       if (info.isSymbolicLink()) throw fail("artifact_outside", `${file} passes through the symbolic link ${parts.slice(0, index).join("/")}, so a format migration does not read, write, or remove it.`, { path: file });
-      if (!info.isDirectory()) throw fail("invalid_path", `${parts.slice(0, index).join("/")} is no folder, so the format migration ${id} cannot write ${file} and changed nothing.`, { path: file });
+      if (!info.isDirectory()) throw fail("invalid_path", `${parts.slice(0, index).join("/")} is no folder, so the format migration run ${id} cannot write ${file} and changed nothing.`, { path: file });
     }
     await checkoutFile(root, file);
     await mkdir(path.join(root, ...parts), { recursive: true });
     await checkoutFile(root, file);
     await writeAtomically(path.join(root, file), content, {
       renameFile: async (from, to) => {
-        await beforePlacing();
         await checkoutFile(root, file);
         await renameWhenFree(from, to);
       }
     });
   } catch (error) { throw unwritable(error); }
 }
-
-// A store source that a migration into the checkout removes goes through the store's own update, checked against the version the proposal read.
-async function applyStoreRemove(root, source) {
-  const { updateArtifact } = await import("./store-artifacts.mjs");
-  try {
-    return (await updateArtifact({ projectRoot: root, operations: [{ op: "remove", path: source.path, expectedVersion: source.version, ...scopeInputOf(source.scope) }] })).artifacts;
-  } catch (error) {
-    if (error?.code === "version_conflict") throw fail("migration_stale", `${label(source)} changed in the record store since the format migration was proposed, so it is not removed.`, { paths: [named(source)] });
-    throw error;
-  }
-}
-
-// The scope input that names a scope object, as get_artifact and update_artifact take it.
-const scopeInputOf = (scope) => scope === null || scope === undefined ? {} : scope.kind === "component" ? { scope: "component", component: scope.component } : { scope: scope.kind };

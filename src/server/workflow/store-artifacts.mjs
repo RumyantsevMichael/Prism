@@ -571,7 +571,7 @@ export async function updateArtifact(input) {
     const checked = input.operations.map((operation) => checkOperation(config, kinds, operation));
     const seen = await seenScopes(input.projectRoot);
     // The tool call notes what its update wrote, so a move that the call finishes still removes a moved file whose artifact the update changed.
-    return withArtifactStoreLock(seen, () => applyOperations(seen, checked, { noteWrites: true }));
+    return withArtifactStoreLock(seen, async () => ({ artifacts: (await applyOperations(seen, checked, { noteWrites: true })).artifacts }));
   });
 }
 
@@ -579,7 +579,7 @@ export async function updateArtifact(input) {
  * Apply checked operations while the store's artifact lock is held: every operation is checked against the store before any file changes.
  * Every change to a store artifact, an agent's update and Prism's own plan files and views alike, goes through here.
  */
-async function applyOperations(seenStore, checked, { held = null, noteWrites = false, formatCheck = { unknownAside: false, migration: null } } = {}) {
+async function applyOperations(seenStore, checked, { held = null, noteWrites = false, formatCheck = { unknownAside: false, appliedMigration: null } } = {}) {
   // The update checks each folder above the files it reads and writes once, and every file again right before it is written; nothing changes the store before the writes, so each folder's names are listed once too.
   const seen = { ...seenStore, folderChecks: folderChecks() };
   const listed = new Map();
@@ -722,6 +722,14 @@ async function applyOperations(seenStore, checked, { held = null, noteWrites = f
       names.set(target, file);
       artifacts.push(counted({ path: file, scope, version: artifactVersion(next) }, removed));
       if (hasStatus(address.kind)) mismatches.push({ entry: artifacts.at(-1), file, scope, address, text: operation.content });
+      // A format migration run keeps a decided artifact decided: its migrated bytes become the accepted version, attributed to the run.
+      if (operation.acceptedFrom && hasStatus(address.kind)) {
+        const status = await statusOf(scope, address);
+        if (["Approved", "Accepted"].includes(status.record.status)) {
+          await keepAccepted(file, next);
+          setStatus(status.target, file, withAcceptedVersion(status.record, artifactVersion(next), { event: "migrated", migration: operation.acceptedFrom.migration, at: operation.acceptedFrom.at }));
+        }
+      }
       // The move of a checkout's files keeps their bytes as they are, so only a write that brings content of its own is checked.
       if (operation.bytes === undefined) noteFormatted(file, scope, address);
       continue;
@@ -853,7 +861,7 @@ async function applyOperations(seenStore, checked, { held = null, noteWrites = f
   }
   // A change syncs as a record write does, so it is committed and pushed without a further call; the sync stages artifacts only once this update releases the artifact lock.
   if ((changed.length || clearing.length) && seen.store.sync) scheduleRecordSync(seen.store.base);
-  return { artifacts };
+  return { artifacts, files: changed.map(([target]) => path.relative(seen.store.base, target).split(path.sep).join("/")) };
 }
 
 const FORMAT_TYPES = Object.freeze({ requirements: "requirements", adrs: "adr", glossary: "glossary" });
@@ -897,7 +905,7 @@ async function checkFormats(seen, formatted, { read, statusOf, formatCheck }) {
     const result = await checkArtifactContent({
       path: file, type, bytes: record.bytes, status: await recordedStatus(scope, address),
       lookup: type === "glossary" ? storeSourceLookup(scope, copiesOf) : null,
-      appliedMigration: (id) => id === formatCheck.migration || applied?.has(id) === true,
+      appliedMigration: (id) => formatCheck.appliedMigration?.(id) === true || applied?.has(id) === true,
       unknownAside: formatCheck.unknownAside === true
     });
     if (!result.conforms) refused.push({ path: file, scope, type, findings: result.findings });
@@ -1802,22 +1810,32 @@ export async function storeArtifactCopy(projectRoot, file, input = {}) {
 }
 
 /**
- * Apply a format migration's store changes in one checked update under the store's artifact lock: write the target, { path, scope, content, expectedVersion, status },
- * where a new requirement or ADR is recorded with status, and remove the store source, { path, scope, expectedVersion }, when one is given.
- * The update keeps identities, comments, status records, accepted versions, and sync as update_artifact does, and a version that changed is refused with version_conflict.
- * The target is checked against its format as the proposal was, with unknown values aside and migration, the applied migration's id, counting as applied.
- * Returns the update's entries: [{ path, scope, version } | { path, scope, removed, removedComments? }].
+ * Apply a format migration run's store changes in one checked update under the store's artifact lock: write each target, { path, scope, content, expectedVersion, status },
+ * where a new requirement or ADR is recorded with status, and remove each store source, { path, scope, expectedVersion }.
+ * The update keeps identities, comments, status records, and sync as update_artifact does, and a version that changed is refused with version_conflict.
+ * Each target is checked against its current format as any write is, strictly, with appliedMigration(id) true for the run's own migrations, which apply together;
+ * an Approved or Accepted target keeps its status and records its migrated bytes as its accepted version, attributed to the run as acceptedFrom { migration, at }.
+ * Returns { artifacts, files }: the update's entries, [{ path, scope, version } | { path, scope, removed, removedComments? }], and the store-relative files it changed.
  */
-export async function applyStoreMigration(projectRoot, { target, remove = null, migration = null }) {
+export async function applyStoreRun(projectRoot, { writes, removes = [], appliedMigration, acceptedFrom }) {
   return refusing(async () => {
     const { config, kinds } = await configuration(projectRoot);
     const seen = await seenScopes(projectRoot);
-    const operations = [{ op: "write", path: target.path, content: target.content, expectedVersion: target.expectedVersion, ...scopeFieldsOf(target.scope), ...(target.expectedVersion === null && target.status ? { writtenStatus: target.status } : {}) }];
-    if (remove) operations.push({ op: "remove", path: remove.path, expectedVersion: remove.expectedVersion, ...scopeFieldsOf(remove.scope) });
+    const operations = [
+      ...writes.map((target) => ({ op: "write", path: target.path, content: target.content, expectedVersion: target.expectedVersion, ...scopeFieldsOf(target.scope), ...(target.expectedVersion === null && target.status ? { writtenStatus: target.status } : {}), acceptedFrom })),
+      ...removes.map((source) => ({ op: "remove", path: source.path, expectedVersion: source.expectedVersion, ...scopeFieldsOf(source.scope) }))
+    ];
     const checked = operations.map((operation) => {
-      const { writtenStatus, ...plain } = operation;
+      const { writtenStatus, acceptedFrom: from, ...plain } = operation;
       return { ...checkOperation(config, kinds, plain), operation };
     });
-    return withArtifactStoreLock(seen, async () => (await applyOperations(seen, checked, { noteWrites: true, formatCheck: { unknownAside: true, migration } })).artifacts);
+    return withArtifactStoreLock(seen, () => applyOperations(seen, checked, { noteWrites: true, formatCheck: { unknownAside: false, appliedMigration } }));
   });
+}
+
+/** The store's base folder, where a sync of its records runs, and whether it syncs, in a project with a record store; null without one. */
+export async function storeSyncBase(projectRoot) {
+  if (((await readWorkflowConfig(projectRoot)).workspace?.store ?? null) === null) return null;
+  const seen = await seenScopes(projectRoot);
+  return { base: seen.store.base, sync: Boolean(seen.store.sync) };
 }

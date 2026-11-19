@@ -28,8 +28,9 @@ export const LEGACY_MARKS = "legacy-marks";
 const LEGACY_MARK_ID = /^legacy-[0-9a-f]{8,32}$/;
 // Format migrations are workspace records of their own, apart from the migrations/ and artifact-migrations/ folders that hold the move of records and artifacts into a store.
 export const FORMAT_MIGRATIONS = "format-migrations";
-const FORMAT_MIGRATION_ID = /^migration-[0-9a-f]{8,64}$/;
-const FORMAT_MIGRATION_FILE = /^migration-[0-9a-f]{8,64}\.json$/;
+// A format migration record is a migration run, run- and 16 hexadecimal digits, or a single migration of an earlier Prism, migration- and hexadecimal digits.
+const FORMAT_MIGRATION_ID = /^(?:migration-[0-9a-f]{8,64}|run-[0-9a-f]{16})$/;
+const FORMAT_MIGRATION_FILE = /^(?:migration-[0-9a-f]{8,64}|run-[0-9a-f]{16})\.json$/;
 // Reported format findings are workspace records too, one file per finding, named by the hash of what it reports.
 export const FORMAT_FINDINGS = "format-findings";
 const FORMAT_FINDING_ID = /^finding-[0-9a-f]{16,64}$/;
@@ -73,7 +74,7 @@ export function recordPath(key) {
     return `${RECORD_DIRECTORY}/${LEGACY_MARKS}/${key.id}.json`;
   }
   if (key?.kind === "format-migration") {
-    if (typeof key.id !== "string" || !FORMAT_MIGRATION_ID.test(key.id)) throw fail("invalid_path", "A format migration id is migration- and hexadecimal digits.");
+    if (typeof key.id !== "string" || !FORMAT_MIGRATION_ID.test(key.id)) throw fail("invalid_path", "A format migration record id is run- and 16 hexadecimal digits, or migration- and hexadecimal digits.");
     return `${RECORD_DIRECTORY}/${FORMAT_MIGRATIONS}/${key.id}.json`;
   }
   if (key?.kind === "format-finding") {
