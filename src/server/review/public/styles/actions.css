@@ -79,6 +79,11 @@
   min-width: 0;
 }
 
+/* A choice drawn as one select, such as the host, and a run action's pickers take the whole width of the control. */
+.action-choice.is-wide {
+  justify-items: stretch;
+}
+
 /* A group whose options do not fit one line wraps onto the next. */
 .action-options {
   display: flex;

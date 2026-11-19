@@ -289,9 +289,11 @@ function mountOverlays(container, data, ctx, endRoot) {
     return focusAction(id, chosen);
   };
   endRoot?.querySelector("[data-initiative-settings-open]")?.addEventListener("click", () => dialog.show?.());
-  // Cancel, Escape, and the close button all leave the settings as they were, so a reopened dialog never holds changes nobody applied.
+  // Cancel, Escape, and the close button all leave the settings as they were, so a reopened dialog never holds changes nobody applied;
+  // a picker's popover that closes inside the dialog sends its own prism-close, which keeps them.
   dialog.querySelector("[data-settings-cancel]").addEventListener("click", () => dialog.close?.());
-  dialog.addEventListener("prism-close", () => {
+  dialog.addEventListener("prism-close", (event) => {
+    if (event.target !== dialog) return;
     list.discard();
     showCount();
   });

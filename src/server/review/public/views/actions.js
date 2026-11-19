@@ -1,8 +1,10 @@
 import { badge, escapeHtml } from "./util.js";
 import { coalesce } from "./poller.js";
+import { createRunChoices, createRunOptionsReader, HOST_HINT, hostFieldOf, hostLeader, isRunAction, isRunField } from "./run-choices.js";
 
 // The page draws every action from its listing: the registry names the fields, and this view places them as kit controls:
-// a prism-field per text field, a group of pressed prism-buttons per choice, and prism-buttons to apply and reset.
+// a prism-field per text field, a group of pressed prism-buttons per choice, a select prism-field per choice of host, a prism-picker
+// per run choice, such as a model and its effort, and prism-buttons to apply and reset.
 export const READ_ONLY_NOTICE = "This tab can only read. To make changes, run prism review in this project, or ask the agent to present the review.";
 export const STALE_MESSAGE = "Someone changed this since you opened it; it now shows the current value.";
 
@@ -10,6 +12,8 @@ const isRecord = (value) => value !== null && typeof value === "object" && !Arra
 // Text counts as a value only when it holds more than whitespace, as the server reads it.
 const normalized = (value) => typeof value === "string" ? (value.trim() ? value.trim() : null) : value ?? null;
 const filled = (value) => normalized(value) !== null;
+// Two values are the same when they read alike, so a run choice chosen back to what is stored is no change.
+const same = (left, right) => isRecord(left) || isRecord(right) ? JSON.stringify(left ?? null) === JSON.stringify(right ?? null) : left === right;
 
 /** Each field's current value: a one-field action holds its value, and an object value fills the fields it names. */
 export function currentInput(action) {
@@ -62,7 +66,7 @@ export function actionFormState(action, draft = {}) {
   const input = Object.fromEntries(fields.map((field) => [field.name, Object.hasOwn(values, field.name) ? values[field.name] : current[field.name]]));
   const missing = fields.find((field) => isRequired(field, input) && !filled(input[field.name]));
   // An action without a value, such as an answer or a rebuild, is never unchanged; a setting is unchanged while every field holds its current value.
-  const unchanged = action.value !== null && action.value !== undefined && fields.every((field) => normalized(input[field.name]) === normalized(current[field.name]));
+  const unchanged = action.value !== null && action.value !== undefined && fields.every((field) => same(normalized(input[field.name]), normalized(current[field.name])));
   const confirm = action.confirm && action.confirm.values.includes(normalized(input[action.confirm.field])) ? action.confirm.message : null;
   const hint = !action.available ? action.reason ?? "" : missing ? `Fill in ${missing.label}.` : "";
   return { input, ready: Boolean(action.available) && !unchanged && !missing, confirm, hint };
@@ -143,7 +147,19 @@ function shownFields(action, input) {
 // A one-choice setting applies when an option is picked; an action with text or several fields applies with its own button.
 const appliesOnPick = (action) => !action.context && action.fields.length === 1 && action.fields[0].kind !== "text";
 
-function fieldHtml(action, field, input, { disabled, key }) {
+// A choice of host is one select: a host this computer lacks shows as unavailable and cannot be chosen, with its reason below.
+function selectHtml(action, field, input, { disabled, key }) {
+  const picked = normalized(input[field.name]);
+  const chosen = field.options.find((option) => option.value === picked);
+  const options = field.options.map((option) => `<prism-option value="${escapeHtml(option.value)}"${option.value === picked ? " selected" : ""}${option.reason ? " disabled" : ""}>${escapeHtml(option.label ?? option.value)}${option.reason ? ": unavailable" : ""}</prism-option>`).join("");
+  const reasons = field.options.filter((option) => option.reason).map((option) => `<p class="action-reason">${escapeHtml(option.reason)}</p>`).join("");
+  const consequence = !action.context && chosen?.consequence && !chosen.reason ? `<p class="gate-consequence action-consequence">${escapeHtml(chosen.consequence)}</p>` : "";
+  return `<div class="action-choice is-wide"><prism-field class="action-field" type="select" label="${escapeHtml(field.label)}" hint="${escapeHtml(HOST_HINT)}" value="${escapeHtml(picked ?? "")}" data-select data-field="${escapeHtml(field.name)}" data-focus-key="${escapeHtml(`${key}|${field.name}`)}"${disabled ? " disabled" : ""}>${options}</prism-field>${consequence}${reasons}</div>`;
+}
+
+function fieldHtml(action, field, input, { disabled, key, layout }) {
+  if (layout.select(field)) return selectHtml(action, field, input, { disabled, key });
+  if (layout.skip(field)) return "";
   if (field.kind === "text") {
     const required = isRequired(field, input);
     // The field's hint says whether it is required; maxlength reaches the native control after the field is drawn.
@@ -159,8 +175,9 @@ function fieldHtml(action, field, input, { disabled, key }) {
   return `<div class="action-choice">${group}${consequence}</div>`;
 }
 
-function actionHtml(action, entry, { writable, renderMarkdown, heading, submitLabel, batch }) {
+function actionHtml(action, entry, { writable, renderMarkdown, heading, submitLabel, batch, layoutOf }) {
   const { key, draft, error, sending } = entry;
+  const layout = layoutOf(entry.target, action);
   const state = actionFormState(action, draft);
   const id = `action-${entry.id}`;
   const disabled = !writable || sending;
@@ -172,10 +189,16 @@ function actionHtml(action, entry, { writable, renderMarkdown, heading, submitLa
   } else if (!action.fields.length) {
     control = `<div class="action-submit"><prism-button size="sm" data-apply data-focus-key="${escapeHtml(`${key}|apply`)}"${disabled ? " disabled" : ""}>${escapeHtml(submitLabel?.(action) ?? action.label)}</prism-button></div>`;
   } else {
-    const fields = shownFields(action, state.input).map((field) => fieldHtml(action, field, state.input, { disabled, key })).join("");
+    const fields = shownFields(action, state.input).map((field) => fieldHtml(action, field, state.input, { disabled, key, layout })).join("");
+    // The run choices are kit pickers that stay in place while the list redraws, so their row draws only where they go,
+    // and its buttons are drawn alike with or without a change, which the pickers enable in place.
+    const run = isRunAction(action);
+    const slot = run ? `<div data-run-slot="${escapeHtml(key)}"></div>` : "";
+    const ready = !run && !disabled && state.ready;
+    const reset = run ? `<prism-button size="sm" data-reset data-focus-key="${escapeHtml(`${key}|reset`)}" disabled>Reset</prism-button>` : draft ? `<prism-button size="sm" data-reset data-focus-key="${escapeHtml(`${key}|reset`)}"${sending ? " disabled" : ""}>Reset</prism-button>` : "";
     // A batch list applies its changes together from its own button, so its rows draw no button of their own.
-    const submit = batch || appliesOnPick(action) ? "" : `<div class="action-submit"><prism-button size="sm" variant="primary" data-apply data-focus-key="${escapeHtml(`${key}|apply`)}"${disabled || !state.ready ? " disabled" : ""}>${escapeHtml(submitLabel?.(action) ?? "Apply")}</prism-button>${draft ? `<prism-button size="sm" data-reset data-focus-key="${escapeHtml(`${key}|reset`)}"${sending ? " disabled" : ""}>Reset</prism-button>` : ""}<p class="action-hint" id="${id}-hint" aria-live="polite">${escapeHtml(state.hint)}</p></div>`;
-    control = `${contextHtml(action, renderMarkdown)}${guidanceHtml(action, choice)}<div class="action-fields">${fields}</div>${submit}`;
+    const submit = batch || appliesOnPick(action) ? "" : `<div class="action-submit"><prism-button size="sm" variant="primary" data-apply data-focus-key="${escapeHtml(`${key}|apply`)}"${ready ? "" : " disabled"}>${escapeHtml(submitLabel?.(action) ?? "Apply")}</prism-button>${reset}<p class="action-hint" id="${id}-hint" aria-live="polite">${run ? "" : escapeHtml(state.hint)}</p></div>`;
+    control = `${contextHtml(action, renderMarkdown)}${guidanceHtml(action, choice)}${fields ? `<div class="action-fields">${fields}</div>` : ""}${slot}${submit}`;
   }
   return `<div class="action-row${action.available ? "" : " is-unavailable"}" data-action-key="${escapeHtml(key)}" aria-busy="${Boolean(sending)}">
     <div class="action-meta"><span class="action-label" id="${id}-label">${head.label}</span>${head.detail ? `<span class="action-detail">${head.detail}</span>` : ""}<p class="action-effect" id="${id}-effect">${escapeHtml(action.effect)}</p></div>
@@ -228,24 +251,123 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
   let rendered = "";
   let waitingFocus = null;
   let wanted = [...targets];
+  // The run choices of each run action, kept across redraws, and one reader of the hosts' run options for the whole list.
+  const runChoices = new Map();
+  const reader = typeof api.runOptions === "function" ? createRunOptionsReader((query) => api.runOptions(query)) : null;
 
   function entryOf(target, action) {
     const key = keyOf(target, action);
     let entry = entries.get(key);
     if (!entry) entries.set(key, entry = { key, id: ++sequence, target, error: null, sending: false });
-    entry.draft = drafts[key] ?? null;
+    entry.draft = hostFieldOf(action) ? runDraftOf(target, action) : drafts[key] ?? null;
     return entry;
   }
 
   const actionsOf = () => wanted.flatMap((target) => (listings.get(target)?.actions ?? []).filter((action) => !groups || groups.includes(action.group)).map((action) => ({ target, action })));
   const writable = () => wanted.length > 0 && wanted.every((target) => listings.get(target)?.writable === true);
+  const itemOf = (target, action, items = actionsOf()) => items.find((item) => item.target === target && item.action.id === action.id) ?? { target, action };
+
+  // A run action follows the choice of host that another action of its list offers, such as the initiative's Host, and otherwise draws its own.
+  function layoutOf(target, action) {
+    const items = actionsOf();
+    const self = itemOf(target, action, items);
+    const leads = items.some((other) => isRunAction(other.action) && hostLeader(other, items) === self);
+    const host = hostFieldOf(action);
+    const led = Boolean(host && hostLeader(self, items));
+    return {
+      select: (field) => (leads && field === action.fields[0]) || (field === host && !led),
+      skip: (field) => isRunField(field) || (field === host && led)
+    };
+  }
+
+  // The host a run action shows: the one its leader shows, the one the person chose in its own select, or its stored or first found host.
+  function shownHost(target, action) {
+    const items = actionsOf();
+    const leader = hostLeader(itemOf(target, action, items), items);
+    if (leader) {
+      const field = leader.action.fields[0];
+      return normalized(actionFormState(leader.action, drafts[keyOf(leader.target, leader.action)] ?? null).input[field.name]);
+    }
+    const host = hostFieldOf(action);
+    const chosen = drafts[keyOf(target, action)]?.host;
+    if (chosen) return chosen;
+    return normalized(currentInput(action)[host.name]) ?? host.options.find((option) => !option.reason)?.value ?? host.options[0]?.value ?? null;
+  }
+
+  // A run action keeps the person's unsent choices per host, { hosts: { <host>: values }, host }, so switching hosts and back keeps them;
+  // its draft is the shown host's choices, or none while that host has none and the host itself is unchanged.
+  function runDraftOf(target, action) {
+    const kept = drafts[keyOf(target, action)];
+    const host = shownHost(target, action);
+    const own = kept?.hosts?.[host] ?? null;
+    if (!own && kept?.host === undefined) return null;
+    return { values: { [hostFieldOf(action).name]: host, ...(own ?? {}) } };
+  }
+
+  function runInput(target, action) {
+    const host = shownHost(target, action);
+    return { host, input: actionFormState(action, { values: { [hostFieldOf(action).name]: host, ...(drafts[keyOf(target, action)]?.hosts?.[host] ?? {}) } }).input };
+  }
+
+  // A run choice waits in the shown host's draft; a field chosen back to its current value is no change.
+  function setRunValue(key, name, value) {
+    const item = actionsOf().find((candidate) => keyOf(candidate.target, candidate.action) === key);
+    if (!item) return;
+    const { target, action } = item;
+    const hostName = hostFieldOf(action).name;
+    const host = shownHost(target, action);
+    const kept = (drafts[key] ??= {});
+    const hosts = (kept.hosts ??= {});
+    const values = { ...(hosts[host] ?? {}), [name]: value };
+    const current = actionFormState(action, { values: { [hostName]: host } }).input;
+    for (const [field, chosen] of Object.entries(values)) if (same(normalized(chosen), normalized(current[field]))) delete values[field];
+    if (Object.keys(values).length) hosts[host] = values;
+    else delete hosts[host];
+    if (!Object.keys(hosts).length && kept.host === undefined) delete drafts[key];
+    const entry = entryOf(target, action);
+    entry.error = null;
+    const error = root.querySelector(`[data-action-key="${CSS.escape(key)}"] .action-error`);
+    if (error) error.hidden = true;
+    syncRunChoices();
+    onRender?.();
+  }
+
+  // Places each run action's pickers where its row draws them and brings them up to date; a row drawn without buttons of its own state
+  // has them enabled here, so a choice never redraws the row and an open picker stays open.
+  function syncRunChoices() {
+    for (const { target, action } of actionsOf()) {
+      if (!hostFieldOf(action)) continue;
+      const key = keyOf(target, action);
+      const slot = root.querySelector(`[data-run-slot="${CSS.escape(key)}"]`);
+      let controller = runChoices.get(key);
+      if (!slot && !controller?.section.isConnected) continue;
+      if (!controller) {
+        controller = createRunChoices({
+          read: (query) => (reader ? reader.read(query) : Promise.resolve({ status: 0, json: { message: "This page cannot read the host's run options." } })),
+          choose: (name, value) => setRunValue(key, name, value)
+        });
+        runChoices.set(key, controller);
+      }
+      if (slot) slot.replaceWith(controller.section);
+      const entry = entryOf(target, action);
+      const { host, input } = runInput(target, action);
+      const hostField = hostFieldOf(action);
+      const hostLabel = hostField.options.find((option) => option.value === host)?.label ?? host ?? "";
+      controller.update({ fields: action.fields, input, host, hostLabel, writable: writable() && Boolean(reader), disabled: entry.sending || !action.available });
+      const row = controller.section.closest("[data-action-key]");
+      if (!row) continue;
+      const state = actionFormState(action, entry.draft);
+      row.querySelector("[data-apply]")?.toggleAttribute("disabled", !writable() || entry.sending || !state.ready);
+      row.querySelector("[data-reset]")?.toggleAttribute("disabled", entry.sending || !entry.draft);
+    }
+  }
 
   function html() {
     if (failure && !listings.size) return `<p class="action-error" role="alert">${escapeHtml(failure)}</p>`;
     if (!wanted.every((target) => listings.has(target))) return '<p class="muted action-loading">Loading…</p>';
     const items = actionsOf();
     if (!items.length) return `<p class="empty-note">${escapeHtml(emptyText)}</p>`;
-    const options = { writable: writable(), renderMarkdown, heading, submitLabel, batch };
+    const options = { writable: writable(), renderMarkdown, heading, submitLabel, batch, layoutOf };
     const readOnly = writable() || !notice ? "" : readOnlyNotice();
     return `${readOnly}<div class="action-list${compact ? " is-compact" : ""}">${items.map(({ target, action }) => actionHtml(action, entryOf(target, action), options)).join("")}</div>`;
   }
@@ -253,8 +375,12 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
   // A re-render keeps the focused control and the cursor in a text field, so a refresh never takes the person's place.
   function render() {
     const next = html();
-    if (next === rendered && root.childElementCount) return;
+    if (next === rendered && root.childElementCount) {
+      syncRunChoices();
+      return;
+    }
     const focused = root.contains(document.activeElement) ? document.activeElement : null;
+    const inRun = focused && [...runChoices.values()].some((controller) => controller.section.contains(focused)) ? focused : null;
     // A control that was disabled while its change was sent keeps its claim on focus until it is enabled again, unless focus moved elsewhere.
     const idle = !document.activeElement || document.activeElement === document.body;
     const focusKey = focusKeyOf(focused) ?? (idle ? waitingFocus : null);
@@ -263,7 +389,9 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     rendered = next;
     root.innerHTML = next;
     limitFields(root);
-    if (focusKey) {
+    syncRunChoices();
+    if (inRun?.isConnected) inRun.focus({ preventScroll: true });
+    else if (focusKey) {
       const target = [...root.querySelectorAll("[data-focus-key]")].find((element) => element.dataset.focusKey === focusKey);
       const fallback = isEnabled(target) ? target : root.querySelector(`[data-action-key="${CSS.escape(focusKey.split("|").slice(0, 2).join("|"))}"] :is(${ENABLED})`);
       if (!isEnabled(target) && target) waitingFocus = focusKey;
@@ -373,6 +501,7 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
   }
 
   root.addEventListener("click", (event) => {
+    if (event.target.closest?.("[data-run-choices]")) return;
     const button = event.target.closest("prism-button");
     if (!button || button.disabled || !root.contains(button)) return;
     const item = locate(button);
@@ -399,7 +528,7 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
 
   // Typing updates the draft and the controls it decides in place, so the field keeps its focus and an input method keeps its composition.
   root.addEventListener("input", (event) => {
-    const field = event.target.closest("prism-field[data-field]");
+    const field = event.target.closest("prism-field[data-field]:not([data-select])");
     const item = field && locate(field);
     if (!item) return;
     setDraft(item.entry, { ...(item.entry.draft?.values ?? {}), [field.dataset.field]: field.value });
@@ -421,9 +550,30 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     }
   });
 
-  // Enter in a one-line field applies a ready change, as a form would.
+  // A choice of host waits in the draft like a pick, and a run action's own choice of host shows that host's choices.
+  root.addEventListener("change", (event) => {
+    const field = event.target.closest?.("prism-field[data-select]");
+    const item = field && root.contains(field) ? locate(field) : null;
+    if (!item) return;
+    item.entry.error = null;
+    if (isRunAction(item.action)) {
+      (drafts[item.entry.key] ??= {}).host = field.value;
+      render();
+      return;
+    }
+    const values = { ...(item.entry.draft?.values ?? {}), [field.dataset.field]: field.value };
+    if (!batch && appliesOnPick(item.action)) {
+      if (actionFormState(item.action, { values }).ready) void send(item, values);
+      else render();
+      return;
+    }
+    setDraft(item.entry, values);
+    render();
+  });
+
+  // Enter in a one-line field applies a ready change, as a form would; the run choices' own fields take their own Enter.
   root.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" || event.target.tagName !== "INPUT" || !event.target.closest("prism-field") || event.isComposing) return;
+    if (event.key !== "Enter" || event.target.tagName !== "INPUT" || !event.target.closest("prism-field") || event.target.closest("[data-run-choices]") || event.isComposing) return;
     const item = locate(event.target);
     if (!item?.entry.draft) return;
     event.preventDefault();
@@ -449,8 +599,10 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
       }
       return true;
     },
-    /** Forgets every unsent change of the list. */
+    /** Forgets every unsent change of the list, and closes its pickers, which read the hosts again when they show next. */
     discard() {
+      reader?.forget();
+      for (const controller of runChoices.values()) controller.reset();
       for (const { target, action } of actionsOf()) {
         const entry = entryOf(target, action);
         entry.error = null;

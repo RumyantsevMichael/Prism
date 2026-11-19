@@ -1999,6 +1999,60 @@ prism-picker [hidden] {
   color: var(--prism-color-ink);
 }
 
+/* ---------- Run choices: one prism-picker per run choice, a choice of its own purpose across the width and the agents two to a row ---------- */
+
+.prism-run-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--prism-space-6) var(--prism-space-5);
+  min-width: 0;
+}
+
+.prism-run-choices > [data-wide],
+.prism-run-choices-note {
+  grid-column: 1 / -1;
+}
+
+.prism-run-choices-note {
+  margin: 0;
+  color: var(--prism-color-danger);
+  font-size: var(--prism-font-size-sm);
+  font-weight: var(--prism-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.prism-run-choices-note[hidden] {
+  display: none;
+}
+
+/* Below a run choice's models: the host's note, a typed name, and the effort of the chosen model. */
+.prism-run-choice-effort-head {
+  margin-top: var(--prism-space-2);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.prism-run-choice-efforts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+.prism-run-choice-none,
+.prism-run-choice-levels {
+  color: var(--prism-color-ink-muted);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .prism-run-choices {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* ---------- prism-disclosure: a quiet toggle and the content it shows ---------- */
 
 prism-disclosure {

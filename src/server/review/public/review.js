@@ -392,6 +392,8 @@ function showHistory() {
 // A tab writes only with the write session it took from the one-time grant in the URL Prism opened; the tab's session storage keeps it,
 // which no other tab shares, so a tab opened from a link an agent handed over stays read-only.
 const WRITE_SESSION_KEY = "prism-write-session";
+// A host's run options take at most a minute to read, so their request waits a little longer than that.
+const RUN_OPTIONS_DEADLINE_MS = 75000;
 
 function writeSession() {
   try {
@@ -420,6 +422,13 @@ const actionApi = {
     const response = await appFetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify(request) })
       .catch(() => null);
     if (!response) return { status: 0, json: { message: "The review app did not answer, so the change was not applied. Try again in a moment." } };
+    return { status: response.status, json: await response.json().catch(() => ({ message: "The server returned an unreadable response." })) };
+  },
+  // A host's providers, models, and efforts for a run choice; the read can start the host, so it may take up to a minute.
+  async runOptions(query) {
+    if (connection === "stopped") return { status: 0, json: { message: STOPPED_MESSAGE } };
+    const response = await appFetch(`./api/run-options?${new URLSearchParams(query)}`, { cache: "no-store", headers: writeHeaders(), deadlineMs: RUN_OPTIONS_DEADLINE_MS }).catch(() => null);
+    if (!response) return { status: 0, json: { message: "The review app did not answer, so the host's models could not be read. Try again in a moment." } };
     return { status: response.status, json: await response.json().catch(() => ({ message: "The server returned an unreadable response." })) };
   },
   confirm: confirmAction,
