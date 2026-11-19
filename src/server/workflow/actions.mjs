@@ -15,8 +15,9 @@ import { ambiguousApprovalMessage, answerArtifactApproval, commentOnArtifact, pe
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
 import { confirmLaunch } from "../session/launch-confirmation.mjs";
-import { HOSTS } from "../session/launch-hosts.mjs";
+import { HOSTS, hostDefinition } from "../session/launch-hosts.mjs";
 import { LAUNCH_ID_PATTERN } from "../session/launch-records.mjs";
+import { choiceReasons, nameRuleBreach, NAME_RULE_MESSAGES, readRunOptions, RUN_KINDS, validProvider } from "../session/run-options.mjs";
 import {
   answerLaunchGate,
   hostAvailability,
@@ -36,7 +37,6 @@ import {
 
 const GATE_ID = /^gate-[0-9a-f]{8,32}$/;
 const APPROVAL_ID = /^approval-[0-9a-f]{8,32}$/;
-const TEXT_LIMIT = 200;
 const NOTE_LIMIT = 4000;
 // A scope label is workspace, a repository name, or <repository>/<component>, and neither a label nor an artifact path holds a ":".
 const SCOPE_LABEL = /^[A-Za-z0-9][A-Za-z0-9._-]*(\/[A-Za-z0-9][A-Za-z0-9._-]*)?$/;
@@ -184,10 +184,12 @@ async function readTarget(projectRoot, parsed, indexer, state = undefined, env =
   const shipped = await shippedDecision(projectRoot, parsed.initiative).catch(() => null);
   const context = { ...parsed, coordination, record, shipped, initiativeTarget: `initiative:${parsed.initiative}` };
   if (parsed.kind === "initiative" && !(await initiativeExists(projectRoot, parsed.initiative, record))) throw unknownTarget(parsed.reference);
-  if (parsed.kind === "initiative") {
+  // The host setting names each host this computer lacks, and the models setting checks a change against its host's report.
+  if (parsed.kind === "initiative" || parsed.kind === "slice") {
     context.hosts = await hostAvailability({ env });
-    context.launchRunning = await initiativeRunning({ projectRoot, initiative: parsed.initiative, env });
+    context.readOptions = runOptionsReader(projectRoot, env);
   }
+  if (parsed.kind === "initiative") context.launchRunning = await initiativeRunning({ projectRoot, initiative: parsed.initiative, env });
   if (parsed.kind === "slice" && !(record?.slices && Object.hasOwn(record.slices, parsed.slice))) throw unknownTarget(parsed.reference);
   if (parsed.kind === "gate") {
     const gate = (coordination.state?.pending ?? []).find((item) => isRecord(item) && item.id === parsed.gate);
@@ -201,7 +203,9 @@ async function readTarget(projectRoot, parsed, indexer, state = undefined, env =
 
 const settingsOf = (context) => (context.coordination.valid ? context.coordination.state?.settings : null) ?? {};
 
-function setting({ name, label, fields, effect, confirm = null, value, after = (values) => values.value, ignores = () => [] }) {
+// A setting's fields may follow the target, such as the hosts this computer finds; stored, when given, is the value a change is
+// compared with, for a setting that shows a value it has not stored.
+function setting({ name, label, fields, effect, confirm = null, value, stored = null, after = (values) => values.value, ignores = () => [] }) {
   return {
     id: `initiative.${name}`,
     kinds: ["initiative", "slice"],
@@ -209,8 +213,9 @@ function setting({ name, label, fields, effect, confirm = null, value, after = (
     group: "Initiative settings",
     effect,
     target: (context) => context.initiativeTarget,
-    fields: () => fields,
+    fields: typeof fields === "function" ? fields : () => fields,
     value,
+    ...(stored ? { stored } : {}),
     context: () => null,
     recommended: () => null,
     confirm: () => confirm,
@@ -222,19 +227,134 @@ function setting({ name, label, fields, effect, confirm = null, value, after = (
   };
 }
 
-const NEXT_CHILD = "Applies to child sessions started after the change.";
+const NEXT_AGENT = "Applies to agents started after the change.";
 const autonomyOf = (context) => settingsOf(context).autonomy ?? "conservative";
+
+// ---- Host and models ----
+
+// Each supported host in order, with the reason this computer lacks it, or null where it is found.
+function hostOptions(context, consequence) {
+  return HOSTS.map(({ host, label }) => {
+    const availability = context.hosts?.find((item) => item.host === host);
+    return { value: host, label, consequence: consequence(label), reason: availability?.available ? null : availability?.reason ?? `${label} was not found.` };
+  });
+}
+
+const firstFoundHost = (context) => context.hosts?.find((item) => item.available)?.host ?? null;
+const HOST_DEFAULT_CHOICE = Object.freeze({ model: null, effort: null, typed: false });
+
+// One host's stored entry in full: its provider or null, and each kind's choice with null for the host default.
+function fullEntry(stored) {
+  const entry = isRecord(stored) ? stored : {};
+  const choiceOf = (value) => (isRecord(value) ? { model: value.model ?? null, effort: value.effort ?? null, typed: value.typed === true } : { ...HOST_DEFAULT_CHOICE });
+  return { provider: typeof entry.provider === "string" ? entry.provider : null, ...Object.fromEntries(RUN_KINDS.map(({ kind }) => [kind, choiceOf(entry[kind])])) };
+}
+
 const modelsOf = (context) => {
-  const stored = settingsOf(context).models;
-  return stored === undefined || stored === "defaults" ? "host defaults" : stored;
+  const stored = isRecord(settingsOf(context).models) ? settingsOf(context).models : {};
+  return Object.fromEntries(HOSTS.map(({ host }) => [host, fullEntry(stored[host])]));
 };
-const whenCustom = { field: "mode", values: ["custom"] };
+
+// The stored form leaves out every host default, and every host whose entry is then empty.
+function compactModels(value) {
+  const compact = {};
+  for (const [host, entry] of Object.entries(value)) {
+    const kept = {};
+    if (entry.provider !== null) kept.provider = entry.provider;
+    for (const { kind } of RUN_KINDS) {
+      const choice = entry[kind];
+      const part = { ...(choice.model === null ? {} : { model: choice.model }), ...(choice.effort === null ? {} : { effort: choice.effort }), ...(choice.typed ? { typed: true } : {}) };
+      if (Object.keys(part).length) kept[kind] = part;
+    }
+    if (Object.keys(kept).length) compact[host] = kept;
+  }
+  return compact;
+}
+
+// Reads a host's run options for the checkout; one apply keeps what it read, so its checks under the state lock read nothing again.
+function runOptionsReader(projectRoot, env) {
+  const reads = new Map();
+  return (selection) => {
+    const key = JSON.stringify(selection);
+    if (!reads.has(key)) reads.set(key, readRunOptions({ ...selection, checkout: projectRoot, env }));
+    return reads.get(key);
+  };
+}
+
+const optionOf = (report, id) => report.options.find((item) => item.id === id) ?? null;
+const RUN_CHOICE_HINTS = {
+  coordinator: "Only coordinates: it plans the order of work, starts the agents below and asks you at gates. It writes no code.",
+  designImplementation: "Writes each slice's design, tests and code.",
+  codeReview: "Reviews each finished slice.",
+  securityReview: "Reviews slices that touch access, secrets or other trust boundaries.",
+  gateSummary: "Turns the design's tests into the short examples you read at the design gate."
+};
+const PROVIDER_HINT = "Where the host sends its model requests; only some hosts offer a choice.";
+
+function modelsFields(context) {
+  return [
+    choice("host", "Host", hostOptions(context, (label) => `Shows and changes the choices kept for ${label}.`), { required: true }),
+    field("provider", "run-option", "Provider", { for: "coordinator", option: "provider", hint: PROVIDER_HINT }),
+    ...RUN_KINDS.map(({ kind, label, purpose }) => field(kind, "run-choice", label, { for: purpose, hint: RUN_CHOICE_HINTS[kind] }))
+  ];
+}
+
+// A change names one host and its entry, and only what that host reports, or a model name typed as such, is taken; the checks run
+// in field order, so the first failing field answers: the host, the provider, then the kinds. The host is read only for a value it
+// must offer, so host defaults and a typed model without an effort start no host process.
+async function checkedModels(values, context) {
+  const { host, provider } = values;
+  const { label } = hostDefinition(host);
+  const refuse = (name, message) => invalid(name, "A value that the host reports, the host default, or a model name typed as such.", message);
+  const missing = hostOptions(context, () => "").find((item) => item.value === host)?.reason;
+  if (missing) throw refuse("host", missing);
+  if (provider !== null) {
+    if (!validProvider(provider)) throw refuse("provider", NAME_RULE_MESSAGES.provider);
+    const base = await context.readOptions({ host, purpose: "coordinator" });
+    if (base.state === "unavailable") throw refuse("host", base.reason);
+    if (!optionOf(base, "provider")?.values.some((item) => item.value === provider)) throw refuse("provider", choiceReasons.provider(label, provider));
+  }
+  for (const { kind, purpose } of RUN_KINDS) {
+    const choice = values[kind] ?? HOST_DEFAULT_CHOICE;
+    if (choice.typed && choice.model === null) throw refuse(kind, "Only a model name can be typed.");
+    const breach = nameRuleBreach({ model: choice.model, effort: choice.effort });
+    if (breach) throw refuse(kind, breach.message);
+    if (choice.effort === null && (choice.model === null || choice.typed)) continue;
+    const report = await context.readOptions({ host, purpose, provider, model: choice.model, effort: choice.effort, typed: choice.typed });
+    if (report.state === "unavailable") throw refuse("host", report.reason);
+    for (const id of ["model", "effort"]) {
+      const chosen = optionOf(report, id)?.chosen;
+      if (chosen?.state === "not-offered") throw refuse(kind, chosen.reason);
+    }
+  }
+  const after = modelsOf(context);
+  after[host] = { provider, ...Object.fromEntries(RUN_KINDS.map(({ kind }) => [kind, values[kind] ?? { ...HOST_DEFAULT_CHOICE }])) };
+  return after;
+}
 
 const SETTING_DEFINITIONS = [
   setting({
+    name: "host",
+    label: "Host",
+    fields: (context) => [choice("value", "Host", hostOptions(context, (label) => `${label} runs the launched session and its agents.`), { required: true })],
+    effect: "Launches started after the change run on this host; a running or resumed session keeps the host it started on.",
+    // With no host stored, the first host this computer finds shows, and choosing it still stores it as the person's.
+    value: (context) => settingsOf(context).host ?? firstFoundHost(context),
+    stored: (context) => settingsOf(context).host ?? null,
+    after: (values, context) => {
+      const chosen = hostOptions(context, () => "").find((item) => item.value === values.value);
+      if (chosen?.reason) throw invalid("value", HOSTS.map(({ host }) => host), chosen.reason);
+      return values.value;
+    }
+  }),
+  setting({
     name: "autonomy",
     label: "Autonomy",
-    fields: [choice("value", "Autonomy", [option("conservative", "Conservative"), option("broad", "Broad"), option("full", "Full")], { required: true })],
+    fields: [choice("value", "Autonomy", [
+      option("conservative", "Conservative", "You approve every design and answer every decision."),
+      option("broad", "Broad", "Designs that change no requirement, add no decision record and raise no open question are accepted without you; you answer the rest."),
+      option("full", "Full", "Agents accept every design and settle internal decisions without you; they never turn on Push.")
+    ], { required: true })],
     effect: "Decides which later gates wait for you; a gate already open keeps waiting for you.",
     confirm: { field: "value", values: ["full"], message: "Agents will accept every design and resolve internal decisions without you." },
     value: autonomyOf
@@ -243,7 +363,7 @@ const SETTING_DEFINITIONS = [
     name: "commit",
     label: "Commit",
     fields: [toggle("value", "Commit", "Agents leave their changes uncommitted.", "Agents commit their changes to Git history.")],
-    effect: NEXT_CHILD,
+    effect: NEXT_AGENT,
     confirm: { field: "value", values: ["on"], message: "Agents will commit their changes to Git history." },
     value: (context) => settingsOf(context).commit ?? (autonomyOf(context) === "full" ? "on" : "off")
   }),
@@ -251,42 +371,42 @@ const SETTING_DEFINITIONS = [
     name: "push",
     label: "Push",
     fields: [toggle("value", "Push", "Finished slices stay on this machine.", "Agents push finished slices beyond this machine.")],
-    effect: NEXT_CHILD,
+    effect: NEXT_AGENT,
     confirm: { field: "value", values: ["on"], message: "Agents will push finished slices beyond this machine." },
     value: (context) => settingsOf(context).push ?? "off"
   }),
   setting({
     name: "continuation",
     label: "Continuation",
-    fields: [choice("value", "Continuation", [option("auto", "Automatic"), option("stepwise", "Stepwise")], { required: true })],
-    effect: "Applies when the slice in progress finishes.",
+    fields: [choice("value", "Continuation", [
+      option("auto", "Automatic", "The next slice starts as soon as one finishes."),
+      option("stepwise", "Stepwise", "The run stops after each slice until you continue it.")
+    ], { required: true })],
+    effect: "Whether the next slice starts by itself; applies when the slice in progress finishes.",
     value: (context) => settingsOf(context).continuation ?? "auto"
   }),
   setting({
     name: "review",
     label: "Review",
-    fields: [choice("value", "Review", [option("marked", "Marked slices"), option("recommended", "Recommended slices"), option("all", "All slices")], { required: true })],
-    effect: "Sets the review mark of slices whose design is not yet accepted.",
+    fields: [choice("value", "Review", [
+      option("marked", "Marked slices", "Only slices you mark for review at the design gate."),
+      option("recommended", "Recommended slices", "Slices you mark, plus those the design recommends reviewing."),
+      option("all", "All slices", "Every slice gets a code review.")
+    ], { required: true })],
+    effect: "Which slices get a code review before they count as done; a slice whose design is already accepted keeps its review.",
     value: (context) => settingsOf(context).review ?? "marked"
   }),
-  setting({
-    name: "models",
-    label: "Models",
-    fields: [
-      choice("mode", "Models", [option("host defaults", "Host defaults"), option("custom", "Custom")], { required: true }),
-      text("delivery", "Delivery model", TEXT_LIMIT, { requiredWhen: whenCustom }),
-      text("review", "Review model", TEXT_LIMIT, { requiredWhen: whenCustom }),
-      text("securityReview", "Security review model", TEXT_LIMIT, { requiredWhen: whenCustom }),
-      text("examples", "Examples model", TEXT_LIMIT)
-    ],
-    effect: NEXT_CHILD,
-    value: modelsOf,
-    // Host defaults store no model names, so the text fields are neither checked nor kept.
-    ignores: (values) => values.mode === "host defaults" ? ["delivery", "review", "securityReview", "examples"] : [],
-    after: (values) => values.mode === "host defaults"
-      ? "host defaults"
-      : { delivery: values.delivery, review: values.review, securityReview: values.securityReview, ...(values.examples === null ? {} : { examples: values.examples }) }
-  })
+  {
+    ...setting({
+      name: "models",
+      label: "Models",
+      fields: modelsFields,
+      effect: "The coordinator's model and effort apply to launches started after the change, and each agent's to agents started after it; a running session or agent keeps its own.",
+      value: modelsOf,
+      after: checkedModels
+    }),
+    change: (context, after) => ({ setting: { name: "models", value: compactModels(after) } })
+  }
 ];
 
 // Only the settings that coordination state accepts have actions, so a setting Prism retires loses its action with it.
@@ -543,7 +663,9 @@ function readInput(fields, input, ignores = () => []) {
   let ignored = null;
   for (const item of ordered) {
     const raw = input[item.name];
-    if (item.kind === "text") {
+    if (item.kind === "run-option" || item.kind === "run-choice") {
+      values[item.name] = item.kind === "run-option" ? runOptionInput(item, raw) : runChoiceInput(item, raw);
+    } else if (item.kind === "text") {
       ignored ??= new Set(ignores(values));
       if (ignored.has(item.name)) {
         values[item.name] = null;
@@ -571,6 +693,28 @@ function readInput(fields, input, ignores = () => []) {
     }
   }
   return values;
+}
+
+// A run option takes a name or null for the host default; whether the host offers it is the action's own check.
+function runOptionInput(item, raw) {
+  if (raw === undefined || raw === null || raw === "") return null;
+  if (typeof raw !== "string") throw invalid(item.name, "A name, or null for the host default.", `${item.label} must be a name or the host default.`);
+  return raw;
+}
+
+// A run choice takes { model, effort, typed } or null for the host default, with null or a missing part as the host's default.
+function runChoiceInput(item, raw) {
+  const accepted = "{ model, effort, typed } with model and effort a name or null and typed true or false, or null for the host default.";
+  if (raw === undefined || raw === null) return { model: null, effort: null, typed: false };
+  const malformed = () => invalid(item.name, accepted, `${item.label} must be a model, an effort, and whether the model was typed.`);
+  if (!isRecord(raw) || Object.keys(raw).some((key) => !["model", "effort", "typed"].includes(key))) throw malformed();
+  const part = (value) => {
+    if (value === undefined || value === null || value === "") return null;
+    if (typeof value !== "string") throw malformed();
+    return value;
+  };
+  if (raw.typed !== undefined && typeof raw.typed !== "boolean") throw malformed();
+  return { model: part(raw.model), effort: part(raw.effort), typed: raw.typed === true };
 }
 
 // ---- Applying ----
@@ -605,13 +749,14 @@ async function authorOf(projectRoot, { store = false } = {}) {
 
 // Checks one request against a target read: the action, the revision, availability, the input, and confirmation, in that order.
 // It answers null for an input equal to the current value, and otherwise the definition, its view, and the value to set.
-function check(definition, context, { revision, input, confirmed }) {
+async function check(definition, context, { revision, input, confirmed }) {
   const current = view(definition, context);
   if ((revision ?? null) !== current.revision) throw fail("stale_revision", "The record changed since the page read it.", { current });
   if (!current.available) throw fail(definition.unavailableCode?.(context) ?? "action_unavailable", current.reason, { reason: current.reason, current });
   const values = readInput(current.fields, input, definition.ignores ?? (() => []));
-  const after = definition.after(values, context);
-  if (current.value !== null && sameValue(after, current.value)) return null;
+  const after = await definition.after(values, context);
+  const unchanged = definition.stored ? definition.stored(context) : current.value;
+  if (unchanged !== null && sameValue(after, unchanged)) return null;
   if (current.confirm && current.confirm.values.includes(values[current.confirm.field] ?? null) && confirmed !== true) {
     throw fail("confirmation_required", current.confirm.message, { confirm: current.confirm });
   }
@@ -646,7 +791,7 @@ export async function applyAction({ projectRoot, target, action, input, revision
   if (parsed.kind === "approval") {
     // An ambiguous id is refused before any other check, whatever revision and input the request holds.
     if (read.ambiguous) throw fail("approval_ambiguous", read.ambiguous, { reason: read.ambiguous });
-    const checked = check(definition, read, request);
+    const checked = await check(definition, read, request);
     applied = await entryOf(checked, read);
     // An approval records who gave it, so a checkout whose Git names no user is refused rather than recording an anonymous one.
     if (!applied.by.name) throw fail("author_unknown", "Git names no user.name for this checkout, so the answer cannot record who approved; set one with git config user.name and answer again.");
@@ -660,7 +805,7 @@ export async function applyAction({ projectRoot, target, action, input, revision
       throw storeRefused(error) ? storeRefusal(error) : error;
     });
   } else if (parsed.kind === "artifact") {
-    const checked = check(definition, read, request);
+    const checked = await check(definition, read, request);
     applied = await entryOf(checked, read);
     // A comment records who wrote it, so a checkout whose Git names no user is refused rather than storing an anonymous one.
     if (!applied.by.name) throw fail("author_unknown", "Git names no user.name for this checkout, so the comment cannot record who wrote it; set one with git config user.name and comment again.");
@@ -673,7 +818,7 @@ export async function applyAction({ projectRoot, target, action, input, revision
       throw storeRefused(error) ? storeRefusal(error) : error;
     });
   } else if (parsed.kind === "index") {
-    const checked = check(definition, read, request);
+    const checked = await check(definition, read, request);
     if (checked) {
       applied = await entryOf(checked, read);
       // The rebuild and its history entry belong to the checkout that indexes the component.
@@ -684,7 +829,7 @@ export async function applyAction({ projectRoot, target, action, input, revision
     // The checks repeat under the state lock on the state it holds, so a change that lands between the read above and the write is never overwritten.
     const written = await recordPersonAction({ projectRoot, initiative: parsed.initiative, prepare: async (coordination) => {
       const context = await readTarget(projectRoot, parsed, indexer, coordination, env, checkouts);
-      const checked = check(definition, context, request);
+      const checked = await check(definition, context, request);
       if (!checked) return null;
       const entry = await entryOf(checked, context);
       return { entry, ...definition.change(context, checked.after) };
@@ -710,7 +855,7 @@ const launchRefusal = (error) => (error instanceof LaunchError ? fail(error.code
 // Applies a launch, stop, or resume: the common checks, then the action's own step, which confirms outside the page where it starts a
 // session, and only once that took effect the history entry, which names the launch id and never the host session id.
 async function applyLaunchAction({ projectRoot, definition, context, request, entryOf, env, target, indexer, checkouts = null }) {
-  const checked = check(definition, context, request);
+  const checked = await check(definition, context, request);
   let outcome;
   try {
     outcome = await definition.launch({ projectRoot, context, env });

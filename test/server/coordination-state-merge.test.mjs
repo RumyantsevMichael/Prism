@@ -175,8 +175,8 @@ test("a person's change on one machine and an agent's state write on another wit
   const { applied } = await applyAction({ projectRoot: value.a, target: "initiative:reports", action: "initiative.continuation", input: { value: "stepwise" }, revision: view.revision, via: "review-app" });
   const onB = await readCoordinationState({ projectRoot: value.b, initiative: "reports" });
   await updateCoordinationState({ projectRoot: value.b, initiative: "reports", expectedRevision: onB.revision, changes: { next: ["Implement reports."], settings: { review: "all" } } });
-  const otherView = (await listActions({ projectRoot: value.b, target: "initiative:reports" })).actions.find((action) => action.id === "initiative.models");
-  const { applied: fromB } = await applyAction({ projectRoot: value.b, target: "initiative:reports", action: "initiative.models", input: { mode: "custom", delivery: "opus", review: "opus", securityReview: "opus" }, revision: otherView.revision, via: "review-app" });
+  const otherView = (await listActions({ projectRoot: value.b, target: "initiative:reports" })).actions.find((action) => action.id === "initiative.autonomy");
+  const { applied: fromB } = await applyAction({ projectRoot: value.b, target: "initiative:reports", action: "initiative.autonomy", input: { value: "broad" }, revision: otherView.revision, via: "review-app" });
   assert.equal((await syncRecordStore(value.storeA)).state, "ok");
   const status = await syncRecordStore(value.storeB);
   assert.deepEqual([status.state, status.conflicts], ["ok", []]);
@@ -188,11 +188,11 @@ test("a person's change on one machine and an agent's state write on another wit
   assert.equal(await readFile(path.join(value.storeA, PATH), "utf8"), await readFile(path.join(value.storeB, PATH), "utf8"));
   const { state } = stateA;
   assert.deepEqual([state.settings.continuation, state.settings.review, state.next], ["stepwise", "all", ["Implement reports."]]);
-  assert.deepEqual(state.settings.models, { delivery: "opus", review: "opus", securityReview: "opus" });
+  assert.deepEqual(state.settings.autonomy, "broad");
   assert.deepEqual(state.history.map((item) => item.id).sort(), [applied.id, fromB.id].sort());
   assert.deepEqual(state.history.find((item) => item.id === applied.id).by.name, "Ada");
   assert.deepEqual(state.history.find((item) => item.id === fromB.id).by.name, "Grace", "each entry names the machine's own author");
-  assert.deepEqual(Object.keys(state.personSettings).sort(), ["continuation", "models"]);
+  assert.deepEqual(Object.keys(state.personSettings).sort(), ["autonomy", "continuation"]);
 });
 
 // History and closed gates are the only parts that give way to the 1 MiB limit, oldest first, so a valid answer is never refused for good.

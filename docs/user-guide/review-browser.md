@@ -202,12 +202,19 @@ An initiative has these settings, each with its default and the moment an agent 
 
 | Setting | Values | Default | Takes effect |
 | --- | --- | --- | --- |
+| Host | Each host Prism supports, Claude Code and Codex | None stored, shown as the first host found on this computer | For launches started after the change; a running or resumed session keeps the host it started on. |
 | Autonomy | `conservative`, `broad`, `full` | `conservative` | Decides which later gates wait for you; a gate already open keeps waiting for you. |
-| Commit | `off`, `on` | `on` with `full` autonomy, otherwise `off` | For child sessions started after the change. |
-| Push | `off`, `on` | `off` | For child sessions started after the change. |
+| Commit | `off`, `on` | `on` with `full` autonomy, otherwise `off` | For agents started after the change. |
+| Push | `off`, `on` | `off` | For agents started after the change. |
 | Continuation | `auto`, `stepwise` | `auto` | When the slice in progress finishes. |
-| Review | `marked`, `recommended`, `all` | `marked` | Sets the review mark of slices whose design is not yet accepted. |
-| Models | `host defaults`, or a delivery, review, and security review model with an optional examples model | `host defaults` | For child sessions started after the change. |
+| Review | `marked`, `recommended`, `all` | `marked` | Sets the review mark of slices whose design is not yet accepted; a slice whose design is already accepted keeps its review. |
+| Models | For each host, a provider and the model and effort of the coordinator, design and implementation, code review, security review, and design gate summary agents | The host's own default for each | The coordinator's for launches started after the change, and each agent's for agents started after it. |
+
+A host that is not found on this computer shows why, such as `Claude Code was not found: no claude executable on PATH.`, and choosing it is refused with that reason.
+A change to Models names one host and keeps the choices of every other host.
+It takes only a provider, model, or effort that the host reports, its default, or a model name you typed, which Prism cannot check; a value the host does not offer is refused with a reason such as `Claude Code on this computer does not offer the model claude-opus-3.`
+While the host cannot report its options, Models takes only the host's defaults and typed model names.
+An initiative's earlier Models value keeps its meaning: `host defaults` reads as the host's default for every choice, and named delivery, review, security review, and examples models read as typed models of the design and implementation, code review, security review, and design gate summary agents of every host.
 
 Turning autonomy to `full`, commit on, or push on asks you to confirm first, because it lets agents act further without you.
 
@@ -223,8 +230,7 @@ On a slice page the card names the initiative above its title, because the setti
 Each setting shows its options as a button group, the sentence on when a change takes effect, and for an on or off setting what the picked option does.
 In the dialog, the options you pick wait for **Apply**, which counts them, such as **Apply 2 changes**, and applies them one by one; it stops at a change that is refused or that you do not confirm, and closes once all of them applied.
 **Cancel**, Esc, or **Close** closes the dialog and drops the changes you have not applied.
-On a slice page's card, picking an option applies it at once, except for Models, whose model names you type and then send with **Apply** or Enter; **Reset** drops what you typed.
-Choosing **Custom** for Models shows the delivery, review, security review, and examples model fields, and **Apply** stays disabled with a hint such as `Fill in Delivery model.` until every required name is filled in.
+On a slice page's card, picking an option applies it at once.
 A change that needs your confirmation opens a dialog that says what it lets agents do, with **Confirm** and **Cancel**; Esc or **Cancel** leaves the setting as it was.
 Every control works with Tab, Enter, and Space.
 When an agent or another tab changed the setting after the page showed it, the page refuses your change, shows the current value, and says `Someone changed this since you opened it; it now shows the current value.`

@@ -18,7 +18,7 @@ process.env.PLUGIN_DATA = privateData;
 delete process.env.CLAUDE_PLUGIN_DATA;
 test.after(() => rm(privateData, { recursive: true, force: true }));
 const posixOnly = process.platform === "win32" ? "the stub hosts and dialogs are POSIX scripts" : false;
-const SETTINGS = ["initiative.autonomy", "initiative.commit", "initiative.push", "initiative.continuation", "initiative.review", "initiative.models"];
+const SETTINGS = ["initiative.host", "initiative.autonomy", "initiative.commit", "initiative.push", "initiative.continuation", "initiative.review", "initiative.models"];
 const effect = (label) => `Starts a headless ${label} session on this computer that runs the orchestrate skill for this initiative; you confirm it outside the browser unless you confirmed in the last 30 minutes.`;
 
 async function setup(t, options = {}) {

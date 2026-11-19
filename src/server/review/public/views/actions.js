@@ -115,6 +115,8 @@ function fieldHtml(action, field, input, { disabled, key }) {
     // The field's hint says whether it is required; maxlength reaches the native control after the field is drawn.
     return `<prism-field class="action-field" type="${field.multiline ? "textarea" : "text"}" label="${escapeHtml(field.label)}" hint="${required ? "Required" : "Optional"}" value="${escapeHtml(input[field.name] ?? "")}" data-field="${escapeHtml(field.name)}" data-focus-key="${escapeHtml(`${key}|${field.name}`)}"${field.maxLength ? ` data-max-length="${field.maxLength}"` : ""}${required ? " required" : ""}${disabled ? " disabled" : ""}></prism-field>`;
   }
+  // A field without options, such as a run choice, has a control of its own that this generic view does not draw.
+  if (!Array.isArray(field.options)) return "";
   const picked = normalized(input[field.name]);
   const chosen = field.options.find((option) => option.value === picked);
   const group = `<div class="action-options" role="group" aria-label="${escapeHtml(field.label)}">${field.options.map((option) =>
