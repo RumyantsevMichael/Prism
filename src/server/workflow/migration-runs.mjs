@@ -153,9 +153,10 @@ export function setRunLauncher(value) {
 const starting = new Map();
 
 /**
- * Start one run for each new set among the checked artifacts, apart from the task that made the check: the returned promise settles once the runs are recorded,
+ * Start one run for each new set among the checked artifacts: the returned promise settles once the runs are recorded on this machine,
  * and every failure is kept from the caller, since a set that no run holds is started by the next check.
- * With store sync on, each new run is confirmed with the store's remote as a slice claim is, so the run that another machine recorded first wins, and an unreachable remote starts nothing.
+ * The rest happens apart from the task that made the check: with store sync on, each new run is confirmed with the store's remote as a slice claim is,
+ * so the run that another machine recorded first wins and an unreachable remote withdraws it, and each confirmed run's session is launched.
  */
 export function startMigrationRuns(projectRoot, checked) {
   const candidates = checked.filter((artifact) => !artifact.conforms && MIGRATED_TYPES.has(artifact.type));
@@ -169,7 +170,6 @@ export function startMigrationRuns(projectRoot, checked) {
 
 async function startRuns(projectRoot, checked) {
   const root = await realpath(projectRoot);
-  const { storeSyncBase } = await import("./store-artifacts.mjs");
   const started = await withRecordLock(root, START_LOCK, async () => {
     const sets = findMigrationSets(await allRuns(root), checked);
     const written = [];
@@ -183,7 +183,12 @@ async function startRuns(projectRoot, checked) {
     }
     return written;
   }, fail);
-  if (!started.length) return [];
+  if (started.length) confirmRuns(root, started).catch(() => {});
+  return started;
+}
+
+async function confirmRuns(root, started) {
+  const { storeSyncBase } = await import("./store-artifacts.mjs");
   const store = await storeSyncBase(root).catch(() => null);
   let confirmed = started;
   if (store?.sync) {

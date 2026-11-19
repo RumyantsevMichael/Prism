@@ -54,7 +54,7 @@ export async function reportFormatFinding({ projectRoot, artifact, message, line
     return { finding: plain(finding) };
   }, fail);
   // The reported artifact no longer conforms, so the check that follows the report starts a run for its set when no run holds it yet.
-  checkTargets(root, store, targets).catch(() => {});
+  await checkTargets(root, store, targets).catch(() => {});
   return reported;
 }
 

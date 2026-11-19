@@ -376,16 +376,16 @@ export async function checkTargets(root, store, targets, { legacyOf, appliedMigr
   const states = migrationStates(await refusing(() => allRuns(root)), checked);
   for (const [index, state] of states.entries()) artifacts[index].migration = state;
   // A set holds every nonconforming artifact of its type and scope, so a check of some artifacts starts runs from a check of all of them, apart from itself.
-  if (startRuns && complete) startMigrationRuns(root, checked).catch(() => {});
-  else if (startRuns && checked.some((artifact) => !artifact.conforms)) checkAllLater(root);
+  // The runs are recorded before the check returns, and their confirmation with a store's remote and their sessions follow apart from it.
+  if (startRuns && complete) {
+    const started = await startMigrationRuns(root, checked);
+    if (started.length) for (const [index, state] of migrationStates(started, checked).entries()) if (state) artifacts[index].migration = state;
+  } else if (startRuns && checked.some((artifact) => !artifact.conforms && artifact.type !== "feature")) {
+    await checkArtifacts({ projectRoot: root }).catch(() => {});
+    const states = migrationStates(await refusing(() => allRuns(root)), checked);
+    for (const [index, state] of states.entries()) artifacts[index].migration = state;
+  }
   return artifacts;
-}
-
-const fullChecks = new Set();
-function checkAllLater(root) {
-  if (fullChecks.has(root)) return;
-  fullChecks.add(root);
-  setImmediate(() => checkArtifacts({ projectRoot: root }).catch(() => {}).finally(() => fullChecks.delete(root)));
 }
 
 /** The key of an artifact version's reported findings: its scope label, path, and version. */
