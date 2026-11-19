@@ -13,6 +13,7 @@ import { checkArtifactFolders, folderChecks, noteToolCallWrite, recordStoreOf, r
 import { pruneArtifactFolders, runGit, scheduleRecordSync } from "./record-store-sync.mjs";
 import { artifactKinds, readWorkflowConfig } from "./workflow-config.mjs";
 import { parseStoreJson } from "./store-json.mjs";
+import { declaredView } from "./view-declarations.mjs";
 
 // Agents read and write a workspace's descriptive artifacts in its record store through these tools, addressed by the project-relative path the checkout's configured paths give them.
 const PAGE_LINES = 2000;
@@ -62,7 +63,7 @@ export const UPDATE_ARTIFACT_SCHEMA = object({
     object({ op: { const: "edit" }, path: text, expectedVersion: version, edits: { type: "array", minItems: 1, maxItems: 200, items: object({ oldText: anyText, newText: anyText }) }, ...scopeFields }, ["op", "path", "expectedVersion", "edits"]),
     object({ op: { const: "remove" }, path: text, expectedVersion: version, ...scopeFields }, ["op", "path", "expectedVersion"]),
     object({ op: { const: "move_scope" }, path: text, expectedVersion: version, ...scopeFields }, ["op", "path", "expectedVersion", "scope"]),
-    object({ op: { const: "ask_approval" }, path: text, status: { type: "string", minLength: 1, maxLength: 200 }, question: text, context: { type: "string", maxLength: 8000 }, ...scopeFields }, ["op", "path", "context"])
+    object({ op: { const: "ask_approval" }, path: text, status: { type: "string", minLength: 1, maxLength: 200 }, shipped: { type: "string", minLength: 1, maxLength: 200 }, question: text, context: { type: "string", maxLength: 8000 }, ...scopeFields }, ["op", "path", "context"])
   ] } }
 }, ["projectRoot", "operations"]);
 
@@ -71,13 +72,13 @@ const SCOPE_TEXT = "scope is \"workspace\", \"repository\" for this checkout's r
 export const ARTIFACT_TOOLS = Object.freeze([
   {
     name: "get_artifact",
-    description: `In a project whose .prism/workflow.md names a record store, read a descriptive artifact the store holds: a requirement, an ADR, a plan file such as slice.md, the glossary, or the roadmap view. Address it by the project-relative path that the configured Requirements, ADRs, Plans, Glossary, and Roadmap paths give it; feature files, the user guide, tests, and code stay in the checkout and are refused with not_an_artifact. Every name below a configured folder, and the configured Glossary and Roadmap file names, must begin with an ASCII letter or digit, hold only ASCII letters, digits, ".", "_", and "-", not end in "." or ".lock", and be no Windows device name such as con, aux, nul, com1, or lpt1 before its first "."; any other is refused with artifact_name_invalid, data.invalidName holding the first such name, and listings leave such files out. A file read returns path, scope, kind, version (sha256 of its bytes, which update_artifact takes as expectedVersion), bytes, totalLines, offset, content, and nextOffset: content is whole lines from offset (1-based) up to limit lines (default 2000) and 64 KiB, at least one line, so read again from nextOffset until it is null. A requirement or ADR also returns status, its recorded status, which only a person's answer at a gate changes, and statusMismatch with written, recorded, and a message when its Status: line says otherwise; every file returns acceptedVersion and changedSinceAccepted against the bytes a person last accepted, approval once one is recorded, latestAnswer with the gate, status, choice (approve or request-changes), note, answeredAt, by, and entry (the id of the review app's history entry that applied it) of the person's latest answer at an approval gate, so requested changes reach an agent that no longer waits, and accepted true reads those accepted bytes. Every file read also returns comments, the people's comments on the file from the review browser, oldest first and including those a store sync brought from other machines, each with id, version (the version it was made on), line, text, author (name and host), at, and entry (the id of the review app's history entry that applied it), at most 20 in one read, with totalComments, the number of all of them, and nextCommentOffset, the 1-based position of the first one left out, or null; read the rest with commentOffset (1-based, default 1) set to nextCommentOffset until it is null. The comments move with the file to another scope and are removed with it. Every read also returns location, the artifact's place below artifacts/ in the store. Without path, or with a folder, it lists the artifacts of every scope the store holds below it: the workspace scope, each repository's scope, and each component scope, also those of other repositories, each with path, location, scope, kind, version, bytes, and status for a requirement or ADR, sorted by path and then scope label, at most 2000 with truncated true when more exist, and indexedAt, the time of the index the listing answers from, which Prism refreshes after each store sync and artifact write and once it is a minute old. An entry's path is where this checkout's configured folder of its kind puts it, or null when this checkout configures no path for its kind, and entries without a path list last; read one of those by location. label names one scope by the label listings report, such as workspace, a repository's name, or <repository>/<component>, and with path reads that scope's artifact; an unknown label is refused with scope_unknown and data.scopes listing the labels the store holds, and label with scope or component is refused with scope_invalid. location, a listing entry's location, reads the artifact there in place of path, and with path, label, scope, or component is refused with scope_invalid. A path that more than one scope holds is refused with artifact_ambiguous, data.scopes listing every holding scope's label, until label picks one; scope and component still name only this checkout's own scopes: ${SCOPE_TEXT}. Refusals: artifact_not_found, artifact_not_text, scope_invalid, component_unknown, store_not_configured when the project has no store, and the store's own refusal, such as store_unavailable or a repository name refusal, when it cannot be used. Reads never change a checkout file.`,
+    description: `In a project whose .prism/workflow.md names a record store, read a descriptive artifact the store holds: a requirement, an ADR, a plan file such as slice.md, the glossary, or the roadmap view. Address it by the project-relative path that the configured Requirements, ADRs, Plans, Glossary, and Roadmap paths give it; feature files, the user guide, tests, and code stay in the checkout and are refused with not_an_artifact. Every name below a configured folder, and the configured Glossary and Roadmap file names, must begin with an ASCII letter or digit, hold only ASCII letters, digits, ".", "_", and "-", not end in "." or ".lock", and be no Windows device name such as con, aux, nul, com1, or lpt1 before its first "."; any other is refused with artifact_name_invalid, data.invalidName holding the first such name, and listings leave such files out. A file read returns path, scope, kind, version (sha256 of its bytes, which update_artifact takes as expectedVersion), bytes, totalLines, offset, content, and nextOffset: content is whole lines from offset (1-based) up to limit lines (default 2000) and 64 KiB, at least one line, so read again from nextOffset until it is null. A requirement or ADR also returns status, its recorded status, which only a person's answer at a gate changes, and statusMismatch with written, recorded, and a message when its Status: line says otherwise; every file returns acceptedVersion and changedSinceAccepted against the bytes a person last accepted, approval once one is recorded, latestAnswer with the gate, status, choice (approve or request-changes), note, answeredAt, by, and entry (the id of the review app's history entry that applied it) of the person's latest answer at an approval gate, so requested changes reach an agent that no longer waits, and accepted true reads those accepted bytes. Every file read also returns comments, the people's comments on the file from the review browser, oldest first and including those a store sync brought from other machines, each with id, version (the version it was made on), line, text, author (name and host), at, and entry (the id of the review app's history entry that applied it), at most 20 in one read, with totalComments, the number of all of them, and nextCommentOffset, the 1-based position of the first one left out, or null; read the rest with commentOffset (1-based, default 1) set to nextCommentOffset until it is null. The comments move with the file to another scope and are removed with it. Every read also returns location, the artifact's place below artifacts/ in the store. A read of a plan file that its folder's slice.md declares in its ## Views section also returns view: { kind, question, clauses, contract, note }, where clauses are the contract clause numbers the view cites, contract is the path of the nearest slice.md with a Contract in its folder or a folder above it inside the Plans folder, and note says that where the view and the contract differ, the contract decides; any other file has no view. Without path, or with a folder, it lists the artifacts of every scope the store holds below it: the workspace scope, each repository's scope, and each component scope, also those of other repositories, each with path, location, scope, kind, version, bytes, and status for a requirement or ADR, sorted by path and then scope label, at most 2000 with truncated true when more exist, and indexedAt, the time of the index the listing answers from, which Prism refreshes after each store sync and artifact write and once it is a minute old. An entry's path is where this checkout's configured folder of its kind puts it, or null when this checkout configures no path for its kind, and entries without a path list last; read one of those by location. label names one scope by the label listings report, such as workspace, a repository's name, or <repository>/<component>, and with path reads that scope's artifact; an unknown label is refused with scope_unknown and data.scopes listing the labels the store holds, and label with scope or component is refused with scope_invalid. location, a listing entry's location, reads the artifact there in place of path, and with path, label, scope, or component is refused with scope_invalid. A path that more than one scope holds is refused with artifact_ambiguous, data.scopes listing every holding scope's label, until label picks one; scope and component still name only this checkout's own scopes: ${SCOPE_TEXT}. Refusals: artifact_not_found, artifact_not_text, scope_invalid, component_unknown, store_not_configured when the project has no store, and the store's own refusal, such as store_unavailable or a repository name refusal, when it cannot be used. Reads never change a checkout file.`,
     inputSchema: GET_ARTIFACT_SCHEMA,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
   {
     name: "update_artifact",
-    description: `In a project whose .prism/workflow.md names a record store, change descriptive artifacts in the store, addressed by project-relative path as get_artifact reads them, never by editing files in the checkout. operations holds at most 50 of write (path, content, expectedVersion), edit (path, expectedVersion, edits of oldText and newText, each replacing text that occurs exactly once in the text earlier edits left, else edit_not_applied with data.edit its index), remove (path, expectedVersion), move_scope (path, expectedVersion, and the scope to move it to), and ask_approval (path, optional status, default Approved, optional question, and context, the situation for a person who has not followed the work), which records a pending approval gate on a requirement or ADR at its current version and returns its id as gate, for the person to answer on Attention in the review browser and for wait_for_user_gate with artifact; it is refused with not_a_status_artifact for any other file, status_by_ship for Accepted on an ADR, which only a ship accepts, and nothing_to_approve when the status is already recorded and the bytes are the accepted ones. Leave Status: and Approved: lines to gates: a write whose Status: line differs from the recorded status is kept and its entry carries statusMismatch. expectedVersion is the version last read, or null to create; any other mismatch is refused with version_conflict and data.version holding the current version or null. write, edit, and remove take an optional scope to pick one when two scopes hold the path; ${SCOPE_TEXT}. A new artifact takes the given scope, else the scope that holds its nearest folder, else the workspace scope, and creating a path that another seen scope holds is refused with artifact_exists. A write that creates an artifact, and a move_scope, whose path differs only in letter case from an artifact path a seen scope holds, or from another write of the update, is refused with artifact_name_conflict and data.path holding that path, so change only the letter case by a remove and then a write in a later update. Such a write or move_scope whose location in the store, the path below artifacts/ in the scope it would take, holds more than ${ARTIFACT_LOCATION_BYTES_MAX} bytes, or a name of more than ${STORE_NAME_BYTES_MAX}, is refused with artifact_path_too_long and data.location, so choose a shorter path or a scope with a shorter folder. Such a write or move_scope in a component scope whose component name is a Windows device name, such as aux, nul, or com1, is refused with component_name_invalid and data.component, so rename the component under ## Components in .prism/workflow.md or choose another scope. move_scope of a path that several scopes hold moves the one copy whose version is expectedVersion. Content is UTF-8 text of at most 1 MiB, else artifact_too_large. Prism checks every operation before it changes any file, so a refused update changes nothing. The result lists, for each operation, the artifact's path, scope, and new version, or removed true. An artifact's comments from the review browser belong to it: move_scope moves them with it, remove removes them, and a write that creates an artifact removes the comments that a removed or moved artifact left at its path, and such an entry carries removedComments, the number of comments removed, when there were any, so read a file's comments with get_artifact before you remove it. A name that breaks the artifact name form that get_artifact describes is refused with artifact_name_invalid and data.invalidName, so choose another name. An agent changes only the artifacts of its own checkout's scopes, the workspace, its repository, and its components: a new artifact never takes another repository's scope, and a write with a version, edit, remove, move_scope, or ask_approval of a path that only other repositories' scopes hold is refused with scope_not_writable, data.scope naming the first such scope's label, so change it from a checkout of that repository. Paths outside the artifact paths are refused with not_an_artifact and stay in the checkout; without a store it refuses with store_not_configured.`,
+    description: `In a project whose .prism/workflow.md names a record store, change descriptive artifacts in the store, addressed by project-relative path as get_artifact reads them, never by editing files in the checkout. operations holds at most 50 of write (path, content, expectedVersion), edit (path, expectedVersion, edits of oldText and newText, each replacing text that occurs exactly once in the text earlier edits left, else edit_not_applied with data.edit its index), remove (path, expectedVersion), move_scope (path, expectedVersion, and the scope to move it to), and ask_approval (path, optional status, default Approved, optional question, and context, the situation for a person who has not followed the work), which records a pending approval gate on a requirement or ADR at its current version and returns its id as gate, for the person to answer on Attention in the review browser and for wait_for_user_gate with artifact; with shipped, the id of an initiative the roadmap records as shipped, it asks to accept a Proposed ADR that the initiative's ship left Proposed, status Accepted by default and no other, and the person's approval records the acceptance with that initiative and the slice, repository, and verified commit of each slice its ship recorded, under acceptance with afterShip true, while the shipped decision stays as it is; it is refused with validation_failed when the initiative has not shipped, when the file is no Proposed ADR, or when no slice.md of the initiative links the ADR and the ADR links none of the initiative's requirement files; it is refused with not_a_status_artifact for any other file, status_by_ship for Accepted on an ADR without shipped, which a ship accepts, and nothing_to_approve when the status is already recorded and the bytes are the accepted ones. Leave Status: and Approved: lines to gates: a write whose Status: line differs from the recorded status is kept and its entry carries statusMismatch. expectedVersion is the version last read, or null to create; any other mismatch is refused with version_conflict and data.version holding the current version or null. write, edit, and remove take an optional scope to pick one when two scopes hold the path; ${SCOPE_TEXT}. A new artifact takes the given scope, else the scope that holds its nearest folder, else the workspace scope, and creating a path that another seen scope holds is refused with artifact_exists. A write that creates an artifact, and a move_scope, whose path differs only in letter case from an artifact path a seen scope holds, or from another write of the update, is refused with artifact_name_conflict and data.path holding that path, so change only the letter case by a remove and then a write in a later update. Such a write or move_scope whose location in the store, the path below artifacts/ in the scope it would take, holds more than ${ARTIFACT_LOCATION_BYTES_MAX} bytes, or a name of more than ${STORE_NAME_BYTES_MAX}, is refused with artifact_path_too_long and data.location, so choose a shorter path or a scope with a shorter folder. Such a write or move_scope in a component scope whose component name is a Windows device name, such as aux, nul, or com1, is refused with component_name_invalid and data.component, so rename the component under ## Components in .prism/workflow.md or choose another scope. move_scope of a path that several scopes hold moves the one copy whose version is expectedVersion. Content is UTF-8 text of at most 1 MiB, else artifact_too_large. Prism checks every operation before it changes any file, so a refused update changes nothing. The result lists, for each operation, the artifact's path, scope, and new version, or removed true. An artifact's comments from the review browser belong to it: move_scope moves them with it, remove removes them, and a write that creates an artifact removes the comments that a removed or moved artifact left at its path, and such an entry carries removedComments, the number of comments removed, when there were any, so read a file's comments with get_artifact before you remove it. A name that breaks the artifact name form that get_artifact describes is refused with artifact_name_invalid and data.invalidName, so choose another name. An agent changes only the artifacts of its own checkout's scopes, the workspace, its repository, and its components: a new artifact never takes another repository's scope, and a write with a version, edit, remove, move_scope, or ask_approval of a path that only other repositories' scopes hold is refused with scope_not_writable, data.scope naming the first such scope's label, so change it from a checkout of that repository. Paths outside the artifact paths are refused with not_an_artifact and stay in the checkout; without a store it refuses with store_not_configured.`,
     inputSchema: UPDATE_ARTIFACT_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }
   }
@@ -500,9 +501,12 @@ async function readResult(seen, input, { file, name, scope, address, record }) {
   const offset = input.offset ?? 1;
   const read = page(content, offset, input.limit ?? PAGE_LINES);
   const mismatch = input.accepted ? null : statusMismatch(address.kind, name, content, status);
+  // A view that its folder's Views section declares tells its reader which clauses it explains and that the contract decides.
+  const view = address.kind === "plans" && file ? await declaredView(input.projectRoot, file, { plans: (await readWorkflowConfig(input.projectRoot)).paths?.plans ?? null }).catch(() => null) : null;
   return {
     path: file, location: artifactLocation(scope, address), scope, kind: address.kind, version: artifactVersion(bytes), bytes: bytes.length, totalLines: read.totalLines, offset, content: read.content, nextOffset: read.nextOffset,
     ...statusFields(address.kind, status, record.version), ...(mismatch ? { statusMismatch: mismatch } : {}), ...(input.accepted ? { accepted: true } : {}),
+    ...(view ? { view } : {}),
     ...(await listComments(seen, scope, address, input.commentOffset ?? 1))
   };
 }
@@ -669,10 +673,45 @@ export async function updateArtifact(input) {
     const { config, kinds } = await configuration(input.projectRoot);
     const checked = input.operations.map((operation) => checkOperation(config, kinds, operation));
     const seen = await seenScopes(input.projectRoot);
+    for (const item of checked) if (item.operation.op === "ask_approval" && item.operation.shipped !== undefined) item.shipped = await shippedRealization(input.projectRoot, seen, kinds, item.operation.shipped);
     // The tool call notes what its update wrote, so a move that the call finishes still removes a moved file whose artifact the update changed.
     return withArtifactStoreLock(seen, () => applyOperations(seen, checked, { noteWrites: true }));
   });
 }
+
+/**
+ * What an approval that accepts an ADR after the named initiative shipped needs: { initiative, verifiedBy, requirements, linked },
+ * verifiedBy the slice, repository, and verified commit of each slice that the ship recorded, requirements the initiative's requirement files, and linked the paths that its slice.md files link;
+ * an initiative that has not shipped refuses with validation_failed.
+ */
+async function shippedRealization(projectRoot, seen, kinds, initiative) {
+  const { readRoadmap } = await import("./roadmap.mjs");
+  const { loaded } = await readRoadmap(projectRoot);
+  const entry = (loaded.valid && Array.isArray(loaded.record?.initiatives) ? loaded.record.initiatives : []).find((item) => item.id === initiative);
+  if (entry?.decision?.kind !== "shipped") throw fail("validation_failed", `The roadmap has no shipped initiative ${initiative}; an ADR that an initiative still to ship relies on is accepted by that ship, once a slice.md links it.`);
+  const slices = isRecordValue(entry.decision.slices) ? entry.decision.slices : {};
+  const verifiedBy = Object.keys(slices).sort().map((slice) => ({ slice, repository: typeof slices[slice]?.repository === "string" ? slices[slice].repository : null, commit: typeof slices[slice]?.verified === "string" ? slices[slice].verified : null }));
+  const requirements = new Set((Array.isArray(entry.requirements) ? entry.requirements : []).filter((item) => typeof item === "string").map((item) => item.replace(/#.*$/, "")));
+  const linked = new Set();
+  const { initiativePlan } = await import("./ship-standing.mjs");
+  const { plan } = await initiativePlan(projectRoot, initiative).catch(() => ({ plan: null }));
+  if (plan) {
+    for (const { entry: slice, held } of await readPlanSlices(await planSeen(seen, plan), plan)) {
+      const text = held.bytes ? artifactText(held.bytes) : null;
+      for (const file of (text === null ? null : linkedPaths(text, slice.path)) ?? []) linked.add(file);
+    }
+  }
+  return { initiative, verifiedBy, requirements, linked };
+}
+
+// Whether a shipped initiative realized an ADR: a slice.md of its plan links the ADR, or the ADR links one of its requirement files.
+function realizes(shipped, file, bytes) {
+  if (shipped.linked.has(file)) return true;
+  const text = bytes ? artifactText(bytes) : null;
+  return ((text === null ? null : linkedPaths(text, file)) ?? []).some((target) => shipped.requirements.has(target));
+}
+
+const isRecordValue = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
 /**
  * Apply checked operations while the store's artifact lock is held: every operation is checked against the store before any file changes.
@@ -862,7 +901,10 @@ async function applyOperations(seenStore, checked, { held = null, noteWrites = f
       artifacts.push(counted({ path: file, scope: source.scope, removed: true }, await takeComments(source.scope, address, file)));
     } else if (operation.op === "ask_approval") {
       const status = await statusOf(source.scope, address);
-      const asked = askApproval(address.kind, file, status.record, { status: operation.status, question: operation.question, context: operation.context, version: source.record.version });
+      if (item.shipped && !realizes(item.shipped, file, contentOf(file, source.record))) {
+        throw fail("validation_failed", `${file} cites none of the requirement files of the shipped initiative ${item.shipped.initiative}, and no slice.md of its plan links it, so nothing shows that the initiative realized it; nothing changed.`);
+      }
+      const asked = askApproval(address.kind, file, status.record, { status: operation.status, question: operation.question, context: operation.context, version: source.record.version, ...(item.shipped ? { shipped: item.shipped } : {}) });
       setStatus(status.target, file, asked.record);
       artifacts.push({ path: file, scope: source.scope, version: source.record.version, gate: asked.gate.id });
     } else if (operation.op === "answer_approval") {
@@ -1754,6 +1796,49 @@ async function proposedVersions(linked) {
     if (held !== null) versions.push({ scope: adr.scope.label, path: adr.path, version: held.version });
   }
   return versions;
+}
+
+/**
+ * The Proposed ADRs that cite an initiative's requirements but that no slice.md links, so its ship would leave them Proposed: [{ path, scope, requirements }], sorted by path and then scope label.
+ * requirements are the initiative's requirement references, such as docs/requirements/reports.md#1, and an ADR cites one when a Markdown link in it names that requirement file.
+ * The ADRs are those of the workspace scope and of the scopes of every repository of the plan; an ADR that a slice.md of the plan links, or that a slice.md of any other plan links, as the ADR of another initiative, is not listed.
+ */
+export async function unlinkedAdrs(projectRoot, plan, requirements) {
+  return refusing(async () => {
+    const { kinds } = await configuration(projectRoot);
+    const folderOf = (kind) => kinds.kinds.find((entry) => entry.kind === kind)?.path ?? null;
+    const adrFolder = folderOf("adrs");
+    const cited = new Set(requirements.filter((item) => typeof item === "string").map((item) => item.replace(/#.*$/, "")));
+    if (plan === null || adrFolder === null || !cited.size) return [];
+    const seen = await seenScopes(projectRoot);
+    const wide = await planSeen(seen, plan);
+    const resolve = manyReads(seen);
+    const { linked } = await planLinkedAdrs(seen, wide, kinds, await readPlanSlices(wide, plan), { strict: false, resolve });
+    const own = new Set(linked.map((adr) => `${adr.scope.label}\0${adr.path}`));
+    // A link from another plan's slice.md marks the ADR as that initiative's, whichever scope it resolves in.
+    const elsewhere = new Set();
+    const plansFolder = folderOf("plans");
+    if (plansFolder !== null) {
+      for (const entry of await holdings(wide, plansFolder, null)) {
+        if (entry.kind !== "plans" || path.posix.basename(entry.path) !== "slice.md" || below(plan.folder, entry.path)) continue;
+        const held = await readStored(entry.target, null, null, CONTENT_MAX);
+        const text = held?.bytes ? artifactText(held.bytes) : null;
+        for (const file of (text === null ? null : linkedPaths(text, entry.path)) ?? []) elsewhere.add(file);
+      }
+    }
+    const allowed = (scope) => scope.kind === "workspace" || plan.repositories.includes(scope.repository);
+    const found = [];
+    for (const entry of await holdings(wide, adrFolder, null)) {
+      if (entry.kind !== "adrs" || !allowed(entry.scope) || own.has(`${entry.scope.label}\0${entry.path}`) || elsewhere.has(entry.path)) continue;
+      const record = await statusRecordOf(seen, entry.scope, artifactAddress(kinds, entry.path), resolve);
+      if (record.status !== "Proposed") continue;
+      const held = await readStored(entry.target, null, null, CONTENT_MAX);
+      const text = held?.bytes ? artifactText(held.bytes) : null;
+      const names = [...new Set((text === null ? null : linkedPaths(text, entry.path)) ?? [])].filter((file) => cited.has(file)).sort();
+      if (names.length) found.push({ path: entry.path, scope: entry.scope.label, requirements: names });
+    }
+    return found.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : left.scope < right.scope ? -1 : left.scope > right.scope ? 1 : 0);
+  });
 }
 
 /**

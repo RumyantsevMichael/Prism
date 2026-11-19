@@ -18,7 +18,7 @@ export class PrismDocTabGroup extends Base {
   static styles = ["prism-doc-tab-group.css"];
   static observedAttributes = ["collapsed", "current", "count", "tone"];
   static catalog = {
-    purpose: "The head of a named group of tabs in a prism-doc-tabs strip: a colored name and a count that collapse and expand the group, and a close button for the group's tabs.",
+    purpose: "The head of a named group of tabs in a prism-doc-tabs strip: a name in the group's color on a pale wash of it, and a count that collapse and expand the group, and a close button for the group's tabs.",
     options: [
       { name: "name", values: ["text"], default: "", description: "The group's name, also its visible text; the strip sends it in its group events." },
       { name: "tone", values: GROUP_TONES, default: "from the name", description: "The group's color; without it, the name picks one, so a group keeps its color everywhere." },

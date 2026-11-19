@@ -8,6 +8,8 @@ import {
   createSessionCorrelationKey,
   writeHostSessionFacts
 } from "../server/session/host-session-facts.mjs";
+import { agentModelDirectory, writeAgentModel } from "../server/session/agent-models.mjs";
+import { holderOf } from "../server/workflow/slice-claims.mjs";
 
 const MAX_HOOK_INPUT_BYTES = 4 * 1024 * 1024;
 const CONTEXT_EVENTS = new Set(["SessionStart", "UserPromptSubmit"]);
@@ -45,7 +47,8 @@ export async function recordSessionFacts({
   if (
     !adapter
     && !capture.record
-    && capture.reasonCode === HOST_FACT_REASON.HOST_METADATA_UNAVAILABLE
+    // A Claude Code input that names no cwd, which Codex always names, is refused by the Codex adapter for its project root rather than its metadata.
+    && (capture.reasonCode === HOST_FACT_REASON.HOST_METADATA_UNAVAILABLE || (capture.reasonCode === HOST_FACT_REASON.NO_PROJECT_ROOT && !Object.hasOwn(hookInput, "cwd")))
     && typeof environment.CLAUDE_PROJECT_DIR === "string"
     && environment.CLAUDE_PROJECT_DIR.trim()
     && !environment.CODEX_VERSION
@@ -58,6 +61,11 @@ export async function recordSessionFacts({
     if (typeof hookInput.session_id === "string" && hookInput.session_id.trim() && !hookInput.agent_id) {
       claudeCodeSessionDigest = createSessionCorrelationKey(hookInput.session_id);
     }
+  }
+  // A capture of the session's main agent that names a model notes it for the claims that agent takes; a sub-agent's input is refused above and records no capture.
+  const model = capture.record?.host?.model;
+  if (model && !hookInput.agent_id) {
+    await writeAgentModel({ holder: holderOf(hookInput.session_id), model, directory: agentModelDirectory({ ...process.env, ...environment }) }).catch(() => {});
   }
   const dataDirectory = environment.PLUGIN_DATA || environment.CLAUDE_PLUGIN_DATA;
   let hookOutput = null;

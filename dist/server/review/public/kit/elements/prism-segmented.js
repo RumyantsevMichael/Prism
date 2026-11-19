@@ -10,9 +10,10 @@ export class PrismSegmented extends Base {
     options: [
       { name: "label", values: ["text"], default: "", description: "The group's accessible name." },
       { name: "value", values: ["text"], default: "", description: "The chosen segment's value; the value property reads and writes it." },
+      { name: "wrap", values: ["boolean"], default: "false", description: "Segments that no longer fit on one line go on to the next line with their whole words, for a choice of several filters with counts." },
       { name: "children with value", values: ["children"], default: "", description: "Each child that carries a value attribute becomes one segment showing the child's content." }
     ],
-    states: ["default", "chosen", "long-text", "unbroken-name"],
+    states: ["default", "chosen", "wrap", "long-text", "unbroken-name"],
     keyboard: ["Tab reaches the chosen segment.", "ArrowLeft and ArrowRight, or ArrowUp and ArrowDown, choose the previous or next segment, wrapping at the ends.", "Enter, Space, or a click chooses a segment and sends change with detail.value."]
   };
 

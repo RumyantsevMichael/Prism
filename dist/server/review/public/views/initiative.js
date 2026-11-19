@@ -8,6 +8,7 @@ import { codeChip } from "./code-location.js";
 import { claimChip, claimOf } from "./claims.js";
 import { componentChip } from "./components.js";
 import { createActionList } from "./actions.js";
+import { REFRESH_MS, stateOf } from "./agents.js";
 import { shippedHistoryHtml } from "./shipped-history.js";
 import { preference, setPreference } from "../kit/preferences.js";
 
@@ -184,8 +185,9 @@ let headSequence = 0;
 function headControls(data, ctx, ids) {
   const summary = runTotalsSummary(data.runTotals?.initiative ?? null);
   const totals = summary ? `<prism-button id="${ids.totals}" size="sm" variant="ghost" class="initiative-totals" tip="Run totals of this initiative"><prism-icon name="clock" size="xs"></prism-icon><span>${summary}</span><prism-icon name="chevron-down" size="xs"></prism-icon></prism-button>` : "";
-  if (!ctx.actionApi) return totals;
-  return `${totals}<prism-button id="${ids.launch}" size="sm" class="initiative-launch"><prism-icon name="play" size="xs"></prism-icon><span>Launch</span><prism-icon name="chevron-down" size="xs"></prism-icon></prism-button><prism-button size="sm" class="initiative-settings" data-initiative-settings-open><prism-icon name="settings" size="xs"></prism-icon><span>Settings</span></prism-button>`;
+  const lastRun = '<span class="initiative-last-run-slot" data-last-run-slot></span>';
+  if (!ctx.actionApi) return `${lastRun}${totals}`;
+  return `${lastRun}${totals}<prism-button id="${ids.launch}" size="sm" class="initiative-launch"><prism-icon name="play" size="xs"></prism-icon><span>Launch</span><prism-icon name="chevron-down" size="xs"></prism-icon></prism-button><prism-button size="sm" class="initiative-settings" data-initiative-settings-open><prism-icon name="settings" size="xs"></prism-icon><span>Settings</span></prism-button>`;
 }
 
 // The overlays the head's controls open: the run totals, the launch actions, and the settings dialog, which applies its changes together.
@@ -195,13 +197,78 @@ function overlays(data, ctx, ids, head) {
   if (!ctx.actionApi) return totals;
   const title = data.roadmapItem?.title ?? data.id;
   return `${totals}
-    ${head ? `<prism-popover class="initiative-launch-popover" for="${ids.launch}" heading="Launch an orchestration"><div data-launch-actions></div></prism-popover>` : ""}
+    ${head ? `<prism-popover class="initiative-launch-popover" for="${ids.launch}" heading="Launch an orchestration"><div class="initiative-latest-run" data-launch-latest hidden></div><div data-launch-actions></div></prism-popover>` : ""}
     <prism-dialog class="initiative-settings-dialog" heading="Settings of ${escapeHtml(title)}" size="lg" data-initiative-settings-dialog>
       <p class="initiative-settings-lead">How agents run this initiative's slices. Changes apply when you press Apply.</p>
       <div data-initiative-settings></div>
       <prism-button slot="footer" data-settings-cancel>Cancel</prism-button>
       <prism-button slot="footer" variant="primary" data-settings-apply disabled>Apply</prism-button>
     </prism-dialog>`;
+}
+
+// The states of a launched run that the page head names, since each needs the person or is under way; a finished or stopped run shows only in the Launch popover.
+const HEAD_RUN_TEXT = Object.freeze({ failed: "Last run failed", blocked: "Last run blocked", waiting: "Waiting for you", running: "Running" });
+
+/** The newest session launched on this computer for the initiative, from api/launches, or null. */
+export function latestLaunch(launches, initiative) {
+  return (Array.isArray(launches) ? launches : []).filter((item) => item?.initiative === initiative)
+    .sort((left, right) => (right.launchedAt ?? "").localeCompare(left.launchedAt ?? ""))[0] ?? null;
+}
+
+const AGENTS_LINK = '<a href="./review?artifact=agents" data-artifact="agents">Open in Agents</a>';
+
+// How the initiative's latest launched run on this computer stands: a badge in the page head while it failed, is blocked, waits, or runs,
+// and in the Launch popover its state, host, and reason with a link to the Agents page. It is read every few seconds while the page shows.
+function mountLastRun(container, data, ctx, endRoot) {
+  const slot = endRoot?.querySelector("[data-last-run-slot]");
+  if (!slot || typeof fetch !== "function") return;
+  const popover = container.querySelector(".initiative-launch-popover");
+  const latest = popover?.querySelector("[data-launch-latest]");
+  let shown = "";
+  const show = (launch) => {
+    const key = launch ? JSON.stringify([launch.id, launch.state, launch.reason, launch.runs]) : "";
+    if (key === shown) return;
+    shown = key;
+    const head = launch ? HEAD_RUN_TEXT[launch.state] : null;
+    const [words, tone] = launch ? stateOf(launch) : ["", "neutral"];
+    // A tab that can only read launches nothing, so its head leads straight to the Agents page.
+    const readOnly = typeof ctx.canWrite === "function" && !ctx.canWrite();
+    slot.innerHTML = !head ? ""
+      : readOnly ? `<span class="initiative-last-run" data-initiative-last-run-state>${badge(head, tone)}</span>${AGENTS_LINK}`
+      : `<prism-button size="sm" variant="ghost" class="initiative-last-run" data-initiative-last-run tip="${popover ? "Show the latest run" : "Open Agents"}">${badge(head, tone)}</prism-button>`;
+    bindLinks(slot, ctx);
+    if (!latest) return;
+    latest.hidden = !launch;
+    latest.innerHTML = launch
+      ? `<div class="initiative-latest-run-head"><span class="initiative-latest-run-title">Latest run · ${escapeHtml(launch.hostLabel ?? launch.host ?? "")}</span>${badge(words, tone)}</div>
+        ${launch.reason ? `<p class="initiative-latest-run-reason">${escapeHtml(launch.reason)}</p>` : ""}
+        ${AGENTS_LINK}`
+      : "";
+    bindLinks(latest, ctx);
+  };
+  slot.addEventListener("click", (event) => {
+    if (!event.target.closest?.("[data-initiative-last-run]")) return;
+    if (popover) popover.show?.();
+    else ctx.openArtifact?.("agents");
+  });
+  let reading = false;
+  const refresh = async () => {
+    if (reading) return;
+    reading = true;
+    try {
+      const response = await fetch("./api/launches", { cache: "no-store" });
+      if (response.ok) show(latestLaunch((await response.json().catch(() => ({}))).launches, data.id));
+    } catch {
+      // A failed read keeps what the page shows until the next one.
+    } finally {
+      reading = false;
+    }
+  };
+  const poll = setInterval(() => {
+    if (!slot.isConnected) return clearInterval(poll);
+    void refresh();
+  }, REFRESH_MS);
+  void refresh();
 }
 
 function mountOverlays(container, data, ctx, endRoot) {
@@ -263,6 +330,7 @@ export async function render(container, entity, ctx) {
   const finish = () => {
     container.querySelector(".initiative-facts")?.addEventListener("toggle", (event) => { ctx.state.factsOpen = Boolean(event.detail?.open); });
     mountOverlays(container, data, ctx, endRoot);
+    mountLastRun(container, data, ctx, endRoot);
     applyWidths(container);
     bindLinks(container, ctx);
   };

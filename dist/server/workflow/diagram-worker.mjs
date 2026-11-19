@@ -64,24 +64,55 @@ const render = (source) => new Promise((resolve) => {
 const unescape = (value) => value.replace(/&lt;/g, "<").replace(/&quot;/g, "\"").replace(/&amp;/g, "&");
 const texts = (svg, pattern) => [...svg.matchAll(pattern)].map((match) => unescape(match[1]).trim()).filter(Boolean);
 
-// PlantUML draws every failure as a diagram: a syntax or include error names its source line, and an unknown diagram type says so.
-function summarize(svg) {
+const UNRECOGNIZED = "PlantUML does not recognize the diagram; it needs @startuml and a supported diagram type.";
+
+const count = (svg, pattern) => (svg.match(pattern) ?? []).length;
+
+// An activity draws an action as a rounded box with its own fill, unlike a fork bar, and a decision as a hexagon of six distinct corners, unlike a merge.
+function activityCounts(svg) {
+  const actions = [...svg.matchAll(/<rect [^>]*>/g)].filter(([tag]) => / rx="/.test(tag) && /fill="([^"]*)"/.exec(tag)?.[1] !== /stroke="([^"]*)"/.exec(tag)?.[1]).length;
+  const decisions = [...svg.matchAll(/<polygon points="([^"]*)" fill="([^"]*)" stroke="([^"]*)"/g)].filter(([, points, fill, stroke]) => {
+    const corners = points.trim().split(/\s+/);
+    return fill !== stroke && corners.length === 7 && new Set(corners.slice(0, 6)).size === 6;
+  }).length;
+  return { elements: actions + decisions, relations: 0 };
+}
+
+// What each drawn kind counts: participants and messages of a sequence, actions and decisions of an activity,
+// states without the [*] pseudostates and transitions of a state machine, and elements and relations of any other diagram.
+function counts(svg, kind) {
+  if (kind === "sequence") return { elements: count(svg, /<g class="participant participant-head"/g), relations: new Set(svg.match(/<g class="message"[^>]*\bid="[^"]*"/g)?.map((tag) => /\bid="([^"]*)"/.exec(tag)[1]) ?? []).size };
+  if (kind === "activity") return activityCounts(svg);
+  if (kind === "state") return { elements: count(svg, /<g class="entity"/g), relations: count(svg, /<g class="link"/g) };
+  const entities = count(svg, /<g class="(?:entity|cluster)"/g);
+  const participants = count(svg, /<g><title>/g);
+  // A diagram that marks no elements has its boxes stand in for them.
+  const boxes = count(svg, /<rect /g);
+  return { elements: entities || participants || boxes, relations: count(svg, /<g class="link"/g) };
+}
+
+// PlantUML draws a syntax or include error as a diagram that names its source line, and an unknown diagram type as one that says so.
+function summarize(svg, kind) {
   const located = /\[From [^\]]*\(line (\d+)\)/.exec(svg);
   if (located || /Diagram not supported/.test(svg)) {
     const errors = texts(svg, /<text[^>]*fill="#FF0000"[^>]*>([^<]*)/g);
-    const fallback = located ? "PlantUML reported an error." : "PlantUML does not recognize the diagram; it needs @startuml and a supported diagram type.";
+    const fallback = located ? "PlantUML reported an error." : UNRECOGNIZED;
     return { valid: false, line: Number(located?.[1]) || null, message: errors.join(" ") || fallback };
   }
-  const entities = (svg.match(/<g class="(?:entity|cluster)"/g) ?? []).length;
-  const participants = (svg.match(/<g><title>/g) ?? []).length;
-  // Activity diagrams mark no elements, so their boxes stand in for them.
-  const boxes = (svg.match(/<rect /g) ?? []).length;
-  return { valid: true, elements: entities || participants || boxes, relations: (svg.match(/<g class="link"/g) ?? []).length };
+  return { valid: true, ...counts(svg, kind) };
+}
+
+// The runtime draws a source without a start line as a diagram, and raises a Java exception for an unknown diagram type or a malformed Salt grid.
+// Both are sources that do not parse; any other failure, such as a timeout, leaves the source unchecked.
+function check(source, kind, outcome) {
+  if (!/^\s*@start[a-z]+/im.test(source)) return { checked: true, valid: false, line: null, message: UNRECOGNIZED };
+  if (!outcome.error) return { checked: true, ...summarize(outcome.svg, kind) };
+  if (/Unsupported diagram type/.test(outcome.error)) return { checked: true, valid: false, line: null, message: UNRECOGNIZED };
+  const thrown = /^java\.[\w.]*?(\w+(?:Exception|Error))(?::\s*(.*))?/.exec(outcome.error);
+  if (thrown) return { checked: true, valid: false, line: null, message: `PlantUML could not read it (${thrown[1]}${thrown[2] ? `: ${thrown[2]}` : ""}).`.slice(0, 300) };
+  return { checked: false, message: outcome.error.slice(0, 300) };
 }
 
 const results = [];
-for (const item of workerData.sources) {
-  const outcome = await render(item.source);
-  results.push({ path: item.path, ...(outcome.error ? { checked: false, message: outcome.error.slice(0, 300) } : { checked: true, ...summarize(outcome.svg) }) });
-}
+for (const item of workerData.sources) results.push({ path: item.path, ...check(item.source, item.kind, await render(item.source)) });
 parentPort.postMessage(results);

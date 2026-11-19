@@ -21,11 +21,12 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, loadAttention, loadClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
+import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, loadAttention, loadClaims, loadDeclaredView, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
 import { shippedCommit, sliceFiles } from "./slice-files.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
 import { listLaunches } from "../session/launched-sessions.mjs";
+import { listAgents } from "./agents.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 import { readStoredPreferences, writePreferences } from "./review-preferences.mjs";
 import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
@@ -639,8 +640,15 @@ export async function serveOutsideSession(request, response, pathname) {
   const asset = request.method === "GET" || request.method === "HEAD" ? publicAsset(pathname) : null;
   if (asset) await serveFile(response, asset.file, asset.type);
   else if (wantsPage(request)) await sendUnavailable(response, "expired");
-  else send(response, 404, "Not found");
+  else {
+    // A call from a page loaded before the app restarted says that its link expired, so the page reloads into the page that tells the person so.
+    response.setHeader(EXPIRED_LINK_HEADER, "expired");
+    send(response, 404, "Not found");
+  }
 }
+
+/** The header on a refusal of a call whose link carries no current viewer credential. */
+export const EXPIRED_LINK_HEADER = "X-Prism-Link";
 
 // The file and type of a route under kit/ or styles/, or null for a path that leaves its folder, is not a known type, or is not a styles/<name>.css.
 export function publicAsset(route) {
@@ -1258,6 +1266,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     const answer = { ref, path: ref, location, scope, content, modifiedAt: read.modifiedAt, artifact, links, unresolvedLinks: links.filter((link) => link.resolved === false).length };
     if (path.posix.extname(location).toLowerCase() === ".json") Object.assign(answer, { diagrams: [] }, await loadJsonArtifact(projectRoot, location, content));
     else answer.diagrams = await storeDiagrams(location, content, links, held);
+    const view = read.path ? await loadDeclaredView(projectRoot, read.path).catch(() => null) : null;
+    if (view) answer.view = view;
     send(response, 200, JSON.stringify(answer), "application/json; charset=utf-8");
   }
 
@@ -1515,6 +1525,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     } else if (route === "/api/launches" && request.method === "GET") {
       // Every launched session of this machine that shares this checkout's record store; reading needs no write session.
       sendJson(response, 200, await listLaunches({ projectRoot, env: process.env }));
+    } else if (route === "/api/agents" && request.method === "GET") {
+      // Every agent once: this computer's launched sessions and the workspace's claims that none of them holds; reading needs no write session.
+      sendJson(response, 200, await listAgents({ projectRoot, env: process.env }));
     } else if (route === "/api/actions/targets" && request.method === "GET") {
       try {
         sendJson(response, 200, await listActionTargets({ projectRoot, kind: url.searchParams.get("kind"), checkouts: await checkoutRoots() }));
@@ -1646,7 +1659,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         send(response, 404, "The file is not available for review.");
         return;
       }
-      send(response, 200, JSON.stringify(loaded), "application/json; charset=utf-8");
+      // A design view that its folder declares carries its kind, question, clauses, and governing contract.
+      const view = await loadDeclaredView(projectRoot, artifactPath).catch(() => null);
+      send(response, 200, JSON.stringify(view ? { ...loaded, view } : loaded), "application/json; charset=utf-8");
     } else if (wantsPage(request) && !/^\/(api|kit|styles|views|vendor)\//.test(route)) {
       // A page address the app no longer has, such as one from an earlier release, opens the project's start page instead of a line of text.
       response.writeHead(302, { Location: `${baseUrl}/`, "Cache-Control": "no-store" });

@@ -57,6 +57,12 @@ async function acquireFileLock(artifactPath, makeError, options) {
       return { lockPath, token };
     } catch (caught) {
       if (caught.code !== "EEXIST") {
+        // Windows keeps a lock file that its holder just removed until every reader of it closes it, and refuses to create it again meanwhile with EPERM,
+        // so on Windows that refusal waits like a held lock until the deadline.
+        if (process.platform === "win32" && (caught.code === "EPERM" || caught.code === "EACCES") && Date.now() < deadline) {
+          await wait(25);
+          continue;
+        }
         throw caught;
       }
       try {

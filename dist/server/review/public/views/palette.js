@@ -20,7 +20,7 @@ const SCOPES = [
   { value: "files", label: "Files", kinds: ["file"] },
   { value: "text", label: "Text", kinds: ["text", "code"] }
 ];
-const PLACE_ICONS = { attention: "bell", roadmap: "roadmap", requirements: "list", decisions: "scale", glossary: "book", launches: "agent", code: "code" };
+const PLACE_ICONS = { attention: "bell", roadmap: "roadmap", requirements: "list", decisions: "scale", glossary: "book", agents: "agent", code: "code" };
 const KIND_ICONS = { action: "filter", initiative: "roadmap", slice: "layers", requirement: "list", decision: "scale", term: "book", record: "document", file: "code", text: "document", code: "code" };
 const RESULT_LIMIT = 40;
 const TEXT_SEARCH_DELAY_MS = 200;

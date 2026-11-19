@@ -4,7 +4,7 @@
 // test/server/review-diagram-theme-browser.test.mjs fails when a new runtime paints other defaults.
 
 /** The vendored runtime's version. */
-export const PLANTUML_RUNTIME = "1.2026.8";
+export const PLANTUML_RUNTIME = "1.2026.9";
 
 /** The color of the runtime's default text, which the theming treats by the ground it sits on. */
 export const PLANTUML_TEXT = "#000000";

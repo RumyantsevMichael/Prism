@@ -12,7 +12,7 @@ import path from "node:path";
 import { COMMENTS_PER_ARTIFACT_MAX, finishUnfinishedMoves, nameToolCallRoot, outsideToolCall, recordStoreOf, recordStoreSummary, restoreMigrationReports, takeMigrationReports, toolCallContext, withToolCall } from "./workflow/record-store.mjs";
 import { REPOSITORY_REFUSALS } from "./workflow/repository-names.mjs";
 import { confirmSavedConflicts, releaseSavedConflicts, takeSavedConflicts } from "./workflow/record-store-sync.mjs";
-import { callSessionId, withCallSession } from "./workflow/slice-claims.mjs";
+import { callSessionId, configureClaims, harnessName, withCallSession, withClaimAgent } from "./workflow/slice-claims.mjs";
 import { REPOSITORY_CONTEXT_INPUT_LIMITS, planRepositoryContext } from "./repository-intelligence/repository-intelligence.mjs";
 import {
   listRepositoryIntelligenceProviders,
@@ -51,7 +51,7 @@ import { startChangeMapDerivation } from "./conservation/derived-change-map.mjs"
 import { UPDATE_DESIGN_VIEW_SCHEMA, updateDesignView } from "./workflow/design-view.mjs";
 import { DEFAULT_WAIT_MINUTES, MAX_WAIT_GATES, HOOK_WAIT_MINUTES, MAX_WAIT_MINUTES, answerText, changedText, waitForUserGates } from "./workflow/gate-wait.mjs";
 import { endGateWait, keptSettingsText, personChangesText, rememberAskedGates, startGateWait, takePersonChanges } from "./workflow/change-notices.mjs";
-import { callAgent, currentCallAgent, withCallAgent } from "./workflow/call-agent.mjs";
+import { callAgent, callAgentRole, currentCallAgent, withCallAgent } from "./workflow/call-agent.mjs";
 import { recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
 import { startBackgroundPreparation } from "./repository-intelligence/background-preparation.mjs";
@@ -116,6 +116,9 @@ function taskId(metadata = {}) {
   return metadata["x-codex-turn-metadata"]?.thread_id ?? metadata.threadId ?? "mcp-process";
 }
 
+// The project roots that tool calls named in a host that names no project at start; only the first call for a root asks whether to open the browser.
+const namedRoots = new Set();
+
 // A projectRoot argument that the server cannot use is the caller's mistake, which the log records as a refusal rather than as a failure of the server.
 const projectRootRefusal = (message) => Object.assign(new Error(message), { refusal: true });
 
@@ -147,8 +150,13 @@ async function requestedProjectRoot(argumentsValue) {
   }
   // The tool call's project root is the checkout whose first store access in this call may move its existing artifacts into the store, since this call's result reports the move.
   nameToolCallRoot(resolvedRoot);
-  // A host that names no project at start, such as Codex, lists its project in the review app from its first Prism tool call.
-  outsideToolCall(() => reviewServers.register(resolvedRoot));
+  // A host that names no project at start, such as Codex, lists its project in the review app from its first Prism tool call,
+  // and that call opens the review browser as a session start does, since it is the first moment the session knows its project.
+  if (hostProjectRoot) outsideToolCall(() => reviewServers.register(resolvedRoot));
+  else if (!namedRoots.has(resolvedRoot)) {
+    namedRoots.add(resolvedRoot);
+    void outsideToolCall(() => opensAtStart(resolvedRoot).then((open) => reviewServers.register(resolvedRoot, { open }), () => reviewServers.register(resolvedRoot)));
+  }
   // The native index starts building once the project is known, so a later search finds it ready; this never waits for the build, and the build moves no artifact.
   void outsideToolCall(() => startBackgroundPreparation(resolvedRoot));
   return resolvedRoot;
@@ -469,7 +477,7 @@ const tools = [
   },
   {
     name: "update_design_view",
-    description: "Replace a designed slice's design view, which the review browser shows at the design gate: one example per acceptance test, each a single line under the number of the slice.md Contract clause it checks, restating only what the test asserts. Prism checks that each cited test name occurs in its test file and each clause number exists, lists clauses without examples as gaps, and marks the view stale when the contract or a test file changes. It also parses the PlantUML files beside slice.md and reports any that accept_design would refuse.",
+    description: "Replace a designed slice's design view, which the review browser shows at the design gate: one example per acceptance test, each a single line under the number of the slice.md Contract clause it checks, restating only what the test asserts. Prism checks that each cited test name occurs in its test file and each clause number exists, lists clauses without examples as gaps, and marks the view stale when the contract or a test file changes. It also checks the declared views of the folders that accept_design checks, by the same rules, and returns views ({ path, kind, elements, relations }) and viewProblems, each problem that accept_design would refuse.",
     inputSchema: UPDATE_DESIGN_VIEW_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   },
@@ -1369,6 +1377,7 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
   const saved = taken.filter((item) => item.record && !item.overBound);
   const removals = taken.filter((item) => item.undoneRemoval);
   const fileRemovals = taken.filter((item) => item.undoneFile);
+  const recordRemovals = taken.filter((item) => item.undoneRecord);
   const moves = taken.filter((item) => item.undoneMove);
   // A file of either machine's that a sync took out because its path at its artifact's new location would be too long is named with that location, for that cause alone.
   const tooLong = taken.filter((item) => item.tooLongAt && !item.overBound);
@@ -1391,6 +1400,10 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
   if (fileRemovals.length) {
     const them = fileRemovals.length === 1 ? "it" : "them";
     sections.push({ header: `Store sync undid this machine's removal of ${plural(fileRemovals.length, "store file")} at the store's root, such as its README, because another machine changed ${them} before this machine's removal reached the store; the store holds ${them} again with the other machine's version. Remove ${them} from the store again if the removal still matters.`, items: fileRemovals, line: async (item) => `- ${item.undoneFile} in the record store at ${item.store}` });
+  }
+  if (recordRemovals.length) {
+    const them = recordRemovals.length === 1 ? "it" : "them";
+    sections.push({ header: `Store sync undid this machine's removal of ${plural(recordRemovals.length, "record")}, because another machine changed ${them} before this machine's removal reached the store; the store holds ${them} again with the other machine's version. Read each record again, and redo the removal if it still matters.`, items: recordRemovals, line: async (item) => `- ${item.undoneRecord} in the record store at ${item.store}` });
   }
   if (moves.length) {
     sections.push({ header: `Store sync undid this machine's move of ${plural(moves.length, "artifact")} to another scope, because another machine moved ${moves.length === 1 ? "it" : "them"} elsewhere, or kept its own file at the path this machine moved ${moves.length === 1 ? "it" : "them"} to, before this machine's move reached the store; the store keeps each in the first scope named below, with this machine's other changes to it. Read each one again with get_artifact and move it again with move_scope if the move still matters.`, items: moves, line: (item) => undoneMoveLine(item, argumentsValue) });
@@ -1609,6 +1622,8 @@ input.on("line", async (line) => {
     if (request.method === "initialize") {
       clientName = typeof request.params?.clientInfo?.name === "string" ? request.params.clientInfo.name : null;
       clientVersion = typeof request.params?.clientInfo?.version === "string" ? request.params.clientInfo.version : null;
+      // The harness the client names itself is what each claim this server takes records as its host.
+      configureClaims({ host: harnessName(request.params?.clientInfo) });
       result(request.id, {
         protocolVersion: request.params?.protocolVersion ?? "2025-06-18",
         capabilities: { tools: {} },
@@ -1625,7 +1640,9 @@ input.on("line", async (line) => {
       const call = toolCallContext();
       const value = await withToolCall(call, () => withCallSession(meta, async () => {
         const agent = await callAgent(meta).catch(() => undefined);
-        return withCallAgent(agent, async () => withPersonChanges(name, argumentsValue, await callTool(name, argumentsValue, meta, request.id)));
+        // A claim records the session's main agent model only when the call is positively that agent's.
+        const role = await callAgentRole(meta).catch(() => "unknown");
+        return withCallAgent(agent, () => withClaimAgent(role === "main", async () => withPersonChanges(name, argumentsValue, await callTool(name, argumentsValue, meta, request.id))));
       })).finally(done);
       log.debug("tool_call", { tool: name, ms: Math.round(performance.now() - started), ...(value?.isError ? { isError: true } : {}) });
       // A cancelled request gets no response, so it carries no notes either; nor does a result made once the host closed input, which ends the session.

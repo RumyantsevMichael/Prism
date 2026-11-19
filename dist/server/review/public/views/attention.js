@@ -605,6 +605,12 @@ function group(id, label, entries, { count = entries.length, tone = "neutral", n
 // A question chosen on a filtered page opens Everything with that question picked, so it can be answered there.
 let pendingSelection = null;
 
+/** Opens Attention with the question `gate` selected and its answer form shown, as another page's Answer does. */
+export function openQuestion(ctx, gate) {
+  if (gate) pendingSelection = `gate:${gate}`;
+  ctx.openArtifact?.("attention");
+}
+
 // The filter's name and count above its items, with the way back to everything, in the page head.
 function filterLine(container, text, ctx) {
   setPageSub(container, pageSub(escapeHtml(text), { end: '<a href="./review?artifact=attention" data-artifact="attention">Show everything</a>' }), ctx);

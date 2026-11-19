@@ -58,6 +58,7 @@ const rowGate = `<prism-row icon="gate" tone="accent"><a href="#entry-prism-row"
 const libTable = (columns, body, columnsClass = "catalog-lib-columns") => `<prism-lib-table class="${columnsClass}"><div class="prism-lib-row is-head" aria-hidden="true">${columns.map((column) => `<span>${html(column)}</span>`).join("")}</div>${body}</prism-lib-table>`;
 const libRows = (rows, { plainThird = false } = {}) => rows.map(([title, icon, kind, third, fourth]) => `<div class="prism-lib-row"><span><span class="prism-lib-title"><prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon><a href="#entry-prism-lib-table">${title}</a></span></span><span class="prism-lib-cell">${kind}</span>${plainThird ? `<span>${third}</span>` : `<span class="prism-lib-cell">${third}</span>`}<span class="prism-lib-cell is-detail">${fourth}</span></div>`).join("");
 const libGroup = (label, count, source = "") => `<div class="prism-lib-group"><h4 class="prism-lib-group-name">${label} <prism-badge tone="neutral">${count}</prism-badge></h4>${source ? `<span class="prism-lib-group-source">${source}</span>` : ""}</div>`;
+const libDetails = (text, code) => `<div class="prism-lib-details"><p>${text}</p><prism-code><pre><code>${code}</code></pre></prism-code></div>`;
 const libPairs = (rows) => rows.map(([title, icon, second]) => `<div class="prism-lib-row"><span><span class="prism-lib-title"><prism-icon class="prism-lib-kind" name="${icon}" size="sm" aria-hidden="true"></prism-icon><a href="#entry-prism-lib-table">${title}</a></span></span><span class="prism-lib-cell">${second}</span></div>`).join("");
 
 // A kit button that opens the dialog after it, through the catalog's data-opens wiring.
@@ -78,9 +79,9 @@ function toastButton(caption, message, tone) {
 }
 
 // A claim whose times are set from now: `left` minutes left, or lapsed that many minutes ago when negative, on a lease of 30 minutes.
-function claimOf({ variant, label = "Claude on build-2", host = "", activity = "implementation", left = 41 }) {
+function claimOf({ variant, label = "Claude on build-2", host = "", model = "", activity = "implementation", left = 41 }) {
   const at = (minutes) => new Date(Date.now() + minutes * 60000).toISOString();
-  return `<prism-claim variant="${variant}" label="${html(label)}"${host ? ` host="${html(host)}"` : ""} activity="${activity}" claimed-at="${at(left - 90)}" renewed-at="${at(left - 30)}" expires-at="${at(left)}"></prism-claim>`;
+  return `<prism-claim variant="${variant}" label="${html(label)}"${host ? ` host="${html(host)}"` : ""}${model ? ` model="${html(model)}"` : ""} activity="${activity}" claimed-at="${at(left - 90)}" renewed-at="${at(left - 30)}" expires-at="${at(left)}"></prism-claim>`;
 }
 
 // A time `count` minutes from now, as an ISO timestamp, and a prism-time of it in the default format.
@@ -138,7 +139,8 @@ const SPECIMENS = {
     menu: `<prism-button size="sm"><prism-icon name="play" size="xs"></prism-icon><span>Launch</span><prism-icon name="chevron-down" size="xs"></prism-icon></prism-button><prism-button size="sm" variant="ghost"><prism-icon name="clock" size="xs"></prism-icon><span>3 h 55 min active</span><prism-icon name="chevron-down" size="xs"></prism-icon></prism-button>`,
     shrink: `<span class="catalog-narrow"><prism-button variant="chrome" shrink><prism-avatar kind="workspace" name="P" aria-hidden="true"></prism-avatar><span>payments-platform / feature/retry-total-deadline</span><prism-badge variant="count" tone="danger">12</prism-badge><prism-icon name="chevron-down" size="xs"></prism-icon></prism-button></span>`,
     badge: `<prism-button variant="ghost" label="Attention, 5 items"><prism-icon name="bell"></prism-icon><prism-badge slot="badge" solid size="sm">5</prism-badge></prism-button>`,
-    "long-text": `<prism-button>${LONG}</prism-button>`,
+    text: `<prism-button size="sm" variant="primary" text="Answer"></prism-button><prism-button size="sm" variant="ghost" text="Stop"></prism-button>`,
+    "long-text": `<prism-button>${LONG}</prism-button><prism-button text="${LONG}"></prism-button>`,
     "unbroken-name": `<prism-button variant="primary">${UNBROKEN}</prism-button>`
   },
   "prism-icon": {
@@ -299,6 +301,7 @@ const SPECIMENS = {
   "prism-segmented": {
     default: `<prism-segmented label="View"><span value="board">Board</span><span value="list">List</span><span value="graph">Graph</span></prism-segmented>`,
     chosen: `<prism-segmented label="View" value="list"><span value="board">Board</span><span value="list">List</span><span value="graph">Graph</span></prism-segmented>`,
+    wrap: `<div class="catalog-narrow"><prism-segmented label="Show" value="all" wrap><span value="all">All 12</span><span value="needs-you">Needs you 2</span><span value="here">This computer 4</span><span value="other">Other sessions 6</span><span value="expired">Expired ${UNBROKEN}</span></prism-segmented></div>`,
     "long-text": `<div class="catalog-narrow"><prism-segmented label="${LONG}" value="a"><span value="a">${LONG}</span><span value="b">${LONG}</span></prism-segmented></div>`,
     "unbroken-name": `<div class="catalog-narrow"><prism-segmented label="Unbroken" value="u"><span value="u">${UNBROKEN}</span><span value="v">List</span></prism-segmented></div>`
   },
@@ -339,6 +342,7 @@ const SPECIMENS = {
     island: `<prism-panel heading="Change map" variant="island"><p>Planned changes.</p></prism-panel>`,
     "tools-and-footer": `<prism-panel heading="Review ledger" level="3"><prism-button slot="tools" size="sm" variant="ghost">Copy link</prism-button><p>Two open findings.</p><span slot="footer"><prism-button size="sm" variant="primary">Answer</prism-button></span></prism-panel>`,
     maximizable: `<prism-panel heading="Diagram" eyebrow="Slice" maximizable><p>Maximize fills the window; Restore or Escape brings it back.</p></prism-panel>`,
+    region: `<prism-panel heading="In what order do the client and the server talk?" eyebrow="Sequence view" region><p>A region landmark named by its heading.</p></prism-panel>`,
     "many-items": `<prism-panel heading="Planned changes"><prism-button slot="tools" size="sm" variant="ghost">Filter</prism-button><prism-button slot="tools" size="sm" variant="ghost">Sort</prism-button><prism-button slot="tools" size="sm" variant="ghost">Copy</prism-button>${repeat(14, (index) => `<p>Change ${index + 1} of the slice.</p>`)}</prism-panel>`,
     "long-text": `<prism-panel heading="${LONG}" eyebrow="${LONG}" maximizable><prism-button slot="tools" size="sm" variant="ghost">${LONG}</prism-button><p>${LONG}</p><p slot="footer">${LONG}</p></prism-panel>`,
     "unbroken-name": `<prism-panel heading="${UNBROKEN}" eyebrow="${UNBROKEN}" variant="island"><prism-button slot="tools" size="sm" variant="ghost">${UNBROKEN}</prism-button><p>${UNBROKEN}</p></prism-panel>`
@@ -464,8 +468,9 @@ const SPECIMENS = {
     strip: claimOf({ variant: "strip" }) + claimOf({ variant: "strip", label: "Michael on build-2", host: "Claude Code" }),
     expired: claimOf({ variant: "inline", label: "Claude on vm", activity: "design", left: -4 }) + claimOf({ variant: "avatar", label: "Claude on vm", left: -4 }),
     "expired-strip": claimOf({ variant: "strip", label: "Claude on vm", left: -95 }),
-    "long-text": claimOf({ variant: "inline", label: LONG }) + claimOf({ variant: "strip", label: LONG, left: 3000 }),
-    "unbroken-name": claimOf({ variant: "inline", label: UNBROKEN }) + claimOf({ variant: "strip", label: UNBROKEN, left: -3000 })
+    model: claimOf({ variant: "inline", label: "Michael on build-2", host: "Codex", model: "gpt-5.5" }) + claimOf({ variant: "inline", label: "Claude on vm", model: "claude-opus-5-5", activity: "design" }) + claimOf({ variant: "strip", label: "Michael on build-2", host: "Claude Code", model: "claude-opus-5-5" }) + claimOf({ variant: "avatar", label: "Michael on build-2", host: "Codex", model: "gpt-5.5" }),
+    "long-text": claimOf({ variant: "inline", label: LONG }) + claimOf({ variant: "strip", label: LONG, left: 3000 }) + claimOf({ variant: "inline", label: "Michael on build-2", host: LONG, model: LONG }) + claimOf({ variant: "strip", label: LONG, host: LONG, model: LONG }),
+    "unbroken-name": claimOf({ variant: "inline", label: UNBROKEN }) + claimOf({ variant: "strip", label: UNBROKEN, left: -3000 }) + claimOf({ variant: "strip", label: "Claude on vm", model: UNBROKEN })
   },
   "prism-time": {
     ago: timeOf(-7) + " · " + timeOf(-0.2) + " · " + timeOf(-3000),
@@ -564,6 +569,21 @@ const third = 3;</code></pre></prism-code>`,
     "long-text": rowsOf(`<prism-row icon="question" tone="info"><a href="#entry-prism-row">${LONG}</a><span slot="description">${LONG}</span><prism-chip slot="kind" tone="accent">${LONG}</prism-chip><time slot="time" datetime="2026-11-10T08:00:00Z">2 min</time><prism-button slot="action" size="sm">Answer</prism-button></prism-row><prism-row wrap icon="check-circle" tone="success">${LONG}<span slot="detail">${LONG}</span><prism-chip slot="kind" tone="success">Answered</prism-chip></prism-row>`),
     "unbroken-name": rowsOf(`<prism-row icon="question" tone="info"><a href="#entry-prism-row">${UNBROKEN}</a><span slot="description">${UNBROKEN}</span><prism-chip slot="kind">${UNBROKEN}</prism-chip><prism-button slot="action" size="sm">Open</prism-button></prism-row><prism-row wrap icon="check-circle" tone="success">${UNBROKEN}<span slot="detail">${UNBROKEN}</span><prism-chip slot="kind" tone="success">Answered</prism-chip></prism-row>`)
   },
+  "prism-count-link": {
+    default: `<prism-count-link href="#entry-prism-count-link" icon="play" count="3">Launched on this computer</prism-count-link>`,
+    zero: `<prism-count-link href="#entry-prism-count-link" icon="clock" count="0">Expired claims</prism-count-link>`,
+    list: `<div class="prism-count-links"><prism-count-link href="#entry-prism-count-link" icon="play" count="4">Launched on this computer</prism-count-link><prism-count-link href="#entry-prism-count-link" icon="agent" count="6">Other sessions</prism-count-link><prism-count-link href="#entry-prism-count-link" icon="clock" count="2">Expired claims</prism-count-link></div>`,
+    "long-text": `<div class="catalog-narrow prism-count-links"><prism-count-link href="#entry-prism-count-link" icon="agent" count="12345">${LONG}</prism-count-link></div>`,
+    "unbroken-name": `<div class="catalog-narrow prism-count-links"><prism-count-link href="#entry-prism-count-link" icon="agent" count="7">${UNBROKEN}</prism-count-link></div>`
+  },
+  "prism-agent-summary": {
+    quiet: `<prism-agent-summary variant="chrome" shape="round" working="0"></prism-agent-summary>`,
+    working: `<prism-agent-summary variant="chrome" shape="round" working="2" expired="1"></prism-agent-summary>`,
+    "needs-you": `<prism-agent-summary variant="chrome" shape="round" working="4" failed="1" waiting="1" expired="1"></prism-agent-summary><prism-agent-summary variant="chrome" shape="round" working="3" waiting="2"></prism-agent-summary>`,
+    many: `<prism-agent-summary variant="chrome" shape="round" working="10" failed="1" waiting="1" expired="2"></prism-agent-summary>`,
+    "long-text": `<prism-agent-summary variant="chrome" shape="round" working="12345" failed="678" waiting="9012" expired="34"></prism-agent-summary>`,
+    "unbroken-name": `<prism-agent-summary variant="chrome" shape="round" working="1234567890" failed="1234567890" waiting="1234567890"></prism-agent-summary>`
+  },
   "prism-page-sub": {
     default: `<prism-page-sub>Records changed in the last 7 days, from the repository's history, those not committed first.</prism-page-sub>`,
     "with-link": `<prism-page-sub>Review findings · 2 of 7 items<a slot="end" href="#entry-prism-page-sub">Show everything</a></prism-page-sub>`,
@@ -578,10 +598,11 @@ const third = 3;</code></pre></prism-code>`,
     grouped: libTable(["Title", "Kind", "Status", "Why it is here"], `${libGroup("The contract cites", 2, "from the slice's design")}${libRows([["Retry requirements", "list", "Requirement", "<prism-chip tone=\"success\">Approved</prism-chip>", "Section 1"], ["Retry deadline", "book", "Glossary term", "<prism-chip>Defined</prism-chip>", "Clause 1"]], { plainThird: true })}`),
     "with-detail": libTable(["Requirements file", "Status", "Date", "Assigned to"], `${libGroup("<prism-status value=\"approved\"></prism-status>", 2)}${[["Retry requirements", "3 requirements", "<prism-chip interactive tone=\"accent\">Retry timed-out requests until a total deadline<span slot=\"meta\">req 1</span></prism-chip><prism-chip interactive tone=\"accent\">Emit retry metrics<span slot=\"meta\">req 3</span></prism-chip>"], [UNBROKEN, "1 requirement", "<span class=\"muted\">Not assigned yet</span>"]].map(([title, detail, chips]) => `<div class="prism-lib-row"><span class="prism-lib-title"><prism-icon class="prism-lib-kind" name="list" size="sm" aria-hidden="true"></prism-icon><span class="prism-lib-title-text"><a href="#entry-prism-lib-table">${title}</a><span class="prism-lib-cell is-detail">${detail}</span></span></span><span class="prism-lib-cell"><prism-status value="approved"></prism-status></span><span class="prism-lib-cell">Approved 4 Sep</span><span class="prism-lib-cell chip-row">${chips}</span></div>`).join("")}`),
     "empty-group": libTable(["Title", "Kind", "Status", "Why it is here"], `${libGroup("This work changes", 0, "planned by the design or changed by the verified result")}<p class="prism-lib-nothing">Nothing yet.</p>`),
+    "with-details": libTable(["Title", "Kind", "Changed", "By"], libRows([["Harden request retries", "play", "Launched session", "2 h ago", "Claude Code"], ["Export activity reports", "play", "Launched session", "1 d ago", "Codex"]]).replace(/<\/div>$/, `${libDetails("Continue it in a terminal, in /work/retries", "codex resume 0b6f1c2e-6c1a-4d1e-9a57-3c2b9c4b1f00")}</div>`)),
     "no-source": libTable(["Slice", "Initiative"], `${libGroup("In progress", 2)}${libPairs([["Emit retry metrics", "branch", "Harden request retries"], [UNBROKEN, "branch", LONG]])}`, "catalog-lib-pair"),
     "many-items": libTable(["Title", "Kind", "Changed", "By"], libRows(Array.from({ length: 14 }, (_, index) => [index % 5 ? `Record ${index + 1}` : `${UNBROKEN}-${index + 1}`, "list", "Requirement", `${index + 1} h ago`, "Ada Lovelace"]))),
-    "long-text": libTable(["Title", "Kind", "Status", "Why it is here"], `${libGroup(LONG, 1, LONG)}${libRows([[LONG, "list", LONG, LONG, LONG]])}`),
-    "unbroken-name": libTable(["Title", "Kind", "Status", "Why it is here"], `${libGroup(UNBROKEN, 1, UNBROKEN)}${libRows([[UNBROKEN, "file", UNBROKEN, UNBROKEN, UNBROKEN]])}`)
+    "long-text": libTable(["Title", "Kind", "Status", "Why it is here"], `${libGroup(LONG, 1, LONG)}${libRows([[LONG, "list", LONG, LONG, LONG]]).replace(/<\/div>$/, `${libDetails(LONG, LONG)}</div>`)}`),
+    "unbroken-name": libTable(["Title", "Kind", "Status", "Why it is here"], `${libGroup(UNBROKEN, 1, UNBROKEN)}${libRows([[UNBROKEN, "file", UNBROKEN, UNBROKEN, UNBROKEN]]).replace(/<\/div>$/, `${libDetails(UNBROKEN, UNBROKEN)}</div>`)}`)
   },
 
   "prism-phase": {

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { access, constants, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { isAgentModel } from "./agent-models.mjs";
 
 // The hosts that a launched session runs, the commands Prism runs for them, and the readers of their output streams.
 // Nothing here takes a value from the review page except the initiative identifier, checked by the caller, and the host.
@@ -248,14 +249,25 @@ const digestKey = (id) => createHash("sha256").update(Buffer.from(id, "utf16le")
  * One run's conversation with its host over the host's standard input and output.
  * `send(message)` writes one JSON line to the host's input and `closeInput()` ends that input; the conversation calls neither
  * after it closed the input, and closes it once the host's work is over, so the host exits by itself.
- * `facts` collects { hostSessionId, turnId, refusals, refusalCount, hostError }: refusals holds the first RECORDED_REFUSALS of
- * the refusalCount refusals, and host text in them has the host session id, the known one or the one the run names, replaced
- * before it is cut. onSessionId is called once when a Codex launch names its thread with an id that is safe to keep.
+ * `facts` collects { hostSessionId, turnId, model, refusals, refusalCount, hostError }: model is the one that Claude Code's first
+ * `system` `init` event or Codex's thread/start or thread/resume result names, or null when that is no model a claim may record;
+ * refusals holds the first RECORDED_REFUSALS of the refusalCount refusals, and host text in them has the host session id, the
+ * known one or the one the run names, replaced before it is cut. onModel is called once with the model as soon as the host names
+ * one, and onSessionId is called once when a Codex launch names its thread with an id that is safe to keep.
  * `interrupt()` stops the run the way the host's own Stop button does: it sends the host's interrupt while the input is open and
  * closes the input once the host has answered it, or at once for a Codex run that has not sent turn/start yet.
  */
-export function hostConversation(host, { initiative, checkout, hostSessionId = null, resume = false, send, closeInput, onSessionId = () => {} }) {
-  const facts = { hostSessionId: null, turnId: null, refusals: [], refusalCount: 0, hostError: null };
+export function hostConversation(host, { initiative, checkout, hostSessionId = null, resume = false, send, closeInput, onSessionId = () => {}, onModel = () => {} }) {
+  const facts = { hostSessionId: null, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null };
+  let modelSeen = false;
+  // Only the first place that can name the run's model counts; a value that is no model a claim may record keeps none.
+  const named = (value) => {
+    if (modelSeen) return;
+    modelSeen = true;
+    if (!isAgentModel(value)) return;
+    facts.model = detached(value);
+    onModel(facts.model);
+  };
   let inputOpen = true;
   const redact = (value) => redactSessionId(redactSessionId(value, hostSessionId), facts.hostSessionId);
   // The id is replaced before the text is cut, so no cut leaves part of it behind.
@@ -292,6 +304,10 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
       event(event) {
         if (event.type === "control_response") {
           if (interruptId !== null && event.response?.request_id === interruptId) close();
+          return;
+        }
+        if (event.type === "system" && event.subtype === "init") {
+          named(event.model);
           return;
         }
         if (event.type === "system" && typeof event.task_id === "string") {
@@ -367,12 +383,13 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
         return;
       }
       if (method === "thread/start" || method === "thread/resume") {
-        const named = result?.thread?.id;
-        if (method === "thread/start" && validHostSessionId(named)) {
-          facts.hostSessionId = named;
-          onSessionId(named);
+        named(result?.model);
+        const thread = result?.thread?.id;
+        if (method === "thread/start" && validHostSessionId(thread)) {
+          facts.hostSessionId = thread;
+          onSessionId(thread);
         }
-        threadId = method === "thread/resume" ? hostSessionId : typeof named === "string" && named ? named : null;
+        threadId = method === "thread/resume" ? hostSessionId : typeof thread === "string" && thread ? thread : null;
         if (!threadId) {
           close();
           return;

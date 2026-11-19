@@ -78,7 +78,12 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
       resume,
       send: (message) => child.stdin.write(`${JSON.stringify(message)}\n`),
       closeInput: () => child.stdin.end(),
-      onSessionId: (id) => update((current) => { if (!current.hostSessionId) current.hostSessionId = id; })
+      onSessionId: (id) => update((current) => { if (!current.hostSessionId) current.hostSessionId = id; }),
+      // The run's model is recorded as soon as the host names it, so a running launch already shows it.
+      onModel: (model) => update((current) => {
+        const run = current.runs.find((entry) => entry.token === token);
+        if (run) run.model = model;
+      })
     });
     let started = false;
     let heartbeat = null;
@@ -102,7 +107,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
         const at = new Date().toISOString();
         update((current) => {
           delete current.startFailure;
-          current.runs.push({ number, cause, token, supervisorPid: process.pid, hostPid: child.pid, startedAt: at, heartbeatAt: at, outputAt: null, endedAt: null, exit: null, refusals: [], refusalCount: 0, hostError: null, stderr: null, stopGraceMs: graceMs, stopRequestedAt: null });
+          current.runs.push({ number, cause, token, supervisorPid: process.pid, hostPid: child.pid, startedAt: at, heartbeatAt: at, outputAt: null, model: null, endedAt: null, exit: null, refusals: [], refusalCount: 0, hostError: null, stderr: null, stopGraceMs: graceMs, stopRequestedAt: null });
         }).then(() => markSpawned(true));
         heartbeat = setInterval(() => update((current) => {
           const run = current.runs.find((entry) => entry.token === token);
@@ -182,7 +187,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
           if (!run) return;
           // The id is replaced before the line is cut, so no cut leaves part of it behind.
           const last = redactSessionId(lines.at(-1) ?? null, current.hostSessionId);
-          Object.assign(run, { endedAt, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, refusalCount: facts.refusalCount, hostError: facts.hostError, stderr: last?.slice(0, 300) ?? null });
+          Object.assign(run, { endedAt, model: facts.model, exit: { code: code ?? null, signal: signal ?? null }, refusals: facts.refusals, refusalCount: facts.refusalCount, hostError: facts.hostError, stderr: last?.slice(0, 300) ?? null });
           if (!run.stopRequestedAt && request) run.stopRequestedAt = new Date(requestTime(request)).toISOString();
         });
         resolve();

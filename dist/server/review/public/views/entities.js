@@ -7,7 +7,7 @@ export const ENTITY_LABELS = Object.freeze({
   decisions: "Decisions",
   glossary: "Glossary",
   code: "Code",
-  launches: "Launched sessions"
+  agents: "Agents"
 });
 
 const SECTIONS = Object.keys(ENTITY_LABELS);
@@ -20,7 +20,7 @@ const VIEWS = {
   decisions: () => import("./library.js"),
   glossary: () => import("./library.js"),
   code: () => import("./code.js"),
-  launches: () => import("./launched-sessions.js"),
+  agents: () => import("./agents.js"),
   diagrams: () => import("./library.js"),
   touched: () => import("./knowledge.js"),
   changed: () => import("./knowledge.js")
@@ -32,6 +32,10 @@ export const KNOWLEDGE_PAGES = Object.freeze({ diagrams: "Diagrams", touched: "T
 // Mirrors the server's entity references: sections, Attention's filtered pages, Knowledge's pages, initiative:<id>, and slice:<id>/<slug>.
 export function parseEntityRef(ref) {
   if (SECTIONS.includes(ref)) return { kind: ref };
+  // The Launched sessions address, as a restored tab or an old link, opens the Agents page that replaced it; agents:<group> opens it with that Show choice made.
+  if (ref === "launches") return { kind: "agents" };
+  const group = /^agents:(needs-you|this-computer|other|expired)$/.exec(ref ?? "");
+  if (group) return { kind: "agents", page: group[1] };
   // Attention's filtered pages: one kind, one initiative's items, the roadmap's open questions, or the questions answered this week.
   let match = /^attention:(questions|findings|failed|blocked|ready|problems|answered|roadmap-questions|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
   if (match) return { kind: "attention", page: match[1] };
@@ -105,7 +109,7 @@ export function entityLabel(entity) {
   if (entity.kind === "roadmap") return { eyebrow: "Roadmap", title: "Roadmap", lead: data.serves || null, subtitle: data.recordPath ?? null };
   if (entity.kind === "initiative") return { eyebrow: "Initiative", title: data.roadmapItem?.title ?? data.id, subtitle: data.recordPath };
   if (entity.kind === "slice") return { eyebrow: `Slice · ${data.initiativeTitle}`, title: data.slice.title, subtitle: data.artifacts?.folder ?? null };
-  if (entity.kind === "launches") return { title: ENTITY_LABELS.launches, lead: null, subtitle: null };
+  if (entity.kind === "agents") return { title: ENTITY_LABELS.agents, lead: "Every agent working on this workspace, and every session launched on this computer.", subtitle: null };
   if (entity.kind === "glossary") return { eyebrow: "Library", title: "Glossary", subtitle: data.path };
   if (entity.kind === "code") return { eyebrow: "Library", title: "Code", subtitle: null };
   if (Object.hasOwn(KNOWLEDGE_PAGES, entity.kind)) return { eyebrow: "Knowledge", title: KNOWLEDGE_PAGES[entity.kind], subtitle: null };

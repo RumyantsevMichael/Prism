@@ -18,8 +18,8 @@ async function readHookInput(input) {
 }
 
 // Claude Code runs this before it sends each Prism tool call and names agent_id only for a sub-agent's tool use,
-// so the server, which receives only the tool use id, can tell that sub-agent's calls from its main agent's.
-// It never refuses or delays the tool use beyond recording it, and prints nothing; a host whose input names no agent, such as Codex, records nothing.
+// so the server, which receives only the tool use id, can tell that sub-agent's calls from its main agent's, and a call no hook recorded from both.
+// It records every Prism tool use, naming the agent only for a sub-agent's, never refuses or delays the tool use beyond recording it, and prints nothing.
 export async function recordCallAgentHook({ input = process.stdin, directory } = {}) {
   const hookInput = JSON.parse(await readHookInput(input));
   if (hookInput.hook_event_name && hookInput.hook_event_name !== "PreToolUse") return false;

@@ -1,7 +1,7 @@
 import { createPoller } from "./poller.js";
 
 // Every live and expired claim of the project's initiatives, as the server reads them from the initiative records.
-// The sidebar, the command palette, Who's working, and the views read the same index, so a claim shows the same everywhere and never offers an action.
+// The sidebar, the command palette, and the views read the same index, so a claim shows the same everywhere and never offers an action.
 
 const REFRESH_MS = 10000;
 
@@ -17,7 +17,7 @@ export function claimElement(claim, variant = "inline", attributes = {}) {
   element.setAttribute("variant", variant);
   element.setAttribute("label", claim.label);
   element.setAttribute("activity", claim.activity);
-  for (const [name, value] of Object.entries({ host: claim.host, "claimed-at": claim.claimedAt, "renewed-at": claim.renewedAt, "expires-at": claim.expiresAt, ...attributes })) {
+  for (const [name, value] of Object.entries({ host: claim.host, model: claim.model, "claimed-at": claim.claimedAt, "renewed-at": claim.renewedAt, "expires-at": claim.expiresAt, ...attributes })) {
     if (value) element.setAttribute(name, value);
   }
   return element;

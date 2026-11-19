@@ -15,7 +15,7 @@ import { missingNotice, nextMissingTabs, renderMissing } from "./views/missing-t
 import { createPageBar } from "./views/page-bar.js";
 import { DEFAULT_PLACE, PLACES, placeNamed } from "./views/places.js";
 import { claimElement, createClaimIndex } from "./views/claim-index.js";
-import { createPresence } from "./views/presence.js";
+import { createAgentsMenu } from "./views/agents-menu.js";
 import { DENSITIES, onPreferencesChange, preference, preferencesReady, savePreferences, setPreference, THEMES } from "./kit/preferences.js";
 import { shownActionEntries } from "./views/actions.js";
 import { artifactChangesView, artifactReviewHtml, focusAfterMore, mountArtifactReview, readListedComments } from "./views/artifact-review.js";
@@ -27,6 +27,7 @@ import { LANES, laneHeading } from "./views/roadmap.js";
 import { createPoller, deadline, POLL_DEADLINE_MS } from "./views/poller.js";
 import { createEventRelay } from "./views/event-relay.js";
 import { shippedHistoryHtml } from "./views/shipped-history.js";
+import { bindViewLinks, requestClause, viewKind, viewNoteHtml } from "./views/design-views.js";
 import { arrangeGroups } from "./views/tab-groups.js";
 
 const project = document.getElementById("project");
@@ -172,14 +173,24 @@ let sidePanel;
 let panelPreview;
 let pageBar;
 let claimIndex;
-let presence;
+let agentsMenu;
 const viewStates = new Map();
 const treeToggles = new Map();
 
 // Every request has a deadline, so a request the browser holds back for want of a free connection fails and shows the connection banner instead of freezing the page.
+// A restarted app gives every link a new credential and refuses calls with the old one, so a page loaded before the restart reloads
+// into the page that says its link no longer works, instead of staying on screen while every action fails.
+let expiredLink = false;
+
 function appFetch(url, options = {}) {
   const { deadlineMs, ...rest } = options;
-  return fetch(url, { signal: deadline(deadlineMs), ...rest });
+  return fetch(url, { signal: deadline(deadlineMs), ...rest }).then((response) => {
+    if (response.status === 404 && response.headers.get("X-Prism-Link") === "expired" && !expiredLink) {
+      expiredLink = true;
+      location.reload();
+    }
+    return response;
+  });
 }
 
 function samePaths(left, right) {
@@ -1399,6 +1410,17 @@ function fileName(path) {
   return path.split("/").pop();
 }
 
+// A design view's clause link opens its contract's page at that clause, also when that page is the one showing.
+function openClause(ref, number) {
+  requestClause(ref, number);
+  if (ref !== selectedPath) {
+    openRef(ref);
+    return;
+  }
+  lastSnapshot = "";
+  void showArtifact(ref);
+}
+
 function fileType(path) {
   return path.split(".").pop().toUpperCase();
 }
@@ -1421,6 +1443,7 @@ function pageLabel(path) {
     return named.code ? path : named.label === named.kind ? named.kind : `${named.kind} · ${named.label}`;
   }
   if (parsed.kind === "knowledge") return KNOWLEDGE_PAGES[parsed.page];
+  if (parsed.kind === "agents") return ENTITY_LABELS.agents;
   if (parsed.page) return attentionPageLabel(path, parsed.page);
   if (ENTITY_LABELS[parsed.kind]) return ENTITY_LABELS[parsed.kind];
   const indexed = navigation.index?.find((entry) => entry.ref === path)?.label;
@@ -2083,7 +2106,7 @@ function renderNavigation() {
   void updateAttentionSignals(attention.gates ?? 0);
   for (const rail of [shellRail, drawerRail]) renderRail(rail, attention.gates ?? 0);
   const entity = Boolean(parseEntityRef(selectedPath ?? ""));
-  const claims = claimIndex ? [...claimIndex.live(), ...claimIndex.expired()].map((claim) => [claim.ref, claim.expiresAt, claim.label]) : [];
+  const claims = claimIndex ? [...claimIndex.live(), ...claimIndex.expired()].map((claim) => [claim.ref, claim.expiresAt, claim.label, claim.host, claim.model]) : [];
   const key = JSON.stringify([currentPlace, selectedPath, scope, attention, navigation.initiatives, navigation.places, navigation.glossary, navigation.library, navigation.diagnostics, claims, [...treeToggles], workFilterField?.value ?? "", knowledgeQuery(), knowledgeResults, attentionMoreOpen, currentPlace === "knowledge" ? [lastSlice, touchedCount] : null, storeSignature, scopeFilter && [...scopeFilter]]);
   if (key === navigationKey) return;
   navigationKey = key;
@@ -2601,13 +2624,15 @@ async function showArtifact(path) {
       : documentSheet(data, state);
   const memory = beginRebuild(path);
   // A repository file is named by its path; a record of Prism's by its title and kind, never its file name.
+  // A declared design view is named by the question it answers, with its kind above it and its note below.
   const named = describe(data.path);
-  const heading = named.code ? fileName(data.path) : named.label === named.kind ? named.kind : named.label;
+  const view = data.view ?? null;
+  const heading = view ? view.question : named.code ? fileName(data.path) : named.label === named.kind ? named.kind : named.label;
   const kind = structured ? KIND_LABELS[data.kind] ?? "JSON" : named.code ? fileType(data.path) : named.kind;
   memory.stage.innerHTML = `
     <header class="artifact-header">
       <div>
-        ${named.code ? "" : `<p class="eyebrow">${escapeHtml(named.kind)}</p>`}
+        ${view ? `<p class="eyebrow">${escapeHtml(viewKind(view))}</p>` : named.code ? "" : `<p class="eyebrow">${escapeHtml(named.kind)}</p>`}
         <h1${named.code ? " data-code-subject" : ""}>${escapeHtml(heading)}</h1>
         ${named.code ? `<p class="artifact-path" data-code-subject>${escapeHtml(data.path)}</p>` : ""}
         ${data.location ? `<p class="artifact-path" data-code-subject>${escapeHtml(data.location)}</p>` : ""}
@@ -2621,11 +2646,13 @@ async function showArtifact(path) {
         ${source ? "<prism-chip>Read-only</prism-chip>" : structured ? "" : `<prism-chip>${diagramLabel}</prism-chip>`}
       </div>
     </header>
+    ${view ? viewNoteHtml(view, "view-note view-header-note") : ""}
     ${artifactReviewHtml(data, state)}
     <div class="document-history" data-shipped-history>${documentHistoryHtml(path)}</div>
     ${documentCard}`;
   // A store artifact shows its review view above its content, and its comment form keeps an unsent comment across the page's live updates.
   // More comments lists further comments in place, so the page takes what the card now lists as what it shows and redraws only when that changes.
+  if (view) bindViewLinks(memory.stage, openClause);
   mountArtifactReview(memory.stage, data, { actionApi, state, readPage, onListed: (listed) => { if (listed.path === selectedPath) lastSnapshot = JSON.stringify(listed); } });
   bindChanges(memory.stage, state, path);
   pageBar.setActions(structured ? modeButtons(state, path) : []);
@@ -2731,6 +2758,11 @@ function viewContext(path, state) {
       close: () => sidePanel.close(),
       isOpen: () => sidePanel.isOpen()
     },
+    // A design view's card on a slice's Views tab draws its source as a diagram card does.
+    async drawView(section, source) {
+      await renderDiagram(source, section.querySelector(".diagram-output"), section);
+      if (path === selectedPath) decorateMaximize(path);
+    },
     // A view embeds a PlantUML file as the same diagram card that opening the file shows.
     async mountDiagram(target, diagramPath) {
       const data = await fetchJson(`./api/artifact?${artifactQuery(localTab(diagramPath))}`);
@@ -2785,7 +2817,7 @@ function paletteEntries() {
     { ref: "decisions", label: "Decisions", kind: "place", detail: "Library" },
     { ref: "glossary", label: "Glossary", kind: "place", detail: "Library" },
     { ref: "knowledge:diagrams", label: "Diagrams", kind: "place", detail: "Library" },
-    { ref: "launches", label: "Launched sessions", kind: "place", detail: "Headless sessions on this computer" }
+    { ref: "agents", label: "Agents", kind: "place", detail: "Every agent of this workspace and every session launched here" }
   ];
   // A library entry that names a store artifact by the reading checkout's path is that store artifact: it opens by its ref, follows the scope filter, and names its scope,
   // so the Records group below never lists it a second time.
@@ -3061,15 +3093,26 @@ async function initialize() {
     onChange: () => {
       navigationKey = "";
       renderNavigation();
-      presence?.render();
+      void agentsMenu?.refresh();
     }
   });
   await claimIndex.refresh().catch(() => {});
-  presence = createPresence({
-    button: document.getElementById("presence-button"),
-    popover: document.getElementById("presence"),
-    claims: claimIndex,
-    onOpen: (ref) => openRef(ref)
+  agentsMenu = createAgentsMenu({
+    button: document.getElementById("agents-button"),
+    popover: document.getElementById("agents"),
+    onOpen: (ref) => openRef(ref),
+    // Answer selects the question the launch waits on, with its answer form, once Attention shows.
+    onAnswer: async (gate) => {
+      const { openQuestion } = await import("./views/attention.js");
+      openQuestion({ openArtifact: (ref) => openRef(ref) }, gate);
+    },
+    // Open shows the Agents page with that session's details unfolded, and shows every group if the page's Show choice left the session out.
+    onOpenAgent: (id) => {
+      const state = viewState("agents");
+      state.openAgents = [...new Set([...(state.openAgents ?? []), id])];
+      if (state.show && !["all", "needs-you", "this-computer"].includes(state.show)) state.show = "all";
+      openRef("agents");
+    }
   });
   palette = createPalette({
     dialog: document.getElementById("palette"),
@@ -3103,6 +3146,11 @@ async function initialize() {
   });
   sidePanel = createSidePanel({
     shell: appShell,
+    // A view's clause or contract opens on the contract's page, so the panel closes rather than show the view beside it.
+    onOpenClause: (ref, number) => {
+      sidePanel.close();
+      openClause(ref, number);
+    },
     sheet: document.getElementById("side-panel-sheet"),
     describe,
     // A page's Side panel button follows the panel, however it opens or closes.
@@ -3294,7 +3342,6 @@ async function initialize() {
   });
   connectSessionEvents();
   renderNavigation();
-  presence.render();
   document.addEventListener("click", noteLinkOpened, { capture: true });
   document.addEventListener("auxclick", noteLinkOpened, { capture: true });
   if (requestedPath && requestedPath !== selectedPath && selectedPath && openTabs.includes(selectedPath) && openedFromLink(requestedPath)) {
