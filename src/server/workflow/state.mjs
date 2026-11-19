@@ -27,19 +27,43 @@ const SETTING_KEYS = new Set(INITIATIVE_SETTINGS);
 // left out for the host default, so the stored value is compact and a host the person never chose for holds nothing.
 const RUN_HOSTS = HOSTS.map(({ host }) => host);
 const KIND_NAMES = RUN_KINDS.map(({ kind }) => kind);
-// The earlier models value named one model per role for every host; each role is now a kind, and each name a typed choice.
+const AGENT_KINDS = RUN_KINDS.filter(({ purpose }) => purpose === "agents").map(({ kind }) => kind);
+// The earlier models value named one model per role for every host; each role is now an agent kind, and each name a typed choice,
+// or an earlier name where it breaks the model rule.
 const EARLIER_ROLES = Object.freeze({ delivery: "designImplementation", review: "codeReview", securityReview: "securityReview", examples: "gateSummary" });
 const EARLIER_DEFAULTS = new Set(["defaults", "host defaults"]);
+const EARLIER_NAME_LIMIT = 200;
+const EARLIER_NAME = /^[^\s\p{Cc}]+(?: [^\s\p{Cc}]+)*$/u;
+
+/** Whether a name keeps the earlier-name rule: 1 to 200 characters, no control character, and only single spaces between its words. */
+export function validEarlierName(name) {
+  return typeof name === "string" && EARLIER_NAME.test(name) && [...name].length <= EARLIER_NAME_LIMIT;
+}
+
+/** Why an earlier name is not offered: no host takes it as a model, so it is shown and refused until the person replaces it. */
+export const earlierReason = (hostLabel, earlier) => `Prism kept the earlier model name ${earlier}, which ${hostLabel} cannot take as a model.`;
+
+// An earlier name keeps its words: each run of white space and control characters is one space, with none at either end, and at most 200 characters.
+function earlierName(name) {
+  return [...name.replace(/[\s\p{Cc}]+/gu, " ").trim()].slice(0, EARLIER_NAME_LIMIT).join("").trimEnd();
+}
 
 function earlierAssignment(value) {
   return isRecord(value) && Object.keys(value).length > 0 && Object.entries(value).every(([key, name]) => Object.hasOwn(EARLIER_ROLES, key) && typeof name === "string");
 }
 
-/** A models value in the per-host shape: an earlier host defaults value reads as no choice, and an earlier assignment as typed choices of every host. */
+// One earlier name as a run choice: a typed model where it keeps the model rule once trimmed, else an earlier name, and null when nothing is left.
+function earlierChoice(name) {
+  if (validModel(name.trim())) return { model: name.trim(), typed: true };
+  const earlier = earlierName(name);
+  return earlier ? { earlier } : null;
+}
+
+/** A models value in the per-host shape: an earlier host defaults value reads as no choice, and an earlier assignment as the choices of every host. */
 export function migratedModels(value) {
   if (typeof value === "string" && EARLIER_DEFAULTS.has(value)) return {};
   if (!earlierAssignment(value)) return value;
-  const entry = () => Object.fromEntries(Object.entries(EARLIER_ROLES).filter(([role]) => Object.hasOwn(value, role)).map(([role, kind]) => [kind, { model: value[role].trim(), typed: true }]));
+  const entry = () => Object.fromEntries(Object.entries(EARLIER_ROLES).filter(([role]) => Object.hasOwn(value, role)).map(([role, kind]) => [kind, earlierChoice(value[role])]).filter(([, choice]) => choice !== null));
   return Object.fromEntries(RUN_HOSTS.map((host) => [host, entry()]));
 }
 
@@ -246,12 +270,8 @@ function validateModels(value, errors) {
     addError(errors, "settings.models", "must be an object keyed by host");
     return;
   }
-  if (earlierAssignment(value)) {
-    for (const [role, name] of Object.entries(value)) {
-      if (!validModel(name.trim())) addError(errors, `settings.models.${role}`, NAME_RULE_MESSAGES.model);
-    }
-    return;
-  }
+  // Every name of an earlier assignment migrates, to a typed choice, an earlier name, or the host default.
+  if (earlierAssignment(value)) return;
   for (const [host, entry] of Object.entries(value)) {
     const at = `settings.models.${host}`;
     if (!RUN_HOSTS.includes(host)) {
@@ -268,20 +288,27 @@ function validateModels(value, errors) {
       } else if (!KIND_NAMES.includes(key)) {
         addError(errors, `${at}.${key}`, `is not a kind of run choice; the kinds are ${KIND_NAMES.join(", ")}`);
       } else {
-        validateRunChoice(item, `${at}.${key}`, errors);
+        validateRunChoice(item, `${at}.${key}`, errors, AGENT_KINDS.includes(key));
       }
     }
   }
 }
 
-// A stored run choice leaves out each host default, so typed appears only as true and only with a model.
-function validateRunChoice(value, at, errors) {
+// A stored run choice leaves out each host default, so typed appears only as true and only with a model; an agent kind's choice
+// may instead keep an earlier name alone.
+function validateRunChoice(value, at, errors, agent) {
   if (!isRecord(value)) {
     addError(errors, at, "must be an object of model, effort, and typed");
     return;
   }
+  if (Object.hasOwn(value, "earlier")) {
+    if (!agent) addError(errors, `${at}.earlier`, "is kept only by an agent's choice, never the coordinator's");
+    else if (Object.keys(value).length > 1) addError(errors, `${at}.earlier`, "stands alone in its choice, without a model, an effort, or typed");
+    else if (!validEarlierName(value.earlier)) addError(errors, `${at}.earlier`, "has 1 to 200 characters, no control character, and only single spaces between its words");
+    return;
+  }
   for (const key of Object.keys(value)) {
-    if (!["model", "effort", "typed"].includes(key)) addError(errors, `${at}.${key}`, "is not a part of a run choice; its parts are model, effort, and typed");
+    if (!["model", "effort", "typed"].includes(key)) addError(errors, `${at}.${key}`, "is not a part of a run choice; its parts are model, effort, typed, and on an agent's choice an earlier name alone");
   }
   if (value.model !== undefined && !validModel(value.model)) addError(errors, `${at}.model`, NAME_RULE_MESSAGES.model);
   if (value.effort !== undefined && !validEffort(value.effort)) addError(errors, `${at}.effort`, NAME_RULE_MESSAGES.effort);

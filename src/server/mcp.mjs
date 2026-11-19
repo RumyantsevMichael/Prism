@@ -411,12 +411,20 @@ const RUN_CHOICE_SCHEMA = {
     typed: { type: "boolean", const: true, description: "Only beside a model name the person typed, which the host does not list." }
   }
 };
+// An agent's choice may instead keep, alone, an earlier name that breaks the model rule, which is never passed to a host.
+const AGENT_CHOICE_SCHEMA = {
+  ...RUN_CHOICE_SCHEMA,
+  properties: {
+    ...RUN_CHOICE_SCHEMA.properties,
+    earlier: { type: "string", minLength: 1, maxLength: 200, description: "An earlier model name that no host can take, kept alone until the person replaces it; it reads as the host default." }
+  }
+};
 const RUN_HOST_ENTRY_SCHEMA = {
   type: "object",
   additionalProperties: false,
   properties: {
     provider: { type: "string", pattern: PROVIDER_PATTERN.source },
-    ...Object.fromEntries(RUN_KINDS.map(({ kind }) => [kind, RUN_CHOICE_SCHEMA]))
+    ...Object.fromEntries(RUN_KINDS.map(({ kind, purpose }) => [kind, purpose === "agents" ? AGENT_CHOICE_SCHEMA : RUN_CHOICE_SCHEMA]))
   }
 };
 const LISTED_PROBLEMS = 20;
@@ -752,7 +760,7 @@ const tools = [
   },
   {
     name: "get_coordination_state",
-    description: "Read an initiative's coordination state record with its revision. Reads never create the record. Its settings.host names the supported host that launches run on, and settings.models keeps, per host, a provider and the coordinator's, designImplementation's, codeReview's, securityReview's, and gateSummary's { model, effort, typed }, each part left out for the host default; an earlier models value reads migrated, host defaults as {} and named models as typed choices of every host. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked; a document in the checkout is to be committed apart from the task's changes, while one in the record store is shared by its sync and needs no commit. The text carries its message as a line.",
+    description: "Read an initiative's coordination state record with its revision. Reads never create the record. Its settings.host names the supported host that launches run on, and settings.models keeps, per host, a provider and the coordinator's, designImplementation's, codeReview's, securityReview's, and gateSummary's { model, effort, typed }, each part left out for the host default; an earlier models value reads migrated, host defaults as {} and named models as typed choices of every host, except that a name breaking the model rule is kept alone as { earlier } on that agent kind, which reads as the host default and is never passed to a host. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked; a document in the checkout is to be committed apart from the task's changes, while one in the record store is shared by its sync and needs no commit. The text carries its message as a line.",
     inputSchema: {
       type: "object",
       properties: {
@@ -827,7 +835,7 @@ const tools = [
                     { type: "string", enum: ["defaults", "host defaults"], description: "The earlier form, stored as no choice." },
                     {
                       type: "object",
-                      description: "The choices kept for each host; a part left out is the host's default, and an earlier { delivery, review, securityReview, examples } value is stored as typed choices of every host.",
+                      description: "The choices kept for each host; a part left out is the host's default, and an earlier { delivery, review, securityReview, examples } value is stored as typed choices of every host, with a name breaking the model rule kept as { earlier }.",
                       propertyNames: { enum: RUN_HOST_NAMES },
                       additionalProperties: RUN_HOST_ENTRY_SCHEMA
                     }

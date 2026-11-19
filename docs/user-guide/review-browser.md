@@ -215,6 +215,8 @@ A change to Models names one host and keeps the choices of every other host.
 It takes only a provider, model, or effort that the host reports, its default, or a model name you typed, which Prism cannot check; a value the host does not offer is refused with a reason such as `Claude Code on this computer does not offer the model claude-opus-3.`
 While the host cannot report its options, Models takes only the host's defaults and typed model names.
 An initiative's earlier Models value keeps its meaning: `host defaults` reads as the host's default for every choice, and named delivery, review, security review, and examples models read as typed models of the design and implementation, code review, security review, and design gate summary agents of every host.
+A named model that is no model name, such as `Claude Opus 4.1`, is kept as an earlier model name, and that agent runs with the host's default model instead, because Prism never passes the name to a host.
+A Models change that still holds it is refused with a reason such as `Prism kept the earlier model name Claude Opus 4.1, which Claude Code cannot take as a model.`, and choosing another model, the host's default, or a model name you type replaces it.
 
 Turning autonomy to `full`, commit on, or push on asks you to confirm first, because it lets agents act further without you.
 

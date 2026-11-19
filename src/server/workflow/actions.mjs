@@ -10,7 +10,7 @@ import { runGit } from "./record-store-sync.mjs";
 import { REPOSITORY_NAME } from "./repository-names.mjs";
 import { readRoadmap } from "./roadmap.mjs";
 import { shippedActionReason, shippedDecision } from "./shipped-history.mjs";
-import { INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction } from "./state.mjs";
+import { earlierReason, INITIATIVE_SETTINGS, readCoordinationState, recordPersonAction, validEarlierName } from "./state.mjs";
 import { ambiguousApprovalMessage, answerArtifactApproval, commentOnArtifact, pendingApprovalGates, storeArtifactTarget } from "./store-artifacts.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
@@ -244,10 +244,15 @@ function hostOptions(context, consequence) {
 const firstFoundHost = (context) => context.hosts?.find((item) => item.available)?.host ?? null;
 const HOST_DEFAULT_CHOICE = Object.freeze({ model: null, effort: null, typed: false });
 
-// One host's stored entry in full: its provider or null, and each kind's choice with null for the host default.
+// One host's stored entry in full: its provider or null, and each kind's choice with null for the host default; a kept earlier
+// name reads as the host default beside its earlier name, so nothing passes it on as a model.
 function fullEntry(stored) {
   const entry = isRecord(stored) ? stored : {};
-  const choiceOf = (value) => (isRecord(value) ? { model: value.model ?? null, effort: value.effort ?? null, typed: value.typed === true } : { ...HOST_DEFAULT_CHOICE });
+  const choiceOf = (value) => {
+    if (!isRecord(value)) return { ...HOST_DEFAULT_CHOICE };
+    if (typeof value.earlier === "string") return { ...HOST_DEFAULT_CHOICE, earlier: value.earlier };
+    return { model: value.model ?? null, effort: value.effort ?? null, typed: value.typed === true };
+  };
   return { provider: typeof entry.provider === "string" ? entry.provider : null, ...Object.fromEntries(RUN_KINDS.map(({ kind }) => [kind, choiceOf(entry[kind])])) };
 }
 
@@ -264,6 +269,10 @@ function compactModels(value) {
     if (entry.provider !== null) kept.provider = entry.provider;
     for (const { kind } of RUN_KINDS) {
       const choice = entry[kind];
+      if (typeof choice.earlier === "string") {
+        kept[kind] = { earlier: choice.earlier };
+        continue;
+      }
       const part = { ...(choice.model === null ? {} : { model: choice.model }), ...(choice.effort === null ? {} : { effort: choice.effort }), ...(choice.typed ? { typed: true } : {}) };
       if (Object.keys(part).length) kept[kind] = part;
     }
@@ -318,6 +327,8 @@ async function checkedModels(values, context) {
   }
   for (const { kind, purpose } of RUN_KINDS) {
     const choice = values[kind] ?? HOST_DEFAULT_CHOICE;
+    // An earlier name is never offered, so a change that still holds one is refused until the person replaces it.
+    if (choice.earlier !== undefined) throw refuse(kind, earlierReason(label, choice.earlier));
     if (choice.typed && choice.model === null) throw refuse(kind, "Only a model name can be typed.");
     const breach = nameRuleBreach({ model: choice.model, effort: choice.effort });
     if (breach) throw refuse(kind, breach.message);
@@ -704,19 +715,22 @@ function runOptionInput(item, raw) {
   return raw;
 }
 
-// A run choice takes { model, effort, typed } or null for the host default, with null or a missing part as the host's default.
+// A run choice takes { model, effort, typed } or null for the host default, with null or a missing part as the host's default; an
+// agent's choice may also hold the earlier name that its value shows, which the action's own check refuses with its reason.
 function runChoiceInput(item, raw) {
   const accepted = "{ model, effort, typed } with model and effort a name or null and typed true or false, or null for the host default.";
   if (raw === undefined || raw === null) return { model: null, effort: null, typed: false };
   const malformed = () => invalid(item.name, accepted, `${item.label} must be a model, an effort, and whether the model was typed.`);
-  if (!isRecord(raw) || Object.keys(raw).some((key) => !["model", "effort", "typed"].includes(key))) throw malformed();
+  const parts = item.for === "agents" ? ["model", "effort", "typed", "earlier"] : ["model", "effort", "typed"];
+  if (!isRecord(raw) || Object.keys(raw).some((key) => !parts.includes(key))) throw malformed();
+  if (raw.earlier !== undefined && !validEarlierName(raw.earlier)) throw malformed();
   const part = (value) => {
     if (value === undefined || value === null || value === "") return null;
     if (typeof value !== "string") throw malformed();
     return value;
   };
   if (raw.typed !== undefined && typeof raw.typed !== "boolean") throw malformed();
-  return { model: part(raw.model), effort: part(raw.effort), typed: raw.typed === true };
+  return { model: part(raw.model), effort: part(raw.effort), typed: raw.typed === true, ...(raw.earlier === undefined ? {} : { earlier: raw.earlier }) };
 }
 
 // ---- Applying ----
