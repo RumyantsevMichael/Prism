@@ -3,7 +3,7 @@ import { access, constants, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 // The hosts that a launched session runs, the commands Prism runs for them, and the readers of their output streams.
-// Nothing here takes a value from the review page except the initiative identifier, checked by the caller, and the host.
+// Nothing here takes a value from the review page except the initiative identifier or the format migration run's id, checked by the caller, and the host.
 
 export const HOSTS = Object.freeze([
   Object.freeze({ host: "claude-code", label: "Claude Code", executable: "claude" }),
@@ -124,31 +124,47 @@ export async function hostAvailability({ env = process.env } = {}) {
   }));
 }
 
-/** The arguments of a run: Claude Code's launch or resume form with its session id, or Codex's app server. */
-export function hostArguments({ host, hostSessionId, resume }) {
+// A model that may reach a command line: letters, digits, `.`, `_`, `:`, `/`, `[`, `]`, and `-`, never `-` first.
+const MODEL_PATTERN = /^[0-9A-Za-z_.][0-9A-Za-z_.:/[\]-]{0,127}$/;
+const modelOf = (model) => (typeof model === "string" && MODEL_PATTERN.test(model) ? model : null);
+
+/** The arguments of a run: Claude Code's launch or resume form with its session id and, when the launch names one, its model, or Codex's app server. */
+export function hostArguments({ host, hostSessionId, resume, model = null }) {
   if (host === "claude-code") {
     if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
-    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...CLAUDE_FLAGS];
+    const chosen = modelOf(model);
+    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...CLAUDE_FLAGS, ...(chosen ? ["--model", chosen] : [])];
   }
   if (host === "codex") return ["app-server"];
   throw new Error(`Unknown host ${host}.`);
 }
 
-/** The stream-json user message that gives a Claude Code run its prompt. */
-export function claudePrompt(initiative) {
-  return { type: "user", message: { role: "user", content: `/prism:orchestrate ${initiative}` } };
+/**
+ * The skill invocation that a run's prompt holds, without its host's prefix: `prism:migrate-artifact <run id>` for a format migration run,
+ * and `prism:orchestrate <initiative>` otherwise. Nothing else reaches a prompt.
+ */
+export function runInvocation({ initiative = null, migrationRun = null }) {
+  return typeof migrationRun === "string" && migrationRun ? `prism:migrate-artifact ${migrationRun}` : `prism:orchestrate ${initiative}`;
 }
 
-/** The Codex request that opens the run's thread: thread/start for a launch, thread/resume with the kept thread id for a resume. */
-export function codexThreadRequest({ checkout, hostSessionId, resume }) {
-  if (!resume) return { method: "thread/start", params: { cwd: checkout, ...CODEX_POLICY } };
+/** The stream-json user message that gives a Claude Code run its prompt, for an initiative or for { initiative, migrationRun } as runInvocation takes it. */
+export function claudePrompt(subject) {
+  const invocation = subject !== null && typeof subject === "object" ? runInvocation(subject) : runInvocation({ initiative: subject });
+  return { type: "user", message: { role: "user", content: `/${invocation}` } };
+}
+
+/** The Codex request that opens the run's thread: thread/start for a launch, thread/resume with the kept thread id for a resume, each with the launch's model when it names one. */
+export function codexThreadRequest({ checkout, hostSessionId, resume, model = null }) {
+  const chosen = modelOf(model);
+  const modelField = chosen ? { model: chosen } : {};
+  if (!resume) return { method: "thread/start", params: { cwd: checkout, ...CODEX_POLICY, ...modelField } };
   if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
-  return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...CODEX_POLICY } };
+  return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...CODEX_POLICY, ...modelField } };
 }
 
-/** The Codex request that starts the run's one orchestrate turn. */
-export function codexTurnRequest({ threadId, initiative }) {
-  return { method: "turn/start", params: { threadId, input: [{ type: "text", text: `$prism:orchestrate ${initiative}` }] } };
+/** The Codex request that starts the run's one turn: the initiative's orchestrate, or the format migration run's migrate-artifact. */
+export function codexTurnRequest({ threadId, initiative = null, migrationRun = null }) {
+  return { method: "turn/start", params: { threadId, input: [{ type: "text", text: `$${runInvocation({ initiative, migrationRun })}` }] } };
 }
 
 /** The stream-json line that Claude Code's own Stop button sends: an interrupt control request with a request id that Prism chooses. */
@@ -254,7 +270,7 @@ const digestKey = (id) => createHash("sha256").update(Buffer.from(id, "utf16le")
  * `interrupt()` stops the run the way the host's own Stop button does: it sends the host's interrupt while the input is open and
  * closes the input once the host has answered it, or at once for a Codex run that has not sent turn/start yet.
  */
-export function hostConversation(host, { initiative, checkout, hostSessionId = null, resume = false, send, closeInput, onSessionId = () => {} }) {
+export function hostConversation(host, { initiative = null, migrationRun = null, model = null, checkout, hostSessionId = null, resume = false, send, closeInput, onSessionId = () => {} }) {
   const facts = { hostSessionId: null, turnId: null, refusals: [], refusalCount: 0, hostError: null };
   let inputOpen = true;
   const redact = (value) => redactSessionId(redactSessionId(value, hostSessionId), facts.hostSessionId);
@@ -283,7 +299,7 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
     const taskKey = digestKey;
     let interruptId = null;
     return {
-      start: () => write(claudePrompt(initiative)),
+      start: () => write(claudePrompt({ initiative, migrationRun })),
       interrupt() {
         if (interruptId !== null) return;
         interruptId = randomUUID();
@@ -362,7 +378,7 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
     const answered = (method, result) => {
       if (method === "initialize") {
         write({ jsonrpc: "2.0", method: "initialized", params: {} });
-        const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume });
+        const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume, model });
         request(open, params);
         return;
       }
@@ -377,7 +393,7 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
           close();
           return;
         }
-        const { method: turn, params } = codexTurnRequest({ threadId, initiative });
+        const { method: turn, params } = codexTurnRequest({ threadId, initiative, migrationRun });
         turnRequested = true;
         request(turn, params);
         return;

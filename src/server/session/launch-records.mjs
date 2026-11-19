@@ -276,7 +276,7 @@ function stateOf(record, status, label, gates) {
 }
 
 /**
- * The launch view of a record: { id, initiative, host, hostLabel, checkout, launchedAt, runningMs, runs, state, reason, exit, resumeCommand, answerWaits }.
+ * The launch view of a record: { id, initiative, migrationRun (only for a format migration run's session), host, hostLabel, checkout, launchedAt, runningMs, runs, state, reason, exit, resumeCommand, answerWaits }.
  * gates is gateFacts of the launch as the page's checkout reads its initiative's coordination state; without it no gate is counted.
  */
 export function launchView(record, { now = Date.now(), gates = null } = {}) {
@@ -298,7 +298,9 @@ export function launchView(record, { now = Date.now(), gates = null } = {}) {
   const resumeCommand = command ? { command, cwd: record.checkout } : null;
   return {
     id: record.id,
-    initiative: record.initiative,
+    initiative: record.initiative ?? null,
+    // Only a format migration run's session names its run, so an initiative's view keeps its fields.
+    ...(typeof record.migrationRun === "string" ? { migrationRun: record.migrationRun } : {}),
     host: record.host,
     hostLabel: label,
     checkout: record.checkout,

@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { CONFORMING, GLOSSARY, PATHS, checked, entryOf, formatServer, read, write } from "./fixtures/artifact-formats.mjs";
-import { waitFor } from "./fixtures/format-migration-runs.mjs";
+import { CONFORMING, GLOSSARY, PATHS, checked, entryOf, read, write } from "./fixtures/artifact-formats.mjs";
+import { runCheckout, waitFor } from "./fixtures/format-migration-runs.mjs";
 
 // A format migration inside its run accounts for every source statement, keeps decisions and the target's entries, settles or asks each point,
 // and applies once the run finishes, with the person's answers to what it asked.
@@ -69,7 +69,8 @@ Related: n/a
 const auditProposal = (run, content = auditContent()) => ({ run, type: "requirements", source: AUDIT, target: AUDIT, content, summary: "Adds the format's sections and fields around the one obligation and marks the values the file never gave as unknown.", leftovers: [] });
 
 async function project(context, files = { [TERMS]: TERMS_TEXT, [AUDIT]: AUDIT_SOURCE }) {
-  const server = await formatServer(context, { ...CONFORMING, ...files });
+  // Prism launches each run's session, so these projects see stub hosts that hold their turn while the test calls the run's tools as that session would.
+  const server = await runCheckout(context, { ...CONFORMING, ...files });
   const run = (await waitFor(async () => entryOf(await checked(server.call, [Object.keys(files)[0]]), Object.keys(files)[0])?.migration ?? null, { what: "the run of the requirements set" })).run;
   return { ...server, run };
 }

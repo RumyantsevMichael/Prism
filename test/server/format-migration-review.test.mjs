@@ -3,10 +3,14 @@ import { mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink,
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { CONFORMING, FEATURE, REQUIREMENT, checked, entryOf, formatServer, read } from "./fixtures/artifact-formats.mjs";
-import { labelOf, storeProject, storeRead } from "./fixtures/artifact-formats-store.mjs";
-import { waitFor } from "./fixtures/format-migration-runs.mjs";
+import { CONFORMING, FEATURE, REQUIREMENT, checked, entryOf, read } from "./fixtures/artifact-formats.mjs";
+import { labelOf, storeRead } from "./fixtures/artifact-formats-store.mjs";
+import { runCheckout, runStore, waitFor } from "./fixtures/format-migration-runs.mjs";
 import { defer } from "./fixtures/teardown.mjs";
+
+// Prism launches each run's session, so these projects see stub hosts that hold their turn while the test calls the run's tools as that session would.
+const formatServer = (context, files) => runCheckout(context, files);
+const storeProject = (context, files) => runStore(context, files);
 
 // Format migrations stay inside the project, invent no decision or wording, and keep a named target scope; a run checks its record again when it applies,
 // applies nothing outside the project or beyond what its proposals passed, and keeps every source when a target cannot be written.

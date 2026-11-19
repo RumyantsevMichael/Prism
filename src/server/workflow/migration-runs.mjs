@@ -9,6 +9,7 @@ import { parseStoreJson } from "./store-json.mjs";
 // Format migration runs: Prism starts one run by itself for each set of nonconforming requirement files, ADRs, or glossaries of one type in one scope,
 // the run's session proposes one format migration per artifact of the set, and finishing the run applies all of them or none, or asks the person once.
 // A run is a record of its own under format-migrations/, beside no roadmap entry, initiative, slice, claim, or gate.
+// Prism launches each run's session itself, on this machine, as a launched session of the checkout whose prompt is the migrate-artifact skill and the run's id alone.
 
 export const RUN_ID = /^run-[0-9a-f]{16}$/;
 export const RUN_STATUSES = Object.freeze(["starting", "running", "waiting-for-host", "asking", "continuing", "applied", "failed"]);
@@ -145,7 +146,8 @@ export function findMigrationSets(runs, checked) {
 // A run's id is the hash of its set, so two machines that start a run of the same set record the same run, and the store's sync keeps the one recorded first.
 const runIdOf = (set) => `run-${createHash("sha256").update(JSON.stringify([set.type, labelOf(set.scope), set.formatVersion, set.artifacts.map((artifact) => [artifact.path, labelOf(artifact.scope), artifact.version])])).digest("hex").slice(0, 16)}`;
 
-// The function that launches a run's session, which the launch of runs on a host sets: launcher({ projectRoot, run }) with the run's record.
+// The function that launches a run's session: launcher({ projectRoot, run }) with the run's record.
+// A Prism server sets it to launchRunSession when it starts, so a module that only reads runs, such as a test's, launches nothing.
 let launcher = null;
 
 /** Set the function that launches each run Prism starts, or null to launch none; it runs apart from the start and its failure never reaches it. */
@@ -153,7 +155,177 @@ export function setRunLauncher(value) {
   launcher = typeof value === "function" ? value : null;
 }
 
+// ---- Launching ----
+
+const LAUNCH_ENDED = "The run's session ended before the run finished: ";
+// The statuses from which a launch that started its host makes the run running.
+const LAUNCHED_FROM = new Set(["starting", "waiting-for-host"]);
+
+/**
+ * The host and model of a format migration run's session on this machine: { host, model, reason }, with the first available host of Claude Code and Codex,
+ * in that order, and model null, so the host uses its own default model; when no host is available, host is null and reason says why for each host.
+ * This is the only choice of a run's host and model, so the machine's launch settings replace this function alone.
+ */
+export async function migrationRunHost(env = process.env) {
+  const { hostAvailability } = await import("../session/launch-hosts.mjs");
+  const hosts = await hostAvailability({ env });
+  const found = hosts.find((entry) => entry.available);
+  if (found) return { host: found.host, model: null, reason: null };
+  return { host: null, model: null, reason: `No host is available on this machine: ${hosts.map((entry) => entry.reason).join(" ")}` };
+}
+
+// Record a run's launch, its status, or both, unless the run ended: the status changes only from one of `from`, so a run that asked or failed meanwhile keeps that.
+async function recordLaunch(root, id, { launch, status = null, reason = null, from = LAUNCHED_FROM }) {
+  return withRunLock(root, id, async () => {
+    const record = await readRun(root, id);
+    if (!record || ENDED.has(record.status)) return record;
+    const next = { ...record, ...(launch === undefined ? {} : { launch }) };
+    if (status !== null && from.has(record.status)) Object.assign(next, { status, reason });
+    await writeRun(root, next);
+    return next;
+  });
+}
+
+// Fail an open run, applying nothing, unless a later session of the run took over from the one that names launch.
+async function failOpenRun(root, id, reason, { launch = null } = {}) {
+  return withRunLock(root, id, async () => {
+    const record = await readRun(root, id);
+    if (!record || !OPEN_STATUSES.has(record.status)) return record;
+    if (launch !== null && record.launch?.id && record.launch.id !== launch) return record;
+    const now = new Date().toISOString();
+    const next = { ...record, status: "failed", failure: { reason: failureReason(reason), at: now }, endedAt: now, reason: null };
+    await writeRun(root, next);
+    return next;
+  });
+}
+
+/**
+ * Launch a run's session on this machine at once, without asking anyone, on the host that migrationRunHost chooses, with the migrate-artifact prompt alone:
+ * the run becomes running with launch { id, host } once the host started, or waiting-for-host with the reason when no host is available.
+ * A session of the run that already runs here starts no second one. `status` is the status that a started launch records, running for a new run;
+ * a continuation keeps continuing. Returns the run's record, or null for an unknown run.
+ */
+export async function launchMigrationRun(projectRoot, id, { env = process.env, status = "running" } = {}) {
+  const root = await realpath(projectRoot);
+  const from = status === "running" ? LAUNCHED_FROM : new Set([status]);
+  const choice = await migrationRunHost(env);
+  if (!choice.host) return recordLaunch(root, id, { status: "waiting-for-host", reason: choice.reason, from: new Set([...from, "starting"]) });
+  const { startMigrationLaunch } = await import("../session/launched-sessions.mjs");
+  let started;
+  try {
+    started = await startMigrationLaunch({ projectRoot: root, migrationRun: id, host: choice.host, model: choice.model, env });
+  } catch (error) {
+    if (error?.code === "launch_running") return readRun(root, id);
+    if (error?.code === "host_unavailable") return recordLaunch(root, id, { status: "waiting-for-host", reason: `No host is available on this machine: ${error.message}`, from: new Set([...from, "starting"]) });
+    if (typeof error?.code === "string") return failOpenRun(root, id, `${LAUNCH_ENDED}${error.message}`);
+    throw error;
+  }
+  return recordLaunch(root, id, { launch: { id: started.launch.id, host: choice.host }, status, from });
+}
+
+/** The launcher that a Prism server sets: it launches each run Prism starts as launchMigrationRun does. */
+export const launchRunSession = ({ projectRoot, run }) => launchMigrationRun(projectRoot, run.id);
+
+/**
+ * The end of a run's session, by its exit, a host error, or a stop: a run that is still starting, running, or continuing fails with the session's last reason,
+ * applying nothing, while a run that asks, waits, or ended keeps its status.
+ */
+export async function sessionEnded(projectRoot, id, { launch = null, reason }) {
+  const root = await realpath(projectRoot);
+  return failOpenRun(root, id, `${LAUNCH_ENDED}${reason}`, { launch });
+}
+
+/**
+ * Continue a run once the person answered its question: the run is continuing, and its session resumes with the same prompt,
+ * or a new session starts on an available host when the earlier one cannot be resumed, or the run waits for a host when none is available.
+ * Returns { run } as get_migration_run does, refused with migration_run_unknown or, for a run that ended, migration_run_closed.
+ */
+export async function continueMigrationRun(projectRoot, id, { env = process.env } = {}) {
+  const root = await realpath(projectRoot);
+  await storedRun(root, id);
+  const record = await storeRefusing(() => withRunLock(root, id, async () => {
+    const current = await storedRun(root, id);
+    if (ENDED.has(current.status)) throw closed(current);
+    const next = { ...current, status: "continuing", reason: null };
+    await writeRun(root, next);
+    return next;
+  }));
+  const { resumeLaunch } = await import("../session/launched-sessions.mjs");
+  let resumed = false;
+  if (record.launch?.id) {
+    try {
+      await resumeLaunch({ id: record.launch.id, env, cause: "person" });
+      resumed = true;
+    } catch (error) {
+      // A session of the run that still runs keeps the run; any other refusal starts a new session.
+      if (error?.code === "launch_running") resumed = true;
+      else if (typeof error?.code !== "string") throw error;
+    }
+  }
+  if (!resumed) await launchMigrationRun(root, id, { env, status: "continuing" });
+  return { run: await storeRefusing(async () => shownRun(root, await storedRun(root, id))) };
+}
+
+/**
+ * Run a failed run again: a new run with the cause rerun for the artifacts of the failed run's set that still break their format at their current version,
+ * confirmed as a new run is and launched as launchMigrationRun launches it, apart from the call. `by` is who asked, { name, email }.
+ * Returns { run } as get_migration_run does. A run that did not fail, or that a rerun already follows, is refused with run_not_failed,
+ * and a set whose every artifact now conforms with migration_run_conforming.
+ */
+export async function rerunMigration(projectRoot, id, by = null, { env = process.env } = {}) {
+  const root = await realpath(projectRoot);
+  const { checkTargets, contentVersion, resolveArtifacts, targetBytes } = await import("./artifact-check.mjs");
+  const record = await storeRefusing(() => withRecordLock(root, START_LOCK, async () => {
+    const failed = await storedRun(root, id);
+    const followed = (await allRuns(root)).some((run) => run.rerunOf === id);
+    if (failed.status !== "failed" || followed) {
+      throw fail("run_not_failed", `The format migration run ${id} ${failed.status !== "failed" ? `is ${failed.status}, and only a failed run runs again` : "already runs again in a later run"}.`, { run: id, status: failed.status });
+    }
+    const artifacts = [];
+    let formatVersion = failed.set.formatVersion;
+    for (const artifact of failed.set.artifacts) {
+      const entry = artifact.scope === null || artifact.scope === undefined ? artifact.path : { path: artifact.path, ...scopeInputOf(artifact.scope) };
+      let resolved;
+      try {
+        resolved = await resolveArtifacts({ projectRoot: root, paths: [entry] });
+      } catch (error) {
+        if (["artifact_missing", "artifact_ambiguous", "artifact_type_unknown"].includes(error?.code)) continue;
+        throw error;
+      }
+      const [checked] = await checkTargets(resolved.root, resolved.store, resolved.targets, { startRuns: false });
+      if (!checked || checked.conforms || checked.type !== failed.set.type) continue;
+      formatVersion = checked.version;
+      artifacts.push({ path: checked.path, scope: checked.scope, version: contentVersion(await targetBytes(resolved.root, resolved.targets[0])) });
+    }
+    if (!artifacts.length) throw fail("migration_run_conforming", `Every artifact of the format migration run ${id} now conforms to its format, so no run starts again.`, { run: id });
+    const now = new Date().toISOString();
+    const next = {
+      id: `run-${randomBytes(8).toString("hex")}`, set: { type: failed.set.type, scope: failed.set.scope, formatVersion, artifacts }, cause: "rerun", rerunOf: id,
+      by: by && typeof by === "object" ? { name: String(by.name ?? ""), email: String(by.email ?? "") } : null,
+      status: "starting", startedAt: now, endedAt: null, nonce: randomBytes(8).toString("hex"), migrations: [], question: null, answers: null, result: null, failure: null, nextPoint: 1
+    };
+    await writeRun(root, next);
+    return next;
+  }, fail));
+  trackLaunches(root, confirmRuns(root, [record], ({ projectRoot: base, run }) => launchMigrationRun(base, run.id, { env }))).catch(() => {});
+  return { run: await storeRefusing(() => shownRun(root, record)) };
+}
+
 const starting = new Map();
+// The launches that this process has under way, by project root, so a call on a run on this machine follows the start of its session.
+const launching = new Map();
+
+function trackLaunches(root, work) {
+  const next = Promise.allSettled([launching.get(root), work]).then(() => {});
+  launching.set(root, next);
+  next.finally(() => { if (launching.get(root) === next) launching.delete(root); });
+  return work;
+}
+
+/** Wait until the sessions that this process is launching for the project's runs have started or failed to start. */
+export async function settledRunLaunches(projectRoot) {
+  await launching.get(projectRoot)?.catch(() => {});
+}
 
 /**
  * Start one run for each new set among the checked artifacts: the returned promise settles once the runs are recorded on this machine,
@@ -173,8 +345,11 @@ export function startMigrationRuns(projectRoot, checked) {
 
 async function startRuns(projectRoot, checked) {
   const root = await realpath(projectRoot);
+  let waiting = [];
   const started = await withRecordLock(root, START_LOCK, async () => {
-    const sets = findMigrationSets(await allRuns(root), checked);
+    const runs = await allRuns(root);
+    waiting = runs.filter((run) => run.status === "waiting-for-host");
+    const sets = findMigrationSets(runs, checked);
     const written = [];
     for (const set of sets) {
       const id = runIdOf(set);
@@ -186,11 +361,28 @@ async function startRuns(projectRoot, checked) {
     }
     return written;
   }, fail);
-  if (started.length) confirmRuns(root, started).catch(() => {});
+  if (started.length) trackLaunches(root, confirmRuns(root, started)).catch(() => {});
+  if (waiting.length && launcher) trackLaunches(root, relaunchWaiting(root, waiting)).catch(() => {});
   return started;
 }
 
-async function confirmRuns(root, started) {
+// A check on this machine launches each run that waits for a host: the run is starting again under its lock, so one check alone launches it.
+async function relaunchWaiting(root, waiting) {
+  for (const run of waiting) {
+    const claimed = await withRunLock(root, run.id, async () => {
+      const current = await readRun(root, run.id);
+      if (current?.status !== "waiting-for-host") return null;
+      const choice = await migrationRunHost();
+      if (!choice.host) return null;
+      const next = { ...current, status: "starting", reason: null };
+      await writeRun(root, next);
+      return next;
+    });
+    if (claimed && launcher) await Promise.resolve().then(() => launcher({ projectRoot: root, run: claimed })).catch(() => {});
+  }
+}
+
+async function confirmRuns(root, started, launch = launcher) {
   const { storeSyncBase } = await import("./store-artifacts.mjs");
   const store = await storeSyncBase(root).catch(() => null);
   let confirmed = started;
@@ -210,10 +402,7 @@ async function confirmRuns(root, started) {
     confirmed = [];
     for (const record of started) if ((await readRun(root, record.id))?.nonce === record.nonce) confirmed.push(record);
   }
-  for (const record of confirmed) {
-    if (!launcher) continue;
-    Promise.resolve().then(() => launcher({ projectRoot: root, run: record })).catch(() => {});
-  }
+  if (launch) await Promise.all(confirmed.map((record) => Promise.resolve().then(() => launch({ projectRoot: root, run: record })).catch(() => {})));
   return confirmed;
 }
 
@@ -260,7 +449,7 @@ async function shownRun(root, record) {
     artifacts.push({ ...artifact, findings });
   }
   return {
-    id: record.id, set: { ...record.set, artifacts }, cause: record.cause, status: record.status, startedAt: record.startedAt, endedAt: record.endedAt ?? null,
+    id: record.id, set: { ...record.set, artifacts }, cause: record.cause, status: record.status, startedAt: record.startedAt, endedAt: record.endedAt ?? null, launch: record.launch ?? null,
     migrations: record.migrations.map(shownMigration), question: record.question ?? null, answers: record.answers ?? null, result: record.result ?? null, failure: record.failure ?? null
   };
 }
@@ -315,6 +504,7 @@ export function requireOpen(record) {
 export async function finishMigrationRun(input) {
   runInput(input, "finish_migration_run", ["run"]);
   const root = await realpath(input.projectRoot);
+  await settledRunLaunches(root);
   await storedRun(root, input.run);
   const record = await storeRefusing(() => withRunLock(root, input.run, async () => {
     const current = await storedRun(root, input.run);
@@ -365,6 +555,7 @@ export async function failMigrationRun(input) {
   runInput(input, "fail_migration_run", ["run", "reason"]);
   if (typeof input.reason !== "string" || input.reason.trim().length < 1 || input.reason.length > REASON_MAX) throw fail("invalid_input", `reason must be plain text of 1 to ${REASON_MAX} characters on why the run fails.`);
   const root = await realpath(input.projectRoot);
+  await settledRunLaunches(root);
   await storedRun(root, input.run);
   const record = await storeRefusing(() => withRunLock(root, input.run, async () => {
     const current = await storedRun(root, input.run);

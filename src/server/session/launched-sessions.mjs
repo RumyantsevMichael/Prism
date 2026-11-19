@@ -38,7 +38,8 @@ import {
   writeStopRequest
 } from "./launch-records.mjs";
 
-// Starting, listing, resuming, and stopping launched sessions: headless host sessions that Prism runs for one initiative on this machine.
+// Starting, listing, resuming, and stopping launched sessions: headless host sessions that Prism runs on this machine for one initiative,
+// or for one format migration run, which Prism launches by itself without asking anyone.
 // Each run runs under a detached supervisor, so the session outlives the process that started it.
 
 export { hostAvailability, LaunchError };
@@ -53,6 +54,10 @@ const STOP_SETTLE_MS = 5000;
 
 const refuse = (code, message) => new LaunchError(code, message);
 const runningMessage = (initiative) => `A launched session of ${initiative} is running on this machine.`;
+const runRunningMessage = (run) => `A session of the format migration run ${run} is running on this machine.`;
+// What a launch runs for: { initiative, migrationRun }, one of them null, so a format migration run's sessions never block an initiative's, nor the other way round.
+const subjectOf = (record) => ({ initiative: record.initiative ?? null, migrationRun: typeof record.migrationRun === "string" ? record.migrationRun : null });
+const subjectRunningMessage = (subject) => (subject.migrationRun ? runRunningMessage(subject.migrationRun) : runningMessage(subject.initiative));
 
 async function initiativeExists(projectRoot, initiative) {
   if (typeof initiative !== "string" || !SLUG_PATTERN.test(initiative)) return false;
@@ -68,11 +73,12 @@ async function withLaunchLock(env, action) {
   return withFileLock(path.join(launchesDirectory(env), "launches"), action, (code, message) => refuse(code === "lock_timeout" ? "launch_failed" : code, message), { timeoutMs: LOCK_TIMEOUT_MS });
 }
 
-async function otherRunning(env, { initiative, store, except = null }) {
+async function otherRunning(env, { initiative = null, migrationRun = null, store, except = null }) {
   const now = Date.now();
   for (const { record } of await listLaunchRecords(env)) {
     if (!record || record.id === except) continue;
-    if (record.initiative === initiative && record.store === store && launchRunning(record, now)) return true;
+    const subject = subjectOf(record);
+    if (subject.initiative === initiative && subject.migrationRun === migrationRun && record.store === store && launchRunning(record, now)) return true;
   }
   return false;
 }
@@ -136,16 +142,31 @@ export async function startLaunch({ projectRoot, initiative, host, env = process
   if (!definition) throw refuse("unknown_host", `Prism cannot launch ${String(host)}: the hosts are claude-code and codex.`);
   const checkout = await realpath(projectRoot);
   if (!(await initiativeExists(checkout, initiative))) throw refuse("unknown_initiative", `No initiative ${String(initiative)} exists in this checkout.`);
+  return launchSession({ checkout, subject: { initiative, migrationRun: null }, host, model: null, env });
+}
+
+/**
+ * Starts the first run of a format migration run's session in the checkout, without a confirmation: { launch }, its view in state running.
+ * The record names the run under migrationRun and no initiative, and the host uses the model given, or its own default model for null.
+ */
+export async function startMigrationLaunch({ projectRoot, migrationRun, host, model = null, env = process.env }) {
+  if (!hostDefinition(host)) throw refuse("unknown_host", `Prism cannot launch ${String(host)}: the hosts are claude-code and codex.`);
+  if (typeof migrationRun !== "string" || !/^run-[0-9a-f]{16}$/.test(migrationRun)) throw refuse("unknown_migration_run", `No format migration run ${String(migrationRun)} exists.`);
+  return launchSession({ checkout: await realpath(projectRoot), subject: { initiative: null, migrationRun }, host, model, env });
+}
+
+async function launchSession({ checkout, subject, host, model, env }) {
   const resolved = await resolveHost(host, env);
   if (!resolved.available) throw refuse("host_unavailable", resolved.reason);
   const store = await storeLocation(checkout);
   return withLaunchLock(env, async () => {
-    if (await otherRunning(env, { initiative, store })) throw refuse("launch_running", runningMessage(initiative));
+    if (await otherRunning(env, { ...subject, store })) throw refuse("launch_running", subjectRunningMessage(subject));
     const id = newLaunchId();
     const folder = await createLaunchFolder(env, id);
     const record = {
       id,
-      initiative,
+      initiative: subject.initiative,
+      ...(subject.migrationRun ? { migrationRun: subject.migrationRun, model: model ?? null } : {}),
       host,
       checkout,
       store,
@@ -170,7 +191,7 @@ async function resumeLocked(env, folder, id, cause) {
   const record = await readLaunchRecord(folder);
   if (!record) throw unknownLaunch(id);
   if (launchRunning(record)) throw refuse("launch_running", "The session is running.");
-  if (await otherRunning(env, { initiative: record.initiative, store: record.store, except: id })) throw refuse("launch_running", runningMessage(record.initiative));
+  if (await otherRunning(env, { ...subjectOf(record), store: record.store, except: id })) throw refuse("launch_running", subjectRunningMessage(subjectOf(record)));
   if (!validHostSessionId(record.hostSessionId)) throw refuse("no_host_session", "The session never reported its host session id, so it cannot be resumed.");
   const resolved = await resolveHost(record.host, env);
   if (!resolved?.available) throw refuse("host_unavailable", resolved?.reason ?? `Unknown host ${record.host}.`);
@@ -194,7 +215,7 @@ export async function resumeRefusal({ id, env = process.env }) {
   const record = folder ? await readLaunchRecord(folder) : null;
   if (!record) return unknownLaunch(id).message;
   if (launchRunning(record)) return "The session is running.";
-  if (await otherRunning(env, { initiative: record.initiative, store: record.store, except: id })) return runningMessage(record.initiative);
+  if (await otherRunning(env, { ...subjectOf(record), store: record.store, except: id })) return subjectRunningMessage(subjectOf(record));
   if (!validHostSessionId(record.hostSessionId)) return "The session never reported its host session id, so it cannot be resumed.";
   const resolved = await resolveHost(record.host, env);
   return resolved?.available ? null : resolved?.reason ?? `Unknown host ${record.host}.`;
@@ -211,6 +232,12 @@ export async function launchRunStatus({ id, env = process.env }) {
 export async function initiativeRunning({ projectRoot, initiative, env = process.env }) {
   const store = await storeLocation(await realpath(projectRoot));
   return otherRunning(env, { initiative, store });
+}
+
+/** Whether a session of the format migration run, in the record store of projectRoot, runs on this machine. */
+export async function migrationRunRunning({ projectRoot, migrationRun, env = process.env }) {
+  const store = await storeLocation(await realpath(projectRoot));
+  return otherRunning(env, { migrationRun, store });
 }
 
 /** The message that a launch refused for a running session of the initiative carries. */
@@ -379,6 +406,7 @@ export async function listLaunches({ projectRoot, env = process.env, now = Date.
   // Each initiative's pending gates as this page's checkout reads its coordination state, read once per list.
   const pendingOf = new Map();
   const pending = (initiative) => {
+    if (typeof initiative !== "string") return Promise.resolve([]);
     if (!pendingOf.has(initiative)) {
       pendingOf.set(initiative, readCoordinationState({ projectRoot: checkout, initiative }).then((read) => (read.valid ? read.state?.pending ?? [] : [])).catch(() => []));
     }

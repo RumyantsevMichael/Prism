@@ -59,7 +59,7 @@ function infoHtml(launch, title, ctx) {
       </div>`
     : "";
   return `<div class="launch-head">
-      <h2 class="launch-title">${artifactLink(`initiative:${launch.initiative}`, ctx, title)}</h2>
+      <h2 class="launch-title">${launch.migrationRun ? escapeHtml(`Format migration ${launch.migrationRun}`) : artifactLink(`initiative:${launch.initiative}`, ctx, title)}</h2>
       ${badge(stateText, tone)}
     </div>
     ${launch.reason ? `<p class="launch-reason">${escapeHtml(launch.reason)}</p>` : ""}

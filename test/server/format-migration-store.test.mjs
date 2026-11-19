@@ -3,8 +3,8 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { CONFORMING, REQUIREMENT } from "./fixtures/artifact-formats.mjs";
-import { labelOf, storeProject, storeRead, storeWrite } from "./fixtures/artifact-formats-store.mjs";
-import { waitFor } from "./fixtures/format-migration-runs.mjs";
+import { labelOf, storeRead, storeWrite } from "./fixtures/artifact-formats-store.mjs";
+import { runStore, waitFor } from "./fixtures/format-migration-runs.mjs";
 import { exists } from "./fixtures/workspace-artifacts.mjs";
 
 // Format migrations of store artifacts: named by path and scope, checked against recorded statuses, and applied through Prism's store writes when their run finishes.
@@ -55,7 +55,8 @@ Related: n/a
 const auditProposal = (run, content = auditContent(), source = AUDIT) => ({ run, type: "requirements", source, target: source, content, summary: "Adds the format's sections and fields around the one obligation and marks the values the file never gave as unknown.", leftovers: [] });
 
 async function project(context) {
-  const { place, root, call } = await storeProject(context, { ...CONFORMING, [AUDIT]: AUDIT_SOURCE });
+  // Prism launches each run's session, so these projects see stub hosts that hold their turn while the test calls the run's tools as that session would.
+  const { place, root, call } = await runStore(context, { ...CONFORMING, [AUDIT]: AUDIT_SOURCE });
   await storeRead(call, AUDIT);
   return { place, root, call };
 }

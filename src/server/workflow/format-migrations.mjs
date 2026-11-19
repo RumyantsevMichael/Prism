@@ -9,7 +9,7 @@ import { artifactLocations, artifactTypeOf } from "./artifact-check.mjs";
 import { artifactAddress } from "./artifact-paths.mjs";
 import { newStatus } from "./artifact-status.mjs";
 import { dropReportedFindings } from "./format-findings.mjs";
-import { OPEN_STATUSES, allRuns, appliedMigrationIds, artifactName, requireOpen, scopeInputOf, shownMigration, storedRun, withProposalLock, withRunLock, writeRun } from "./migration-runs.mjs";
+import { OPEN_STATUSES, allRuns, appliedMigrationIds, artifactName, requireOpen, scopeInputOf, settledRunLaunches, shownMigration, storedRun, withProposalLock, withRunLock, writeRun } from "./migration-runs.mjs";
 import { commitStoreFiles, syncRecordStoreNow } from "./record-store-sync.mjs";
 import { applyStoreRun, storeArtifactCopy, storeSyncBase } from "./store-artifacts.mjs";
 import { normalizeStatement, splitStatements } from "./statements.mjs";
@@ -446,6 +446,8 @@ function misplacedStatements(type, sourceText, content, statements, { named = ne
 export async function proposeMigration(input) {
   const given = proposalInput(input);
   const root = await realpath(input.projectRoot);
+  // A session of the run that this process is launching starts before the run takes a proposal, as it would for the session's own call.
+  await settledRunLaunches(root);
   const known = await storedRun(root, given.run);
   requireOpen(known);
   const config = await readWorkflowConfig(root);

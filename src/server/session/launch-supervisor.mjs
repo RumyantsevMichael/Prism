@@ -9,9 +9,10 @@
 // a process that the host started.
 // It names its launch folder on its command line, so any process on this machine can find it.
 // After a run that exited 0, it resumes the session once when the person answered here, during the run, a gate that is still pending.
+// The run of a format migration run's session reports its end to that run, which fails when it was still open.
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
+import { launchView, readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
 import { hostArguments, hostConversation, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
 
 const STDERR_KEEP = 64 * 1024;
@@ -62,7 +63,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
     await failStart("The session never reported its host session id, so it cannot be resumed.");
     return;
   }
-  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume });
+  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, model: record.model ?? null });
   const number = record.runs.length + 1;
   const graceMs = stopGraceMs(env);
   let stderr = Buffer.alloc(0);
@@ -73,6 +74,8 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
     child.stdin.on("error", () => {});
     const conversation = hostConversation(record.host, {
       initiative: record.initiative,
+      migrationRun: record.migrationRun ?? null,
+      model: record.model ?? null,
       checkout: record.checkout,
       hostSessionId: record.hostSessionId,
       resume,
@@ -210,11 +213,27 @@ export async function superviseRun({ folder, cause, token, env = process.env }) 
   });
   if (started) await started.ended;
   await queue;
+  if (started && typeof record.migrationRun === "string") {
+    await reportRunEnd(folder, token).catch(() => {});
+    return;
+  }
   // A run that exited 0 with an answer given here while it ran, whose gate is still pending, is resumed once for that answer.
   if (started) {
     const { resumeForAnswers } = await import("./launched-sessions.mjs");
     await resumeForAnswers({ id: record.id, token, env }).catch(() => {});
   }
+}
+
+// The end of a format migration run's session, as its launch view states it, reaches the run: a run that is still open fails with it.
+async function reportRunEnd(folder, token) {
+  const record = await readLaunchRecord(folder);
+  const run = record?.runs.find((entry) => entry.token === token);
+  if (!run?.endedAt || record.runs.at(-1) !== run) return;
+  const view = launchView(record);
+  const exit = run.exit?.signal ? `signal ${run.exit.signal}` : `exit code ${run.exit?.code ?? "unknown"}`;
+  const reason = view.reason ?? (view.state === "stopped" ? `${view.hostLabel} was stopped.` : `${view.hostLabel} ended with ${exit}.`);
+  const { sessionEnded } = await import("../workflow/migration-runs.mjs");
+  await sessionEnded(record.checkout, record.migrationRun, { launch: record.id, reason });
 }
 
 const [folder, cause, token] = process.argv.slice(2);
