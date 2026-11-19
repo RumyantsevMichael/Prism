@@ -79,3 +79,10 @@ test("clause 14: workflow's Common terms drop Legacy mark and define format find
   assert.ok(definition("Leftover list"), "Leftover list is defined");
   assert.doesNotMatch(terms, /\bconcept/i);
 });
+
+test("clause 15: migrate-artifact recommends an unknown point's value itself, and a separate source's removal once every statement has a home", async () => {
+  const migrate = body(await skill("migrate-artifact"));
+  const sentences = migrate.split(/\n/);
+  assert.ok(sentences.some((line) => /unknown/i.test(line) && /recommendation/i.test(line) && /value itself/i.test(line)), "an unknown point's recommendation is the value itself");
+  assert.ok(sentences.some((line) => /separate source/i.test(line) && /remov/i.test(line) && /every (source )?statement/i.test(line) && /home/i.test(line)), "the separate source is removed once every statement has a home");
+});

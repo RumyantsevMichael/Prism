@@ -55,9 +55,27 @@ test("clauses 7, 8: a nonconforming file's page shows a warning banner with each
   assert.deepEqual([banner.tag, banner.tone], ["prism-banner", "warning"]);
   assert.match(banner.text, /This file breaks its format/);
   assert.match(banner.text, /requirements\.header/);
+  const rules = await page.evaluate(() => [...document.querySelectorAll("prism-banner[data-format-mark] prism-chip")].map((chip) => chip.textContent.trim()));
+  assert.ok(rules.includes("requirements.header"), `each broken rule is a chip in the banner: ${JSON.stringify(rules)}`);
   const other = await opened(context, [PATHS.requirements]);
   await other.getByText("Request retries", { exact: false }).first().waitFor();
   assert.deepEqual(await marks(other, "body"), []);
+});
+
+test("clauses 6, 12: the Requirements library lists every requirement file in one kit library table, and the broken file's row holds the mark", { skip, timeout: 90000 }, async (context) => {
+  const page = await opened(context, ["requirements"]);
+  await page.getByText("Old notes", { exact: false }).first().waitFor();
+  assert.equal(await page.locator("table.data-table").count(), 0, "no plain table lists the files");
+  const table = page.locator("prism-lib-table");
+  assert.equal(await table.count(), 1);
+  const head = (await table.locator(".prism-lib-row.is-head").innerText()).split(/\s*\n\s*/).filter(Boolean);
+  assert.deepEqual(head, ["Title", "Status", "Created", "Used by"]);
+  const rows = table.locator(".prism-lib-row:not(.is-head)");
+  assert.equal(await rows.count(), 2, "one row per requirement file");
+  const broken = rows.filter({ hasText: "Old notes" });
+  assert.equal(await broken.locator("prism-badge[data-format-mark]").count(), 1);
+  assert.equal(await rows.filter({ hasText: "Request retries" }).locator("[data-format-mark]").count(), 0);
+  assert.deepEqual(page.errors, []);
 });
 
 test("clause 6: the Jump palette marks a nonconforming file's result", { skip, timeout: 90000 }, async (context) => {

@@ -97,6 +97,7 @@ test("clauses 11, 12: answering records each point's value with its author and c
   const { run, points } = await asking(call);
   const { action } = await answerAction(base, run, headers);
   assert.deepEqual(action.fields.map((field) => field.name).sort(), points.map((point) => point.id).sort(), "one field per asked point, named by its id");
+  assert.deepEqual(action.value, Object.fromEntries(points.map((point) => [point.id, RECOMMENDATION])), "each field starts as the point's recommendation, the value itself");
   const { listLaunches } = await import("../../dist/server/session/launched-sessions.mjs");
   await waitFor(async () => {
     const launch = (await listLaunches({ projectRoot: root })).launches.find((entry) => entry.migrationRun === run);
@@ -143,6 +144,24 @@ test("clause 11: an unknown value is refused as an answer for an Accepted ADR", 
   assert.equal(codeOf(refused), "invalid_input", refused.text);
   const values = Object.fromEntries(points.map((point) => [point.id, "Every change is traced to its administrator."]));
   assert.equal((await answer(base, run, values, headers)).status, 200);
+});
+
+test("clause 18: a separate source's removal takes no field, and the answer records its removal", { skip: posixOnly }, async (context) => {
+  const terms = "docs/requirements/terms.md";
+  const glossary = CONFORMING[PATHS.glossary];
+  const { call, base, headers } = await served(context, { ...CONFORMING, [terms]: "# Payment terms\n\nTerms used by the payments team.\n\n| Term | Definition |\n| --- | --- |\n| Backoff | The wait between two attempts. |\n" });
+  const leftover = { statement: "Terms used by the payments team.", home: "Dropped: the glossary keeps its own purpose." };
+  const proposal = (run, extra = {}) => ({ run, type: "glossary", source: terms, target: PATHS.glossary, content: `${glossary}\n<a id="backoff"></a>\n## Backoff\n\nThe wait between two attempts.\n\nSource: migration\n`, summary: "Moves the payments team's one term into the glossary.", leftovers: [leftover], settled: [{ point: { kind: "leftover", statement: leftover.statement }, reason: "The glossary already states its purpose." }], ...extra });
+  const { run, points } = await asking(call, terms, proposal);
+  const removal = points.find((point) => point.kind === "remove-source");
+  assert.ok(removal, JSON.stringify(points));
+  const { action } = await answerAction(base, run, headers);
+  assert.ok(!action.fields.some((field) => field.name === removal.id), "the removal offers no choice");
+  const others = Object.fromEntries(points.filter((point) => point !== removal).map((point) => [point.id, RECOMMENDATION]));
+  const kept = await answer(base, run, { ...others, [removal.id]: "keep" }, headers);
+  assert.equal(codeOf(kept), "invalid_input", kept.text);
+  assert.equal((await answer(base, run, others, headers)).status, 200);
+  assert.equal((await readRun(call, run)).answers[removal.id].choice, "remove");
 });
 
 test("clause 14: rerunning a failed run starts a new run of its set, and a run that is not failed or already rerun is refused", { skip: posixOnly }, async (context) => {

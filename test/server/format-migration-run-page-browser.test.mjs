@@ -8,7 +8,7 @@ import { AUDIT, AUDIT_SOURCE, auditContent, auditProposal, readRun, runCheckout,
 import { escapes, launch, openPage, skip as noBrowser, waitForView } from "./fixtures/kit-browser.mjs";
 import { startActionReview } from "./fixtures/review-actions.mjs";
 
-// A format migration run's page shows its set, diffs, and status, words each asked point, and offers the answer while the run asks
+// A format migration run's page shows its set, statement maps, and status, words each asked point with its recommendation prefilled, and offers one answer while the run asks
 // and the rerun once it failed, built from the UI kit with every run and artifact text set as text.
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-run-page-data-")));
@@ -19,6 +19,9 @@ test.after(() => rm(privateData, { recursive: true, force: true }));
 const skip = noBrowser || (process.platform === "win32" ? "the stub hosts are POSIX scripts" : false);
 const UNANCHORED = REQUIREMENT.replace('<a id="2"></a>\n', "");
 const MARKUP = "<img src=x onerror=window.__owned=1>";
+const MARKED = `Administrators change settings ${MARKUP} that nobody can trace.`;
+const MARKED_SOURCE = AUDIT_SOURCE.replace("Administrators change settings that nobody can trace.", MARKED);
+const PATH_TEXT = "see [the retries](docs/requirements/retries.md) and docs/requirements/retries.md";
 const QUESTION_WORDS = /Where does this text belong\?|Do these entries mean the same\?|Which value is missing\?|Which definition stays\?|Remove the source document\?/;
 
 async function opened(context, files, ref, { store = false, open = (prepared) => [`migration-run:${prepared.run}`] } = {}) {
@@ -40,9 +43,9 @@ async function opened(context, files, ref, { store = false, open = (prepared) =>
 
 async function askingRun(call) {
   const run = await runFor(call, AUDIT);
-  const bare = await call("propose_migration", auditProposal(run, { content: auditContent({ problem: MARKUP }) }));
+  const bare = await call("propose_migration", auditProposal(run, { content: auditContent({ problem: MARKED }) }));
   const asked = bare.value.points.map((point) => ({ point, recommendation: `Leave it unknown ${MARKUP}` }));
-  const proposed = await call("propose_migration", auditProposal(run, { content: auditContent({ problem: MARKUP }), summary: `Adds the sections ${MARKUP}`, asked }));
+  const proposed = await call("propose_migration", auditProposal(run, { content: auditContent({ problem: MARKED }), summary: `Adds the sections ${MARKUP}, ${PATH_TEXT}`, asked }));
   assert.equal(proposed.refused, false, proposed.text);
   assert.equal((await call("finish_migration_run", { run })).refused, false);
   return { run, points: proposed.value.migration.points };
@@ -53,22 +56,32 @@ const kitOnly = (page) => page.evaluate(() => {
   return [...view.querySelectorAll("*")].filter((element) => element.tagName.includes("-") && !element.tagName.toLowerCase().startsWith("prism-")).map((element) => element.tagName.toLowerCase());
 });
 
-test("clauses 4, 5, 10: an asking run's page shows its set, summary, and diff, words each asked point with its recommendation, and offers the answer", { skip, timeout: 120000 }, async (context) => {
-  const { page, run, points } = await opened(context, { ...CONFORMING, [AUDIT]: AUDIT_SOURCE }, askingRun);
+test("clauses 4, 5, 10, 16, 17: an asking run's page shows its set, summary, and statement map, words each asked point with its recommendation prefilled, and offers one answer", { skip, timeout: 120000 }, async (context) => {
+  const { page, run, points } = await opened(context, { ...CONFORMING, [AUDIT]: MARKED_SOURCE }, askingRun);
   await page.getByText("Format migration", { exact: false }).first().waitFor();
   const text = await page.locator("body").innerText();
   assert.match(text, /Format migration[^\n]*Requirements/);
   assert.ok(text.includes(run), "the page names the run");
   assert.ok(text.includes(AUDIT), "the page lists the set's artifact");
   assert.match(text, /asking|waits for your answers/i);
-  assert.ok(text.includes(`Adds the sections ${MARKUP}`), "the summary is shown as text");
-  assert.ok(text.includes("## Problem"), "the diff from the source is shown");
+  assert.ok(text.includes(`Adds the sections ${MARKUP}, ${PATH_TEXT}`), "the summary is shown as text");
+  const map = page.locator("prism-lib-table .prism-lib-row", { hasText: "The system shall record every administrative action." });
+  assert.equal(await map.count(), 1, "the statement map lists the source statement once, word for word");
+  assert.match(await map.innerText(), /1\. Record administrative actions/, "the statement shows the section it landed in");
+  const marked = page.locator("prism-lib-table .prism-lib-row", { hasText: MARKED });
+  assert.equal(await marked.count(), 1, "a source statement with markup is listed as text");
+  assert.match(await marked.innerText(), /Problem/);
+  assert.ok(text.includes("Added by the format"), "the map lists what the format added");
   assert.equal((text.match(/Which value is missing\?/g) ?? []).length, points.length, "each unknown point is worded");
   assert.ok(text.includes(`Leave it unknown ${MARKUP}`), "the recommendation is shown as text");
+  const prefilled = await page.evaluate((ids) => ids.map((id) => document.querySelector(`[data-answer-field="${id}"]`)?.value ?? null), points.map((point) => point.id));
+  assert.deepEqual(prefilled, points.map(() => `Leave it unknown ${MARKUP}`), "each answer starts as the recommendation, the value itself");
   assert.match(text, QUESTION_WORDS);
   assert.equal(await page.evaluate(() => window.__owned ?? null), null, "no run text runs as markup");
   assert.equal(await page.locator("img[src='x']").count(), 0);
-  assert.ok(await page.getByRole("button", { name: /answer/i }).count() >= 1, "the answer form is offered");
+  assert.equal(await page.locator("a", { hasText: "docs/requirements/retries.md" }).count(), 0, "a path in an agent's text is no link");
+  assert.equal(await page.getByRole("button", { name: /send answers/i }).count(), 1, "one answer sends the whole run");
+  assert.equal(await page.getByRole("button", { name: /^(accept|decline|keep)/i }).count(), 0, "the page offers no accept, decline, or keep-as-is");
   assert.deepEqual(await kitOnly(page), [], "the page uses UI kit elements only");
   assert.deepEqual(await escapes(page), []);
   assert.deepEqual(page.errors, []);
@@ -97,13 +110,14 @@ const applied = async (call) => {
   return { run: id };
 };
 
-test("clause 6: an applied run's page shows each migrated artifact's diff and summary", { skip, timeout: 120000 }, async (context) => {
+test("clauses 6, 16: an applied run's page shows each migrated artifact's statement map and summary", { skip, timeout: 120000 }, async (context) => {
   const { page, call, run } = await opened(context, { ...CONFORMING, [PATHS.requirements]: UNANCHORED }, applied);
   assert.equal((await readRun(call, run)).status, "applied");
   await page.getByText("Adds the anchor of section 2.", { exact: false }).first().waitFor();
   const text = await page.locator("body").innerText();
   assert.match(text, /applied/i);
-  assert.ok(text.includes('<a id="2"></a>'), "the diff from the source is shown");
+  assert.ok(text.includes("Clients give up on the first dropped connection."), "the statement map lists the source's statements");
+  assert.ok(text.includes("Added by the format") && text.includes('<a id="2"></a>'), "the map lists the anchor the format added");
   assert.equal(await page.getByRole("button", { name: /answer|run (it )?again|rerun/i }).count(), 0);
 });
 
