@@ -357,13 +357,13 @@ export async function confirmLaunch({ initiative, host, checkout, env = process.
     if (await coolingDown(env, now)) throw cooldown();
     const shownAt = Date.now();
     const outcome = await runDialog(dialog);
-    // The cool-down runs from the dialog's end, on the request's clock.
+    // The launch window and the cool-down both run from the dialog's end, on the request's clock.
     const endedAt = now + (Date.now() - shownAt);
     if (outcome.spawnError && !dialog.readsStartFailure) throw unavailable(`${path.basename(dialog.command)} could not be started`);
     const answer = dialog.read(outcome);
     if (answer instanceof LaunchError) throw answer;
     if (answer === "confirmed") {
-      const opened = await openWindow(env, now);
+      const opened = await openWindow(env, endedAt);
       return { asked: true, windowEndsAt: opened.endsAt };
     }
     await startCooldown(env, endedAt);
