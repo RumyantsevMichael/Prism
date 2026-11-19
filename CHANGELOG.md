@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.28.0](https://github.com/RumyantsevMichael/Prism/compare/v0.27.1...v0.28.0) (2026-11-19)
+
+
+### Added
+
+* design views that fit the change ([#324](https://github.com/RumyantsevMichael/Prism/issues/324)) ([8649f7a](https://github.com/RumyantsevMichael/Prism/commit/8649f7a89992418358b3726526a45b9c68cca4ac)), closes [#323](https://github.com/RumyantsevMichael/Prism/issues/323)
+* **review:** restyle tab groups, drop the Keep button, pin the answer ([#345](https://github.com/RumyantsevMichael/Prism/issues/345)) ([96ab3d0](https://github.com/RumyantsevMichael/Prism/commit/96ab3d015f99cc4e35c59c13484fa3f0926e64d3))
+* **review:** show every agent in an Agents menu and page ([#349](https://github.com/RumyantsevMichael/Prism/issues/349)) ([1f9b9e6](https://github.com/RumyantsevMichael/Prism/commit/1f9b9e6c6442b1bed05d9207077a8ea20ffa9adf)), closes [#160](https://github.com/RumyantsevMichael/Prism/issues/160)
+
+
+### Fixed
+
+* accept an ADR that a ship left Proposed at a person's approval ([15f06b4](https://github.com/RumyantsevMichael/Prism/commit/15f06b407609f68e870a26d5efd1e08132a2e44a))
+* find squash ship commits and keep ADRs from staying Proposed after a ship ([#348](https://github.com/RumyantsevMichael/Prism/issues/348)) ([15f06b4](https://github.com/RumyantsevMichael/Prism/commit/15f06b407609f68e870a26d5efd1e08132a2e44a))
+* keep showing code fetched last when a code fetch fails ([#341](https://github.com/RumyantsevMichael/Prism/issues/341)) ([f9a6c17](https://github.com/RumyantsevMichael/Prism/commit/f9a6c17531c306b11055b171e786b785c43e2fbf)), closes [#340](https://github.com/RumyantsevMichael/Prism/issues/340)
+* keep the SSH command the person set in core.sshCommand ([#335](https://github.com/RumyantsevMichael/Prism/issues/335)) ([1f8fd1b](https://github.com/RumyantsevMichael/Prism/commit/1f8fd1baf7a704014fd85b197aca09db093fc313))
+* name an undone record removal in the next tool result ([#334](https://github.com/RumyantsevMichael/Prism/issues/334)) ([144eea3](https://github.com/RumyantsevMichael/Prism/commit/144eea3b2109d9af6b437b779afa9333090bd77a)), closes [#248](https://github.com/RumyantsevMichael/Prism/issues/248)
+* record a squash commit as the ship commit of an earlier slice ([15f06b4](https://github.com/RumyantsevMichael/Prism/commit/15f06b407609f68e870a26d5efd1e08132a2e44a))
+* refuse a ship that would leave a cited ADR Proposed unseen ([15f06b4](https://github.com/RumyantsevMichael/Prism/commit/15f06b407609f68e870a26d5efd1e08132a2e44a))
+* report a .prism record move made on a review browser request ([#336](https://github.com/RumyantsevMichael/Prism/issues/336)) ([c989355](https://github.com/RumyantsevMichael/Prism/commit/c989355ed2697720745f1cb5948f3c0e522a5ac2)), closes [#321](https://github.com/RumyantsevMichael/Prism/issues/321)
+* retry the artifact lock on Windows, and wait for the checked state in flaky tests ([#333](https://github.com/RumyantsevMichael/Prism/issues/333)) ([0c1022a](https://github.com/RumyantsevMichael/Prism/commit/0c1022a4476497e0314f73bf5311a16266a6552f)), closes [#262](https://github.com/RumyantsevMichael/Prism/issues/262)
+* **review:** open the review browser in Codex and retire tabs from before a restart ([#343](https://github.com/RumyantsevMichael/Prism/issues/343)) ([62727b7](https://github.com/RumyantsevMichael/Prism/commit/62727b7e138b55094129bdc46fd83cf1a9f8451c))
+* **review:** show the latest launched run on its initiative page ([#338](https://github.com/RumyantsevMichael/Prism/issues/338)) ([da49176](https://github.com/RumyantsevMichael/Prism/commit/da491767a9ef56da1739a30a8ffcf14b5a89670a)), closes [#337](https://github.com/RumyantsevMichael/Prism/issues/337)
+
 ## [0.27.1](https://github.com/RumyantsevMichael/Prism/compare/v0.27.0...v0.27.1) (2026-11-17)
 
 
