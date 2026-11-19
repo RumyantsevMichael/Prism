@@ -15,7 +15,7 @@ import { ambiguousApprovalMessage, answerArtifactApproval, commentOnArtifact, pe
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
 import { confirmLaunch } from "../session/launch-confirmation.mjs";
-import { HOSTS } from "../session/launch-hosts.mjs";
+import { launchHosts } from "../session/launch-hosts.mjs";
 import { LAUNCH_ID_PATTERN } from "../session/launch-records.mjs";
 import {
   answerLaunchGate,
@@ -402,7 +402,8 @@ const launchBase = {
   revision: () => null
 };
 
-const LAUNCH_ACTIONS = HOSTS.map(({ host, label }) => ({
+// The launch actions follow the hosts that the review app found when it started, so an ACP agent declared later appears after a restart.
+const LAUNCH_ACTIONS = launchHosts().map(({ host, label }) => ({
   ...launchBase,
   id: `launch.${host}`,
   kinds: ["initiative"],

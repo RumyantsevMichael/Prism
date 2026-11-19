@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { access, constants, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { isAgentModel } from "./agent-models.mjs";
+import { acpAgentHosts } from "./acp-agents.mjs";
 
 // The hosts that a launched session runs, the commands Prism runs for them, and the readers of their output streams.
 // Nothing here takes a value from the review page except the initiative identifier, checked by the caller, and the host.
@@ -58,8 +59,13 @@ export function redactSessionId(text, hostSessionId) {
   return text.replace(new RegExp(hostSessionId, "gi"), SESSION_ID_PLACEHOLDER);
 }
 
-export function hostDefinition(host) {
-  return HOSTS.find((definition) => definition.host === host) ?? null;
+/** The built-in hosts followed by the Agent Client Protocol agents that this computer declares. */
+export function launchHosts(env = process.env) {
+  return [...HOSTS, ...acpAgentHosts(env)];
+}
+
+export function hostDefinition(host, env = process.env) {
+  return launchHosts(env).find((definition) => definition.host === host) ?? null;
 }
 
 async function executableFile(file) {
@@ -93,9 +99,13 @@ async function npmShimScript(file) {
  * where command and prefix are what the supervisor spawns before the host arguments.
  */
 export async function resolveHost(host, env = process.env) {
-  const definition = hostDefinition(host);
+  const definition = hostDefinition(host, env);
   if (!definition) return null;
   const missing = { ...definition, available: false, executable: null, command: null, prefix: [], reason: `${definition.label} was not found: no ${definition.executable} executable on PATH.` };
+  if (path.isAbsolute(definition.executable)) {
+    if (await executableFile(definition.executable)) return { ...definition, available: true, command: definition.executable, prefix: [], reason: null };
+    return { ...missing, reason: `${definition.label} was not found: ${definition.executable} is no executable file.` };
+  }
   const entries = pathEntries(env);
   if (process.platform !== "win32") {
     for (const entry of entries) {
@@ -119,19 +129,21 @@ export async function resolveHost(host, env = process.env) {
 
 /** One entry per host in order: { host, label, available, executable, reason }. */
 export async function hostAvailability({ env = process.env } = {}) {
-  return Promise.all(HOSTS.map(async ({ host }) => {
+  return Promise.all(launchHosts(env).map(async ({ host }) => {
     const { label, available, executable, reason } = await resolveHost(host, env);
     return { host, label, available, executable, reason };
   }));
 }
 
-/** The arguments of a run: Claude Code's launch or resume form with its session id, or Codex's app server. */
-export function hostArguments({ host, hostSessionId, resume }) {
+/** The arguments of a run: Claude Code's launch or resume form with its session id, Codex's app server, or an ACP agent's declared arguments. */
+export function hostArguments({ host, hostSessionId, resume, env = process.env }) {
   if (host === "claude-code") {
     if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
     return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...CLAUDE_FLAGS];
   }
   if (host === "codex") return ["app-server"];
+  const definition = hostDefinition(host, env);
+  if (definition?.acp) return [...definition.acp.args];
   throw new Error(`Unknown host ${host}.`);
 }
 
@@ -163,9 +175,12 @@ export function codexInterruptRequest({ threadId, turnId }) {
 }
 
 /** The command that continues a host session in a terminal, or null for an id that breaks HOST_SESSION_ID_PATTERN. */
-export function resumeCommandOf(host, hostSessionId) {
+export function resumeCommandOf(host, hostSessionId, env = process.env) {
   if (!validHostSessionId(hostSessionId)) return null;
-  return host === "claude-code" ? `claude --resume ${hostSessionId}` : `codex resume ${hostSessionId}`;
+  if (host === "claude-code") return `claude --resume ${hostSessionId}`;
+  if (host === "codex") return `codex resume ${hostSessionId}`;
+  const template = hostDefinition(host, env)?.acp?.resumeCommand;
+  return template ? template.replaceAll("{session}", hostSessionId) : null;
 }
 
 /** The environment of a run: the starter's own, without the host session variables, and with PRISM_LAUNCH naming the launch. */
@@ -235,6 +250,8 @@ function blockText(content) {
 
 
 const text = (value) => (typeof value === "string" ? value : "");
+// The token counts of an ACP prompt answer, each a finite number or left out.
+const tokenCounts = (usage) => Object.fromEntries(["inputTokens", "outputTokens", "cachedReadTokens", "cachedWriteTokens", "thoughtTokens", "totalTokens"].filter((key) => Number.isFinite(usage[key])).map((key) => [key, usage[key]]));
 // A Claude Code error result's text: its `result` when that is a non-empty string, and otherwise its `errors` strings joined.
 const claudeErrorText = (event) => (text(event.result) || (Array.isArray(event.errors) ? event.errors.filter((entry) => typeof entry === "string").join("; ") : ""));
 
@@ -257,8 +274,8 @@ const digestKey = (id) => createHash("sha256").update(Buffer.from(id, "utf16le")
  * `interrupt()` stops the run the way the host's own Stop button does: it sends the host's interrupt while the input is open and
  * closes the input once the host has answered it, or at once for a Codex run that has not sent turn/start yet.
  */
-export function hostConversation(host, { initiative, checkout, hostSessionId = null, resume = false, send, closeInput, onSessionId = () => {}, onModel = () => {} }) {
-  const facts = { hostSessionId: null, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null };
+export function hostConversation(host, { initiative, checkout, hostSessionId = null, resume = false, send, closeInput, onSessionId = () => {}, onModel = () => {}, env = process.env }) {
+  const facts = { hostSessionId: null, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null, usage: null };
   let modelSeen = false;
   // Only the first place that can name the run's model counts; a value that is no model a claim may record keeps none.
   const named = (value) => {
@@ -282,7 +299,13 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
     inputOpen = false;
     closeInput();
   };
-  const handle = host === "claude-code" ? claudeHandler() : codexHandler();
+  const refused = (tool, reason) => {
+    facts.refusalCount += 1;
+    if (facts.refusals.length < RECORDED_REFUSALS) facts.refusals.push({ tool, reason: cut(reason) });
+  };
+  const acpDefinition = host === "claude-code" || host === "codex" ? null : hostDefinition(host, env)?.acp ?? null;
+  if (host !== "claude-code" && host !== "codex" && !acpDefinition) throw new Error(`Unknown host ${host}.`);
+  const handle = host === "claude-code" ? claudeHandler() : host === "codex" ? codexHandler() : acpHandler(acpDefinition);
 
   // Claude Code: the prompt is one stream-json user message, and the input closes at a result event once every background task
   // that the host reported as started has been reported as ended.
@@ -462,6 +485,162 @@ export function hostConversation(host, { initiative, checkout, hostSessionId = n
           }
           else if (params.turn.id === facts.turnId) turnEnded(params.turn);
         }
+      }
+    };
+  }
+
+
+  // An Agent Client Protocol agent: JSON-RPC 2.0 over its standard input and output, protocol version 1, through initialize,
+  // session/new or session/resume, the declared config options, and one session/prompt. Prism declares no client capability, so an
+  // agent asks it for no file or terminal; a permission request is answered `cancelled`, which the agent must not read as approval,
+  // and is recorded as a refusal; every other request is answered with HOST_REQUEST_REFUSAL. The input closes when the prompt is
+  // answered, or when one of Prism's requests is answered with an error.
+  function acpHandler(definition) {
+    const pending = new Map();
+    let nextId = 1;
+    let sessionId = null;
+    let configOptions = [];
+    let queued = [];
+    let prompting = false;
+    let promptDone = false;
+    let stopAsked = false;
+    let cancelSent = false;
+    let canResume = false;
+    let canLoad = false;
+    const request = (method, params) => {
+      const id = nextId++;
+      pending.set(id, method);
+      write({ jsonrpc: "2.0", id, method, params });
+    };
+    const fail = (message) => {
+      facts.hostError = hostError(message);
+      close();
+    };
+    const modelOf = (options) => {
+      const model = Array.isArray(options) ? options.find((option) => option?.category === "model") : null;
+      return model?.currentValue;
+    };
+    const advertised = (configId) => configOptions.some((option) => option?.id === configId);
+    const next = () => {
+      if (stopAsked) {
+        close();
+        return;
+      }
+      const option = queued.shift();
+      if (option) {
+        if (!advertised(option.configId)) {
+          fail(`The agent offers no option ${option.configId}, so Prism did not start the run.`);
+          return;
+        }
+        request("session/set_config_option", { sessionId, configId: option.configId, value: option.value });
+        return;
+      }
+      named(modelOf(configOptions));
+      prompting = true;
+      request("session/prompt", { sessionId, prompt: [{ type: "text", text: definition.prompt.replaceAll("{initiative}", initiative) }] });
+    };
+    const sendCancel = () => {
+      if (cancelSent || promptDone || !prompting) return;
+      cancelSent = true;
+      write({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
+    };
+    const answered = (method, result) => {
+      if (method === "initialize") {
+        if (result?.protocolVersion !== 1) {
+          fail(`The agent speaks ACP version ${String(result?.protocolVersion)}, and Prism speaks version 1.`);
+          return;
+        }
+        const capabilities = result?.agentCapabilities ?? {};
+        canResume = Boolean(capabilities.sessionCapabilities?.resume);
+        canLoad = capabilities.loadSession === true;
+        if (!resume) {
+          request("session/new", { cwd: checkout, mcpServers: [] });
+          return;
+        }
+        if (!validHostSessionId(hostSessionId)) {
+          fail("The session never reported its session id, so it cannot be resumed.");
+          return;
+        }
+        if (!canResume && !canLoad) {
+          fail("The agent cannot resume a session.");
+          return;
+        }
+        request(canResume ? "session/resume" : "session/load", { sessionId: hostSessionId, cwd: checkout, mcpServers: [] });
+        return;
+      }
+      if (method === "session/new" || method === "session/resume" || method === "session/load") {
+        const id = method === "session/new" ? result?.sessionId : hostSessionId;
+        if (typeof id !== "string" || !id) {
+          fail("The agent named no session.");
+          return;
+        }
+        sessionId = id;
+        if (method === "session/new" && validHostSessionId(id)) {
+          facts.hostSessionId = id;
+          onSessionId(id);
+        }
+        configOptions = Array.isArray(result?.configOptions) ? result.configOptions : [];
+        // An agent may forget options on resume, so the declared ones are set again on every run.
+        queued = [...definition.options];
+        next();
+        return;
+      }
+      if (method === "session/set_config_option") {
+        if (Array.isArray(result?.configOptions)) configOptions = result.configOptions;
+        next();
+        return;
+      }
+      if (method === "session/prompt") {
+        promptDone = true;
+        const stopReason = text(result?.stopReason);
+        if (result?.usage && typeof result.usage === "object") facts.usage = { ...(facts.usage ?? {}), tokens: tokenCounts(result.usage) };
+        if (stopReason === "refusal") facts.hostError = hostError("The agent refused the prompt.");
+        if (stopReason === "max_tokens" || stopReason === "max_turn_requests") facts.hostError = hostError(`The agent stopped: ${stopReason}.`);
+        close();
+      }
+    };
+    return {
+      start: () => request("initialize", { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "prism-launch", version: "1" } }),
+      interrupt() {
+        stopAsked = true;
+        if (!prompting) close();
+        else sendCancel();
+      },
+      event(message) {
+        const hasId = typeof message.id === "string" || typeof message.id === "number";
+        if (hasId && typeof message.method === "string") {
+          if (message.method === "session/request_permission") {
+            const call = message.params?.toolCall ?? {};
+            const tool = toolName(call.title ?? call.kind, "an action");
+            refused(tool, `${tool} was refused: Prism grants no permission to a launched agent.`);
+            write({ jsonrpc: "2.0", id: message.id, result: { outcome: { outcome: "cancelled" } } });
+            return;
+          }
+          write({ jsonrpc: "2.0", id: message.id, error: { ...HOST_REQUEST_REFUSAL } });
+          return;
+        }
+        if (hasId) {
+          const method = pending.get(message.id);
+          if (!method) return;
+          pending.delete(message.id);
+          if (message.error !== undefined && message.error !== null) {
+            if (method === "session/prompt") promptDone = true;
+            fail(text(message.error?.message));
+            return;
+          }
+          answered(method, message.result);
+          return;
+        }
+        if (message.method !== "session/update") return;
+        const update = message.params?.update ?? {};
+        if (update.sessionUpdate === "usage_update") {
+          const usage = { ...(facts.usage ?? {}) };
+          if (Number.isFinite(update.used)) usage.contextUsed = update.used;
+          if (Number.isFinite(update.size)) usage.contextSize = update.size;
+          if (update.cost && Number.isFinite(update.cost.amount) && typeof update.cost.currency === "string") usage.cost = { amount: update.cost.amount, currency: update.cost.currency.slice(0, 8) };
+          facts.usage = usage;
+        }
+        if (update.sessionUpdate === "config_option_update" && Array.isArray(update.configOptions)) configOptions = update.configOptions;
       }
     };
   }
