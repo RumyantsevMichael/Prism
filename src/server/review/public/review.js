@@ -178,9 +178,19 @@ const viewStates = new Map();
 const treeToggles = new Map();
 
 // Every request has a deadline, so a request the browser holds back for want of a free connection fails and shows the connection banner instead of freezing the page.
+// A restarted app gives every link a new credential and refuses calls with the old one, so a page loaded before the restart reloads
+// into the page that says its link no longer works, instead of staying on screen while every action fails.
+let expiredLink = false;
+
 function appFetch(url, options = {}) {
   const { deadlineMs, ...rest } = options;
-  return fetch(url, { signal: deadline(deadlineMs), ...rest });
+  return fetch(url, { signal: deadline(deadlineMs), ...rest }).then((response) => {
+    if (response.status === 404 && response.headers.get("X-Prism-Link") === "expired" && !expiredLink) {
+      expiredLink = true;
+      location.reload();
+    }
+    return response;
+  });
 }
 
 function samePaths(left, right) {

@@ -13,6 +13,7 @@ import { ARTIFACT_ACCEPTED, ARTIFACT_COMMENTS, ARTIFACT_IDENTITY, ARTIFACT_MIGRA
 import { COMPONENT_NAME, readComponents } from "./components.mjs";
 import { artifactKinds, initiativeDirectory, readWorkflowConfig, roadmapPaths } from "./workflow-config.mjs";
 import { parseStoreJson } from "./store-json.mjs";
+import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 
 // Machine records live under .prism beside the workflow config, or in the record store the workflow config names; human documents and generated views stay under the configured paths.
 // A record keeps its .prism path as its address in both cases: only recordStoreOf and resolveRecordFile know where its file lives.
@@ -653,21 +654,27 @@ async function migrateIntoProject(root, store, config, report) {
   return report;
 }
 
-// A record move into a record store made outside a tool call, such as on a review browser request, has no result to carry its report, and the shared review app runs in a process of its own,
-// so its report waits in a file in the store's sync folder, which the store's .gitignore leaves out, until the next tool call of the checkout takes it.
-// A move into the project's own .prism keeps its report in this process, because a file there would change the checkout.
+// A record move made outside a tool call, such as on a review browser request, has no result to carry its report, and the shared review app runs in a process of its own,
+// so its report waits in a file until the next tool call of the checkout, in any process on the machine, takes it.
+// A move into a record store leaves the file in the store's sync folder, which the store's .gitignore leaves out.
+// A move into the project's own .prism leaves it in Prism's machine-local folder, in a folder named by the checkout, because a file in the checkout would change it.
 const RECORD_MOVE_NOTES = path.join(".prism-sync", "record-moves");
+const LOCAL_RECORD_MOVE_NOTES = "record-moves";
 const RECORD_MOVE_NOTE = /^\d+-[0-9a-f]{8}\.json$/;
+
+const recordMoveNotes = (root, store) => store.external
+  ? path.join(store.base, RECORD_MOVE_NOTES)
+  : path.join(reviewAppDirectory(), LOCAL_RECORD_MOVE_NOTES, createHash("sha256").update(root).digest("hex").slice(0, 32));
 
 async function noteRecordMoves(root, store, report) {
   if (!report.moved.length && !report.conflicts.length) return;
   const entry = { root, ...(store.external ? { store: store.base } : {}), moved: report.moved, conflicts: report.conflicts };
-  if (!store.external || toolCalls.getStore()?.open) { unreportedMoves.push(entry); return; }
+  if (toolCalls.getStore()?.open) { unreportedMoves.push(entry); return; }
   try {
-    const directory = path.join(store.base, RECORD_MOVE_NOTES);
-    await mkdir(directory, { recursive: true });
+    const directory = recordMoveNotes(root, store);
+    await mkdir(directory, { recursive: true, mode: 0o700 });
     const note = path.join(directory, `${Date.now()}-${randomBytes(4).toString("hex")}.json`);
-    await assertContained(store.contain, note, "the record store", null, { write: true });
+    if (store.external) await assertContained(store.contain, note, "the record store", null, { write: true });
     await writeAtomically(note, `${JSON.stringify(entry)}\n`);
   } catch {
     // A note that cannot be written leaves the report to this process's next tool result, as before.
@@ -677,13 +684,11 @@ async function noteRecordMoves(root, store, report) {
 
 // The reports that record moves outside a tool call left for a checkout, oldest first, each removed as it is taken, so one result of one process carries it.
 async function takeRecordMoveNotes(root) {
-  let store, names;
+  let directory, names;
   try {
-    store = await recordStoreOf(root);
-    if (!store.external) return [];
-    names = (await readdir(path.join(store.base, RECORD_MOVE_NOTES))).filter((name) => RECORD_MOVE_NOTE.test(name)).sort();
+    directory = recordMoveNotes(root, await recordStoreOf(root));
+    names = (await readdir(directory)).filter((name) => RECORD_MOVE_NOTE.test(name)).sort();
   } catch { return []; }
-  const directory = path.join(store.base, RECORD_MOVE_NOTES);
   const taken = [];
   for (const name of names) {
     const note = path.join(directory, name);
