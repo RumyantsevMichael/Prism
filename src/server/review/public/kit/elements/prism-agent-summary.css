@@ -33,12 +33,16 @@
   white-space: nowrap;
 }
 
+/* The badges keep their size, and only the count's words shorten. */
 .marks {
   display: inline-flex;
-  flex: 0 1 auto;
-  min-width: 0;
+  flex: none;
   align-items: center;
   gap: var(--prism-space-2);
+}
+
+.marks > prism-badge {
+  flex: none;
 }
 
 /* The corner count stands on the button's top end corner, as a count on an icon button does. */

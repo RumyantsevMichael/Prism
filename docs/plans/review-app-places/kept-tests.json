@@ -333,7 +333,7 @@
       "clause 76: the page bar moves back and forward through visited pages, from its buttons, Alt+arrows, and the browser, and shows a breadcrumb trail": 13,
       "clause 77: above 1100px the sidebar sits beside the page, and at 1100px and below it opens as a drawer from Navigation": 7,
       "clause 78: the command palette opens on Ctrl+K and Meta+K, drives kinded results from its field, previews the active result, and returns focus on Escape": 12,
-      "clauses 66, 67, 68: the sidebar and Who's working show every claim read-only, live ones breathing in the top bar": 11,
+      "clauses 66, 67, 68: the sidebar, the agents button, and the Agents page show every claim read-only, live ones breathing in the top bar": 11,
       "clauses 20, 21, 22: the shell's text and fields reach WCAG AA, glass overlays included, and its surfaces follow the theme": 6,
       "clause 69: the shell names Prism's records by title and kind, never by file name or path": 2,
       "clauses 36, 77, 78: with long names the shell stays inside a phone and a laptop window, and its menus, popovers, and dialogs stay inside the window": 4

@@ -23,8 +23,8 @@ export function rowDescription(entry, now = Date.now()) {
 function rowHtml(entry, now) {
   const [words, tone] = stateOf(entry);
   const answer = entry.action === "answer";
-  const action = answer ? '<prism-button slot="action" size="sm" variant="primary" data-agent-action="answer" text="Answer"></prism-button>' : '<prism-button slot="action" size="sm" variant="ghost" data-agent-action="open" text="Open"></prism-button>';
-  return `<prism-row icon="play" tone="${escapeHtml(tone)}" data-agent="${escapeHtml(entry.id)}">${escapeHtml(entry.name ?? "")}<span slot="description" data-agent-description>${escapeHtml(rowDescription(entry, now))}</span>${badge(words, tone).replace("<prism-badge", '<prism-badge slot="kind"')}<span slot="time" data-agent-time>${escapeHtml(runningText(entry.launch?.runningMs ?? 0))}</span>${action}</prism-row>`;
+  const action = answer ? '<prism-button slot="action" size="sm" variant="primary" data-menu-action="answer" text="Answer"></prism-button>' : '<prism-button slot="action" size="sm" variant="ghost" data-menu-action="open" text="Open"></prism-button>';
+  return `<prism-row icon="play" tone="${escapeHtml(tone)}" data-menu-agent="${escapeHtml(entry.id)}">${escapeHtml(entry.name ?? "")}<span slot="description" data-menu-description>${escapeHtml(rowDescription(entry, now))}</span>${badge(words, tone).replace("<prism-badge", '<prism-badge slot="kind"')}<span slot="time" data-menu-time>${escapeHtml(runningText(entry.launch?.runningMs ?? 0))}</span>${action}</prism-row>`;
 }
 
 /**
@@ -63,13 +63,13 @@ export function createAgentsMenu({ button, popover, onOpen, onAnswer, onOpenAgen
 
   // A running or waiting session's time counts on between reads, and a failed one's time since it ended, in place, so a focused action keeps its focus.
   function paintTimes(now = Date.now()) {
-    for (const row of content.querySelectorAll("[data-agent]")) {
-      const entry = agents.find((item) => item.id === row.dataset.agent);
+    for (const row of content.querySelectorAll("[data-menu-agent]")) {
+      const entry = agents.find((item) => item.id === row.dataset.menuAgent);
       if (!entry) continue;
-      const time = row.querySelector("[data-agent-time]");
+      const time = row.querySelector("[data-menu-time]");
       const text = runningText((entry.launch?.runningMs ?? 0) + (ticking(entry) ? now - fetchedAt : 0));
       if (time && time.textContent !== text) time.textContent = text;
-      const description = row.querySelector("[data-agent-description]");
+      const description = row.querySelector("[data-menu-description]");
       const words = rowDescription(entry, now);
       if (description && description.textContent !== words) description.textContent = words;
     }
@@ -95,14 +95,14 @@ export function createAgentsMenu({ button, popover, onOpen, onAnswer, onOpenAgen
   });
 
   content.addEventListener("click", (event) => {
-    const target = event.target.closest?.("[data-agents-ref], [data-agent-action]");
+    const target = event.target.closest?.("[data-agents-ref], [data-menu-action]");
     if (!target || !content.contains(target)) return;
     event.preventDefault();
     popover.close?.();
     if (target.dataset.agentsRef) return onOpen(target.dataset.agentsRef);
-    const entry = agents.find((item) => item.id === target.closest("[data-agent]")?.dataset.agent);
+    const entry = agents.find((item) => item.id === target.closest("[data-menu-agent]")?.dataset.menuAgent);
     if (!entry) return;
-    if (target.dataset.agentAction === "answer") return onAnswer(entry.launch?.waitingGate ?? null);
+    if (target.dataset.menuAction === "answer") return onAnswer(entry.launch?.waitingGate ?? null);
     return onOpenAgent(entry.id);
   });
   popover.addEventListener("prism-open", () => void poller.now());

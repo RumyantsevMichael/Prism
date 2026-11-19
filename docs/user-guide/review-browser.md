@@ -37,7 +37,7 @@ A choice applies at once, and System follows the operating system again.
 **About Prism** names the version of Prism that runs the review app, and **Open the catalog** opens the review app's component catalog in a new tab, which shows every control of the interface with its options, states, and keys.
 The catalog's own toolbar changes its theme, density, and width for that tab only, and stores nothing.
 
-The top bar holds the Prism mark, the workspace switcher, the search button that opens the Jump palette, and **Who's working**.
+The top bar holds the Prism mark, the workspace switcher, the search button that opens the Jump palette, and the **Agents** button.
 The status bar at the bottom starts with **Settings**, then shows where the project's records live, naming a shared store, with their sync state, whose color the store icon takes, and ends with the repository index.
 Times in words, such as when a question was asked, how long ago the records synced, or how long a claim has left, count on while the page is open, and hovering one shows the exact date and time.
 The rail at the left edge switches between five places, and the sidebar beside it shows only the current place, under its title and a line that says what it holds.
@@ -110,9 +110,15 @@ A tab whose file was moved or deleted, or whose initiative or slice no longer ex
 The tab and its page return to normal on their own when the target comes back, for example after a checkout.
 When Prism moves a record from its legacy location into `.prism/`, a tab on that record follows it to the new path.
 
-**Who's working** shows up to three avatars of the agents that hold a live claim on a slice, and how many are working.
-Its popover lists every live claim and then every claim that expired, with the holder, the harness, the activity, the slice, and the time left.
-Wherever the browser shows a claim, on a slice, an initiative, the roadmap, the sidebar, or Who's working, it names the harness the agent runs in and the model of the session's main agent as `<harness> · <model>`, such as `Codex · gpt-5.5`, when the claim records them, and `Agent` and no model otherwise.
+The **Agents** button shows up to three avatars of the agents at work and how many work, such as `4 working`, counting the launched sessions that run or wait for you and the live claims that no launched session holds.
+While launched sessions failed or wait for you, it adds a red badge such as `1 failed` and an amber badge such as `1 waits`, and a screen reader also hears how many claims expired.
+In a window 600 pixels wide or less the button shows two avatars and one small count of the launched sessions that need you on its corner, red while one failed and amber otherwise, and no words.
+Opening it shows the **Agents** menu.
+Its **Needs you** group, left out while nothing needs you, lists each launched session that failed or waits for you with its initiative, its harness, its model, what it works on, its state, and how long it ran.
+A waiting session offers **Answer**, which opens Attention with the question it waits on selected and its answer form shown, and a failed one offers **Open**, which opens [the Agents page](#the-agents-page) with its details shown.
+Below that, **Launched on this computer**, **Other sessions**, and **Expired claims** say how many there are, also at 0, and each opens the Agents page showing only those; **Open Agents** opens the whole page.
+The menu lists no claim, so every claim shows on the Agents page.
+Wherever the browser shows a claim, on a slice, an initiative, the roadmap, the sidebar, or the Agents page, it names the harness the agent runs in and the model of the session's main agent as `<harness> · <model>`, such as `Codex · gpt-5.5`, when the claim records them, and `Agent` and no model otherwise.
 The sidebar shows a claimed slice's holder at the end of its row.
 Claims are read-only in the browser.
 
@@ -283,7 +289,7 @@ Each run also keeps the model its host reports as soon as the host names it, fro
 ### The Agents page
 
 The Agents page lists every agent working on this workspace and every session launched on this computer, one row each.
-Open **Agents** from the Jump palette, or at the address `review?artifact=agents`; the old address `review?artifact=launches` opens it too.
+Open **Agents** from the top bar's **Agents** menu or the Jump palette, or at the address `review?artifact=agents`; the old address `review?artifact=launches` opens it too.
 Its lead reads `Every agent working on this workspace, and every session launched on this computer.`.
 It lists every launched session on this computer whose checkout shares this checkout's records, and every live or expired claim on the workspace's slices that no launched session here holds.
 A launched session holds the claims its own agent takes, so its slice shows in its row rather than in a row of its own.
