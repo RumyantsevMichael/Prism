@@ -219,6 +219,46 @@ test("clause 8: a saved choice that the host no longer offers shows as not offer
   assert.deepEqual(s.page.errors, []);
 });
 
+test("clause 8: an earlier model name shows as not offered from the saved value, and Apply sends it back unchanged until the person chooses", { skip: skipHere, timeout: 90000 }, async (t) => {
+  const earlier = { "claude-code": { designImplementation: { earlier: "Claude Opus 4.1" } }, codex: { codeReview: { earlier: "GPT 5 (work)" } } };
+  const s = await settingsDialog(t, { before: (fixture) => writeSettings(fixture.root, { models: earlier }) });
+  const requests = [];
+  s.page.on("request", (request) => requests.push(request.url()));
+  await s.page.keyboard.press("Escape");
+  await settled(() => s.dialog.isVisible(), false);
+  await s.open();
+  await ready(s.dialog, "Design and implementation");
+  const design = picker(s.dialog, "Design and implementation");
+  assert.match(await design.getByRole("button", { name: "Design and implementation" }).innerText(), /Claude Opus 4\.1/, "the earlier name still shows");
+  assert.match(await design.innerText(), /Not offered: Prism kept the earlier model name Claude Opus 4\.1, which Claude Code cannot take as a model\./);
+  assert.equal(await design.getByRole("button", { name: "Design and implementation" }).getAttribute("aria-invalid"), "true");
+  assert.deepEqual(requests.filter((url) => url.includes("api/run-options") && /Claude(%20|\+| )Opus/.test(url)), [], "the earlier name is never sent to api/run-options");
+  const coordinator = await openPicker(s.page, s.dialog, "Coordinator");
+  await coordinator.getByRole("option", { name: /^Fable 5\.2/ }).click();
+  await s.page.keyboard.press("Escape");
+  const apply = s.dialog.locator("[data-settings-apply]");
+  await settled(() => apply.evaluate((element) => !element.hasAttribute("disabled")), true);
+  const answered = s.page.waitForResponse((response) => response.request().method() === "POST" && (response.request().postData() ?? "").includes('"initiative.models"'));
+  await apply.click();
+  const response = await answered;
+  const input = JSON.parse(response.request().postData()).input;
+  assert.equal(input.designImplementation?.earlier, "Claude Opus 4.1", "an untouched earlier name goes back as it was");
+  assert.equal(input.designImplementation?.model ?? null, null, "and never as a model");
+  assert.equal(response.status(), 400, "the models action refuses the earlier name");
+  assert.deepEqual(await storedModels(s.root), earlier, "so nothing changes");
+  if (await s.dialog.isVisible()) await s.page.keyboard.press("Escape");
+  await settled(() => s.dialog.isVisible(), false);
+  await s.open();
+  const replaced = await openPicker(s.page, s.dialog, "Design and implementation");
+  await replaced.getByRole("option", { name: /^Host default/ }).click();
+  await s.page.keyboard.press("Escape");
+  await settled(() => design.innerText(), (text) => !text.includes("Not offered"));
+  assert.doesNotMatch(await design.innerText(), /Not offered/, "choosing the host default clears it");
+  await applyAll(s);
+  assert.deepEqual(await storedModels(s.root), { codex: earlier.codex }, "the chosen value replaces the earlier name, and the other host keeps its own");
+  assert.deepEqual(s.page.errors, []);
+});
+
 test("clause 9: Other model takes a typed name, which shows that Prism cannot check it and is stored as typed, and a name that breaks the rule is not taken", { skip: skipHere, timeout: 90000 }, async (t) => {
   const s = await settingsDialog(t);
   const popover = await openPicker(s.page, s.dialog, "Coordinator");
