@@ -23,7 +23,7 @@ const HINTS = [
   "Writes each slice's design, tests and code.",
   "Reviews each finished slice.",
   "Reviews slices that touch access, secrets or other trust boundaries.",
-  "Turns the design's tests into the short examples you read at the design gate."
+  "Turns the design's tests into the short summaries you read at the design gate."
 ];
 const CLAUDE_MODELS = ["Host default", "Opus 5.5", "Fable 5.2", "Sonnet 5.5", "Haiku 5.5", "Opus 4.6", "Haiku 4.5", "Other model…"];
 
