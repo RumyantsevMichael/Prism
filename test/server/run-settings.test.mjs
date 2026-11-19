@@ -137,7 +137,7 @@ test("clause 7: the models action lists the host, the provider, and the five kin
     ["designImplementation", "run-choice", "Design and implementation", "agents", "Writes each slice's design, tests and code."],
     ["codeReview", "run-choice", "Code review", "agents", "Reviews each finished slice."],
     ["securityReview", "run-choice", "Security review", "agents", "Reviews slices that touch access, secrets or other trust boundaries."],
-    ["gateSummary", "run-choice", "Design gate summary", "agents", "Turns the design's tests into the short examples you read at the design gate."]
+    ["gateSummary", "run-choice", "Design gate summary", "agents", "Turns the design's tests into the short summaries you read at the design gate."]
   ]);
   assert.equal(action.fields[1].option, "provider");
   assert.deepEqual(action.fields[0].options.map((option) => option.value), ["claude-code", "codex"]);
