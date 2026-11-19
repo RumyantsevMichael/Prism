@@ -3034,6 +3034,29 @@ prism-lib-table {
   white-space: nowrap;
 }
 
+/* A row's details, which the row unfolds under its cells, such as a launched session's terminal command and actions; they span every column. */
+.prism-lib-details {
+  display: grid;
+  gap: var(--prism-space-2);
+  grid-column: 1 / -1;
+  min-width: 0;
+  padding: var(--prism-space-3) 0 var(--prism-space-2);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.prism-lib-details > p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A row, a group head, a line, or details that the page hides stay hidden, whatever display their class gives them. */
+.prism-lib-row[hidden],
+.prism-lib-group[hidden],
+.prism-lib-nothing[hidden],
+.prism-lib-details[hidden] {
+  display: none;
+}
+
 /* A group without records says so in one quiet line. */
 .prism-lib-nothing {
   margin: 0;
@@ -3063,6 +3086,10 @@ prism-lib-table {
 
   .prism-lib-row > .prism-lib-cell {
     flex: 0 1 auto;
+  }
+
+  .prism-lib-row > .prism-lib-details {
+    flex: 1 0 100%;
   }
 
   .prism-lib-group {
@@ -3096,6 +3123,10 @@ prism-lib-table {
 
   .prism-lib-row > .prism-lib-cell {
     flex: 0 1 auto;
+  }
+
+  .prism-lib-row > .prism-lib-details {
+    flex: 1 0 100%;
   }
 
   .prism-lib-group {

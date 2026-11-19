@@ -1,5 +1,5 @@
 // prism-lib-table: a library table in light DOM, one bordered list of records: a head row of column names, rows of cells, and group heads with a count
-// and where the group comes from, written with the kit's .prism-lib-* classes; the page sets the columns with --prism-lib-columns.
+// and where the group comes from, and details a row unfolds under itself, written with the kit's .prism-lib-* classes; the page sets the columns with --prism-lib-columns.
 import { Base } from "./base.js";
 
 export class PrismLibTable extends Base {
@@ -13,9 +13,10 @@ export class PrismLibTable extends Base {
       { name: ".prism-lib-cell", values: ["children"], default: "", description: "A quiet cell in the table's smaller muted text; is-detail makes it smaller still." },
       { name: ".prism-lib-group", values: ["children"], default: "", description: "A group head: a .prism-lib-group-name heading with its count and, when the group has one, a .prism-lib-group-source at its end." },
       { name: ".prism-lib-nothing", values: ["children"], default: "", description: "The line of a group without records." },
+      { name: ".prism-lib-details", values: ["children"], default: "", description: "A region the last child of a row holds, which the page unfolds under the row's cells across every column, such as a launched session's terminal command; hidden folds it." },
       { name: "--prism-lib-columns", values: ["grid columns"], default: "minmax(0, 1fr)", description: "The columns every row shares, set by the page." }
     ],
-    states: ["default", "grouped", "with-detail", "empty-group", "no-source"],
+    states: ["default", "grouped", "with-detail", "empty-group", "no-source", "with-details"],
     keyboard: ["The table is not a control; Tab reaches the links in its rows."]
   };
 }

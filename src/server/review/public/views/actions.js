@@ -123,7 +123,7 @@ function fieldHtml(action, field, input, { disabled, key }) {
   return `<div class="action-choice">${group}${consequence}</div>`;
 }
 
-function actionHtml(action, entry, { writable, renderMarkdown, heading, submitLabel, batch }) {
+function actionHtml(action, entry, { writable, renderMarkdown, heading, submitLabel, batch, unavailableButtons }) {
   const { key, draft, error, sending } = entry;
   const state = actionFormState(action, draft);
   const id = `action-${entry.id}`;
@@ -132,7 +132,9 @@ function actionHtml(action, entry, { writable, renderMarkdown, heading, submitLa
   const choice = action.fields.find((field) => field.kind !== "text");
   let control;
   if (!action.available) {
-    control = `<p class="action-reason">${escapeHtml(action.reason ?? "")}</p>`;
+    // A list of a few actions without fields, such as a launched session's, keeps each one's button, unavailable, beside its reason.
+    const button = unavailableButtons && !action.fields.length ? `<div class="action-submit"><prism-button size="sm" disabled data-focus-key="${escapeHtml(`${key}|apply`)}">${escapeHtml(submitLabel?.(action) ?? action.label)}</prism-button></div>` : "";
+    control = `${button}<p class="action-reason">${escapeHtml(action.reason ?? "")}</p>`;
   } else if (!action.fields.length) {
     control = `<div class="action-submit"><prism-button size="sm" data-apply data-focus-key="${escapeHtml(`${key}|apply`)}"${disabled ? " disabled" : ""}>${escapeHtml(submitLabel?.(action) ?? action.label)}</prism-button></div>`;
   } else {
@@ -182,8 +184,9 @@ const lastListings = new WeakMap();
  * and confirm to true only after the person confirms. drafts keeps unsent input per action across re-renders.
  * keepStaleDrafts keeps the person's input when the record changed under it, for input such as a comment that stays meaningful against the current record.
  * notice false leaves out the read-only notice, for a page that shows many lists and says it once for all of them.
+ * unavailableButtons keeps the button of an unavailable action without fields, disabled, beside the reason it is unavailable.
  */
-export function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, notice = true, onRender = null, keepStaleDrafts = false, groups = null, batch = false }) {
+export function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, notice = true, onRender = null, keepStaleDrafts = false, groups = null, batch = false, unavailableButtons = false }) {
   if (!lastListings.has(api)) lastListings.set(api, new Map());
   const known = lastListings.get(api);
   const listings = new Map(targets.filter((target) => known.has(target)).map((target) => [target, known.get(target)]));
@@ -209,7 +212,7 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     if (!wanted.every((target) => listings.has(target))) return '<p class="muted action-loading">Loading…</p>';
     const items = actionsOf();
     if (!items.length) return `<p class="empty-note">${escapeHtml(emptyText)}</p>`;
-    const options = { writable: writable(), renderMarkdown, heading, submitLabel, batch };
+    const options = { writable: writable(), renderMarkdown, heading, submitLabel, batch, unavailableButtons };
     const readOnly = writable() || !notice ? "" : readOnlyNotice();
     return `${readOnly}<div class="action-list${compact ? " is-compact" : ""}">${items.map(({ target, action }) => actionHtml(action, entryOf(target, action), options)).join("")}</div>`;
   }

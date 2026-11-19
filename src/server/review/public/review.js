@@ -1433,6 +1433,7 @@ function pageLabel(path) {
     return named.code ? path : named.label === named.kind ? named.kind : `${named.kind} · ${named.label}`;
   }
   if (parsed.kind === "knowledge") return KNOWLEDGE_PAGES[parsed.page];
+  if (parsed.kind === "agents") return ENTITY_LABELS.agents;
   if (parsed.page) return attentionPageLabel(path, parsed.page);
   if (ENTITY_LABELS[parsed.kind]) return ENTITY_LABELS[parsed.kind];
   const indexed = navigation.index?.find((entry) => entry.ref === path)?.label;
@@ -2806,7 +2807,7 @@ function paletteEntries() {
     { ref: "decisions", label: "Decisions", kind: "place", detail: "Library" },
     { ref: "glossary", label: "Glossary", kind: "place", detail: "Library" },
     { ref: "knowledge:diagrams", label: "Diagrams", kind: "place", detail: "Library" },
-    { ref: "launches", label: "Launched sessions", kind: "place", detail: "Headless sessions on this computer" }
+    { ref: "agents", label: "Agents", kind: "place", detail: "Every agent of this workspace and every session launched here" }
   ];
   // A library entry that names a store artifact by the reading checkout's path is that store artifact: it opens by its ref, follows the scope filter, and names its scope,
   // so the Records group below never lists it a second time.
