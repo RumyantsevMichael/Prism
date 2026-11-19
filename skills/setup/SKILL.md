@@ -136,7 +136,7 @@ Workspace example:
 3. If the roadmap record is absent and no legacy roadmap exists, create it by calling `update_roadmap` with `expectedRevision: null` and the product purpose as what the roadmap serves.
 4. If a legacy roadmap or sibling `roadmap.puml` exists without a roadmap record:
    1. Map each legacy initiative to an identifier that matches its plans folder, its band, its required initiatives, its rationale, and its open questions.
-   2. Map `shipped` and `superseded` initiatives to `ship` and `supersede` operations.
+   2. Map `shipped` initiatives to `record_legacy_ship` operations, which record them as shipped before Prism without the ship gate, and `superseded` initiatives to `supersede` operations.
    3. Present the proposed record and every statement that does not map, and wait for user acceptance.
    4. Call `update_roadmap` with `expectedRevision: null`, the accepted operations, and `replace_hand_written_projection`.
 5. Add a purpose README to each newly created requirements, ADR, feature, and user-guide directory.
@@ -147,7 +147,7 @@ Plans hold each slice's design document and recovery notes, with no seed file.
 ## 5. Report readiness
 
 1. Report the changed paths and whether Prism can work in the project now: the test command is set, or `none yet` until the first slice adds a runner; a store answers `get_roadmap`; and, in Codex, the person must trust Prism's hooks through `/hooks` before gate answers and run totals work.
-2. For a migration, explain that Prism no longer reads the legacy file and the person may remove it after review.
+2. For a migration, name each initiative recorded as shipped before Prism without the ship gate, and explain that Prism no longer reads the legacy file and the person may remove it after review.
 3. Point to `workflow`.
 
 This skill does not commit its changes.
