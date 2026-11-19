@@ -9,12 +9,12 @@ export class PrismDocTab extends Base {
   static styles = ["prism-doc-tab.css"];
   static observedAttributes = ["selected", "preview", "agent", "missing", "label", "current", "group"];
   static catalog = {
-    purpose: "One open document of a prism-doc-tabs strip: its title, an italic preview tab that a double click keeps, a mark when an agent presented it, a dimmed and struck-through title when its target is gone, and a close button.",
+    purpose: "One open document of a prism-doc-tabs strip: its title, an italic preview tab that a double click keeps, an agent mark in the room before its title when an agent presented it, a dimmed and struck-through title when its target is gone, and a close button.",
     options: [
       { name: "value", values: ["text"], default: "", description: "The page the tab opens, sent in the strip's events." },
       { name: "selected", values: ["boolean"], default: "false", description: "The tab of the page that shows, exposed as aria-selected and joined to the page below it." },
       { name: "preview", values: ["boolean"], default: "false", description: "The one preview tab, which the next ordinary open replaces: its title is italic, and a double click or Ctrl+Enter keeps it." },
-      { name: "agent", values: ["boolean"], default: "false", description: "An agent presented the page: the tab carries the agent mark and says so to assistive technology." },
+      { name: "agent", values: ["boolean"], default: "false", description: "An agent presented the page: the agent mark takes the room before the title, which the close button's room at the end mirrors, and the tab says so to assistive technology." },
       { name: "missing", values: ["boolean"], default: "false", description: "The tab's file or record is gone: its title is dimmed and struck through and says so to assistive technology." },
       { name: "label", values: ["text"], default: "", description: "The page's title, which the close button's name uses; the tab's text is its visible title." },
       { name: "tip", values: ["text"], default: "", description: "The full title and what the tab's state means, shown by the kit tooltip on hover and keyboard focus." },
@@ -29,7 +29,8 @@ export class PrismDocTab extends Base {
   constructor() {
     super();
     this.root = shadow(this, PrismDocTab.styles, `<div class="tab" part="tab">
-      <span class="select" part="select" role="tab" tabindex="-1" aria-selected="false"><prism-icon class="mark" name="agent" size="xs" hidden></prism-icon><span class="text"><slot></slot></span><span class="note"></span></span>
+      <span class="lead" part="lead" aria-hidden="true"><prism-icon class="mark" name="agent" size="xs" hidden></prism-icon></span>
+      <span class="select" part="select" role="tab" tabindex="-1" aria-selected="false"><span class="text"><slot></slot></span><span class="note"></span></span>
       <prism-button class="close" data-action="${ACTIONS.close}" size="sm" variant="ghost" tip="Close (middle-click)"><prism-icon name="close" size="xs"></prism-icon></prism-button>
     </div>`);
     this.select = this.root.querySelector(".select");

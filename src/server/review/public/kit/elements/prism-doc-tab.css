@@ -16,8 +16,7 @@
   gap: var(--prism-space-1);
   width: 100%;
   min-width: 0;
-  /* The start keeps the room the close button and its gap take at the end, so the title sits centered between them and an icon can take that room later. */
-  padding: 0 var(--prism-space-2) 0 calc(var(--prism-space-2) + var(--prism-doc-tab-slot) + var(--prism-space-1));
+  padding: 0 var(--prism-space-2);
   border-inline-end: var(--prism-stroke) solid var(--prism-color-line);
   font-size: var(--prism-font-size-sm);
   font-weight: var(--prism-font-weight-medium);
@@ -90,6 +89,14 @@
 
 :host([preview]) .text {
   font-style: italic;
+}
+
+/* The start keeps a room as wide as the close button's at the end, so the title sits centered between them; the agent mark takes that room. */
+.lead {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--prism-doc-tab-slot);
 }
 
 .mark {

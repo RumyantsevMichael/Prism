@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { arrangeGroups, GROUP_LIMIT, groupNameOf, joinGroup } from "./public/views/tab-groups.js";
+import { arrangeGroups, GROUP_LIMIT, groupNameOf, joinGroup, openerOf } from "./public/views/tab-groups.js";
 import { randomBytes } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
@@ -21,7 +21,7 @@ import { readReviewRunTotals } from "../session/run-totals.mjs";
 import { gitFingerprint } from "../repository-intelligence/index-progress.mjs";
 import { readIndexingStatus } from "../repository-intelligence/index-status.mjs";
 import { nativeSemanticRuntime } from "../repository-intelligence/native-semantic-runtime.mjs";
-import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, loadAttention, loadClaims, loadDeclaredView, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
+import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, loadAttention, loadClaims, loadDeclaredView, loadHeldClaims, loadEntity, loadNavigation, loadRecordChanges, parseEntityRef, searchRecords, slicePresence } from "./workspace-model.mjs";
 import { shippedCommit, sliceFiles } from "./slice-files.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
@@ -719,11 +719,12 @@ export function normalizeTabs(value) {
 }
 
 function copyGroups(groups) {
-  return groups.map((group) => ({ name: group.name, tabs: [...group.tabs], collapsed: group.collapsed }));
+  return groups.map((group) => ({ name: group.name, tabs: [...group.tabs], collapsed: group.collapsed, ...(group.opener ? { opener: { ...group.opener } } : {}) }));
 }
 
 // A page's groups name open tabs, each tab in one group at most, with names that differ.
-function checkGroups(value, openTabs, follow = (tab) => tab) {
+// Who opened a group is the review app's record, never the page's: a group keeps the opener the session has under its name.
+function checkGroups(value, openTabs, follow = (tab) => tab, openers = new Map()) {
   if (!Array.isArray(value) || value.length > GROUP_LIMIT) {
     throw new Error(`The tab groups must be an array of at most ${GROUP_LIMIT} groups.`);
   }
@@ -742,7 +743,8 @@ function checkGroups(value, openTabs, follow = (tab) => tab) {
       grouped.add(tab);
     }
     if (Object.hasOwn(group, "collapsed") && typeof group.collapsed !== "boolean") throw new Error("A tab group's collapsed must be true or false.");
-    return { name, tabs, collapsed: group.collapsed === true };
+    const opener = openers.get(name);
+    return { name, tabs, collapsed: group.collapsed === true, ...(opener ? { opener } : {}) };
   });
 }
 
@@ -1385,7 +1387,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
       }
       agentTabs = requestedAgentTabs;
     }
-    const groups = Object.hasOwn(body, "groups") ? checkGroups(body.groups, requestedTabs, follow) : session.groups;
+    const groups = Object.hasOwn(body, "groups") ? checkGroups(body.groups, requestedTabs, follow, new Map(session.groups.filter((group) => group.opener).map((group) => [group.name, group.opener]))) : session.groups;
     if (requestedTabs.length === 0) {
       nextActiveTab = null;
     }
@@ -1404,7 +1406,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   // A workspace's review takes the tabs as from, the presenting checkout, names them, and reads through that checkout once a tab is one that only it shows, such as one of its source files.
   // A group name gathers the presented tabs into that group, made when no group has the name yet, and shows the group expanded;
   // a tab already in another group moves into it, and tabs presented without a name keep the groups they are in.
-  async function presentTabs(tabs, { group, from = projectRoot } = {}) {
+  // by names the presenting agent as { holder, host, model }; the group records its harness, its model, and the slice of the live claim
+  // that agent renewed last as the group's opener, and never the holder.
+  async function presentTabs(tabs, { group, from = projectRoot, by = null } = {}) {
     const requestedTabs = [...new Set(await storeTabs(normalizeTabs(tabs), from))];
     const groupName = group === undefined || group === null ? null : groupNameOf(group);
     let available = await reviewableFiles(requestedTabs);
@@ -1425,8 +1429,22 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     const openTabs = [...session.openTabs, ...requestedTabs.filter((tab) => !session.openTabs.includes(tab))];
     const agentTabs = [...session.agentTabs, ...requestedTabs.filter((tab) => !session.agentTabs.includes(tab))];
     const previewTab = requestedTabs.includes(session.previewTab) ? null : session.previewTab;
-    const groups = groupName ? joinGroup(session.groups, groupName, requestedTabs) : session.groups;
+    const groups = groupName ? joinGroup(session.groups, groupName, requestedTabs, by ? await openerFor(by) : null) : session.groups;
     return commitSession({ openTabs, activeTab: requestedTabs[0], previewTab, agentTabs, groups, activeSource: "agent" });
+  }
+
+  // The opener of a group an agent presents: its harness and model, and the slice of its live claim renewed last, when it holds one.
+  async function openerFor(by) {
+    const holder = typeof by?.holder === "string" && by.holder ? by.holder : null;
+    let claim = null;
+    if (holder) {
+      const read = () => withRecordReads(() => loadHeldClaims(projectRoot));
+      const held = await (workspace ? asWorkspaceView(read) : read()).catch(() => ({ claims: [] }));
+      const now = Date.now();
+      claim = held.claims.filter((entry) => entry.holder === holder && !entry.expired && Date.parse(entry.expiresAt) > now)
+        .sort((left, right) => Date.parse(right.renewedAt ?? right.claimedAt) - Date.parse(left.renewedAt ?? left.claimedAt))[0]?.ref ?? null;
+    }
+    return openerOf({ host: by?.host, model: by?.model, claim });
   }
 
   // A workspace's review reads through one checkout of the workspace, whose source files, index, and configured paths the page shows.

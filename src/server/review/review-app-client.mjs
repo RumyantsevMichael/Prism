@@ -218,8 +218,8 @@ export function createReviewAppClient({ directory = reviewAppDirectory(), launch
     if (current) void controlRequest(current, "DELETE", `/control/projects/${lease.id}`).catch(() => {});
   }
 
-  function present(projectRoot, { tabs, group, open }) {
-    return call("POST", "/control/present", { projectRoot, ...(tabs === undefined ? {} : { tabs }), ...(group === undefined ? {} : { group }), open, acceptsGrant: true, ...storage });
+  function present(projectRoot, { tabs, group, by, open }) {
+    return call("POST", "/control/present", { projectRoot, ...(tabs === undefined ? {} : { tabs }), ...(group === undefined ? {} : { group }), ...(by ? { by } : {}), open, acceptsGrant: true, ...storage });
   }
 
   // Opens a browser at session start only while no tab of any project is connected, so many sessions open at most one window.

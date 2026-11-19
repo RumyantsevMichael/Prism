@@ -744,7 +744,7 @@ async function serveReviewApp({ directory, pluginVersion = null, idleMs = IDLE_M
       }
       if (body.open === true) {
         const tabs = normalizeTabs(body.tabs);
-        const presented = await review.presentTabs(tabs, { from: project.root, ...(Object.hasOwn(body, "group") ? { group: body.group } : {}) });
+        const presented = await review.presentTabs(tabs, { from: project.root, ...(Object.hasOwn(body, "group") ? { group: body.group } : {}), ...(body.by && typeof body.by === "object" ? { by: body.by } : {}) });
         await touch(project);
         // The link names the presented page as the workspace's session names it, so it opens the same artifact through any checkout.
         const url = review.reviewUrl(tabs.length ? [presented.activeTab] : []);

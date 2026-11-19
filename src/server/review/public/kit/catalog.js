@@ -109,7 +109,10 @@ function docTabsOf(tabs, label = "Open documents") {
 const PLACE_SPECIMENS = [["attention", "Attention", "bell"], ["work", "Work", "tree"], ["roadmap", "Roadmap", "roadmap"], ["knowledge", "Knowledge", "book"], ["history", "History", "clock"]];
 const railPlaces = ({ current = "work", count = 3 } = {}) => PLACE_SPECIMENS.map(([value, label, icon]) => `<prism-rail-item value="${value}" label="${label}" icon="${icon}" pressed="${value === current ? "true" : "false"}"${value === "attention" && count ? ` count="${count}" count-label="${count} questions"` : ""}></prism-rail-item>`).join("");
 
-// A strip with tab groups: each item is a tab as docTabsOf takes it, or a group { name, tone, collapsed, tabs } of such tabs, as setTabs would lay them out.
+// The avatar of the agent that opened a group: a live implementation claim, as the review page shows the claim the presenting agent held.
+const openerAvatar = (kind) => `<prism-claim slot="opener" variant="avatar" label="Agent session" host="${html(kind)}" activity="implementation" claimed-at="${new Date(Date.now() - 600000).toISOString()}" renewed-at="${new Date(Date.now() - 60000).toISOString()}" expires-at="${new Date(Date.now() + 1740000).toISOString()}"></prism-claim>`;
+
+// A strip with tab groups: each item is a tab as docTabsOf takes it, or a group { name, tone, collapsed, opener, tabs } of such tabs, as setTabs would lay them out.
 function groupedTabsOf(items, label = "Tab groups") {
   let index = 0;
   const tab = ([title, states = ""], group) => {
@@ -117,7 +120,7 @@ function groupedTabsOf(items, label = "Tab groups") {
     const member = group ? ` group="${html(group.name)}" group-tone="${group.tone}"` : "";
     return `<prism-doc-tab value="doc-${index++}" label="${html(title)}" tip="${html(title)}"${member}${hidden} ${states}>${html(title)}</prism-doc-tab>`;
   };
-  return `<prism-doc-tabs label="${html(label)}">${items.map((item) => Array.isArray(item) ? tab(item) : `<prism-doc-tab-group name="${html(item.name)}" tone="${item.tone}" count="${item.tabs.length}" tip="${html(item.name)}"${item.collapsed ? " collapsed" : ""}>${html(item.name)}</prism-doc-tab-group>${item.tabs.map((each) => tab(each, item)).join("")}`).join("")}</prism-doc-tabs>`;
+  return `<prism-doc-tabs label="${html(label)}">${items.map((item) => Array.isArray(item) ? tab(item) : `<prism-doc-tab-group name="${html(item.name)}" tone="${item.tone}" count="${item.tabs.length}" tip="${html(item.name)}"${item.collapsed ? " collapsed" : ""}${item.opener ? ` opener="${html(item.opener)}"` : ""}>${item.opener ? openerAvatar(item.opener) : ""}${html(item.name)}</prism-doc-tab-group>${item.tabs.map((each) => tab(each, item)).join("")}`).join("")}</prism-doc-tabs>`;
 }
 
 // Each element's specimens by state; every entry also shows long text and an unbroken name, and an element that holds items shows many.
@@ -212,7 +215,8 @@ const SPECIMENS = {
     expanded: groupedTabsOf([{ name: "Retry requests", tone: "1", tabs: [["Design", "selected agent"], ["Change map", "agent"]] }, ["Roadmap"]], "Expanded group"),
     collapsed: groupedTabsOf([["Roadmap", "selected"], { name: "Retry requests", tone: "2", collapsed: true, tabs: [["Design", "agent"], ["Change map", "agent"]] }], "Collapsed group"),
     tones: groupedTabsOf(["1", "2", "3", "4", "5", "6"].map((tone) => ({ name: `Tone ${tone}`, tone, tabs: [[`Page ${tone}`, tone === "1" ? "selected" : ""]] })), "Group tones"),
-    "long-name": groupedTabsOf([{ name: "Share Prism state across repositories and worktrees", tone: "4", tabs: [["Design", "selected agent"]] }], "Long group name"),
+    "opened-by-agent": groupedTabsOf([{ name: "Retry requests", tone: "1", opener: "Claude Code", tabs: [["Design", "selected agent"], ["Change map", "agent"]] }, { name: "Indexing", tone: "4", opener: "An agent harness with a long name", collapsed: true, tabs: [["Requirements", "agent"]] }, ["Roadmap"]], "Groups opened by agents"),
+    "long-name": groupedTabsOf([{ name: "Share Prism state across repositories and worktrees", tone: "4", opener: "Codex", tabs: [["Design", "selected agent"]] }], "Long group name"),
     "long-text": groupedTabsOf([{ name: LONG.slice(0, 60), tone: "3", tabs: [[LONG, "selected agent"]] }], "Long text"),
     "unbroken-name": groupedTabsOf([{ name: UNBROKEN.slice(0, 60), tone: "5", collapsed: true, tabs: [[UNBROKEN, "selected agent"], ["Files"]] }], "Unbroken name")
   },
