@@ -34,7 +34,7 @@ import { listArtifacts } from "./review/review-server.mjs";
 import { createReviewServerPool } from "./review/review-server-pool.mjs";
 import { opensAtStart } from "./review/open-at-start.mjs";
 import { reviewAppDirectory, reviewAppDisabled } from "./review/review-app-discovery.mjs";
-import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
+import { checkpointPause, effectiveSettings, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
 import { historyMarksText, shippedHistory } from "./workflow/shipped-history.mjs";
 import { INITIATIVE_TOOLS, InitiativeError, claimedByUpdate, getInitiative, initiativeAcknowledgement, initiativeWork, readInitiative, requireClaimedWork, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
@@ -760,7 +760,7 @@ const tools = [
   },
   {
     name: "get_coordination_state",
-    description: "Read an initiative's coordination state record with its revision. Reads never create the record. Its settings.host names the supported host that launches run on, and settings.models keeps, per host, a provider and the coordinator's, designImplementation's, codeReview's, securityReview's, and gateSummary's { model, effort, typed }, each part left out for the host default; an earlier models value reads migrated, host defaults as {} and named models as typed choices of every host, except that a name breaking the model rule is kept alone as { earlier } on that agent kind, which reads as the host default and is never passed to a host. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked; a document in the checkout is to be committed apart from the task's changes, while one in the record store is shared by its sync and needs no commit. The text carries its message as a line.",
+    description: "Read an initiative's coordination state record with its revision. Reads never create the record. Its settings.host names the supported host that launches run on, and settings.models keeps, per host, a provider and the coordinator's, designImplementation's, codeReview's, securityReview's, and gateSummary's { model, effort, typed }, each part left out for the host default; an earlier models value reads migrated, host defaults as {} and named models as typed choices of every host, except that a name breaking the model rule is kept alone as { earlier } on that agent kind, which reads as the host default and is never passed to a host. childAgents: { host, kinds } names the calling client's host, or null for a client of no supported host, and for each agent kind, designImplementation, codeReview, securityReview, and gateSummary, the { model, effort } to start that kind of child agent with on that host, null leaving the host default. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked; a document in the checkout is to be committed apart from the task's changes, while one in the record store is shared by its sync and needs no commit. The text carries its message as a line.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1052,12 +1052,38 @@ async function withRecordStore(projectRoot, value) {
   return recordStore ? { ...value, recordStore } : value;
 }
 
+// The calling client's host: the first supported host whose label's first word, such as Claude or Codex, the client's name contains.
+function clientHost() {
+  const name = (clientName ?? "").toLowerCase();
+  const found = HOSTS.find(({ label }) => name.includes(label.split(" ")[0].toLowerCase()));
+  return found?.host ?? null;
+}
+
+const CHILD_AGENT_KINDS = RUN_KINDS.filter(({ purpose }) => purpose === "agents").map(({ kind }) => kind);
+const passedName = (value) => typeof value === "string" ? value : null;
+
+/**
+ * The model and effort that each kind of child agent takes on the calling client's host, from that host's models entry; a part left
+ * out, a kept earlier name, and every kind for a client of no supported host read as null, the host default.
+ */
+function childAgents(read) {
+  const host = clientHost();
+  const models = effectiveSettings(read?.valid ? read.state : null).models;
+  const entry = host && models && typeof models === "object" && !Array.isArray(models) ? models[host] ?? {} : {};
+  const kinds = Object.fromEntries(CHILD_AGENT_KINDS.map((kind) => {
+    const choice = entry && typeof entry[kind] === "object" && entry[kind] !== null && !Object.hasOwn(entry[kind], "earlier") ? entry[kind] : {};
+    return [kind, { model: passedName(choice.model), effort: passedName(choice.effort) }];
+  }));
+  return { host, kinds };
+}
+
 async function callStateTool(name, argumentsValue) {
   const projectRoot = await requestedProjectRoot(argumentsValue);
   const input = { ...argumentsValue, projectRoot };
   let resultValue;
   if (name === "get_coordination_state") {
     resultValue = await readCoordinationState(input);
+    resultValue = { ...resultValue, childAgents: childAgents(resultValue) };
     const history = await shippedHistory(projectRoot, argumentsValue.initiative);
     if (history) resultValue = { ...resultValue, shippedHistory: history };
   } else if (name === "validate_coordination_state") {

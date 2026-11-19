@@ -7,11 +7,10 @@ sdm: "0.3"
 
 # Orchestrate an initiative
 
-The orchestrator coordinates; it judges order, contract defects, and gates, and leaves the work to child sessions.
-Design, implementation, review, and example writer sessions get identifiers and folders from it and return a short status.
+The orchestrator coordinates; it judges order, contract defects, and gates, and leaves the work to child sessions, which get identifiers and folders from it and return a short status.
 Prism records progress from `update_initiative` calls and from the `verify_slice` calls of implementers, so the orchestrator makes no other bookkeeping calls.
 The [workflow](../workflow/SKILL.md) defines the terms.
-To run a skill in a child, start a fresh child agent whose prompt asks it to use that skill and passes the identifiers and folders below, and when no child agent can start, stop and ask the user to run the orchestration where child agents are available.
+To run a skill in a child, start a fresh child agent with its kind's model and effort from the [`models` setting](#1-settings), whose prompt asks it to use that skill and passes the identifiers and folders below, and when no child agent can start, stop and ask the user to run the orchestration where child agents are available.
 
 - Don't
   - Load or follow `setup`, `design`, `implement`, `review`, `triage`, or `ideate` yourself; only their child agents do.
@@ -32,7 +31,7 @@ When a Prism result carries a [person change notice](../workflow/SKILL.md#common
 | `push` | `on`, `off` | `off` | Whether finished slices are pushed; autonomy never turns it on. |
 | `continuation` | `auto`, `stepwise` | `auto` | Whether the next slice starts without the user. |
 | `review` | `marked`, `recommended`, `all` | `marked` | Which slices get an implementation review: those the user marks at the design gate, also those design recommends, or every slice. |
-| `models` | an object keyed by host, each `{provider, coordinator, designImplementation, codeReview, securityReview, gateSummary}` with each kind's choice `{model, effort, typed}` | `{}` | The choices kept for each host: a part left out is the host's default, `typed` marks a model name the user typed, an earlier `host defaults` or named value reads migrated, and a choice of only `earlier` keeps an earlier name that no host takes; you start each agent with the choice kept for the host you run on, and with the host default where none is kept or it holds only `earlier`. |
+| `models` | an object keyed by host, each `{provider, coordinator, designImplementation, codeReview, securityReview, gateSummary}` with each kind's choice `{model, effort, typed}` | `{}` | The choices kept for each host: a part left out is the host's default, `typed` marks a model name the user typed, an earlier `host defaults` or named value reads migrated, and a choice of only `earlier` keeps an earlier name that no host takes and reads as the host default; a launch runs the coordinator with its choice, and `childAgents` from `get_coordination_state` holds each agent kind's `{model, effort}` for the host you run on, `designImplementation` for `design`, `implement`, `setup`, `triage`, and `ideate` agents, `codeReview` for each `review` lane, `securityReview` for the security lane, and `gateSummary` for the example writer, which you pass in the host's child-agent form, such as the Agent tool's `model` and `effort` in Claude Code or `spawn_agent`'s `model` and `reasoning_effort` in Codex, leaving out a `null` value for the host default and, when the host's child agents take none, starting them without it and telling the person once. |
 
 - `conservative` waits for the user at every design gate and decision.
 - `broad` accepts a design automatically unless it changes requirements, adds an ADR, or reports an open question.
@@ -81,7 +80,7 @@ On resume, continue an `in-progress` slice with a fresh implementation session b
 ## 5. Review
 
 1. Call `update_review` as the coordinator with a `start_wave` operation in `implementation-review` mode, one lane per review focus, a fresh reviewer identifier per lane, as `base`, the last commit that a child reported before the slice started, when one did, and, on the first wave, the implementer's worker id as `delivery`.
-2. Run `review` for each lane in a fresh child agent, use a security-focused lane with the `securityReview` choice for trust-boundary changes, and when every lane is `CLEAN`, call `update_review` with `accept_wave`.
+2. Run `review` for each lane in a fresh child agent, add a security-focused lane for trust-boundary changes, and when every lane is `CLEAN`, call `update_review` with `accept_wave`.
 3. When a finding names a contract clause, call `verify_slice` with `contractDefects` for those clauses and handle the slice as blocked with contract defects, unless the code only missed a sound clause, in which case clear the clause with `revise_finding` and that reason.
 4. Otherwise, when a lane returns `FINDINGS`, run a fresh `implement` session with the findings of every wave so far, asking whether they share a cause in the contract, and once it returns `DONE`, set each finding it fixed `FIXED` with its summary through `update_review` as the review's `delivery` worker, then start a new wave with fresh reviewers.
 5. When `start_wave` refuses with a `review_loop_limit` problem, wait for the review loop decision gate that it names as in [user gates](#6-user-gates), asking no question of your own, then for `continue-review` start the wave again with the gate's id as `afterGate`, for `return-to-design` call `update_review` with only a `return_to_design` operation that names the gate and handle the slice as blocked with contract defects, and for `accept-deferred` file one follow-up per unresolved finding in the tracker that `.prism/workflow.md` names, or when it names none add the finding to the roadmap's open questions through `update_roadmap` `set_open_questions` with the existing questions kept, and call `update_review` with `accept_wave`, the gate, and `deferrals` that pair each finding with its follow-up, the tracker's reference or `roadmap: <question>`.

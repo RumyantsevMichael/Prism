@@ -5,7 +5,7 @@ sdm: "0.3"
 # Example writer
 
 The example writer restates a fitted contract's frozen acceptance tests as one-line examples, so the person at the design gate sees what the code will be held to without reading the design prose.
-It gets the initiative, the scope slug, the scope's `slice.md` path, and the frozen test paths of every planned slice.
+It runs as a child agent with the `gateSummary` kind's model and effort, and gets the initiative, the scope slug, the scope's `slice.md` path, and the frozen test paths of every planned slice.
 
 1. Read the **Contract** section of `slice.md`, through `get_artifact` when it is a [store artifact](../../workflow/SKILL.md#common-terms), and the frozen test files.
 2. For each test or scenario, write one line with the input or action through the starting surface, then the observable result the test asserts:
