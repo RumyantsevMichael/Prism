@@ -77,10 +77,28 @@ function optionLabel(field, value) {
   return field?.options?.find((option) => option.value === value)?.label ?? value;
 }
 
-/** A short reading of a value for a label, such as "On" or "Custom". */
+// Whether a kept entry holds a choice of the person's: any part that is not null, false, or an object of such parts.
+const holdsChoice = (value) => (isRecord(value) ? Object.values(value).some(holdsChoice) : value !== null && value !== undefined && value !== false);
+
+const wordList = (items) => (items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
+
+// A value kept per option reads as the picked option with whether its fields hold choices, or else the options that hold choices.
+function keyedText(action, key, input) {
+  const picked = normalized(input[key.name]);
+  if (picked !== null) {
+    const rest = (action.fields ?? []).filter((field) => field !== key).map((field) => input[field.name]);
+    return `${optionLabel(key, picked)}, ${rest.some(holdsChoice) ? "its own choices" : "host defaults"}`;
+  }
+  const chosen = key.options.filter((option) => holdsChoice(action.value[option.value])).map((option) => option.label ?? option.value);
+  return chosen.length ? `Chosen for ${wordList(chosen)}` : "Host defaults";
+}
+
+/** A short reading of a value for a label, such as "On", "Custom", or "Chosen for Codex". */
 export function valueText(action, input = currentInput(action)) {
   const fields = action.fields ?? [];
   if (action.value === null || action.value === undefined) return "";
+  const key = keyField(action);
+  if (key) return keyedText(action, key, input);
   const choice = fields.find((field) => field.kind !== "text");
   if (choice && input[choice.name] !== null) return String(optionLabel(choice, input[choice.name]));
   return isRecord(action.value) ? Object.values(action.value).filter((item) => item !== null).join(", ") : String(action.value);

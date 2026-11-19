@@ -4,7 +4,7 @@ import test from "node:test";
 // An action whose value is kept per option of a choice, such as the models kept per host, fills its other fields from the picked
 // option's entry, so applying from the page sends the stored entry for every field the page does not draw.
 
-const { actionFormState, requestInput } = await import("../../dist/server/review/public/views/actions.js");
+const { actionFormState, requestInput, valueText } = await import("../../dist/server/review/public/views/actions.js");
 
 const choice = { model: "opus", effort: "high", typed: false };
 const empty = { model: null, effort: null, typed: false };
@@ -39,4 +39,14 @@ test("a value that is not keyed by a choice's options fills its fields as before
   assert.deepEqual(actionFormState(push, { values: { value: "on" } }).input, { value: "on" });
   const assigned = { ...models, value: { host: "codex", provider: null, coordinator: null } };
   assert.equal(actionFormState(assigned, {}).input.host, "codex", "an object holding the field names fills them");
+});
+
+test("a value kept per option reads in plain words, for the jump palette and a change's notice", () => {
+  assert.equal(valueText(models), "Chosen for Claude Code and Codex", "the hosts whose entries hold a choice");
+  const none = { ...models, value: { "claude-code": { provider: null, coordinator: empty }, codex: { provider: null, coordinator: empty } } };
+  assert.equal(valueText(none), "Host defaults");
+  assert.equal(valueText({ ...models, value: { ...none.value, codex: models.value.codex } }), "Chosen for Codex");
+  assert.equal(valueText(models, actionFormState(models, { values: { host: "claude-code" } }).input), "Claude Code, its own choices");
+  assert.equal(valueText(none, actionFormState(none, { values: { host: "codex" } }).input), "Codex, host defaults");
+  assert.doesNotMatch(valueText(models), /object|[{}]/);
 });
