@@ -1,6 +1,6 @@
 import { badge, escapeHtml } from "./util.js";
 import { coalesce } from "./poller.js";
-import { createRunChoices, createRunOptionsReader, HOST_HINT, hostFieldOf, hostLeader, isRunAction, isRunField } from "./run-choices.js";
+import { createRunChoices, createRunOptionsReader, HOST_HINT, hostFieldOf, hostLeader, isRunAction, isRunField, runFieldsFixed } from "./run-choices.js";
 
 // The page draws every action from its listing: the registry names the fields, and this view places them as kit controls:
 // a prism-field per text field, a group of pressed prism-buttons per choice, a select prism-field per choice of host, a prism-picker
@@ -50,8 +50,14 @@ function keyField(action) {
 }
 
 // The picked option's entry fills the other fields, so a field this view does not draw sends what is stored, and a pick alone is no change.
+// A run action whose value holds the choices of one host, such as Prism's own runs, holds them for that host only, so another host's
+// choices start from its defaults.
 function keyedInput(action, current, values) {
   const key = keyField(action);
+  const host = key ? null : hostFieldOf(action);
+  if (host && Object.hasOwn(values, host.name) && normalized(values[host.name]) !== current[host.name]) {
+    return Object.fromEntries((action.fields ?? []).map((field) => [field.name, field === host ? normalized(values[host.name]) : isRunField(field) ? null : current[field.name]]));
+  }
   const picked = key ? normalized(Object.hasOwn(values, key.name) ? values[key.name] : current[key.name]) : null;
   const entry = picked === null ? null : action.value[picked];
   if (!isRecord(entry)) return current;
@@ -353,7 +359,9 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
       const { host, input } = runInput(target, action);
       const hostField = hostFieldOf(action);
       const hostLabel = hostField.options.find((option) => option.value === host)?.label ?? host ?? "";
-      controller.update({ fields: action.fields, input, host, hostLabel, writable: writable() && Boolean(reader), disabled: entry.sending || !action.available });
+      // A host value that fixes the run fields to the host defaults reads no host and offers no choice.
+      const fixed = runFieldsFixed(action, input);
+      controller.update({ fields: action.fields, input, host: fixed ? null : host, hostLabel, writable: writable() && Boolean(reader), disabled: entry.sending || !action.available || fixed });
       const row = controller.section.closest("[data-action-key]");
       if (!row) continue;
       const state = actionFormState(action, entry.draft);

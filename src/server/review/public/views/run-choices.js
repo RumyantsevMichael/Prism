@@ -31,6 +31,14 @@ export function hostLeader(item, items) {
   return items.find((other) => other !== item && other.target === item.target && !isRunAction(other.action) && oneChoice(other.action) && optionValues(oneChoice(other.action)) === optionValues(host)) ?? null;
 }
 
+/**
+ * Whether the run fields of an action are fixed to the host defaults for the input's host, as a field's fixedWhen names, such as
+ * Any available host, which offers no choice of its own: its pickers show the host defaults, read no host, and take no choice.
+ */
+export function runFieldsFixed(action, input) {
+  return (action?.fields ?? []).some((field) => isRunField(field) && field.fixedWhen && field.fixedWhen.values.includes(input?.[field.fixedWhen.field] ?? null));
+}
+
 /** A run choice as the page holds it: { model, effort, typed }, and earlier for an earlier name that Prism kept. */
 export function choiceOf(value) {
   if (!isRecord(value)) return { model: null, effort: null, typed: false };
@@ -128,7 +136,7 @@ export function createRunChoices({ read, choose }) {
   function create(field) {
     const element = make("prism-picker", "prism-run-choice", {
       label: field.label,
-      heading: field.kind === "run-choice" ? `${field.label} model` : field.label,
+      heading: field.heading ?? (field.kind === "run-choice" ? `${field.label} model` : field.label),
       "filter-label": field.kind === "run-choice" ? "Filter models" : `Filter ${field.label.toLowerCase()}s`,
       "data-run-field": field.name
     });

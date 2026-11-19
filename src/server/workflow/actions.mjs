@@ -17,6 +17,7 @@ import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identi
 import { confirmLaunch } from "../session/launch-confirmation.mjs";
 import { HOSTS, hostDefinition } from "../session/launch-hosts.mjs";
 import { LAUNCH_ID_PATTERN } from "../session/launch-records.mjs";
+import { AUTOMATIC, AUTOMATIC_LABEL, PrismRunsError, readPrismRunsChoice, writePrismRunsChoice } from "../session/prism-runs.mjs";
 import { choiceReasons, nameRuleBreach, NAME_RULE_MESSAGES, readRunOptions, RUN_KINDS, validProvider } from "../session/run-options.mjs";
 import {
   answerLaunchGate,
@@ -66,6 +67,9 @@ const text = (name, label, maxLength, extra = {}) => field(name, "text", label, 
 
 // ---- Targets ----
 
+// The choices that belong to this computer rather than to a project's records.
+const MACHINE_TARGETS = ["machine:prism-runs"];
+
 /** A target reference read into its parts, or null when it is malformed. */
 export function parseTarget(reference) {
   if (typeof reference !== "string") return null;
@@ -83,6 +87,8 @@ export function parseTarget(reference) {
   if (match && LAUNCH_ID_PATTERN.test(match[1])) return { kind: "launch", reference, launch: match[1] };
   match = /^index:([^/]+)\/([^/]+)$/.exec(reference);
   if (match && REPOSITORY_NAME.test(match[1]) && REPOSITORY_NAME.test(match[2])) return { kind: "index", reference, identity: `${match[1]}/${match[2]}` };
+  // A machine target is a choice that belongs to this computer, kept in the review app folder rather than in any record.
+  if (MACHINE_TARGETS.includes(reference)) return { kind: "machine", reference, machine: reference.slice("machine:".length) };
   return null;
 }
 
@@ -171,6 +177,10 @@ async function readTarget(projectRoot, parsed, indexer, state = undefined, env =
     // A shipped initiative's state is history, so its sessions cannot resume; they stay stoppable, since orchestrate ships while its host runs.
     const shipped = await shippedDecision(projectRoot, view.initiative).catch(() => null);
     return { ...parsed, view, initiative: view.initiative, running: status === "running", resumeReason, shipped };
+  }
+  if (parsed.kind === "machine") {
+    // The choice is checked against what this computer's hosts report, read in the page's checkout.
+    return { ...parsed, prismRuns: await readPrismRunsChoice(env), hosts: await hostAvailability({ env }), readOptions: readOptions ?? runOptionsReader(projectRoot, env) };
   }
   if (parsed.kind === "index") {
     const component = (await indexComponents(projectRoot, checkouts)).find((item) => item.identity === parsed.identity);
@@ -310,13 +320,12 @@ function modelsFields(context) {
   ];
 }
 
-// A change names one host and its entry, and only what that host reports, or a model name typed as such, is taken; the checks run
-// in field order, so the first failing field answers: the host, the provider, then the kinds. The host is read only for a value it
-// must offer, so host defaults and a typed model without an effort start no host process.
-async function checkedModels(values, context) {
-  const { host, provider } = values;
+// One host's provider and run choices, checked in field order against what the host reports, so the first failing field answers:
+// the host, the provider, then each choice as listed in choices, { name, purpose, choice }. Only what the host reports, or a model
+// name typed as such, is taken, and refuse(name, message) builds each refusal. The host is read only for a value it must offer, so
+// host defaults and a typed model without an effort start no host process.
+async function checkHostChoices(context, { host, provider, choices }, refuse) {
   const { label } = hostDefinition(host);
-  const refuse = (name, message) => invalid(name, "A value that the host reports, the host default, or a model name typed as such.", message);
   const missing = hostOptions(context, () => "").find((item) => item.value === host)?.reason;
   if (missing) throw refuse("host", missing);
   if (provider !== null) {
@@ -325,21 +334,29 @@ async function checkedModels(values, context) {
     if (base.state === "unavailable") throw refuse("host", base.reason);
     if (!optionOf(base, "provider")?.values.some((item) => item.value === provider)) throw refuse("provider", choiceReasons.provider(label, provider));
   }
-  for (const { kind, purpose } of RUN_KINDS) {
-    const choice = values[kind] ?? HOST_DEFAULT_CHOICE;
+  for (const { name, purpose, choice } of choices) {
     // An earlier name is never offered, so a change that still holds one is refused until the person replaces it.
-    if (choice.earlier !== undefined) throw refuse(kind, earlierReason(label, choice.earlier));
-    if (choice.typed && choice.model === null) throw refuse(kind, "Only a model name can be typed.");
+    if (choice.earlier !== undefined) throw refuse(name, earlierReason(label, choice.earlier));
+    if (choice.typed && choice.model === null) throw refuse(name, "Only a model name can be typed.");
     const breach = nameRuleBreach({ model: choice.model, effort: choice.effort });
-    if (breach) throw refuse(kind, breach.message);
+    if (breach) throw refuse(name, breach.message);
     if (choice.effort === null && (choice.model === null || choice.typed)) continue;
     const report = await context.readOptions({ host, purpose, provider, model: choice.model, effort: choice.effort, typed: choice.typed });
     if (report.state === "unavailable") throw refuse("host", report.reason);
     for (const id of ["model", "effort"]) {
       const chosen = optionOf(report, id)?.chosen;
-      if (chosen?.state === "not-offered") throw refuse(kind, chosen.reason);
+      if (chosen?.state === "not-offered") throw refuse(name, chosen.reason);
     }
   }
+}
+
+const refuseChoice = (name, message) => invalid(name, "A value that the host reports, the host default, or a model name typed as such.", message);
+
+// A change names one host and its entry, and replaces only that host's entry once its choices are checked.
+async function checkedModels(values, context) {
+  const { host, provider } = values;
+  const choices = RUN_KINDS.map(({ kind, purpose }) => ({ name: kind, purpose, choice: values[kind] ?? HOST_DEFAULT_CHOICE }));
+  await checkHostChoices(context, { host, provider, choices }, refuseChoice);
   const after = modelsOf(context);
   after[host] = { provider, ...Object.fromEntries(RUN_KINDS.map(({ kind }) => [kind, values[kind] ?? { ...HOST_DEFAULT_CHOICE }])) };
   return after;
@@ -645,8 +662,53 @@ const LAUNCH_RESUME = {
   }
 };
 
+// ---- This computer ----
+
+// The host and model of Prism's own runs, such as the runs that move records to a new format: one choice per computer, kept in the
+// review app folder, from the same host reports as a launch's coordinator. Any available host starts each run on the first host
+// found with its defaults, so it takes no provider, model, or effort.
+const AUTOMATIC_ONLY_DEFAULTS = "Any available host takes only the host's default model.";
+const prismRunsValue = (context) => {
+  const { state, choice } = context.prismRuns;
+  if (state !== "chosen") return { host: AUTOMATIC, provider: null, run: { ...HOST_DEFAULT_CHOICE } };
+  return { host: choice.host, provider: choice.provider, run: { model: choice.model, effort: choice.effort, typed: choice.typed } };
+};
+
+const MACHINE_PRISM_RUNS = {
+  id: "machine.prismRuns",
+  kinds: ["machine"],
+  label: "Prism's own runs",
+  group: "This computer",
+  effect: "Prism's own runs on this computer, such as moving records to a new format, start with this host and model; a run already started keeps its own.",
+  target: (context) => context.reference,
+  fields: (context) => [
+    choice("host", "Host", [
+      { value: AUTOMATIC, label: AUTOMATIC_LABEL, consequence: "Each run starts on the first host Prism finds on this computer, with its default model.", reason: null },
+      ...hostOptions(context, (label) => `${label} runs Prism's own runs.`)
+    ], { required: true }),
+    field("provider", "run-option", "Provider", { for: "coordinator", option: "provider", hint: PROVIDER_HINT, fixedWhen: { field: "host", values: [AUTOMATIC] } }),
+    field("run", "run-choice", "Model", { for: "coordinator", heading: "Model of Prism's own runs", hint: "The model and effort of each run, from what the host reports.", fixedWhen: { field: "host", values: [AUTOMATIC] } })
+  ],
+  value: prismRunsValue,
+  context: () => null,
+  recommended: () => null,
+  confirm: () => null,
+  revision: (context) => context.prismRuns.revision,
+  unavailable: () => null,
+  async after(values, context) {
+    const { host, provider, run } = values;
+    if (host === AUTOMATIC) {
+      if (provider !== null) throw refuseChoice("provider", AUTOMATIC_ONLY_DEFAULTS);
+      if (run.model !== null || run.effort !== null || run.typed) throw refuseChoice("run", AUTOMATIC_ONLY_DEFAULTS);
+      return { host, provider: null, run: { ...HOST_DEFAULT_CHOICE } };
+    }
+    await checkHostChoices(context, { host, provider, choices: [{ name: "run", purpose: "coordinator", choice: run }] }, refuseChoice);
+    return { host, provider, run: { model: run.model, effort: run.effort, typed: run.typed } };
+  }
+};
+
 /** Every action, in listing order; a later action joins by adding its definition here. */
-const ACTIONS = [...SETTING_ACTIONS, LAUNCH_RUN, GATE_ANSWER, APPROVAL_ANSWER, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME];
+const ACTIONS = [...SETTING_ACTIONS, LAUNCH_RUN, GATE_ANSWER, APPROVAL_ANSWER, ARTIFACT_COMMENT, INDEX_REBUILD, LAUNCH_STOP, LAUNCH_RESUME, MACHINE_PRISM_RUNS];
 
 /** The sentence on when an action's change takes effect, or null for an action the registry does not define. */
 export const actionEffect = (id) => ACTIONS.find((definition) => definition.id === id)?.effect ?? null;
@@ -881,6 +943,20 @@ export async function applyAction({ projectRoot, target, action, input, revision
       if (error?.code === "version_conflict") throw fail("stale_revision", "The file changed since the page read it.", { current: view(definition, { ...read, artifact: { ...artifact, version: error.version ?? null } }) });
       throw storeRefused(error) ? storeRefusal(error) : error;
     });
+  } else if (parsed.kind === "machine") {
+    // The write repeats the revision check under the file's lock, so a change that lands after the read above is refused as stale.
+    const checked = await check(definition, read, request);
+    if (checked) {
+      applied = await entryOf(checked, read);
+      const { host, provider, run } = checked.after;
+      await writePrismRunsChoice({ choice: { host, provider, ...run }, by: applied.by.name ?? applied.by.checkout, revision: read.prismRuns.revision, env }).catch(async (error) => {
+        if (error instanceof PrismRunsError && error.code === "stale_revision") {
+          const current = view(definition, await readTarget(projectRoot, parsed, indexer, undefined, env, checkouts, readOptions));
+          throw fail("stale_revision", "The choice changed since the page read it.", { current });
+        }
+        throw error;
+      });
+    }
   } else if (parsed.kind === "index") {
     const checked = await check(definition, read, request);
     if (checked) {
