@@ -68,7 +68,7 @@ test("clauses 6, 12: the Requirements library lists every requirement file in on
   assert.equal(await page.locator("table.data-table").count(), 0, "no plain table lists the files");
   const table = page.locator("prism-lib-table");
   assert.equal(await table.count(), 1);
-  const head = (await table.locator(".prism-lib-row.is-head").innerText()).split(/\s*\n\s*/).filter(Boolean);
+  const head = (await table.locator(".prism-lib-row.is-head > *").allTextContents()).map((cell) => cell.trim()).filter(Boolean);
   assert.deepEqual(head, ["Title", "Status", "Created", "Used by"]);
   const rows = table.locator(".prism-lib-row:not(.is-head)");
   assert.equal(await rows.count(), 2, "one row per requirement file");
