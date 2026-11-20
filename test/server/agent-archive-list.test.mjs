@@ -92,7 +92,7 @@ test("§11 the counts leave archived sessions and claims that expired a day ago 
   await s.beat(running);
   const { counts, agents } = await s.agents();
   assert.equal(agents.length, 7, "every agent is listed, archived and old expired ones too");
-  assert.deepEqual(counts, { all: 5, needsYou: 1, failed: 1, waiting: 0, thisComputer: 2, other: 1, expired: 1, working: 2 },
+  assert.deepEqual(counts, { all: 4, needsYou: 1, failed: 1, waiting: 0, thisComputer: 2, other: 1, expired: 1, working: 2 },
     "all: the failed and the running launch, the live claim, the claim that expired 23 hours ago, and nothing archived or expired a day ago");
   assert.equal(entryOf({ agents }, failed).group, "needs-you");
 });
