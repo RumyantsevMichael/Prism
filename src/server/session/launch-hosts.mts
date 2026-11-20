@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { access, constants, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { isAgentModel } from "./agent-models.mjs";
 
 // The hosts that a launched session runs, the commands Prism runs for them, and the readers of their output streams.
@@ -62,22 +63,46 @@ export const MIGRATION_SCOPE_VARIABLE = "PRISM_MIGRATION_RUN";
 export const MIGRATION_PROJECT_VARIABLE = "PRISM_MIGRATION_PROJECT";
 /** The Prism tools that a format migration run's session calls, and the only ones its Prism server lists and takes. */
 export const MIGRATION_RUN_TOOLS = Object.freeze(["get_migration_run", "get_artifact", "propose_migration", "finish_migration_run", "fail_migration_run"]);
-const PRISM_TOOL_PREFIX = "mcp__plugin_prism_prism-review__";
-const CLAUDE_READ_ONLY_TOOLS = MIGRATION_RUN_TOOLS.map((tool) => `${PRISM_TOOL_PREFIX}${tool}`).join(",");
-const claudeReadOnly = (readRoots: string[], denied: string[]) => ["--input-format", "stream-json", "--output-format", "stream-json", "--tools", "Read,Grep,Glob", "--allowedTools", CLAUDE_READ_ONLY_TOOLS,
+/**
+ * The one MCP server of a format migration run's session: this Prism's own server, scoped to the run and its project.
+ * Claude Code loads it alone from the launch's own MCP configuration with every other MCP configuration and claude.ai connector left out,
+ * and a Codex thread's configuration names it as its only MCP server.
+ */
+export const MIGRATION_SERVER = "prism-run";
+const PRISM_SERVER = fileURLToPath(new URL("../mcp.mjs", import.meta.url));
+export function migrationServerDefinition({ run, project }: { run: string; project: string }) {
+  return { command: process.execPath, args: [PRISM_SERVER], env: { NODE_USE_ENV_PROXY: "1", [MIGRATION_SCOPE_VARIABLE]: run, [MIGRATION_PROJECT_VARIABLE]: project } };
+}
+const CLAUDE_READ_ONLY_TOOLS = MIGRATION_RUN_TOOLS.map((tool) => `mcp__${MIGRATION_SERVER}__${tool}`).join(",");
+const CLAUDE_NO_CONNECTORS = JSON.stringify({ disableClaudeAiConnectors: true });
+const claudeReadOnly = (readRoots: string[], denied: string[], mcpConfig: string) => ["--input-format", "stream-json", "--output-format", "stream-json", "--tools", "Read,Grep,Glob", "--allowedTools", CLAUDE_READ_ONLY_TOOLS,
   ...(denied.length ? ["--disallowedTools", denied.flatMap(deniedReads).join(",")] : []),
+  "--mcp-config", mcpConfig, "--strict-mcp-config", "--settings", CLAUDE_NO_CONNECTORS,
   ...(readRoots.length ? ["--add-dir", ...readRoots] : []), "--permission-mode", "dontAsk", "--permission-prompts", "none"];
 /**
  * The deny rules that keep a folder and everything below it unread by Claude Code's file tools, whose Read rules also cover Grep and Glob:
  * a deny rule wins over every allow rule and added folder, also over those of the person's own Claude Code settings, so no setting reads the checkout.
  * A folder whose path a rule cannot hold as written is refused, so a session never starts with a rule that matches less than the folder.
  */
-function deniedReads(folder: string) {
-  const posix = folder.replaceAll("\\", "/");
-  if (!path.isAbsolute(folder) || /[,()*?[\]!\\]/.test(posix.replace(/^[A-Za-z]:/, ""))) throw new Error(`Prism cannot deny the reads of ${folder} to the session, so it does not start it.`);
-  const absolute = `/${posix.replace(/^\/+/, "")}`;
+export function deniedReads(folder: string) {
+  const windows = /^[A-Za-z]:[\\/]/.test(folder);
+  if (!(windows || path.posix.isAbsolute(folder))) throw new Error(`Prism cannot deny the reads of ${folder} to the session, so it does not start it.`);
+  // Claude Code matches a Windows path in its POSIX form, the drive letter in lower case as the first folder: C:\\Users\\me becomes /c/Users/me.
+  const posix = windows ? `/${folder[0].toLowerCase()}/${folder.slice(3).replaceAll("\\", "/")}` : folder;
+  const absolute = `/${posix.replace(/^\/+/, "").replace(/\/+$/, "")}`;
+  if (/[,()*?[\]!\\]/.test(absolute)) throw new Error(`Prism cannot deny the reads of ${folder} to the session, so it does not start it.`);
   return [`Read(/${absolute})`, `Read(/${absolute}/**)`];
 }
+// A read-only launch without its own MCP configuration or server is refused, so a session never starts with the person's MCP servers.
+function requiredConfig(file: unknown) {
+  if (typeof file !== "string" || !path.isAbsolute(file)) throw new Error("A format migration run's session has no MCP configuration of its own, so Prism does not start it.");
+  return file;
+}
+function requiredServer(server: unknown) {
+  if (!server || typeof server !== "object") throw new Error("A format migration run's session has no MCP server of its own, so Prism does not start it.");
+  return server;
+}
+const deniedOf = (folders: unknown): string[] => (Array.isArray(folders) ? folders.filter((folder) => typeof folder === "string" && (path.posix.isAbsolute(folder) || /^[A-Za-z]:[\\/]/.test(folder))) : []);
 const CODEX_READ_ONLY = Object.freeze({ approvalPolicy: "never", sandbox: "read-only" });
 /** The sandbox of a read-only Codex turn: reads only in the run's working folder, the given folders, and the platform's own. */
 const codexReadOnlySandbox = (folder: string, readRoots: string[]) => ({ type: "readOnly", access: { type: "restricted", includePlatformDefaults: true, readableRoots: [folder, ...readRoots] } });
@@ -221,11 +246,11 @@ function coordinatorOf(coordinator: unknown): CoordinatorChoice {
  * coordinator's choice, each left out for the host default, or Codex's app server, which takes the choice in its requests.
  * A read-only run, a format migration run's, takes only the reading tools and the run's own Prism tools, and reads in readRoots too.
  */
-export function hostArguments({ host, hostSessionId, resume, coordinator = null, access = "full", readRoots = [], deniedRoots = [] }: { host: string; hostSessionId: unknown; resume?: boolean; coordinator?: unknown; access?: string; readRoots?: string[]; deniedRoots?: string[] }) {
+export function hostArguments({ host, hostSessionId, resume, coordinator = null, access = "full", readRoots = [], deniedRoots = [], mcpConfig = null }: { host: string; hostSessionId: unknown; resume?: boolean; coordinator?: unknown; access?: string; readRoots?: string[]; deniedRoots?: string[]; mcpConfig?: string | null }) {
   if (host === "claude-code") {
     if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
     const { model, effort } = coordinatorOf(coordinator);
-    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...(readOnly(access) ? claudeReadOnly(rootsOf(readRoots), rootsOf(deniedRoots)) : CLAUDE_FLAGS), ...(model === null ? [] : ["--model", model]), ...(effort === null ? [] : ["--effort", effort])];
+    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...(readOnly(access) ? claudeReadOnly(rootsOf(readRoots), deniedOf(deniedRoots), requiredConfig(mcpConfig)) : CLAUDE_FLAGS), ...(model === null ? [] : ["--model", model]), ...(effort === null ? [] : ["--effort", effort])];
   }
   if (host === "codex") return ["app-server"];
   throw new Error(`Unknown host ${host}.`);
@@ -249,10 +274,11 @@ export function claudePrompt(subject: string | { initiative?: string | null; mig
  * The Codex request that opens the run's thread: thread/start for a launch, thread/resume with the kept thread id for a resume,
  * each with the model and provider of the coordinator's choice, left out for the host default.
  */
-export function codexThreadRequest({ checkout, hostSessionId, resume, coordinator = null, access = "full" }: { checkout: string; hostSessionId: unknown; resume?: boolean; coordinator?: unknown; access?: string }) {
+export function codexThreadRequest({ checkout, hostSessionId, resume, coordinator = null, access = "full", migrationServer = null }: { checkout: string; hostSessionId: unknown; resume?: boolean; coordinator?: unknown; access?: string; migrationServer?: unknown }) {
   const { model, provider } = coordinatorOf(coordinator);
   const chosen = { ...(model === null ? {} : { model }), ...(provider === null ? {} : { modelProvider: provider }) };
-  const policy = readOnly(access) ? CODEX_READ_ONLY : CODEX_POLICY;
+  // A read-only thread's configuration names Prism's scoped server as its only MCP server, in place of those of the person's own configuration.
+  const policy = readOnly(access) ? { ...CODEX_READ_ONLY, config: { mcp_servers: { [MIGRATION_SERVER]: requiredServer(migrationServer) } } } : CODEX_POLICY;
   if (!resume) return { method: "thread/start", params: { cwd: checkout, ...policy, ...chosen } };
   if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
   return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...policy, ...chosen } };
@@ -297,7 +323,8 @@ export function strippedEnvironment(env: NodeJS.ProcessEnv) {
  * and only for a format migration run's launch with PRISM_MIGRATION_RUN naming the run and PRISM_MIGRATION_PROJECT its checkout.
  */
 export function hostEnvironment(env: NodeJS.ProcessEnv, launchId: string, migrationRun: string | null = null, project: string | null = null) {
-  const scoped = typeof migrationRun === "string" && migrationRun ? { [MIGRATION_SCOPE_VARIABLE]: migrationRun, ...(typeof project === "string" && project ? { [MIGRATION_PROJECT_VARIABLE]: project } : {}) } : {};
+  // A migration run's Claude Code session also loads no claude.ai connector.
+  const scoped = typeof migrationRun === "string" && migrationRun ? { [MIGRATION_SCOPE_VARIABLE]: migrationRun, ENABLE_CLAUDEAI_MCP_SERVERS: "false", ...(typeof project === "string" && project ? { [MIGRATION_PROJECT_VARIABLE]: project } : {}) } : {};
   return { ...strippedEnvironment(env), PRISM_LAUNCH: launchId, ...scoped };
 }
 
@@ -389,6 +416,7 @@ export interface HostConversationOptions {
   migrationRun?: string | null;
   access?: string;
   readRoots?: string[];
+  migrationServer?: unknown;
   checkout: string;
   hostSessionId?: string | null;
   resume?: boolean;
@@ -399,7 +427,7 @@ export interface HostConversationOptions {
   onModel?: (model: string) => void;
 }
 
-export function hostConversation(host: string, { initiative = null, migrationRun = null, access = "full", readRoots = [], checkout, hostSessionId = null, resume = false, coordinator = null, send, closeInput, onSessionId = () => {}, onModel = () => {} }: HostConversationOptions) {
+export function hostConversation(host: string, { initiative = null, migrationRun = null, access = "full", readRoots = [], migrationServer = null, checkout, hostSessionId = null, resume = false, coordinator = null, send, closeInput, onSessionId = () => {}, onModel = () => {} }: HostConversationOptions) {
   const facts: HostFacts = { hostSessionId: null, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null };
   let modelSeen = false;
   // Only the first place that can name the run's model counts; a value that is no model a claim may record keeps none.
@@ -520,7 +548,7 @@ export function hostConversation(host: string, { initiative = null, migrationRun
     const answered = (method: string, result: any) => {
       if (method === "initialize") {
         write({ jsonrpc: "2.0", method: "initialized", params: {} });
-        const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume, coordinator, access });
+        const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume, coordinator, access, migrationServer });
         request(open, params);
         return;
       }

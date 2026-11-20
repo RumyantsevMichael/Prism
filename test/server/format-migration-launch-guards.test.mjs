@@ -6,7 +6,7 @@ import path from "node:path";
 import readline from "node:readline";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { CONFORMING, PATHS, REQUIREMENT, write } from "./fixtures/artifact-formats.mjs";
+import { CONFORMING, PATHS, REQUIREMENT, WORKFLOW, write } from "./fixtures/artifact-formats.mjs";
 import { COMPONENTS, STORE_PATHS } from "./fixtures/artifact-formats-store.mjs";
 import { listedTools, readRun, runCheckout, runFor, serve, stubHosts, waitFor } from "./fixtures/format-migration-runs.mjs";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
@@ -35,7 +35,15 @@ test("a run's Claude Code session works in its own folder with only the reading 
   assert.equal(after("--permission-mode"), "dontAsk");
   assert.equal(after("--tools"), "Read,Grep,Glob");
   // No bare Read, Grep, or Glob is allowed, so a read outside the working folder and the added folders asks, and nothing asks.
-  assert.equal(after("--allowedTools"), RUN_TOOLS.map((tool) => `mcp__plugin_prism_prism-review__${tool}`).join(","));
+  assert.equal(after("--allowedTools"), RUN_TOOLS.map((tool) => `mcp__prism-run__${tool}`).join(","));
+  // The session loads Prism's scoped server alone: no MCP server of the person's own configuration, no other plugin's, and no claude.ai connector.
+  assert.ok(started.argv.includes("--strict-mcp-config"));
+  assert.deepEqual(JSON.parse(after("--settings")), { disableClaudeAiConnectors: true });
+  assert.equal(started.env.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
+  const mcp = JSON.parse(await readFile(after("--mcp-config"), "utf8"));
+  assert.deepEqual(Object.keys(mcp.mcpServers), ["prism-run"]);
+  assert.equal(mcp.mcpServers["prism-run"].args[0], path.join(PRISM_ROOT, "dist/server/mcp.mjs"));
+  assert.deepEqual({ run: mcp.mcpServers["prism-run"].env.PRISM_MIGRATION_RUN, project: mcp.mcpServers["prism-run"].env.PRISM_MIGRATION_PROJECT }, { run, project: await realpath(root) });
   // Deny rules win over every allow rule and added folder, also those of the person's own settings, so no setting reads the checkout again.
   const real = await realpath(root);
   assert.equal(after("--disallowedTools"), `Read(/${real}),Read(/${real}/**)`);
@@ -60,6 +68,10 @@ test("a run's Codex thread runs in the read-only sandbox, readable only in its f
   const thread = await waitFor(() => hosts.inputs(started.pid).find((message) => message.method === "thread/start") ?? null, { what: "the thread start" });
   assert.equal(thread.params.sandbox, "read-only");
   assert.equal(thread.params.approvalPolicy, "never");
+  // The thread's configuration names Prism's scoped server as its only MCP server.
+  assert.deepEqual(Object.keys(thread.params.config.mcp_servers), ["prism-run"]);
+  assert.equal(thread.params.config.mcp_servers["prism-run"].env.PRISM_MIGRATION_RUN, run);
+  assert.equal(thread.params.config.mcp_servers["prism-run"].env.PRISM_MIGRATION_PROJECT, await realpath(root));
   assert.equal("approvalsReviewer" in thread.params, false, "no automatic reviewer lets a command out of the sandbox");
   const turn = await waitFor(() => hosts.inputs(started.pid).find((message) => message.method === "turn/start") ?? null, { what: "the turn start" });
   const { type, access } = turn.params.sandboxPolicy;
@@ -152,6 +164,32 @@ test("the run's server serves only files of the set's type under its folder, nev
   await writeFile(config, (await readFile(config, "utf8")).replace("- Requirements: docs/requirements/", "- Requirements: ."));
   await refusedAll([".env", ".npmrc", ".prism/workflow.md", ".git/config", "docs/requirements/sub/link.md", "docs/requirements/notes.txt", "package.json"]);
   assert.equal((await read(PATHS.requirements)).code, null, "the run's own source is still served");
+});
+
+test("a Windows checkout's deny rules name it as Claude Code matches Windows paths, and a path no rule can hold starts no session", async () => {
+  const { deniedReads, hostArguments } = await import("../../dist/server/session/launch-hosts.mjs");
+  assert.deepEqual(deniedReads("C:\\Users\\me\\api"), ["Read(//c/Users/me/api)", "Read(//c/Users/me/api/**)"]);
+  assert.deepEqual(deniedReads("D:/work/api/"), ["Read(//d/work/api)", "Read(//d/work/api/**)"]);
+  assert.deepEqual(deniedReads("/home/me/api"), ["Read(//home/me/api)", "Read(//home/me/api/**)"]);
+  for (const folder of ["/home/me/a,b", "/home/me/[api]", "C:\\Users\\me\\a*b", "relative/api"]) assert.throws(() => deniedReads(folder), /cannot deny the reads/, folder);
+  assert.throws(() => hostArguments({ host: "claude-code", hostSessionId: "s1", access: "read-only", deniedRoots: ["/home/me/api"] }), /no MCP configuration of its own/);
+});
+
+test("a run of artifacts under a configured dot-folder reads its own source, and still no dot-file or Git folder beside or below it", { skip: posixOnly }, async (context) => {
+  const source = ".reqs/retries.md";
+  const files = { ".prism/workflow.md": WORKFLOW.replace("- Requirements: docs/requirements/", "- Requirements: .reqs/"), [source]: UNANCHORED };
+  const { root, call } = await runCheckout(context, files, { hosts: [] });
+  const run = await runFor(call, source);
+  await mkdir(path.join(root, ".reqs/.hidden"), { recursive: true });
+  await writeFile(path.join(root, ".reqs/.env"), "TOKEN=env-secret\n");
+  await writeFile(path.join(root, ".reqs/.hidden/note.md"), "# hidden secret\n");
+  const read = await scopedRead(context, root, run);
+  assert.equal((await read(source)).code, null, "the run's own source under .reqs/ is served");
+  for (const file of [".reqs/.env", ".reqs/.hidden/note.md", ".git/config", ".prism/workflow.md", ".reqs/../.prism/workflow.md"]) {
+    const answer = await read(file);
+    assert.equal(answer.code, "migration_scope", `${file}: ${answer.text}`);
+    assert.doesNotMatch(answer.text, /secret/, file);
+  }
 });
 
 test("a newer nonconforming version of an artifact ends its open run and stops its session, so one run and one session hold it", { skip: posixOnly }, async (context) => {

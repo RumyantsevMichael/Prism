@@ -94,8 +94,17 @@ async function runOf(projectRoot: any, run: any) {
 // Whether the scope takes a project-relative path: never a dot-file or a path under a dot-folder, such as .env, .git, or .prism, and otherwise an artifact
 // of the run's set, or a file that a listing of the set's type would hold, by that type's folder, extension, depth, and name rules, so a configured path
 // of `.` covers only the type's own files and no other file of the checkout.
+// The dot parts of the set type's own configured path, such as a folder `.reqs/`, are the person's choice and count as no dot part.
 const dotted = (file: string) => file.split("/").some((part) => part.startsWith("."));
-const accepted = (record: any, config: any, file: string) => !dotted(file) && (Boolean(setArtifact(record, file)) || listedArtifactType(artifactLocations(config), file) === record.set?.type);
+function belowTypePath(config: any, type: unknown, file: string) {
+  const location = artifactLocations(config).find((entry: any) => entry.type === type);
+  if (!location) return file;
+  if (location.file !== undefined) return location.file === file ? path.posix.basename(file).replace(/^\.+/, "") : file;
+  if (location.folder === "") return file;
+  return file.startsWith(`${location.folder}/`) ? file.slice(location.folder.length + 1) : file;
+}
+const accepted = (record: any, config: any, file: string) => !dotted(belowTypePath(config, record.set?.type, file))
+  && (Boolean(setArtifact(record, file)) || listedArtifactType(artifactLocations(config), file) === record.set?.type);
 
 const setArtifact = (record: any, file: string) => (record.set?.artifacts ?? []).find((artifact: any) => relativePath(artifact.path) === file) ?? null;
 

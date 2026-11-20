@@ -11,9 +11,11 @@
 // After a run that exited 0, it resumes the session once when the person answered here, during the run, a gate that is still pending.
 // The run of a format migration run's session reports its end to that run, which fails when it was still open.
 import { spawn } from "node:child_process";
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { launchCoordinator, launchView, readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
-import { hostArguments, hostConversation, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
+import { hostArguments, hostConversation, migrationServerDefinition, MIGRATION_SERVER, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
 
 const STDERR_KEEP = 64 * 1024;
 const OUTPUT_DRAIN_MS = 2000;
@@ -75,9 +77,23 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
     await failStart("The format migration run's launch has no working folder of its own, so its session cannot start.");
     return;
   }
-  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, coordinator, access: record.access ?? "full", readRoots: record.readRoots ?? [],
-    // A format migration run's Claude Code session is denied every read of the checkout, whatever the person's own settings allow.
-    deniedRoots: typeof record.migrationRun === "string" ? [record.checkout] : [] });
+  // A format migration run's session has one MCP server, Prism's own scoped to the run, which Claude Code reads from the launch's own folder.
+  const migration = typeof record.migrationRun === "string";
+  const migrationServer = migration ? migrationServerDefinition({ run: record.migrationRun, project: record.checkout }) : null;
+  let mcpConfig: string | null = null;
+  if (migration) {
+    mcpConfig = path.join(folder, "mcp-config.json");
+    await writeFile(mcpConfig, `${JSON.stringify({ mcpServers: { [MIGRATION_SERVER]: migrationServer } }, null, 2)}\n`, { mode: 0o600 });
+  }
+  let args: string[];
+  try {
+    args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, coordinator, access: record.access ?? "full", readRoots: record.readRoots ?? [],
+      // A format migration run's Claude Code session is denied every read of the checkout, whatever the person's own settings allow.
+      deniedRoots: migration ? [record.checkout] : [], mcpConfig });
+  } catch (error) {
+    await failStart(error.message);
+    return;
+  }
   const number = record.runs.length + 1;
   const graceMs = stopGraceMs(env);
   let stderr = Buffer.alloc(0);
@@ -91,6 +107,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
       migrationRun: record.migrationRun ?? null,
       access: record.access ?? "full",
       readRoots: record.readRoots ?? [],
+      migrationServer,
       checkout: workFolder,
       hostSessionId: record.hostSessionId,
       resume,
