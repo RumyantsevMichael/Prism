@@ -22,14 +22,18 @@ const STATES = Object.freeze({
 });
 
 // The table's groups in their order, and what each Show choice shows, with the count each choice names.
-export const GROUPS = Object.freeze([["needs-you", "Needs you"], ["launched", "Launched on this computer"], ["other", "Other sessions"], ["expired", "Claims that expired"]]);
+export const GROUPS = Object.freeze([["needs-you", "Needs you"], ["launched", "Launched from Prism"], ["other", "Started outside Prism"], ["expired", "Claims that expired"], ["archived", "Archived"]]);
 export const SHOWS = Object.freeze([
   ["all", "All", "all", ["needs-you", "launched", "other", "expired"]],
   ["needs-you", "Needs you", "needsYou", ["needs-you"]],
-  ["this-computer", "This computer", "thisComputer", ["needs-you", "launched"]],
-  ["other", "Other sessions", "other", ["other"]],
-  ["expired", "Expired", "expired", ["expired"]]
+  ["this-computer", "Launched from Prism", "thisComputer", ["needs-you", "launched"]],
+  ["other", "Started outside Prism", "other", ["other"]],
+  ["expired", "Expired", "expired", ["expired"]],
+  ["archived", "Archived", "archived", ["archived"]]
 ]);
+
+// All leaves out a claim whose expiry is this old or older; Expired keeps it.
+export const EXPIRED_IN_ALL_MS = 24 * 60 * 60 * 1000;
 
 /** A duration in milliseconds as hours, minutes, and seconds, such as `4s`, `2m 05s`, or `1h 02m 09s`. */
 export function runningText(ms) {
@@ -118,15 +122,22 @@ function order(left, right) {
   return at(right.expiresAt) - at(left.expiresAt) || left.id.localeCompare(right.id);
 }
 
-/** The counts of the Show choices, from the entries as the page holds them. */
-export function countsOf(entries) {
+/** Whether All shows an entry: not archived, and not a claim whose expiry is a day old or more by `now`. */
+export function inAll(entry, now = Date.now()) {
+  if (entry.group === "archived") return false;
+  return !(entry.group === "expired" && at(entry.expiresAt) && now - at(entry.expiresAt) >= EXPIRED_IN_ALL_MS);
+}
+
+/** The counts of the Show choices, from the entries as the page holds them, with All counting only what it shows by `now`. */
+export function countsOf(entries, now = Date.now()) {
   const count = (accept) => entries.filter(accept).length;
   return {
-    all: entries.length,
+    all: count((entry) => inAll(entry, now)),
     needsYou: count((entry) => entry.group === "needs-you"),
-    thisComputer: count((entry) => entry.kind === "launch"),
+    thisComputer: count((entry) => entry.kind === "launch" && entry.group !== "archived"),
     other: count((entry) => entry.group === "other"),
-    expired: count((entry) => entry.group === "expired")
+    expired: count((entry) => entry.group === "expired"),
+    archived: count((entry) => entry.group === "archived")
   };
 }
 
@@ -190,6 +201,9 @@ export async function render(container, entity, ctx) {
   const rows = new Map();
   const drafts = (state.actionDrafts ??= {});
   let entries = [];
+  // The entries All left out at the last layout, so a second that moves a claim out of All lays the table out again.
+  let allOut = "";
+  const outOfAll = (now) => entries.filter((entry) => !inAll(entry, now)).map((entry) => entry.id).join("\n");
   let loaded = false;
   let readOnly = typeof ctx.canWrite === "function" ? !ctx.canWrite() : false;
   bindLinks(table, ctx);
@@ -309,10 +323,13 @@ export async function render(container, entity, ctx) {
   }
 
   // Places the head, each shown group's head, and its rows in order, moving a node only when the order changed, and hides what the Show choice leaves out.
-  function layout() {
+  function layout(now = Date.now()) {
     entries.sort(order);
-    const counts = countsOf(entries);
+    const counts = countsOf(entries, now);
     const shown = SHOWS.find(([value]) => value === state.show)?.[3] ?? SHOWS[0][3];
+    // All leaves out what inAll does, and each group's count counts what the choice shows of it.
+    const showing = state.show === "all" || !SHOWS.some(([value]) => value === state.show) ? (entry) => inAll(entry, now) : () => true;
+    allOut = outOfAll(now);
     for (const [value, , key] of SHOWS) {
       const slot = show.querySelector(`[data-show-count="${value}"]`);
       if (slot && slot.textContent !== String(counts[key])) slot.textContent = String(counts[key]);
@@ -321,16 +338,18 @@ export async function render(container, entity, ctx) {
     let visibleRows = 0;
     for (const [group] of GROUPS) {
       const members = entries.filter((entry) => entry.group === group);
-      const visible = shown.includes(group) && members.length > 0;
+      const kept = new Set(members.filter(showing));
+      const visible = shown.includes(group) && kept.size > 0;
       const head = groupHeads.get(group);
       head.hidden = !visible;
       const count = head.querySelector("prism-badge");
-      if (count.textContent !== String(members.length)) count.textContent = String(members.length);
+      if (count.textContent !== String(kept.size)) count.textContent = String(kept.size);
       sequence.push(head);
       for (const entry of members) {
         const row = rows.get(entry.id);
-        row.element.hidden = !visible;
-        if (visible) visibleRows += 1;
+        const rowVisible = visible && kept.has(entry);
+        row.element.hidden = !rowVisible;
+        if (rowVisible) visibleRows += 1;
         sequence.push(row.element);
       }
     }
@@ -385,7 +404,7 @@ export async function render(container, entity, ctx) {
     }
   });
 
-  // Each second counts a running launch's time on, and moves a claim whose lease passed to the claims that expired.
+  // Each second counts a running launch's time on, moves a claim whose lease passed to the claims that expired, and takes a claim out of All once its expiry is a day old.
   function tick() {
     const now = Date.now();
     let moved = false;
@@ -398,7 +417,7 @@ export async function render(container, entity, ctx) {
       }
       paint(row, now);
     }
-    if (moved) layout();
+    if (moved || outOfAll(now) !== allOut) layout(now);
   }
 
   show.addEventListener("change", (event) => {

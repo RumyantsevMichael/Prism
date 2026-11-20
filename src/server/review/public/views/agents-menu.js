@@ -8,8 +8,8 @@ export const REFRESH_MS = 5000;
 
 // The menu's count links: their words, the count of api/agents each shows, their glyph, and the Agents page address each opens.
 const COUNT_LINKS = Object.freeze([
-  ["Launched on this computer", "thisComputer", "play", "agents:this-computer"],
-  ["Other sessions", "other", "agent", "agents:other"],
+  ["Launched from Prism", "thisComputer", "play", "agents:this-computer"],
+  ["Started outside Prism", "other", "agent", "agents:other"],
   ["Expired claims", "expired", "clock", "agents:expired"]
 ]);
 

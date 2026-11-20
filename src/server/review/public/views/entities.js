@@ -34,7 +34,7 @@ export function parseEntityRef(ref) {
   if (SECTIONS.includes(ref)) return { kind: ref };
   // The Launched sessions address, as a restored tab or an old link, opens the Agents page that replaced it; agents:<group> opens it with that Show choice made.
   if (ref === "launches") return { kind: "agents" };
-  const group = /^agents:(needs-you|this-computer|other|expired)$/.exec(ref ?? "");
+  const group = /^agents:(needs-you|this-computer|other|expired|archived)$/.exec(ref ?? "");
   if (group) return { kind: "agents", page: group[1] };
   // Attention's filtered pages: one kind, one initiative's items, the roadmap's open questions, or the questions answered this week.
   let match = /^attention:(questions|findings|failed|blocked|ready|problems|answered|roadmap-questions|work\/[A-Za-z0-9_-]+)$/.exec(ref ?? "");
