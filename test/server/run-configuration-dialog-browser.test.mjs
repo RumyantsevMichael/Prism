@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { escapes, launch, openPage, skip, waitForView } from "./fixtures/kit-browser.mjs";
-import { INITIATIVE, runOptionsReview } from "./fixtures/run-options-hosts.mjs";
+import { startActionReview } from "./fixtures/review-actions.mjs";
+import { INITIATIVE, runOptionsFixture } from "./fixtures/run-options-hosts.mjs";
 import { settled } from "./fixtures/wait.mjs";
 
 // Requirements: docs/requirements/launch-run-configuration.md §1, §2, §3, §12, §15, §17.
@@ -31,7 +32,9 @@ const writeSettings = async (root, settings) => {
 
 /** The initiative page in a tab that Prism opened, which holds the write grant; open() presses Launch and waits for the dialog. */
 async function runPage(t, { hosts, viewport, before } = {}) {
-  const s = await runOptionsReview(t, hosts ? { hosts } : {});
+  const fixture = await runOptionsFixture(t, hosts ? { hosts } : {});
+  fixture.useAsProcessEnv();
+  const s = { ...fixture, ...(await startActionReview(t, fixture.root)) };
   if (before) await before(s);
   await s.review.open([TARGET]);
   const page = await openPage(await launch(t), s.opened.at(-1), viewport ? { viewport } : {});
@@ -45,6 +48,8 @@ async function runPage(t, { hosts, viewport, before } = {}) {
 }
 
 const launchButton = (dialog) => dialog.getByRole("button", { name: /^Launch with / });
+/** The launch button's label as a person reads it: the name its visible text gives the one launch button. */
+const launchLabel = (dialog) => launchButton(dialog).ariaSnapshot().then((snapshot) => snapshot.match(/^- button "([^"]*)"/)?.[1]);
 const pressed = (dialog, group) => dialog.getByRole("group", { name: group }).locator("prism-button[pressed=true]").innerText().then((text) => text.trim());
 const pick = (dialog, group, value) => dialog.getByRole("group", { name: group }).getByRole("button", { name: value, exact: true }).click();
 const picker = (dialog, label) => dialog.locator(`prism-picker[label="${label}"]`);
@@ -64,7 +69,7 @@ test("clause 1: Launch opens one dialog with the host, how the run works, and th
   assert.equal(await s.dialog.getByRole("combobox", { name: "Host" }).inputValue(), "claude-code");
   assert.deepEqual(await s.dialog.locator("prism-picker").evaluateAll((items) => items.map((item) => item.getAttribute("label"))), KINDS);
   assert.match(text, /Launching saves these choices as this initiative's settings\./);
-  assert.equal(await launchButton(s.dialog).innerText(), "Launch with Claude Code");
+  assert.equal(await launchLabel(s.dialog), "Launch with Claude Code");
   assert.equal(await s.dialog.getByRole("button", { name: "Cancel" }).count(), 1);
   assert.deepEqual(s.launchRuns(), [], "opening the dialog starts no session");
   assert.deepEqual(await launchesOf(s), []);
@@ -73,7 +78,7 @@ test("clause 1: Launch opens one dialog with the host, how the run works, and th
 
 test("clause 2: the dialog shows the initiative's current values, and each choice says what it does in plain words", { skip: skipHere, timeout: 90000 }, async (t) => {
   const s = await runPage(t, {
-    before: (fixture) => writeSettings(fixture.root, { autonomy: "broad", commit: true, push: false, continuation: "stepwise", review: "recommended", models: { "claude-code": { coordinator: { model: "fable", effort: "high" } } } })
+    before: (fixture) => writeSettings(fixture.root, { autonomy: "broad", commit: "on", push: "off", continuation: "stepwise", review: "recommended", models: { "claude-code": { coordinator: { model: "fable", effort: "high" } } } })
   });
   await s.open();
   assert.deepEqual([await pressed(s.dialog, "Autonomy"), await pressed(s.dialog, "Continuation"), await pressed(s.dialog, "Review")], ["Broad", "Stepwise", "Recommended slices"]);
@@ -102,7 +107,7 @@ test("clause 2: the dialog shows the initiative's current values, and each choic
 test("clause 3: confirming saves every changed choice as the initiative's settings, under their confirmations, and then launches with them", { skip: skipHere, timeout: 120000 }, async (t) => {
   const s = await runPage(t);
   await s.open();
-  await pick(s.dialog, "Autonomy", "Conservative");
+  await pick(s.dialog, "Autonomy", "Broad");
   await pick(s.dialog, "Push", "On");
   await ready(s.dialog, "Coordinator");
   await picker(s.dialog, "Coordinator").getByRole("button", { name: "Coordinator" }).click();
@@ -119,7 +124,7 @@ test("clause 3: confirming saves every changed choice as the initiative's settin
   const [run] = await settled(() => s.launchRuns("claude"), (runs) => runs.length === 1, { timeout: 30000 });
   assert.ok(run, "one session launched");
   const settings = (await coordination(s.root)).state.settings;
-  assert.deepEqual([settings.autonomy, settings.push], ["conservative", true], "the settings were saved, the risky one after its confirmation");
+  assert.deepEqual([settings.autonomy, settings.push], ["broad", "on"], "the settings were saved, the risky one after its confirmation");
   assert.deepEqual(settings.models["claude-code"].coordinator, { model: "sonnet", effort: "low" });
   const tail = run.argv.slice(-4);
   assert.deepEqual(tail, ["--model", "sonnet", "--effort", "low"], "the launch ran with the saved coordinator choice");
@@ -156,7 +161,7 @@ test("clause 5: choosing another host names it on the launch button, shows its o
   });
   await s.open();
   await s.dialog.getByRole("combobox", { name: "Host" }).selectOption("codex");
-  assert.equal(await settled(() => launchButton(s.dialog).innerText(), "Launch with Codex"), "Launch with Codex");
+  assert.equal(await settled(() => launchLabel(s.dialog), "Launch with Codex"), "Launch with Codex");
   await settled(() => s.dialog.locator("prism-picker").count(), 6);
   await ready(s.dialog, "Coordinator");
   assert.match(await picker(s.dialog, "Coordinator").getByRole("button", { name: "Coordinator" }).innerText(), /GPT-5\.5\s*·?\s*High effort/);
@@ -173,7 +178,7 @@ test("clause 5: a host this computer lacks shows unavailable with its reason and
   const options = await s.dialog.getByRole("combobox", { name: "Host" }).locator("option").evaluateAll((items) => items.map((item) => [item.value, item.disabled]));
   assert.deepEqual(options, [["claude-code", false], ["codex", true]]);
   assert.match(await s.dialog.innerText(), /Codex was not found: no codex executable on PATH\./);
-  assert.equal(await launchButton(s.dialog).innerText(), "Launch with Claude Code");
+  assert.equal(await launchLabel(s.dialog), "Launch with Claude Code");
   assert.deepEqual(s.page.errors, []);
 });
 
