@@ -11,6 +11,8 @@ import { revisionMismatch } from "./revision.mjs";
 import { refuseShipped } from "./shipped-history.mjs";
 import { initiativeDirectory, readWorkflowConfig } from "./workflow-config.mjs";
 import { parseStoreJson } from "./store-json.mjs";
+import { HOSTS } from "../session/launch-hosts.mjs";
+import { NAME_RULE_MESSAGES, RUN_KINDS, validEffort, validModel, validProvider } from "../session/run-options.mjs";
 
 const SCHEMA_VERSION = 1;
 
@@ -18,20 +20,65 @@ const TOP_LEVEL_KEYS = new Set(["schemaVersion", "settings", "active", "pending"
 // Only the review app's action registry writes the person's history and setting marks, so agents' state changes never carry them.
 const REGISTRY_KEYS = new Set(["history", "personSettings"]);
 // The initiative settings that coordination state accepts, in the order the review app lists their actions.
-export const INITIATIVE_SETTINGS = Object.freeze(["autonomy", "commit", "push", "continuation", "review", "models"]);
+export const INITIATIVE_SETTINGS = Object.freeze(["host", "autonomy", "commit", "push", "continuation", "review", "models"]);
 const SETTING_KEYS = new Set(INITIATIVE_SETTINGS);
 
-/** The six effective setting values, each stored or else its default, and personSettings, the names of the settings the person set. */
+// The models setting keeps one entry per supported host: a provider and a run choice { model, effort, typed } per kind, each part
+// left out for the host default, so the stored value is compact and a host the person never chose for holds nothing.
+const RUN_HOSTS: string[] = HOSTS.map(({ host }) => host);
+const KIND_NAMES: string[] = RUN_KINDS.map(({ kind }) => kind);
+const AGENT_KINDS: string[] = RUN_KINDS.filter(({ purpose }) => purpose === "agents").map(({ kind }) => kind);
+// The earlier models value named one model per role for every host; each role is now an agent kind, and each name a typed choice,
+// or an earlier name where it breaks the model rule.
+const EARLIER_ROLES: Readonly<Record<string, string>> = Object.freeze({ delivery: "designImplementation", review: "codeReview", securityReview: "securityReview", examples: "gateSummary" });
+const EARLIER_DEFAULTS = new Set(["defaults", "host defaults"]);
+const EARLIER_NAME_LIMIT = 200;
+const EARLIER_NAME = /^[^\s\p{Cc}]+(?: [^\s\p{Cc}]+)*$/u;
+
+/** Whether a name keeps the earlier-name rule: 1 to 200 characters, no control character, and only single spaces between its words. */
+export function validEarlierName(name: unknown) {
+  return typeof name === "string" && EARLIER_NAME.test(name) && [...name].length <= EARLIER_NAME_LIMIT;
+}
+
+/** Why an earlier name is not offered: no host takes it as a model, so it is shown and refused until the person replaces it. */
+export const earlierReason = (hostLabel: string, earlier: string) => `Prism kept the earlier model name ${earlier}, which ${hostLabel} cannot take as a model.`;
+
+// An earlier name keeps its words: each run of white space and control characters is one space, with none at either end, and at most 200 characters.
+function earlierName(name: string) {
+  return [...name.replace(/[\s\p{Cc}]+/gu, " ").trim()].slice(0, EARLIER_NAME_LIMIT).join("").trimEnd();
+}
+
+function earlierAssignment(value: any) {
+  return isRecord(value) && Object.keys(value).length > 0 && Object.entries(value).every(([key, name]) => Object.hasOwn(EARLIER_ROLES, key) && typeof name === "string");
+}
+
+// One earlier name as a run choice: a typed model where it keeps the model rule once trimmed, else an earlier name, and null when nothing is left.
+function earlierChoice(name: string) {
+  if (validModel(name.trim())) return { model: name.trim(), typed: true };
+  const earlier = earlierName(name);
+  return earlier ? { earlier } : null;
+}
+
+/** A models value in the per-host shape: an earlier host defaults value reads as no choice, and an earlier assignment as the choices of every host. */
+export function migratedModels(value: any) {
+  if (typeof value === "string" && EARLIER_DEFAULTS.has(value)) return {};
+  if (!earlierAssignment(value)) return value;
+  const entry = () => Object.fromEntries(Object.entries(EARLIER_ROLES).filter(([role]) => Object.hasOwn(value, role)).map(([role, kind]) => [kind, earlierChoice(value[role])]).filter(([, choice]) => choice !== null));
+  return Object.fromEntries(RUN_HOSTS.map((host) => [host, entry()]));
+}
+
+/** The seven effective setting values, each stored or else its default, and personSettings, the names of the settings the person set. */
 export function effectiveSettings(state: any) {
   const stored = isRecord(state?.settings) ? state.settings : {};
   const autonomy = stored.autonomy ?? "conservative";
   return {
+    host: stored.host ?? null,
     autonomy,
     commit: stored.commit ?? (autonomy === "full" ? "on" : "off"),
     push: stored.push ?? "off",
     continuation: stored.continuation ?? "auto",
     review: stored.review ?? "marked",
-    models: stored.models === undefined || stored.models === "defaults" ? "host defaults" : stored.models,
+    models: stored.models === undefined ? {} : migratedModels(stored.models),
     personSettings: INITIATIVE_SETTINGS.filter((name) => isRecord(state?.personSettings) && Object.hasOwn(state.personSettings, name))
   };
 }
@@ -72,6 +119,7 @@ const REASON_LIMIT = 1000;
 const REVIEW_CHOICES = new Set(["approve", "request-changes"]);
 const STATE_MAX_BYTES = 1024 * 1024;
 const SETTING_VALUES: Record<string, Set<string>> = {
+  host: new Set(RUN_HOSTS),
   autonomy: new Set(["conservative", "broad", "full"]),
   commit: new Set(["on", "off"]),
   push: new Set(["on", "off"]),
@@ -156,11 +204,14 @@ function defaultState() {
 // Every child now runs in a fresh agent, so a stored agent flow from an older Prism is dropped on read.
 const RETIRED_SETTINGS = new Set(["agentFlow"]);
 
+// An earlier models value reads and writes migrated, like a retired setting that is dropped.
 function withoutRetiredSettings(settings: any) {
   if (!isRecord(settings)) {
     return settings;
   }
-  return Object.fromEntries(Object.entries<any>(settings).filter(([key]) => !RETIRED_SETTINGS.has(key)));
+  const kept: any = Object.fromEntries(Object.entries<any>(settings).filter(([key]) => !RETIRED_SETTINGS.has(key)));
+  if (kept.models !== undefined) kept.models = migratedModels(kept.models);
+  return kept;
 }
 
 function normalizeState(raw: any) {
@@ -214,29 +265,56 @@ function validateStringArray(value: any, pathValue: any, errors: any) {
 
 function validateModels(value: any, errors: any) {
   if (typeof value === "string") {
-    if (value !== "defaults" && value !== "host defaults") {
-      addError(errors, "settings.models", "must be defaults, host defaults, or a model assignment object");
-    }
+    if (!EARLIER_DEFAULTS.has(value)) addError(errors, "settings.models", "must be an object keyed by host");
     return;
   }
   if (!isRecord(value)) {
-    addError(errors, "settings.models", "must be a supported defaults value or an object");
+    addError(errors, "settings.models", "must be an object keyed by host");
     return;
   }
-  const requiredRoles = ["delivery", "review", "securityReview"];
-  for (const role of requiredRoles) {
-    if (typeof value[role] !== "string" || !value[role].trim()) {
-      addError(errors, `settings.models.${role}`, "must be a non-empty model name");
+  // Every name of an earlier assignment migrates, to a typed choice, an earlier name, or the host default.
+  if (earlierAssignment(value)) return;
+  for (const [host, entry] of Object.entries(value)) {
+    const at = `settings.models.${host}`;
+    if (!RUN_HOSTS.includes(host)) {
+      addError(errors, at, `is not a supported host; the hosts are ${RUN_HOSTS.join(", ")}`);
+      continue;
+    }
+    if (!isRecord(entry)) {
+      addError(errors, at, "must be an object of a provider and run choices");
+      continue;
+    }
+    for (const [key, item] of Object.entries(entry as Record<string, unknown>)) {
+      if (key === "provider") {
+        if (!validProvider(item)) addError(errors, `${at}.provider`, NAME_RULE_MESSAGES.provider);
+      } else if (!KIND_NAMES.includes(key)) {
+        addError(errors, `${at}.${key}`, `is not a kind of run choice; the kinds are ${KIND_NAMES.join(", ")}`);
+      } else {
+        validateRunChoice(item, `${at}.${key}`, errors, AGENT_KINDS.includes(key));
+      }
     }
   }
-  if (value.examples !== undefined && (typeof value.examples !== "string" || !value.examples.trim())) {
-    addError(errors, "settings.models.examples", "must be a non-empty model name when present");
+}
+
+// A stored run choice leaves out each host default, so typed appears only as true and only with a model; an agent kind's choice
+// may instead keep an earlier name alone.
+function validateRunChoice(value: any, at: any, errors: any, agent: any) {
+  if (!isRecord(value)) {
+    addError(errors, at, "must be an object of model, effort, and typed");
+    return;
+  }
+  if (Object.hasOwn(value, "earlier")) {
+    if (!agent) addError(errors, `${at}.earlier`, "is kept only by an agent's choice, never the coordinator's");
+    else if (Object.keys(value).length > 1) addError(errors, `${at}.earlier`, "stands alone in its choice, without a model, an effort, or typed");
+    else if (!validEarlierName(value.earlier)) addError(errors, `${at}.earlier`, "has 1 to 200 characters, no control character, and only single spaces between its words");
+    return;
   }
   for (const key of Object.keys(value)) {
-    if (!requiredRoles.includes(key) && key !== "examples") {
-      addError(errors, `settings.models.${key}`, "is not a supported model role");
-    }
+    if (!["model", "effort", "typed"].includes(key)) addError(errors, `${at}.${key}`, "is not a part of a run choice; its parts are model, effort, typed, and on an agent's choice an earlier name alone");
   }
+  if (value.model !== undefined && !validModel(value.model)) addError(errors, `${at}.model`, NAME_RULE_MESSAGES.model);
+  if (value.effort !== undefined && !validEffort(value.effort)) addError(errors, `${at}.effort`, NAME_RULE_MESSAGES.effort);
+  if (value.typed !== undefined && (value.typed !== true || value.model === undefined)) addError(errors, `${at}.typed`, "is true only beside a model name the person typed, and left out otherwise");
 }
 
 function validateSettings(value: any, errors: any, warnings: any) {

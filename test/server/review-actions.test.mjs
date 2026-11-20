@@ -4,6 +4,7 @@ import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { runOptionsReview } from "./fixtures/run-options-hosts.mjs";
 import { DECISION_CONTEXT, DROP_CONSEQUENCE, ENTRY_ID, INITIATIVE, KEEP_CONSEQUENCE, KEEP_REASON, RETENTION_CONTEXT, RETENTION_REASON, SIGNING_CONTEXT, actionOf, actionProject, apply, authorOf, get, inHistoryOrder, listing, pageSession, post, startActionReview } from "./fixtures/review-actions.mjs";
 
 const privateData = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-actions-data-")));
@@ -15,12 +16,16 @@ delete process.env.CLAUDE_PLUGIN_DATA;
 const { getInitiative, updateInitiative } = await import("../../dist/server/workflow/initiative.mjs");
 const { readCoordinationState, updateCoordinationState } = await import("../../dist/server/workflow/state.mjs");
 const { writeRecord } = await import("../../dist/server/workflow/record-store.mjs");
+const { hostAvailability } = await import("../../dist/server/session/launch-hosts.mjs");
 test.after(() => rm(privateData, { recursive: true, force: true }));
 
-const SETTINGS = ["autonomy", "commit", "push", "continuation", "review", "models"];
-const NEXT_CHILD = "Applies to child sessions started after the change.";
+const SETTINGS = ["host", "autonomy", "commit", "push", "continuation", "review", "models"];
+const NEXT_AGENT = "Applies to agents started after the change.";
+const KINDS = ["coordinator", "designImplementation", "codeReview", "securityReview", "gateSummary"];
+const emptyEntry = () => ({ provider: null, ...Object.fromEntries(KINDS.map((kind) => [kind, { model: null, effort: null, typed: false }])) });
+const posixOnly = process.platform === "win32" ? "the stub hosts are POSIX scripts" : false;
 // An initiative lists the launch actions of launched sessions after its settings; these tests read the settings alone.
-const LAUNCHES = ["launch.claude-code", "launch.codex"];
+const LAUNCHES = ["launch.run"];
 const settingsOnly = (actions) => actions.filter((action) => action.group === "Initiative settings");
 
 async function setup(context, options) {
@@ -52,28 +57,30 @@ test("an initiative lists its six settings in order with their fields, defaults,
     for (const field of action.fields) for (const option of field.options ?? []) assert.ok(Object.hasOwn(option, "consequence"), `${action.id}.${field.name}.${option.value} has consequence`);
   }
   const by = Object.fromEntries(list.json.actions.map((action) => [action.id.slice("initiative.".length), action]));
-  assert.deepEqual(Object.fromEntries(SETTINGS.map((name) => [name, by[name].value])), { autonomy: "conservative", commit: "off", push: "off", continuation: "auto", review: "marked", models: "host defaults" });
+  // With no host stored, the host setting shows the first host this computer finds.
+  const firstFound = (await hostAvailability()).find((item) => item.available)?.host ?? null;
+  assert.deepEqual(Object.fromEntries(SETTINGS.map((name) => [name, by[name].value])), { host: firstFound, autonomy: "conservative", commit: "off", push: "off", continuation: "auto", review: "marked", models: { "claude-code": emptyEntry(), codex: emptyEntry() } });
   assert.deepEqual(by.autonomy.fields.map((field) => [field.name, field.kind, field.options.map((option) => option.value)]), [["value", "choice", ["conservative", "broad", "full"]]]);
   for (const name of ["commit", "push"]) assert.deepEqual(by[name].fields.map((field) => [field.kind, field.options.map((option) => option.value)]), [["toggle", ["off", "on"]]]);
   assert.deepEqual(by.continuation.fields[0].options.map((option) => option.value), ["auto", "stepwise"]);
   assert.deepEqual(by.review.fields[0].options.map((option) => option.value), ["marked", "recommended", "all"]);
   assert.deepEqual(by.models.fields.map((field) => [field.name, field.kind, field.required, field.requiredWhen, field.maxLength]), [
-    ["mode", "choice", true, null, null],
-    ["delivery", "text", false, { field: "mode", values: ["custom"] }, 200],
-    ["review", "text", false, { field: "mode", values: ["custom"] }, 200],
-    ["securityReview", "text", false, { field: "mode", values: ["custom"] }, 200],
-    ["examples", "text", false, null, 200]
+    ["host", "choice", true, null, null],
+    ["provider", "run-option", false, null, null],
+    ...KINDS.map((kind) => [kind, "run-choice", false, null, null])
   ]);
-  assert.deepEqual(by.models.fields[0].options.map((option) => option.value), ["host defaults", "custom"]);
+  assert.deepEqual(by.models.fields[0].options.map((option) => option.value), ["claude-code", "codex"]);
   assert.deepEqual(Object.fromEntries(SETTINGS.map((name) => [name, by[name].effect])), {
+    host: "Launches started after the change run on this host; a running or resumed session keeps the host it started on.",
     autonomy: "Decides which later gates wait for you; a gate already open keeps waiting for you.",
-    commit: NEXT_CHILD,
-    push: NEXT_CHILD,
-    continuation: "Applies when the slice in progress finishes.",
-    review: "Sets the review mark of slices whose design is not yet accepted.",
-    models: NEXT_CHILD
+    commit: NEXT_AGENT,
+    push: NEXT_AGENT,
+    continuation: "Whether the next slice starts by itself; applies when the slice in progress finishes.",
+    review: "Which slices get a code review before they count as done; a slice whose design is already accepted keeps its review.",
+    models: "The coordinator's model and effort apply to launches started after the change, and each agent's to agents started after it; a running session or agent keeps its own."
   });
   assert.deepEqual(Object.fromEntries(SETTINGS.map((name) => [name, by[name].confirm])), {
+    host: null,
     autonomy: { field: "value", values: ["full"], message: "Agents will accept every design and resolve internal decisions without you." },
     commit: { field: "value", values: ["on"], message: "Agents will commit their changes to Git history." },
     push: { field: "value", values: ["on"], message: "Agents will push finished slices beyond this machine." },
@@ -198,10 +205,10 @@ test("an input the action does not accept is refused with the accepted values", 
   const unknown = await send("initiative.review", { value: "all", extra: "x" });
   assert.deepEqual([unknown.status, unknown.json.code, unknown.json.field], [400, "invalid_input", "extra"]);
   assert.equal(typeof unknown.json.accepted, "string");
-  const missing = await send("initiative.models", { mode: "custom", review: "opus", securityReview: "opus" });
-  assert.deepEqual([missing.status, missing.json.code, missing.json.field], [400, "invalid_input", "delivery"]);
-  const long = await send("initiative.models", { mode: "custom", delivery: "x".repeat(201), review: "opus", securityReview: "opus" });
-  assert.deepEqual([long.status, long.json.code, long.json.field], [400, "invalid_input", "delivery"]);
+  const missing = await send("initiative.models", { host: "gemini", coordinator: null });
+  assert.deepEqual([missing.status, missing.json.code, missing.json.field], [400, "invalid_input", "host"]);
+  const malformed = await send("initiative.models", { host: "claude-code", designImplementation: { model: 5 } });
+  assert.deepEqual([malformed.status, malformed.json.code, malformed.json.field], [400, "invalid_input", "designImplementation"]);
   const action = await apply(base, { action: "initiative.colour", target: `initiative:${INITIATIVE}`, input: { value: "red" }, revision: null }, headers);
   assert.deepEqual([action.status, action.json.code], [404, "unknown_action"]);
   const wrongTarget = await apply(base, { action: "gate.answer", target: `initiative:${INITIATIVE}`, input: {}, revision: null }, headers);
@@ -211,23 +218,24 @@ test("an input the action does not accept is refused with the accepted values", 
   assert.equal((await state(root)).settings.autonomy, undefined);
 });
 
-test("models store host defaults or an assignment, and an unchanged value records nothing", async (context) => {
-  const { root, base, headers } = await setup(context);
-  let models = actionOf(await listing(base, `initiative:${INITIATIVE}`, headers), "initiative.models");
-  const custom = await apply(base, { action: "initiative.models", target: `initiative:${INITIATIVE}`, input: { mode: "custom", delivery: "opus", review: "sonnet", securityReview: "opus", examples: "  " }, revision: models.revision }, headers);
+test("models store host defaults or an assignment, and an unchanged value records nothing", { skip: posixOnly }, async (context) => {
+  const { root, base, headers } = await runOptionsReview(context);
+  const target = `initiative:${INITIATIVE}`;
+  let models = actionOf(await listing(base, target, headers), "initiative.models");
+  const custom = await apply(base, { action: "initiative.models", target, input: { host: "claude-code", provider: null, coordinator: { model: "opus", effort: "high", typed: false }, designImplementation: { model: "my-proxy", effort: null, typed: true }, codeReview: null }, revision: models.revision }, headers);
   assert.equal(custom.status, 200, custom.text);
-  assert.deepEqual((await state(root)).settings.models, { delivery: "opus", review: "sonnet", securityReview: "opus" });
+  assert.deepEqual((await state(root)).settings.models, { "claude-code": { coordinator: { model: "opus", effort: "high" }, designImplementation: { model: "my-proxy", typed: true } } });
   models = actionOf({ json: custom.json }, "initiative.models");
-  assert.deepEqual(models.value, { delivery: "opus", review: "sonnet", securityReview: "opus" });
-  const reset = await apply(base, { action: "initiative.models", target: `initiative:${INITIATIVE}`, input: { mode: "host defaults", delivery: "ignored" }, revision: models.revision }, headers);
+  assert.deepEqual([models.value["claude-code"].coordinator, models.value.codex], [{ model: "opus", effort: "high", typed: false }, emptyEntry()]);
+  const reset = await apply(base, { action: "initiative.models", target, input: { host: "claude-code" }, revision: models.revision }, headers);
   assert.equal(reset.status, 200, reset.text);
-  assert.equal((await state(root)).settings.models, "host defaults");
+  assert.deepEqual((await state(root)).settings.models, {}, "every host default is left out");
   const historyLength = (await state(root)).history.length;
   const continuation = actionOf({ json: reset.json }, "initiative.continuation");
-  const same = await apply(base, { action: "initiative.continuation", target: `initiative:${INITIATIVE}`, input: { value: "auto" }, revision: continuation.revision }, headers);
+  const same = await apply(base, { action: "initiative.continuation", target, input: { value: "auto" }, revision: continuation.revision }, headers);
   assert.deepEqual([same.status, same.json.applied], [200, null]);
   assert.equal((await state(root)).history.length, historyLength);
-  const samePush = await apply(base, { action: "initiative.push", target: `initiative:${INITIATIVE}`, input: { value: "off" }, revision: continuation.revision }, headers);
+  const samePush = await apply(base, { action: "initiative.push", target, input: { value: "off" }, revision: continuation.revision }, headers);
   assert.deepEqual([samePush.status, samePush.json.applied], [200, null], "an unchanged risky value needs no confirmation");
 });
 

@@ -35,7 +35,7 @@ import { listArtifacts } from "./review/review-server.mjs";
 import { createReviewServerPool } from "./review/review-server-pool.mjs";
 import { opensAtStart } from "./review/open-at-start.mjs";
 import { reviewAppDirectory, reviewAppDisabled } from "./review/review-app-discovery.mjs";
-import { checkpointPause, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
+import { checkpointPause, effectiveSettings, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
 import { historyMarksText, shippedHistory } from "./workflow/shipped-history.mjs";
 import { INITIATIVE_TOOLS, InitiativeError, claimedByUpdate, getInitiative, initiativeAcknowledgement, initiativeWork, readInitiative, requireClaimedWork, updateInitiative } from "./workflow/initiative.mjs";
 import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
@@ -55,6 +55,8 @@ import { endGateWait, keptSettingsText, personChangesText, rememberAskedGates, s
 import { callAgent, callAgentRole, currentCallAgent, withCallAgent } from "./workflow/call-agent.mjs";
 import { recordWaitRequest } from "./workflow/gate-wait-requests.mjs";
 import { nativeSemanticRuntime } from "./repository-intelligence/native-semantic-runtime.mjs";
+import { HOSTS } from "./session/launch-hosts.mjs";
+import { EFFORT_PATTERN, MODEL_PATTERN, PROVIDER_PATTERN, RUN_KINDS } from "./session/run-options.mjs";
 import { startBackgroundPreparation } from "./repository-intelligence/background-preparation.mjs";
 import { NATIVE_INTELLIGENCE_TOOLS, findSameNameUnits, findSharedDependencies, findSharedLiterals, prepareNativeProvider, reportCohesionClusters, reportComplexUnits, reportModuleInterfaces, searchRepositoryConcepts } from "./repository-intelligence/semantic-native-provider.mjs";
 
@@ -413,6 +415,33 @@ function stateErrorData(error: any) {
 
 // Hosts show agents the error message but not the error data, so the message also lists the problems that the data holds.
 // A problem that the message already states is not listed again.
+// The settings.models entry of one host: a provider and one run choice per kind, each part left out for the host default.
+const RUN_HOST_NAMES = HOSTS.map(({ host }) => host);
+const RUN_CHOICE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    model: { type: "string", pattern: MODEL_PATTERN.source },
+    effort: { type: "string", pattern: EFFORT_PATTERN.source },
+    typed: { type: "boolean", const: true, description: "Only beside a model name the person typed, which the host does not list." }
+  }
+};
+// An agent's choice may instead keep, alone, an earlier name that breaks the model rule, which is never passed to a host.
+const AGENT_CHOICE_SCHEMA = {
+  ...RUN_CHOICE_SCHEMA,
+  properties: {
+    ...RUN_CHOICE_SCHEMA.properties,
+    earlier: { type: "string", minLength: 1, maxLength: 200, description: "An earlier model name that no host can take, kept alone until the person replaces it; it reads as the host default." }
+  }
+};
+const RUN_HOST_ENTRY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    provider: { type: "string", pattern: PROVIDER_PATTERN.source },
+    ...Object.fromEntries(RUN_KINDS.map(({ kind, purpose }) => [kind, purpose === "agents" ? AGENT_CHOICE_SCHEMA : RUN_CHOICE_SCHEMA]))
+  }
+};
 const LISTED_PROBLEMS = 20;
 function errorMessage(error: any, data: any) {
   const stated = (item: any) => error.message.includes(typeof item === "string" ? item : item.message || "\0");
@@ -746,7 +775,7 @@ const tools = [
   },
   {
     name: "get_coordination_state",
-    description: "Read an initiative's coordination state record with its revision. Reads never create the record. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked; a document in the checkout is to be committed apart from the task's changes, while one in the record store is shared by its sync and needs no commit. The text carries its message as a line.",
+    description: "Read an initiative's coordination state record with its revision. Reads never create the record. Its settings.host names the supported host that launches run on, and settings.models keeps, per host, a provider and the coordinator's, designImplementation's, codeReview's, securityReview's, and gateSummary's { model, effort, typed }, each part left out for the host default; an earlier models value reads migrated, host defaults as {} and named models as typed choices of every host, except that a name breaking the model rule is kept alone as { earlier } on that agent kind, which reads as the host default and is never passed to a host. childAgents: { host, kinds } names the calling client's host, or null for a client of no supported host, and for each agent kind, designImplementation, codeReview, securityReview, and gateSummary, the { model, effort } to start that kind of child agent with on that host, null leaving the host default. A shipped initiative, also one without a record, adds shippedHistory: { initiative, shippedAt, message, documents, changedAfterShip, laterFixes }, where documents lists the slice documents its ship decision recorded, changedAfterShip each one changed, removed, or added since, ignoring the history mark, and laterFixes each roadmap entry whose corrects names the initiative ({ initiative, title, state, slices }, in roadmap order); the first read of an initiative that shipped before its documents were recorded records them, writes the history mark into each, and lists them under marked; a document in the checkout is to be committed apart from the task's changes, while one in the record store is shared by its sync and needs no commit. The text carries its message as a line.",
     inputSchema: {
       type: "object",
       properties: {
@@ -810,6 +839,7 @@ const tools = [
               type: "object",
               additionalProperties: false,
               properties: {
+                host: { type: "string", enum: RUN_HOST_NAMES },
                 autonomy: { type: "string", enum: ["conservative", "broad", "full"] },
                 commit: { type: "string", enum: ["on", "off"] },
                 push: { type: "string", enum: ["on", "off"] },
@@ -817,17 +847,12 @@ const tools = [
                 review: { type: "string", enum: ["marked", "recommended", "all"] },
                 models: {
                   oneOf: [
-                    { type: "string", enum: ["defaults", "host defaults"] },
+                    { type: "string", enum: ["defaults", "host defaults"], description: "The earlier form, stored as no choice." },
                     {
                       type: "object",
-                      required: ["delivery", "review", "securityReview"],
-                      additionalProperties: false,
-                      properties: {
-                        delivery: { type: "string", minLength: 1 },
-                        review: { type: "string", minLength: 1 },
-                        securityReview: { type: "string", minLength: 1 },
-                        examples: { type: "string", minLength: 1 }
-                      }
+                      description: "The choices kept for each host; a part left out is the host's default, and an earlier { delivery, review, securityReview, examples } value is stored as typed choices of every host, with a name breaking the model rule kept as { earlier }.",
+                      propertyNames: { enum: RUN_HOST_NAMES },
+                      additionalProperties: RUN_HOST_ENTRY_SCHEMA
                     }
                   ]
                 }
@@ -1042,12 +1067,38 @@ async function withRecordStore(projectRoot: string, value: any) {
   return recordStore ? { ...value, recordStore } : value;
 }
 
+// The calling client's host: the first supported host whose label's first word, such as Claude or Codex, the client's name contains.
+function clientHost() {
+  const name = (clientName ?? "").toLowerCase();
+  const found = HOSTS.find(({ label }) => name.includes(label.split(" ")[0].toLowerCase()));
+  return found?.host ?? null;
+}
+
+const CHILD_AGENT_KINDS = RUN_KINDS.filter(({ purpose }) => purpose === "agents").map(({ kind }) => kind);
+const passedName = (value: any) => typeof value === "string" ? value : null;
+
+/**
+ * The model and effort that each kind of child agent takes on the calling client's host, from that host's models entry; a part left
+ * out, a kept earlier name, and every kind for a client of no supported host read as null, the host default.
+ */
+function childAgents(read: any) {
+  const host = clientHost();
+  const models: any = effectiveSettings(read?.valid ? read.state : null).models;
+  const entry = host && models && typeof models === "object" && !Array.isArray(models) ? models[host] ?? {} : {};
+  const kinds = Object.fromEntries(CHILD_AGENT_KINDS.map((kind) => {
+    const choice = entry && typeof entry[kind] === "object" && entry[kind] !== null && !Object.hasOwn(entry[kind], "earlier") ? entry[kind] : {};
+    return [kind, { model: passedName(choice.model), effort: passedName(choice.effort) }];
+  }));
+  return { host, kinds };
+}
+
 async function callStateTool(name: string, argumentsValue: any) {
   const projectRoot = await requestedProjectRoot(argumentsValue);
   const input = { ...argumentsValue, projectRoot };
   let resultValue;
   if (name === "get_coordination_state") {
     resultValue = await readCoordinationState(input);
+    resultValue = { ...resultValue, childAgents: childAgents(resultValue) };
     const history = await shippedHistory(projectRoot, argumentsValue.initiative);
     if (history) resultValue = { ...resultValue, shippedHistory: history };
   } else if (name === "validate_coordination_state") {

@@ -4,11 +4,32 @@ import path from "node:path";
 import { isAgentModel } from "./agent-models.mjs";
 
 // The hosts that a launched session runs, the commands Prism runs for them, and the readers of their output streams.
-// Nothing here takes a value from the review page except the initiative identifier, checked by the caller, and the host.
+// Nothing here takes a value from the review page except the initiative identifier, checked by the caller, the host, and the
+// coordinator's choice, which reaches a host only as the values of --model and --effort or of Codex's model, modelProvider, and
+// effort, and only once it keeps the name rules.
 
+// HOSTS is also the order of every list of hosts. Each host's optionsRead is how Prism reads its run options without a turn or a
+// kept session: Claude Code answers one initialize control request in a print-mode session that keeps no session and runs no
+// hooks or servers, and Codex's app server lists its providers and models for a client that opens no thread.
 export const HOSTS = Object.freeze([
-  Object.freeze({ host: "claude-code", label: "Claude Code", executable: "claude" }),
-  Object.freeze({ host: "codex", label: "Codex", executable: "codex" })
+  Object.freeze({
+    host: "claude-code",
+    label: "Claude Code",
+    executable: "claude",
+    optionsRead: Object.freeze({
+      args: Object.freeze(["-p", "--verbose", "--no-session-persistence", "--settings", "{\"disableAllHooks\":true}", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", "--input-format", "stream-json", "--output-format", "stream-json"]),
+      request: Object.freeze({ type: "control_request", request_id: "prism-options", request: Object.freeze({ subtype: "initialize" }) })
+    })
+  }),
+  Object.freeze({
+    host: "codex",
+    label: "Codex",
+    executable: "codex",
+    optionsRead: Object.freeze({
+      args: Object.freeze(["app-server"]),
+      client: Object.freeze({ clientInfo: Object.freeze({ name: "prism-options", version: "1" }), capabilities: Object.freeze({ experimentalApi: true }) })
+    })
+  })
 ]);
 
 // The host session variables that a review app started by an agent session inherits; a launched host sees none of them.
@@ -127,11 +148,48 @@ export async function hostAvailability({ env = process.env } = {}) {
   }));
 }
 
-/** The arguments of a run: Claude Code's launch or resume form with its session id, or Codex's app server. */
-export function hostArguments({ host, hostSessionId, resume }: { host: string; hostSessionId: unknown; resume?: boolean }) {
+// The coordinator's choice of a launch: { provider, model, effort, typed }, each part null for the host default.
+export const HOST_DEFAULT_COORDINATOR = Object.freeze({ provider: null, model: null, effort: null, typed: false });
+// The name rules: a value that breaks one never reaches a host, and none admits a leading dash or white space.
+export const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/@\[\]+-]{0,199}$/;
+export const PROVIDER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+export const EFFORT_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/;
+const CHOICE_PARTS: readonly string[] = Object.freeze(["provider", "model", "effort", "typed"]);
+
+/**
+ * The coordinator's choice in full, or null when it breaks the name rules: an object of at most provider, model, effort, and typed,
+ * each name null or matching its rule, which admits no leading dash or white space, so no host reads one as an option.
+ * A missing choice is the host default.
+ */
+export interface CoordinatorChoice { provider: string | null; model: string | null; effort: string | null; typed: boolean }
+
+export function checkedCoordinator(value: any): CoordinatorChoice | null {
+  if (value === undefined || value === null) return { ...HOST_DEFAULT_COORDINATOR };
+  if (typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((key) => !CHOICE_PARTS.includes(key))) return null;
+  const part = (name: string, pattern: RegExp) => {
+    const item = value[name] ?? null;
+    return item === null ? null : typeof item === "string" && pattern.test(item) ? item : undefined;
+  };
+  const choice = { provider: part("provider", PROVIDER_PATTERN), model: part("model", MODEL_PATTERN), effort: part("effort", EFFORT_PATTERN), typed: value.typed ?? false };
+  if (choice.provider === undefined || choice.model === undefined || choice.effort === undefined || typeof choice.typed !== "boolean") return null;
+  return { ...choice, typed: choice.typed && choice.model !== null } as CoordinatorChoice;
+}
+
+function coordinatorOf(coordinator: unknown): CoordinatorChoice {
+  const checked = checkedCoordinator(coordinator);
+  if (!checked) throw new Error("The coordinator's choice is not one Prism can pass to a host.");
+  return checked;
+}
+
+/**
+ * The arguments of a run: Claude Code's launch or resume form with its session id, followed by --model and --effort of the
+ * coordinator's choice, each left out for the host default, or Codex's app server, which takes the choice in its requests.
+ */
+export function hostArguments({ host, hostSessionId, resume, coordinator = null }: { host: string; hostSessionId: unknown; resume?: boolean; coordinator?: unknown }) {
   if (host === "claude-code") {
     if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
-    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...CLAUDE_FLAGS];
+    const { model, effort } = coordinatorOf(coordinator);
+    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...CLAUDE_FLAGS, ...(model === null ? [] : ["--model", model]), ...(effort === null ? [] : ["--effort", effort])];
   }
   if (host === "codex") return ["app-server"];
   throw new Error(`Unknown host ${host}.`);
@@ -142,16 +200,22 @@ export function claudePrompt(initiative: string) {
   return { type: "user", message: { role: "user", content: `/prism:orchestrate ${initiative}` } };
 }
 
-/** The Codex request that opens the run's thread: thread/start for a launch, thread/resume with the kept thread id for a resume. */
-export function codexThreadRequest({ checkout, hostSessionId, resume }: { checkout: string; hostSessionId: unknown; resume?: boolean }) {
-  if (!resume) return { method: "thread/start", params: { cwd: checkout, ...CODEX_POLICY } };
+/**
+ * The Codex request that opens the run's thread: thread/start for a launch, thread/resume with the kept thread id for a resume,
+ * each with the model and provider of the coordinator's choice, left out for the host default.
+ */
+export function codexThreadRequest({ checkout, hostSessionId, resume, coordinator = null }: { checkout: string; hostSessionId: unknown; resume?: boolean; coordinator?: unknown }) {
+  const { model, provider } = coordinatorOf(coordinator);
+  const chosen = { ...(model === null ? {} : { model }), ...(provider === null ? {} : { modelProvider: provider }) };
+  if (!resume) return { method: "thread/start", params: { cwd: checkout, ...CODEX_POLICY, ...chosen } };
   if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
-  return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...CODEX_POLICY } };
+  return { method: "thread/resume", params: { threadId: hostSessionId, cwd: checkout, ...CODEX_POLICY, ...chosen } };
 }
 
-/** The Codex request that starts the run's one orchestrate turn. */
-export function codexTurnRequest({ threadId, initiative }: { threadId: string; initiative: string }) {
-  return { method: "turn/start", params: { threadId, input: [{ type: "text", text: `$prism:orchestrate ${initiative}` }] } };
+/** The Codex request that starts the run's one orchestrate turn, with the effort of the coordinator's choice, left out for the host default. */
+export function codexTurnRequest({ threadId, initiative, coordinator = null }: { threadId: string; initiative: string; coordinator?: unknown }) {
+  const { effort } = coordinatorOf(coordinator);
+  return { method: "turn/start", params: { threadId, input: [{ type: "text", text: `$prism:orchestrate ${initiative}` }], ...(effort === null ? {} : { effort }) } };
 }
 
 /** The stream-json line that Claude Code's own Stop button sends: an interrupt control request with a request id that Prism chooses. */
@@ -170,21 +234,25 @@ export function resumeCommandOf(host: string, hostSessionId: unknown) {
   return host === "claude-code" ? `claude --resume ${hostSessionId}` : `codex resume ${hostSessionId}`;
 }
 
-/** The environment of a run: the starter's own, without the host session variables, and with PRISM_LAUNCH naming the launch. */
-export function hostEnvironment(env: NodeJS.ProcessEnv, launchId: string) {
+/** The starter's environment without the host session variables, as a launched run and a read of run options see it. */
+export function strippedEnvironment(env: NodeJS.ProcessEnv) {
   const result: NodeJS.ProcessEnv = { ...env };
   for (const name of STRIPPED_VARIABLES) delete result[name];
-  result.PRISM_LAUNCH = launchId;
   return result;
 }
 
-/** Splits a byte stream into lines, dropping every line longer than MAX_LINE_BYTES. */
-export function lineSplitter(onLine: (line: string) => void) {
+/** The environment of a run: the starter's own, without the host session variables, and with PRISM_LAUNCH naming the launch. */
+export function hostEnvironment(env: NodeJS.ProcessEnv, launchId: string) {
+  return { ...strippedEnvironment(env), PRISM_LAUNCH: launchId };
+}
+
+/** Splits a byte stream into lines, dropping every line longer than maxBytes, MAX_LINE_BYTES unless given. */
+export function lineSplitter(onLine: (line: string) => void, maxBytes = MAX_LINE_BYTES) {
   let pending: Buffer[] = [];
   let pendingBytes = 0;
   let discarding = false;
   const emit = (buffer: Buffer) => {
-    if (!discarding && buffer.length <= MAX_LINE_BYTES) onLine(buffer.toString("utf8").replace(/\r$/, ""));
+    if (!discarding && buffer.length <= maxBytes) onLine(buffer.toString("utf8").replace(/\r$/, ""));
   };
   return {
     push(chunk: Buffer) {
@@ -202,7 +270,7 @@ export function lineSplitter(onLine: (line: string) => void) {
       if (start < chunk.length && !discarding) {
         const rest = chunk.subarray(start);
         pendingBytes += rest.length;
-        if (pendingBytes > MAX_LINE_BYTES) {
+        if (pendingBytes > maxBytes) {
           pending = [];
           pendingBytes = 0;
           discarding = true;
@@ -266,13 +334,14 @@ export interface HostConversationOptions {
   checkout: string;
   hostSessionId?: string | null;
   resume?: boolean;
+  coordinator?: unknown;
   send: (message: unknown) => void;
   closeInput: () => void;
   onSessionId?: (id: string) => void;
   onModel?: (model: string) => void;
 }
 
-export function hostConversation(host: string, { initiative, checkout, hostSessionId = null, resume = false, send, closeInput, onSessionId = () => {}, onModel = () => {} }: HostConversationOptions) {
+export function hostConversation(host: string, { initiative, checkout, hostSessionId = null, resume = false, coordinator = null, send, closeInput, onSessionId = () => {}, onModel = () => {} }: HostConversationOptions) {
   const facts: HostFacts = { hostSessionId: null, turnId: null, model: null, refusals: [], refusalCount: 0, hostError: null };
   let modelSeen = false;
   // Only the first place that can name the run's model counts; a value that is no model a claim may record keeps none.
@@ -393,7 +462,7 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
     const answered = (method: string, result: any) => {
       if (method === "initialize") {
         write({ jsonrpc: "2.0", method: "initialized", params: {} });
-        const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume });
+        const { method: open, params } = codexThreadRequest({ checkout, hostSessionId, resume, coordinator });
         request(open, params);
         return;
       }
@@ -409,7 +478,7 @@ export function hostConversation(host: string, { initiative, checkout, hostSessi
           close();
           return;
         }
-        const { method: turn, params } = codexTurnRequest({ threadId, initiative });
+        const { method: turn, params } = codexTurnRequest({ threadId, initiative, coordinator });
         turnRequested = true;
         request(turn, params);
         return;

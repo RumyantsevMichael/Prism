@@ -4,7 +4,7 @@ import path from "node:path";
 import { withFileLock, writeAtomically } from "../workflow/artifact-store.mjs";
 import { describeRecordStore } from "../workflow/record-store.mjs";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
-import { hostDefinition, redactSessionId, resumeCommandOf } from "./launch-hosts.mjs";
+import { checkedCoordinator, hostDefinition, redactSessionId, resumeCommandOf } from "./launch-hosts.mjs";
 import { isAgentModel } from "./agent-models.mjs";
 import { sessionHolder } from "../workflow/slice-claims.mjs";
 
@@ -111,6 +111,14 @@ export async function readLaunchRecord(folder: string) {
   } catch {
     return null;
   }
+}
+
+/**
+ * The coordinator's choice that a launch record keeps, { provider, model, effort, typed }, which every run of the launch passes to
+ * its host; an earlier record without one reads as host defaults, and one that breaks the name rules reads as null and runs nothing.
+ */
+export function launchCoordinator(record: any) {
+  return checkedCoordinator(record?.coordinator);
 }
 
 export async function writeLaunchRecord(folder: string, record: any) {

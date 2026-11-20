@@ -73,6 +73,15 @@ function popoverFor(caption: any, body: any, { heading }: { heading: string }) {
   return `<prism-button id="${trigger}">${caption}</prism-button><prism-popover for="${trigger}" heading="${heading}">${body}</prism-popover>`;
 }
 
+// A picker of models with an effort below its list, as a run's model choice uses it.
+const PICKER_MODELS = `<prism-list-item value="">Host default<span slot="detail">The model the host uses when none is chosen</span></prism-list-item><prism-list-item value="large">Large model<span slot="detail">Best for everyday, complex tasks</span></prism-list-item><prism-list-item value="small">Small model<span slot="detail">Fastest for quick answers</span></prism-list-item><prism-list-item value="old" disabled>Old model<span slot="detail">No longer offered</span></prism-list-item>`;
+const pickerEffort = `<div slot="extra" role="group" aria-label="Effort"><prism-button size="sm" pressed="false">Low</prism-button> <prism-button size="sm" pressed="true">High</prism-button></div>`;
+function pickerOf({ label = "Model", heading = "Model of the review", value = "large", display = "Large model", detail = "High effort", hint = "Reviews each finished slice.", caption = "", options = PICKER_MODELS, extra = "", busy = false, invalid = false, error = "", disabled = false } = {}) {
+  const flags = `${busy ? " busy" : ""}${invalid ? " invalid" : ""}${disabled ? " disabled" : ""}`;
+  const attributes = `label="${label}" heading="${heading}" filter-label="Filter models" value="${value}" display="${display}" detail="${detail}" hint="${caption || hint}"${error ? ` error="${error}"` : ""}${flags}`;
+  return `<prism-picker ${attributes}>${options}${extra}</prism-picker>`;
+}
+
 // A kit button that shows a message in the page's toast.
 function toastButton(caption: any, message: any, tone: any) {
   return `<prism-button data-toast="${html(message)}" data-tone="${tone}">${html(caption)}</prism-button>`;
@@ -414,12 +423,13 @@ const SPECIMENS: Record<string, any> = {
     selected: `<prism-listbox label="Selected option"><prism-list-item value="a" selected>Kit controls</prism-list-item></prism-listbox>`,
     meta: `<prism-listbox label="Option with kind"><prism-list-item value="a">Retry with a deadline<span slot="meta">Decision · Accepted</span></prism-list-item></prism-listbox>`,
     "two-line": `<prism-listbox label="Two-line options" first-current><prism-list-item value="a"><prism-icon slot="icon" name="layers" size="sm"></prism-icon>Retry timed-out requests until a total deadline<span slot="detail">Harden request retries · Claude on build-2, design</span><span slot="meta">${claimOf({ variant: "avatar" })} Slice</span></prism-list-item><prism-list-item value="b"><prism-icon slot="icon" name="code" size="sm"></prism-icon>strategy.ts<span slot="detail">src/retry/strategy.ts</span><span slot="meta">File</span></prism-list-item></prism-listbox>`,
+    disabled: `<prism-listbox label="Options with one not offered"><prism-list-item value="a">Large model</prism-list-item><prism-list-item value="b" disabled>Old model<span slot="meta">Not offered</span></prism-list-item></prism-listbox>`,
     highlight: `<prism-listbox label="Highlighted match"><prism-list-item value="a"><prism-icon slot="icon" name="list" size="sm"></prism-icon><mark>Retry</mark> requirements<span slot="detail">Requirements</span><span slot="meta">Requirements</span></prism-list-item></prism-listbox>`,
     "long-text": `<prism-listbox label="Long option"><prism-list-item value="a">${LONG}<span slot="meta">Slice</span></prism-list-item></prism-listbox>`,
     "unbroken-name": `<prism-listbox label="Unbroken option"><prism-list-item value="a">${UNBROKEN}</prism-list-item></prism-listbox>`
   },
   "prism-dialog": {
-    closed: opener("Open the record store", `<prism-dialog heading="Record store"><p>Records live in a shared store.</p><prism-field type="text" label="Filter" name="filter"></prism-field><prism-button slot="footer" variant="primary">Copy location</prism-button></prism-dialog>`),
+    closed: opener("Open the record store", `<prism-dialog heading="Record store"><p>Records live in a shared store.</p><prism-field type="text" label="Filter" name="filter"></prism-field><span slot="footer-note">Copying puts the location on the clipboard.</span><prism-button slot="footer" variant="primary">Copy location</prism-button></prism-dialog>`),
     center: opener("Open a small dialog", `<prism-dialog heading="Switch project" size="sm"><p>Pick the project this page shows.</p></prism-dialog>`),
     start: opener("Open the navigation drawer", `<prism-dialog heading="Navigation" placement="start" bare><prism-tree label="Drawer places"><prism-tree-item label="Attention" value="attention" selected></prism-tree-item><prism-tree-item label="Roadmap" value="roadmap"></prism-tree-item></prism-tree></prism-dialog>`),
     flush: opener("Open the places drawer", `<prism-dialog heading="Navigation" placement="start" bare flush><prism-rail label="Drawer places">${railPlaces()}</prism-rail></prism-dialog>`),
@@ -438,6 +448,17 @@ const SPECIMENS: Record<string, any> = {
     "long-content": popoverFor("Show many lines", repeat(30, (index: number) => `<p>Line ${index + 1} of a popover that scrolls inside itself.</p>`), { heading: "Many lines" }),
     "long-text": popoverFor(LONG, `<p>${LONG} ${LONG}</p>`, { heading: LONG }),
     "unbroken-name": popoverFor(UNBROKEN, `<p>${UNBROKEN}</p>`, { heading: UNBROKEN })
+  },
+  "prism-picker": {
+    default: pickerOf(),
+    open: pickerOf({ caption: "Click to open: the effort below the list keeps it open after a choice", extra: pickerEffort }),
+    filtered: pickerOf({ caption: "Type in the filter to keep only the matching models", options: repeat(12, (index: any) => `<prism-list-item value="m${index}">Model ${index + 1}<span slot="detail">${index % 2 ? "Efficient for routine tasks" : "Best for everyday, complex tasks"}</span></prism-list-item>`), value: "m0", display: "Model 1" }),
+    empty: pickerOf({ caption: "The host reported no models", options: "", extra: `<p slot="empty">The host reported no models.</p>`, value: "", display: "Host default", detail: "Host default effort" }),
+    busy: pickerOf({ busy: true, display: "Reading the host’s models…", detail: "" }),
+    invalid: pickerOf({ invalid: true, error: "Not offered: this host does not offer the model old-model." }),
+    disabled: pickerOf({ disabled: true, hint: "Any available host takes only the host's default model." }),
+    "long-text": pickerOf({ label: LONG, heading: LONG, display: LONG, detail: LONG, hint: LONG, options: `<prism-list-item value="long">${LONG}<span slot="detail">${LONG}</span></prism-list-item>`, value: "long" }),
+    "unbroken-name": pickerOf({ label: UNBROKEN, heading: UNBROKEN, display: UNBROKEN, detail: "High effort", options: `<prism-list-item value="u">${UNBROKEN}<span slot="detail">${UNBROKEN}</span></prism-list-item>`, value: "u" })
   },
   "prism-disclosure": {
     closed: `<prism-disclosure summary="Earlier runs"><p>Three runs.</p></prism-disclosure>`,

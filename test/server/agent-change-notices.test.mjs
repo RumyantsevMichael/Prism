@@ -138,7 +138,7 @@ test("a session is told once of the person's changes since it last read the init
   assert.match(text, /initiative\.push/);
   assert.match(text, /off/);
   assert.match(text, /\bon\b/);
-  assert.match(text, /Applies to child sessions started after the change\./);
+  assert.match(text, /Applies to agents started after the change\./);
   const author = authorOf(root);
   assert.ok(text.includes(`by ${author.name} <${author.email}> (${author.checkout})`), "the notice names the change's author and checkout");
   const again = await orchestrator.call("get_coordination_state", { initiative: INITIATIVE });
@@ -259,7 +259,7 @@ test("claiming a scope or starting a slice returns the initiative's effective se
   const mcp = server(context, root, { data, sessionId: "claim-session" });
   const current = await mcp.call("get_initiative", { initiative: INITIATIVE });
   const claimed = await mcp.call("update_initiative", { initiative: INITIATIVE, expectedRevision: current.structuredContent.revision, operations: [{ op: "claim", slug: INITIATIVE }] });
-  assert.deepEqual(claimed.structuredContent.settings, { autonomy: "conservative", commit: "off", push: "on", continuation: "auto", review: "marked", models: "host defaults", personSettings: ["push"] });
+  assert.deepEqual(claimed.structuredContent.settings, { host: null, autonomy: "conservative", commit: "off", push: "on", continuation: "auto", review: "marked", models: {}, personSettings: ["push"] });
   const released = await mcp.call("get_initiative", { initiative: INITIATIVE });
   const started = await mcp.call("update_initiative", { initiative: INITIATIVE, expectedRevision: released.structuredContent.revision, operations: [{ op: "set_status", slug: INITIATIVE, status: "in-progress" }] });
   assert.equal(started.structuredContent.settings.push, "on");

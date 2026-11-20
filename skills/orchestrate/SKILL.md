@@ -7,11 +7,10 @@ sdm: "0.3"
 
 # Orchestrate an initiative
 
-The orchestrator coordinates; it judges order, contract defects, and gates, and leaves the work to child sessions.
-Design, implementation, review, and example writer sessions get identifiers and folders from it and return a short status.
+The orchestrator coordinates; it judges order, contract defects, and gates, and leaves the work to child sessions, which get identifiers and folders from it and return a short status.
 Prism records progress from `update_initiative` calls and from the `verify_slice` calls of implementers, so the orchestrator makes no other bookkeeping calls.
 The [workflow](../workflow/SKILL.md) defines the terms.
-To run a skill in a child, start a fresh child agent whose prompt asks it to use that skill and passes the identifiers and folders below, and when no child agent can start, stop and ask the user to run the orchestration where child agents are available.
+To run a skill in a child, start a fresh child agent with its kind's model and effort from the [`models` setting](#1-settings), whose prompt asks it to use that skill and passes the identifiers and folders below, and when no child agent can start, stop and ask the user to run the orchestration where child agents are available.
 
 - Don't
   - Load or follow `setup`, `design`, `implement`, `review`, `triage`, or `ideate` yourself; only their child agents do.
@@ -21,18 +20,18 @@ To run a skill in a child, start a fresh child agent whose prompt asks it to use
 
 ## 1. Settings
 
-Settings live in the initiative's coordination state, read with `get_coordination_state` and written once before active work with `update_coordination_state` and the current revision.
-A stored value stays authoritative on resume.
+Settings live in the initiative's coordination state, read with `get_coordination_state` and written once before active work with `update_coordination_state` and the current revision, and a stored value stays authoritative on resume.
 When a Prism result carries a [person change notice](../workflow/SKILL.md#common-terms) or `keptSettings`, or a gate wait returns `changed`, apply each change at the effect point its action names before the next step, and name its author when you report it to the user.
 
 | Setting | Values | Default | Effect |
 | --- | --- | --- | --- |
+| `host` | a supported host, `claude-code` or `codex` | none, so the review app shows the first host found | The host that launched sessions of the initiative and their agents run on. |
 | `autonomy` | `conservative`, `broad`, `full` | `conservative` | Which gates wait for the user. |
 | `commit` | `on`, `off` | `on` under `full`, otherwise `off` | Whether design and implementation commit their changes. |
 | `push` | `on`, `off` | `off` | Whether finished slices are pushed; autonomy never turns it on. |
 | `continuation` | `auto`, `stepwise` | `auto` | Whether the next slice starts without the user. |
 | `review` | `marked`, `recommended`, `all` | `marked` | Which slices get an implementation review: those the user marks at the design gate, also those design recommends, or every slice. |
-| `models` | `host defaults` or `{delivery, review, securityReview, examples}` | `host defaults` | Models for child agents; `examples` is optional and defaults to the host's smallest model. |
+| `models` | an object keyed by host, each `{provider, coordinator, designImplementation, codeReview, securityReview, gateSummary}` with each kind's choice `{model, effort, typed}` | `{}` | The choices kept for each host: a part left out is the host's default, `typed` marks a model name the user typed, an earlier `host defaults` or named value reads migrated, and a choice of only `earlier` keeps an earlier name that no host takes and reads as the host default; a launch runs the coordinator with its choice, and `childAgents` from `get_coordination_state` holds each agent kind's `{model, effort}` for the host you run on, `designImplementation` for `design`, `implement`, `setup`, `triage`, and `ideate` agents, `codeReview` for each `review` lane, `securityReview` for the security lane, and `gateSummary` for the example writer, which you pass in the host's child-agent form, such as the Agent tool's `model` and `effort` in Claude Code or `spawn_agent`'s `model` and `reasoning_effort` in Codex, leaving out a `null` value for the host default and, when the host's child agents take none, starting them without it and telling the person once. |
 
 - `conservative` waits for the user at every design gate and decision.
 - `broad` accepts a design automatically unless it changes requirements, adds an ADR, or reports an open question.
@@ -52,7 +51,7 @@ A scope is the root slice, a part that a split design created, or a fix scope, a
 1. Call `update_initiative` with a `claim` operation for the scope, so no other agent starts it, and when Prism refuses the claim with `slice_claimed`, leave the scope to the holder it names and continue with another eligible scope or slice.
 2. Run `design` for the scope in a fresh child agent, passing its slug, its folder, and any reproduction that triage returned.
 3. When design returns `PROPOSED`, read the proposal with `get_initiative`.
-4. When autonomy requires the design gate, or the proposal splits the scope with `user_gate` evidence, ask the gate with the scope's `slice.md`, the views of the scope and its planned slices, and the frozen tests as artifacts, offering to mark slices for review; for a fit design, first write the design view through the [example writer](references/example-writer.md) in a fresh child agent with the `examples` model.
+4. When autonomy requires the design gate, or the proposal splits the scope with `user_gate` evidence, ask the gate with the scope's `slice.md`, the views of the scope and its planned slices, and the frozen tests as artifacts, offering to mark slices for review; for a fit design, first write the design view through the [example writer](references/example-writer.md) in a fresh child agent with the `gateSummary` choice.
 5. When the user asks for changes, return the note to design and repeat from step 3.
 6. Call `update_initiative` with one `accept_proposal` operation for the scope, the slugs whose review mark is `required`, and, for `user_gate` evidence, the gate where the person approved the split; Prism adds the review marks that the `review` setting gives.
 7. When acceptance is refused, return the refusal to design.
@@ -81,7 +80,7 @@ On resume, continue an `in-progress` slice with a fresh implementation session b
 ## 5. Review
 
 1. Call `update_review` as the coordinator with a `start_wave` operation in `implementation-review` mode, one lane per review focus, a fresh reviewer identifier per lane, as `base`, the last commit that a child reported before the slice started, when one did, and, on the first wave, the implementer's worker id as `delivery`.
-2. Run `review` for each lane in a fresh child agent, use a security-focused lane with the `securityReview` model for trust-boundary changes, and when every lane is `CLEAN`, call `update_review` with `accept_wave`.
+2. Run `review` for each lane in a fresh child agent, add a security-focused lane for trust-boundary changes, and when every lane is `CLEAN`, call `update_review` with `accept_wave`.
 3. When a finding names a contract clause, call `verify_slice` with `contractDefects` for those clauses and handle the slice as blocked with contract defects, unless the code only missed a sound clause, in which case clear the clause with `revise_finding` and that reason.
 4. Otherwise, when a lane returns `FINDINGS`, run a fresh `implement` session with the findings of every wave so far, asking whether they share a cause in the contract, and once it returns `DONE`, set each finding it fixed `FIXED` with its summary through `update_review` as the review's `delivery` worker, then start a new wave with fresh reviewers.
 5. When `start_wave` refuses with a `review_loop_limit` problem, wait for the review loop decision gate that it names as in [user gates](#6-user-gates), asking no question of your own, then for `continue-review` start the wave again with the gate's id as `afterGate`, for `return-to-design` call `update_review` with only a `return_to_design` operation that names the gate and handle the slice as blocked with contract defects, and for `accept-deferred` file one follow-up per unresolved finding in the tracker that `.prism/workflow.md` names, or when it names none add the finding to the roadmap's open questions through `update_roadmap` `set_open_questions` with the existing questions kept, and call `update_review` with `accept_wave`, the gate, and `deferrals` that pair each finding with its follow-up, the tracker's reference or `roadmap: <question>`.

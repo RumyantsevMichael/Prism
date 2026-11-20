@@ -18,7 +18,7 @@ import { DEFAULT_PLACE, PLACES, placeNamed } from "./views/places.js";
 import { claimElement, createClaimIndex } from "./views/claim-index.js";
 import { createAgentsMenu } from "./views/agents-menu.js";
 import { DENSITIES, onPreferencesChange, preference, preferencesReady, savePreferences, setPreference, THEMES } from "./kit/preferences.js";
-import { shownActionEntries } from "./views/actions.js";
+import { createActionList, shownActionEntries } from "./views/actions.js";
 import { artifactChangesView, artifactReviewHtml, focusAfterMore, mountArtifactReview, readListedComments } from "./views/artifact-review.js";
 import { themeDiagram } from "./kit/diagram-theme.js";
 import { createWorkspaceForms } from "./views/workspace-forms.js";
@@ -403,6 +403,8 @@ function showHistory() {
 // A tab writes only with the write session it took from the one-time grant in the URL Prism opened; the tab's session storage keeps it,
 // which no other tab shares, so a tab opened from a link an agent handed over stays read-only.
 const WRITE_SESSION_KEY = "prism-write-session";
+// A host's run options take at most a minute to read, so their request waits a little longer than that.
+const RUN_OPTIONS_DEADLINE_MS = 75000;
 
 function writeSession() {
   try {
@@ -431,6 +433,13 @@ const actionApi = {
     const response = await appFetch("./api/actions/apply", { method: "POST", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify(request) })
       .catch(() => null);
     if (!response) return { status: 0, json: { message: "The review app did not answer, so the change was not applied. Try again in a moment." } };
+    return { status: response.status, json: await response.json().catch(() => ({ message: "The server returned an unreadable response." })) };
+  },
+  // A host's providers, models, and efforts for a run choice; the read can start the host, so it may take up to a minute.
+  async runOptions(query: any) {
+    if (connection === "stopped") return { status: 0, json: { message: STOPPED_MESSAGE } };
+    const response = await appFetch(`./api/run-options?${new URLSearchParams(query)}`, { cache: "no-store", headers: writeHeaders(), deadlineMs: RUN_OPTIONS_DEADLINE_MS }).catch(() => null);
+    if (!response) return { status: 0, json: { message: "The review app did not answer, so the host's models could not be read. Try again in a moment." } };
     return { status: response.status, json: await response.json().catch(() => ({ message: "The server returned an unreadable response." })) };
   },
   confirm: confirmAction,
@@ -1198,14 +1207,43 @@ function requireApp() {
   return false;
 }
 
-// Settings, from the status bar's gear or Ctrl+,: sections down its start edge for the appearance, the layout, the record store, and About Prism.
-// Each choice applies at once and is kept as the person's preference, as the appearance menu's did.
+// Settings, from the status bar's gear or Ctrl+,: sections down its start edge for the appearance, the layout, the record store,
+// Prism's own runs, and About Prism. Each appearance and layout choice applies at once and is kept as the person's preference, as the
+// appearance menu's did; Prism's own runs is this computer's action, drawn by the action list and applied with its own button.
 const settingsDialog = document.getElementById("settings-dialog");
+const PRISM_RUNS_TARGET = "machine:prism-runs";
+let prismRunsList: any = null;
+let prismRunsShown = false;
+
+// The action list of Prism's own runs is drawn the first time its section is chosen, so a page that never opens it reads nothing for
+// it, and the section shows once the list has its listing, or its error, rather than a loading line. shown() runs on each later draw.
+function showPrismRuns(shown: any) {
+  if (prismRunsList) return prismRunsShown;
+  const root = document.getElementById("settings-prism-runs-actions")!;
+  prismRunsList = createActionList({
+    root,
+    targets: [PRISM_RUNS_TARGET],
+    api: actionApi,
+    drafts: {},
+    heading: () => ({ label: "Host and model", detail: "" }),
+    emptyText: "This computer has no choice for Prism's own runs.",
+    onRender: () => {
+      if (prismRunsShown || root.querySelector(".action-loading")) return;
+      prismRunsShown = true;
+      // A listing drawn while the list is still being made shows the section only once the list is kept.
+      queueMicrotask(shown);
+    }
+  });
+  return prismRunsShown;
+}
 
 function startSettings() {
   const sections = document.getElementById("settings-sections");
+  let current = "appearance";
   const showSection = (name: string) => {
-    for (const section of settingsDialog!.querySelectorAll(".settings-section")) (section as any).hidden = (section as any).dataset.section !== name;
+    current = name;
+    const ready = name !== "prism-runs" || showPrismRuns(() => { if (current === "prism-runs") showSection("prism-runs"); });
+    for (const section of settingsDialog!.querySelectorAll(".settings-section")) (section as any).hidden = (section as any).dataset.section !== name || !ready;
     for (const item of sections!.querySelectorAll("prism-tree-item")) item.toggleAttribute("selected", item.getAttribute("value") === name);
   };
   sections!.addEventListener("prism-select", (event) => {

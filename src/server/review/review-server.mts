@@ -26,6 +26,7 @@ import { shippedCommit, sliceFiles } from "./slice-files.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
 import { listLaunches } from "../session/launched-sessions.mjs";
+import { readRunOptions, runOptionsQuery } from "../session/run-options.mjs";
 import { listAgents } from "./agents.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 import { readStoredPreferences, writePreferences } from "./review-preferences.mjs";
@@ -790,6 +791,8 @@ const ACTION_STATUS: Record<string, any> = {
   launch_running: 409,
   launch_not_running: 409,
   no_host_session: 409,
+  choice_not_offered: 409,
+  invalid_choice: 409,
   supervision_lost: 409,
   stop_timeout: 409,
   launch_failed: 500
@@ -901,7 +904,7 @@ export async function servePageRoute(request: any, response: any, route: string)
 // onViewer(send) runs when a viewer stream opens, after its first session event, and send writes a named event to that viewer only.
 // writeSessions is the write session store of the server or app that serves this page; without one, no request can write.
 // onAction(event, { shared, comment }) receives each applied action's event, the history entry with its initiative, instead of this page's viewer streams;
-// shared is false for an index target, whose history belongs to this checkout alone, and comment is the id of a stored comment, which names its file, or null.
+// shared is false for an index target, whose history belongs to this checkout alone, and for a machine target, whose choice belongs to this computer, and comment is the id of a stored comment, which names its file, or null.
 // Without it, the event reaches this page's viewer streams.
 // workspace, for a review of the review app's workspace, is { id, describe(), sync?(), viewers?(count), checkouts?() }, describe answering { id, name, kind, url } for the index,
 // sync the workspace's sync state that the index holds, or null when nothing syncs it, viewers receiving the number of connected pages whenever it changes,
@@ -1543,6 +1546,18 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     } else if (route === "/api/launches" && request.method === "GET") {
       // Every launched session of this machine that shares this checkout's record store; reading needs no write session.
       sendJson(response, 200, await listLaunches({ projectRoot, env: process.env }));
+    } else if (route === "/api/run-options" && request.method === "GET") {
+      // A read starts a host process, so only the page's write session may ask, and a refused query starts nothing.
+      if (!writableRequest(request)) {
+        sendJson(response, 403, { code: "write_forbidden", message: READ_ONLY_NOTICE });
+        return;
+      }
+      try {
+        sendJson(response, 200, await readRunOptions({ ...runOptionsQuery(url.searchParams), checkout: projectRoot, env: process.env }));
+      } catch (error) {
+        if (error?.name !== "RunOptionsError") throw error;
+        sendJson(response, error.status, { code: error.code, message: error.message, ...(error.field ? { field: error.field } : {}) });
+      }
     } else if (route === "/api/agents" && request.method === "GET") {
       // Every agent once: this computer's launched sessions and the workspace's claims that none of them holds; reading needs no write session.
       sendJson(response, 200, await listAgents({ projectRoot, env: process.env }));
@@ -1575,7 +1590,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
           const target = parseTarget(result.applied.target);
           // An approval or a comment belongs to no initiative, so its event names its artifact, as Attention's recent changes list it.
           const event = { ...result.applied, initiative: target?.initiative ?? (target?.kind === "launch" ? result.launch?.initiative ?? null : null), ...(result.artifact ? { artifact: result.artifact } : {}) };
-          if (onAction) await Promise.resolve(onAction(event, { shared: target?.kind !== "index", comment: result.comment ?? null })).catch(() => {});
+          if (onAction) await Promise.resolve(onAction(event, { shared: !["index", "machine"].includes(target?.kind), comment: result.comment ?? null })).catch(() => {});
           else notify("action", event);
         }
       } catch (error) {

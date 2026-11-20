@@ -11,7 +11,7 @@
 // After a run that exited 0, it resumes the session once when the person answered here, during the run, a gate that is still pending.
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
+import { launchCoordinator, readLaunchRecord, readStopRequest, stopGraceMs, tokenVoided, withRunStartLock, writeLaunchRecord, HEARTBEAT_MS } from "./launch-records.mjs";
 import { hostArguments, hostConversation, redactSessionId, resolveHost, validHostSessionId } from "./launch-hosts.mjs";
 
 const STDERR_KEEP = 64 * 1024;
@@ -62,7 +62,13 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
     await failStart("The session never reported its host session id, so it cannot be resumed.");
     return;
   }
-  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume });
+  // Every run, the first and each resume, passes the choice that the launch recorded, never the settings of the moment.
+  const coordinator = launchCoordinator(record);
+  if (!coordinator) {
+    await failStart("The session's recorded model choice is not one Prism can pass to a host.");
+    return;
+  }
+  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, coordinator });
   const number = record.runs.length + 1;
   const graceMs = stopGraceMs(env);
   let stderr = Buffer.alloc(0);
@@ -76,6 +82,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
       checkout: record.checkout,
       hostSessionId: record.hostSessionId,
       resume,
+      coordinator,
       send: (message) => child.stdin.write(`${JSON.stringify(message)}\n`),
       closeInput: () => child.stdin.end(),
       onSessionId: (id) => update((current: any) => { if (!current.hostSessionId) current.hostSessionId = id; }),

@@ -146,7 +146,11 @@ try {
   ] });
 
   const state = await call("update_coordination_state", { projectRoot: realRoot, initiative: "retry-hardening", expectedRevision: null, changes: {
-    settings: { autonomy: "broad", agentFlow: "multi", commit: "on", push: "off", continuation: "stepwise", models: "host defaults" },
+    // The models are kept per host, so switching the Settings host shows each host's own choices.
+    settings: { autonomy: "broad", agentFlow: "multi", commit: "on", push: "off", continuation: "stepwise", host: "claude-code", models: {
+      "claude-code": { coordinator: { model: "fable", effort: "high" }, codeReview: { model: "opus", effort: "high" }, securityReview: { model: "opus", effort: "max" }, gateSummary: { model: "haiku", effort: "low" } },
+      codex: { provider: "openai", coordinator: { model: "gpt-5.5", effort: "medium" } }
+    } },
     activeOperations: [{ op: "start", entry: { slice: "timeout-retries", activity: "review", label: "Design audit", workers: ["independent", "security"], workspace: realRoot, reviewLanes: [{ id: "main", reviewer: "independent" }, { id: "security", reviewer: "security" }] } }]
   } });
   // User gates are recorded exactly as the orchestrator records a question before asking it.

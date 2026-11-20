@@ -46,7 +46,7 @@ export class PrismListbox extends Base {
 
   connectedCallback() {
     setAttribute(this, "role", "listbox");
-    this.watch.observe(this, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden"] });
+    this.watch.observe(this, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden", "disabled"] });
     this.attributeChangedCallback();
     if (!this.field && this.hasAttribute("for")) requestAnimationFrame(() => this.bind());
   }
@@ -68,9 +68,9 @@ export class PrismListbox extends Base {
     for (const item of this.querySelectorAll("prism-list-item")) toggleAttribute(item, "current", item === first);
   }
 
-  /** The visible options in order. */
+  /** The visible options that can be chosen, in order; a disabled option is passed over. */
   get options() {
-    return [...this.querySelectorAll("prism-list-item")].filter((option) => option.closest("prism-listbox") === this && !option.closest("[hidden]"));
+    return [...this.querySelectorAll("prism-list-item")].filter((option) => option.closest("prism-listbox") === this && !option.closest("[hidden]") && !option.hasAttribute("disabled"));
   }
 
   /** The native control of the field named by `for`, or null. */

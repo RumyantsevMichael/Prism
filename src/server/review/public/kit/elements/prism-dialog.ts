@@ -1,5 +1,5 @@
 // prism-dialog: a modal dialog on frosted glass over a native <dialog>, whose backdrop is the blurred scrim. It renders in light DOM:
-// its heading and a Close button sit in its header, children with slot="footer" after its body, and every other child in its body.
+// its heading and a Close button sit in its header, children with slot="footer-note" and then slot="footer" after its body, and every other child in its body.
 import { Base, deepActiveElement, distribute, emit, focusables, make, setAttribute, uniqueId } from "./base.js";
 
 const PLACEMENTS = ["center", "top", "start", "bottom", "end"];
@@ -27,7 +27,8 @@ export class PrismDialog extends Base {
       { name: "modeless", values: ["boolean"], default: "false", description: "Opens without a scrim and leaves the page usable behind it, as a drawer of details beside the page does; Escape and Close still close it, and focus moves into it when it opens." },
       { name: "bare", values: ["boolean"], default: "false", description: "Shows no header: the heading still names the dialog for assistive technology without being a heading of its own, and Escape or a click on the scrim closes it, for a dialog whose content draws its own header or none." },
       { name: "flush", values: ["boolean"], default: "false", description: "The body draws no padding, for content that lays itself out to the dialog's edges, such as the navigation drawer's rail and sidebar." },
-      { name: "slot=\"footer\"", values: ["children"], default: "", description: "Actions after the body." }
+      { name: "slot=\"footer\"", values: ["children"], default: "", description: "Actions after the body." },
+      { name: "slot=\"footer-note\"", values: ["children"], default: "", description: "A short note at the start of the footer, before its actions, such as what confirming does; on a narrow window the actions wrap below it." }
     ],
     states: ["closed", "center", "top", "start", "bottom", "end", "modeless", "bare", "flush", "long-content"],
     keyboard: [
@@ -72,7 +73,7 @@ export class PrismDialog extends Base {
     this.frame.append(head, this.body, this.footer);
     this.surface.append(this.frame);
     this.append(this.surface);
-    (this as any).children$ = distribute(this, { footer: this.footer, default: this.body }, [this.surface]);
+    (this as any).children$ = distribute(this, { footer: this.footer, "footer-note": this.footer, default: this.body }, [this.surface]);
     this.surface.addEventListener("close", () => this.closed());
     this.surface.addEventListener("keydown", (event: any) => {
       // A modeless dialog is not the browser's modal, so Escape closes it here; Tab moves on to the page as it would from any region.

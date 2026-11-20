@@ -181,23 +181,33 @@ function frontier(data: any, ctx: any) {
 
 let headSequence = 0;
 
-// The page head's controls: the run totals that open their table, the launch of an orchestration, and the initiative's settings.
+// The page head's controls: the run totals that open their table, Launch, which opens the run configuration, and the initiative's settings.
 function headControls(data: any, ctx: any, ids: any) {
   const summary = runTotalsSummary(data.runTotals?.initiative ?? null);
   const totals = summary ? `<prism-button id="${ids.totals}" size="sm" variant="ghost" class="initiative-totals" tip="Run totals of this initiative"><prism-icon name="clock" size="xs"></prism-icon><span>${summary}</span><prism-icon name="chevron-down" size="xs"></prism-icon></prism-button>` : "";
   const lastRun = '<span class="initiative-last-run-slot" data-last-run-slot></span>';
   if (!ctx.actionApi) return `${lastRun}${totals}`;
-  return `${lastRun}${totals}<prism-button id="${ids.launch}" size="sm" class="initiative-launch"><prism-icon name="play" size="xs"></prism-icon><span>Launch</span><prism-icon name="chevron-down" size="xs"></prism-icon></prism-button><prism-button size="sm" class="initiative-settings" data-initiative-settings-open><prism-icon name="settings" size="xs"></prism-icon><span>Settings</span></prism-button>`;
+  return `${lastRun}${totals}<prism-button id="${ids.launch}" size="sm" class="initiative-launch" data-launch-open><prism-icon name="play" size="xs"></prism-icon><span>Launch</span></prism-button><prism-button size="sm" class="initiative-settings" data-initiative-settings-open><prism-icon name="settings" size="xs"></prism-icon><span>Settings</span></prism-button>`;
 }
 
-// The overlays the head's controls open: the run totals, the launch actions, and the settings dialog, which applies its changes together.
-// Without a head the page shows its run totals in place and keeps only the dialog, which the jump palette opens.
+// The overlays the head's controls open: the run totals, the run configuration, which saves its choices as the initiative's settings and
+// then launches the initiative's host, and the settings dialog, which applies its changes together.
+// Without a head the page shows its run totals in place and keeps only the settings dialog, which the jump palette opens.
 function overlays(data: any, ctx: any, ids: any, head: any) {
   const totals = head && data.runTotals?.initiative ? `<prism-popover class="initiative-totals-popover" for="${ids.totals}" heading="Run totals">${runTotalsTableHtml([{ totals: data.runTotals.initiative, scope: "initiative" }])}</prism-popover>` : "";
   if (!ctx.actionApi) return totals;
   const title = data.roadmapItem?.title ?? data.id;
   return `${totals}
-    ${head ? `<prism-popover class="initiative-launch-popover" for="${ids.launch}" heading="Launch an orchestration"><div class="initiative-latest-run" data-launch-latest hidden></div><div data-launch-actions></div></prism-popover>` : ""}
+    ${head ? `<prism-dialog class="initiative-launch-dialog" heading="Launch ${escapeHtml(title)}" size="lg" data-launch-dialog>
+      <div class="initiative-latest-run" data-launch-latest hidden></div>
+      <p class="initiative-settings-lead">These are this initiative's settings; change any of them before the run starts.</p>
+      <prism-banner class="initiative-launch-note" tone="warning" data-launch-hold hidden><div data-launch-lines></div></prism-banner>
+      <prism-banner class="initiative-launch-note" tone="danger" data-launch-error hidden><div data-launch-lines></div></prism-banner>
+      <div data-launch-settings></div>
+      <span slot="footer-note">Launching saves these choices as this initiative's settings.</span>
+      <prism-button slot="footer" data-launch-cancel>Cancel</prism-button>
+      <prism-button slot="footer" variant="primary" data-launch-confirm disabled><prism-icon name="play" size="xs"></prism-icon><span data-launch-label>Launch</span></prism-button>
+    </prism-dialog>` : ""}
     <prism-dialog class="initiative-settings-dialog" heading="Settings of ${escapeHtml(title)}" size="lg" data-initiative-settings-dialog>
       <p class="initiative-settings-lead">How agents run this initiative's slices. Changes apply when you press Apply.</p>
       <div data-initiative-settings></div>
@@ -206,7 +216,7 @@ function overlays(data: any, ctx: any, ids: any, head: any) {
     </prism-dialog>`;
 }
 
-// The states of a launched run that the page head names, since each needs the person or is under way; a finished or stopped run shows only in the Launch popover.
+// The states of a launched run that the page head names, since each needs the person or is under way; a finished or stopped run shows only in the run configuration.
 const HEAD_RUN_TEXT: Readonly<Record<string, any>> = Object.freeze({ failed: "Last run failed", blocked: "Last run blocked", waiting: "Waiting for you", running: "Running" });
 
 /** The newest session launched on this computer for the initiative, from api/launches, or null. */
@@ -218,12 +228,13 @@ export function latestLaunch(launches: any, initiative: string) {
 const AGENTS_LINK = '<a href="./review?artifact=agents" data-artifact="agents">Open in Agents</a>';
 
 // How the initiative's latest launched run on this computer stands: a badge in the page head while it failed, is blocked, waits, or runs,
-// and in the Launch popover its state, host, and reason with a link to the Agents page. It is read every few seconds while the page shows.
+// and atop the run configuration its state, host, and reason with a link to the Agents page. It is read every few seconds
+// while the page shows; the returned refresh reads it at once, as when the run configuration opens or has launched.
 function mountLastRun(container: any, data: any, ctx: any, endRoot: any) {
   const slot = endRoot?.querySelector("[data-last-run-slot]");
-  if (!slot || typeof fetch !== "function") return;
-  const popover = container.querySelector(".initiative-launch-popover");
-  const latest = popover?.querySelector("[data-launch-latest]");
+  if (!slot || typeof fetch !== "function") return null;
+  const dialog = container.querySelector("[data-launch-dialog]");
+  const latest = dialog?.querySelector("[data-launch-latest]");
   let shown = "";
   const show = (launch: any) => {
     const key = launch ? JSON.stringify([launch.id, launch.state, launch.reason, launch.runs]) : "";
@@ -235,7 +246,7 @@ function mountLastRun(container: any, data: any, ctx: any, endRoot: any) {
     const readOnly = typeof ctx.canWrite === "function" && !ctx.canWrite();
     slot.innerHTML = !head ? ""
       : readOnly ? `<span class="initiative-last-run" data-initiative-last-run-state>${badge(head, tone)}</span>${AGENTS_LINK}`
-      : `<prism-button size="sm" variant="ghost" class="initiative-last-run" data-initiative-last-run tip="${popover ? "Show the latest run" : "Open Agents"}">${badge(head, tone)}</prism-button>`;
+      : `<prism-button size="sm" variant="ghost" class="initiative-last-run" data-initiative-last-run tip="${dialog ? "Show the latest run" : "Open Agents"}">${badge(head, tone)}</prism-button>`;
     bindLinks(slot, ctx);
     if (!latest) return;
     latest.hidden = !launch;
@@ -248,35 +259,140 @@ function mountLastRun(container: any, data: any, ctx: any, endRoot: any) {
   };
   slot.addEventListener("click", (event: any) => {
     if (!event.target.closest?.("[data-initiative-last-run]")) return;
-    if (popover) popover.show?.();
+    if (dialog) dialog.show?.();
     else ctx.openArtifact?.("agents");
   });
-  let reading = false;
-  const refresh = async () => {
-    if (reading) return;
-    reading = true;
+  const read = async () => {
     try {
       const response = await fetch("./api/launches", { cache: "no-store" });
       if (response.ok) show(latestLaunch((await response.json().catch(() => ({}))).launches, data.id));
     } catch {
       // A failed read keeps what the page shows until the next one.
-    } finally {
-      reading = false;
     }
+  };
+  // One read at a time; a refresh asked for during a read waits for one more read after it, so it never answers with an older list.
+  let reading: any = null;
+  let queued = null;
+  const refresh = () => {
+    if (!reading) {
+      reading = read().finally(() => { reading = null; });
+      return reading;
+    }
+    queued ??= reading.then(() => {
+      queued = null;
+      return refresh();
+    });
+    return queued;
   };
   const poll = setInterval(() => {
     if (!slot.isConnected) return clearInterval(poll);
-    void refresh();
+    if (!reading) void refresh();
   }, REFRESH_MS);
   void refresh();
+  return refresh;
+}
+
+// The run configuration's sections, after the host: the settings of how the run works, and the models.
+const LAUNCH_SECTIONS = Object.freeze([
+  { heading: "How the run works", actions: ["initiative.autonomy", "initiative.commit", "initiative.push", "initiative.continuation", "initiative.review"] },
+  { heading: "Models", actions: ["initiative.models"] }
+]);
+
+// Launch opens the run configuration: the latest run, the initiative's settings as the Settings dialog draws them, and a launch of the
+// shown host. Launching applies every changed setting, each under its own confirmation, and then the launch, so the history records
+// the settings first; a choice the host does not offer, a host this computer lacks, or a refused launch holds it and says why.
+function mountLaunch(container: any, data: any, ctx: any, endRoot: any, refreshLatest: any) {
+  const dialog = container.querySelector("[data-launch-dialog]");
+  const confirm = dialog?.querySelector("[data-launch-confirm]");
+  const confirmLabel = confirm?.querySelector("[data-launch-label]");
+  if (!dialog || !confirm || !confirmLabel) return;
+  // Each banner keeps its lines in its own child, which the banner places in its body.
+  const hold = dialog.querySelector("[data-launch-hold]");
+  const failure = dialog.querySelector("[data-launch-error]");
+  const linesOf = new Map([hold, failure].map((banner) => [banner, banner.querySelector("[data-launch-lines]")]));
+  let list: any = null;
+  let sending = false;
+  let refused: any = null;
+  const lines = (banner: any, texts: any) => {
+    const html = texts.map((text: any) => `<div>${escapeHtml(text)}</div>`).join("");
+    const box = linesOf.get(banner);
+    if (box.dataset.shown !== html) {
+      box.dataset.shown = html;
+      box.innerHTML = html;
+    }
+    banner.hidden = !texts.length;
+  };
+  // What holds the launch: the launch's own reason unless choosing a host that is found clears it, the shown host's absence, and each choice not offered.
+  const sync = () => {
+    if (!list) return;
+    const hostAction = list.action("initiative.host");
+    const launch = list.action("launch.run");
+    const options = hostAction?.fields?.[0]?.options ?? [];
+    const shown = list.input("initiative.host")?.value ?? null;
+    const option = options.find((item: any) => item.value === shown) ?? null;
+    const text = option ? `Launch with ${option.label ?? option.value}` : "Launch";
+    if (confirmLabel.textContent !== text) confirmLabel.textContent = text;
+    const reasons = [];
+    if (launch && !launch.available) {
+      const hostReason = options.find((item: any) => item.value === hostAction?.value)?.reason ?? null;
+      const cleared = hostReason !== null && launch.reason === hostReason && option && !option.reason && shown !== hostAction.value;
+      if (!cleared) reasons.push(launch.reason ?? "");
+    }
+    if (option?.reason && !reasons.includes(option.reason)) reasons.push(`Host: ${option.reason}`);
+    const held = list.held();
+    reasons.push(...held.reasons.map((item: any) => `${item.label}: ${item.reason}`));
+    lines(hold, reasons.filter(Boolean));
+    lines(failure, refused ? [refused] : []);
+    confirm.toggleAttribute("disabled", sending || !launch || !list.writable() || reasons.length > 0 || held.reading);
+  };
+  list = createActionList({ root: dialog.querySelector("[data-launch-settings]"), targets: [`initiative:${data.id}`], api: ctx.actionApi, drafts: (ctx.state.launchDrafts ??= {}), renderMarkdown: ctx.renderMarkdown ?? null, batch: true, groups: ["Initiative settings"], sections: LAUNCH_SECTIONS, emptyText: "This initiative has no settings to change.", onRender: () => sync() });
+  sync();
+  endRoot?.querySelector("[data-launch-open]")?.addEventListener("click", () => dialog.show?.());
+  // Opening reads the latest run and the listing again, so the dialog shows the hosts and the run as they are now.
+  const observer = new MutationObserver(() => {
+    if (!dialog.hasAttribute("open")) return;
+    void refreshLatest?.();
+    void list.refresh();
+  });
+  observer.observe(dialog, { attributes: true, attributeFilter: ["open"] });
+  dialog.querySelector("[data-launch-cancel]").addEventListener("click", () => dialog.close?.());
+  // Cancel, Escape, and the close button discard the dialog's changes; a picker's popover that closes inside it sends its own prism-close, which keeps them.
+  dialog.addEventListener("prism-close", (event: any) => {
+    if (event.target !== dialog) return;
+    refused = null;
+    list.discard();
+    sync();
+  });
+  confirm.addEventListener("click", async () => {
+    if (confirm.hasAttribute("disabled") || sending) return;
+    sending = true;
+    refused = null;
+    sync();
+    let launched = false;
+    try {
+      if (await list.applyAll()) {
+        const result = await list.follow("launch.run");
+        launched = result.ok;
+        refused = result.ok ? null : result.message;
+      }
+    } finally {
+      sending = false;
+    }
+    if (launched) {
+      await refreshLatest?.();
+      dialog.close?.();
+    }
+    sync();
+  });
+  dialog.addEventListener("click", (event: any) => {
+    if (event.target.closest?.("prism-chip[data-artifact], a[data-artifact]")) dialog.close?.();
+  });
 }
 
 function mountOverlays(container: any, data: any, ctx: any, endRoot: any) {
   if (!ctx.actionApi || typeof document === "undefined") return;
   const target = `initiative:${data.id}`;
   const drafts = (ctx.state.actionDrafts ??= {});
-  const launchRoot = container.querySelector("[data-launch-actions]");
-  if (launchRoot) createActionList({ root: launchRoot, targets: [target], api: ctx.actionApi, drafts, groups: ["Launched session"], compact: true, submitLabel: () => "Launch", emptyText: "Nothing can be launched here.", notice: false });
   const dialog = container.querySelector("[data-initiative-settings-dialog]");
   const apply = dialog?.querySelector("[data-settings-apply]");
   if (!dialog || !apply) return;
@@ -296,9 +412,11 @@ function mountOverlays(container: any, data: any, ctx: any, endRoot: any) {
     return focusAction(id, chosen);
   };
   endRoot?.querySelector("[data-initiative-settings-open]")?.addEventListener("click", () => dialog.show?.());
-  // Cancel, Escape, and the close button all leave the settings as they were, so a reopened dialog never holds changes nobody applied.
+  // Cancel, Escape, and the close button all leave the settings as they were, so a reopened dialog never holds changes nobody applied;
+  // a picker's popover that closes inside the dialog sends its own prism-close, which keeps them.
   dialog.querySelector("[data-settings-cancel]").addEventListener("click", () => dialog.close?.());
-  dialog.addEventListener("prism-close", () => {
+  dialog.addEventListener("prism-close", (event: any) => {
+    if (event.target !== dialog) return;
     list.discard();
     showCount();
   });
@@ -330,7 +448,8 @@ export async function render(container: any, entity: any, ctx: any) {
   const finish = () => {
     container.querySelector(".initiative-facts")?.addEventListener("toggle", (event: any) => { ctx.state.factsOpen = Boolean(event.detail?.open); });
     mountOverlays(container, data, ctx, endRoot);
-    mountLastRun(container, data, ctx, endRoot);
+    const refreshLatest = mountLastRun(container, data, ctx, endRoot);
+    if (ctx.actionApi && typeof document !== "undefined") mountLaunch(container, data, ctx, endRoot, refreshLatest);
     applyWidths(container);
     bindLinks(container, ctx);
   };
