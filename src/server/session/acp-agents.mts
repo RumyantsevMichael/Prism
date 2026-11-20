@@ -64,22 +64,24 @@ const sharedTestFolder = (env: NodeJS.ProcessEnv, kind: "declarations" | "instal
 };
 
 /**
- * Why a shared test folder cannot be trusted, or null when it is missing or a real folder of this user that no one else can write.
+ * Whether a shared test folder can be read: null when there is none to check, `missing` when it does not exist, so nothing under it is
+ * read, since another user could create it before the read, and otherwise why it cannot be trusted, or `trusted` for a real folder of
+ * this user that no one else can write, which the sticky temporary directory keeps others from replacing.
  * Windows gives each user a temporary directory of their own, so it needs no check there.
  */
-function untrustedFolder(folder: string | null): string | null {
+function sharedFolderTrust(folder: string | null): null | "missing" | "trusted" | { reason: string } {
   const uid = process.getuid?.();
   if (folder === null || uid === undefined) return null;
   let stats;
   try {
     stats = lstatSync(folder);
   } catch (error: any) {
-    return error?.code === "ENOENT" ? null : `${folder} cannot be checked`;
+    return error?.code === "ENOENT" ? "missing" : { reason: `${folder} cannot be checked` };
   }
-  if (!stats.isDirectory()) return `${folder} is not a folder`;
-  if (stats.uid !== uid) return `${folder} belongs to another user`;
-  if ((stats.mode & 0o022) !== 0) return `${folder} can be changed by other users`;
-  return null;
+  if (!stats.isDirectory()) return { reason: `${folder} is not a folder` };
+  if (stats.uid !== uid) return { reason: `${folder} belongs to another user` };
+  if ((stats.mode & 0o022) !== 0) return { reason: `${folder} can be changed by other users` };
+  return "trusted";
 }
 
 /** The folder that holds every registry install. */
@@ -131,8 +133,9 @@ function declaredAgent(entry: unknown, position: number): AcpAgent {
 export function readDeclarations(env: NodeJS.ProcessEnv = process.env): { file: string; state: "missing" | "read" | "unreadable"; reason: string | null; agents: AcpAgent[] } {
   const file = declarationFile(env);
   const unreadable = (why: string) => ({ file, state: "unreadable" as const, reason: `Prism cannot read ${file}: ${why}.`, agents: [] });
-  const untrusted = untrustedFolder(sharedTestFolder(env, "declarations"));
-  if (untrusted) return unreadable(untrusted);
+  const trust = sharedFolderTrust(sharedTestFolder(env, "declarations"));
+  if (trust === "missing") return { file, state: "missing", reason: null, agents: [] };
+  if (typeof trust === "object" && trust !== null) return unreadable(trust.reason);
   let text: string;
   try {
     if (statSync(file).size > MAX_FILE_BYTES) return unreadable(`it is larger than ${MAX_FILE_BYTES / 1024 / 1024} MiB`);
@@ -193,7 +196,8 @@ function installedAgent(folder: string, id: string): AcpAgent | null {
 /** Every registry install as read now, in the order of its install time. */
 export function readInstalls(env: NodeJS.ProcessEnv = process.env): AcpAgent[] {
   const base = agentsFolder(env);
-  if (untrustedFolder(sharedTestFolder(env, "installs"))) return [];
+  const trust = sharedFolderTrust(sharedTestFolder(env, "installs"));
+  if (trust !== null && trust !== "trusted") return [];
   let names: string[];
   try {
     names = readdirSync(base, { withFileTypes: true }).filter((entry) => entry.isDirectory() && ACP_ID_PATTERN.test(entry.name)).map((entry) => entry.name);
