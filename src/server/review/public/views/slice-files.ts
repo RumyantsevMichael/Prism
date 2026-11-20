@@ -17,6 +17,20 @@ function fileRow(file: any) {
   return `<li data-slice-file><code class="slice-file-path">${escapeHtml(file.path)}</code>${removed}${badge(file.state, TONES[file.state] ?? "neutral")}</li>`;
 }
 
+/**
+ * Where the shown commit is, from held of /api/slice-files, as kit chips of the branches that hold it and a badge that says whether the default branch has the files, or null.
+ * Files shown at a commit that only other branches hold are not on the default branch yet, unless the commit recorded at ship is on it, as after a squash merge that kept the feature branch.
+ */
+function branchesHeld(held: any) {
+  if (!held) return null;
+  const name = (branch: string) => chip(escapeHtml(branch), { tip: branch });
+  if (held.onDefault) return `<span class="chip-row" data-slice-branches>${name(held.defaultBranch)}${badge("default branch", "success")}</span>`;
+  const more = held.branchCount > held.branches.length ? `<span class="muted">and ${held.branchCount - held.branches.length} more</span>` : "";
+  // The badges name no branch, so a long default branch name never cuts their words off; the chips name the branches.
+  const landed = !held.defaultBranch ? "" : held.shippedOnDefault ? badge("ship commit on the default branch", "success") : badge("not on the default branch yet", "warning");
+  return `<span class="chip-row" data-slice-branches>${held.branches.map(name).join("")}${more}${landed}</span>`;
+}
+
 /** The slice's verified files as a card, from the answer of /api/slice-files. */
 export function sliceFilesCard(answer: any) {
   if (!answer.files.length) return card("Verified files", emptyState("No verified files", answer.message ?? ""), { eyebrow: "After verification" });
@@ -26,6 +40,7 @@ export function sliceFilesCard(answer: any) {
     ${keyValues([
       ["Shown at", answer.shown ? `${escapeHtml(SOURCES[answer.shown.source] ?? answer.shown.source)} ${commit(answer.shown.commit)}` : null],
       ["Repository", answer.repository ? escapeHtml(answer.repository) : null],
+      ["On branches", branchesHeld(answer.held)],
       ["Verified", commit(answer.verified)],
       ["Recorded at ship", commit(answer.shipped)]
     ])}

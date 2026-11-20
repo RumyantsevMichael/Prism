@@ -1221,6 +1221,7 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     return {
       state: async (repository: string) => known.has(repository) ? workspace.code.state(repository) : { state: "off" },
       reachable: async (repository: string, commit: string) => known.has(repository) ? workspace.code.reachable(repository, commit) : null,
+      branchesHolding: async (repository: string, commit: string) => known.has(repository) ? workspace.code.branchesHolding(repository, commit) : null,
       blobs: async (repository: string, commit: string, paths: string[]) => known.has(repository) ? workspace.code.blobs(repository, commit, paths) : null
     };
   }

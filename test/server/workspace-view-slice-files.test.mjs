@@ -81,8 +81,8 @@ test("clause 55: a file verified with an uncommitted change is changed after ver
   assert.deepEqual(report, { path: "src/report.js", blob: blobOf(DIRTY), shownBlob: blobOf(REPORT), state: "changed after verification" });
 });
 
-test("clause 54: after a squash merge removes the verified commit, the files show at the commit recorded at ship", async (context) => {
-  const slice = await verifiedSlice(context);
+/** Squash feature-x into main, delete feature-x unless keep is true, and ship the initiative, answering the squash commit. */
+async function squashAndShip(slice, { keep = false } = {}) {
   const work = path.join(slice.where.parent, "squash");
   git(slice.where.parent, "clone", "-q", "-b", "main", slice.code, work);
   await writeFile(path.join(work, "src", "report.js"), REPORT);
@@ -90,17 +90,51 @@ test("clause 54: after a squash merge removes the verified commit, the files sho
   git(work, "add", "-A");
   git(work, "commit", "-q", "-m", "Reports (#12)");
   const squashed = git(work, "rev-parse", "HEAD");
-  git(work, "push", "-q", "origin", "main", ":feature-x");
+  git(work, "push", "-q", "origin", "main", ...(keep ? [] : [":feature-x"]));
   ok(await slice.prism.call("update_roadmap", { expectedRevision: null, operations: [{ op: "add_initiative", id: "reports", title: "Reports", intent: "Reports ship.", band: "Now", requirements: ["r.md§1"] }] }));
   const state = ok(await slice.prism.call("get_coordination_state", { initiative: "reports" }));
   const gate = ok(await slice.prism.call("update_coordination_state", { initiative: "reports", expectedRevision: state.revision, changes: { gateOperations: [{ op: "ask", kind: "correctness", question: "Ship the reports initiative?", context: "Every slice passed verification.", artifacts: [] }] } })).openedGates[0].id;
   assert.equal((await answerGate(slice.review, { initiative: "reports", id: gate, choice: "approve" })).status, 200);
   ok(await slice.prism.call("update_roadmap", { expectedRevision: ok(await slice.prism.call("get_roadmap", {})).revision, operations: [{ op: "ship", id: "reports", afterGate: gate }] }));
+  return { work, squashed };
+}
+
+test("clause 54: after a squash merge removes the verified commit, the files show at the commit recorded at ship", async (context) => {
+  const slice = await verifiedSlice(context);
+  const { squashed } = await squashAndShip(slice);
   await codeOn(slice);
   const answer = await slice.files();
   assert.deepEqual(answer.shown, { commit: squashed, source: "ship" });
   assert.equal(answer.shipped, squashed);
+  assert.deepEqual(answer.held, { defaultBranch: "main", onDefault: true, branches: [], branchCount: 0, shippedOnDefault: true });
   assert.ok(answer.files.every((file) => file.state === "same as verified"));
+});
+
+test("a ship commit that only a branch holds says where the files are and that the default branch does not have them yet", async (context) => {
+  const slice = await verifiedSlice(context);
+  const { work, squashed } = await squashAndShip(slice);
+  // A force push takes the squash commit off main, and a branch keeps it.
+  git(work, "push", "-q", "--force", "origin", `${squashed}:refs/heads/hold`, `${squashed}~1:refs/heads/main`);
+  await codeOn(slice);
+  const answer = await slice.files();
+  assert.deepEqual(answer.shown, { commit: squashed, source: "ship" });
+  assert.deepEqual(answer.held, { defaultBranch: "main", onDefault: false, branches: ["hold"], branchCount: 1, shippedOnDefault: false });
+});
+
+test("files shown at a verified commit that a kept feature branch holds say the commit recorded at ship is on the default branch", async (context) => {
+  const slice = await verifiedSlice(context);
+  const { squashed } = await squashAndShip(slice, { keep: true });
+  await codeOn(slice);
+  const answer = await slice.files();
+  assert.deepEqual(answer.shown, { commit: slice.head, source: "verified" });
+  assert.equal(answer.shipped, squashed);
+  assert.deepEqual(answer.held, { defaultBranch: "main", onDefault: false, branches: ["feature-x"], branchCount: 1, shippedOnDefault: true });
+});
+
+test("files shown at a verified commit on a feature branch say the default branch does not have them yet", async (context) => {
+  const slice = await verifiedSlice(context);
+  await codeOn(slice);
+  assert.deepEqual((await slice.files()).held, { defaultBranch: "main", onDefault: false, branches: ["feature-x"], branchCount: 1, shippedOnDefault: false });
 });
 
 test("clause 56: without either commit or without code content the page says why no file is shown", async (context) => {

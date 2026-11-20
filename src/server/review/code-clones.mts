@@ -18,6 +18,8 @@ const CODE = "code";
 const SAVED = "code-content.json";
 const REGISTRATION_MAX_BYTES = 64 * 1024;
 const BRANCHES = "refs/heads/";
+// How many branches other than the default one an answer about where a commit is names, so a commit that many branches are built on stays a short answer.
+const BRANCHES_SHOWN = 5;
 
 const sha16 = (value: any) => createHash("sha256").update(value).digest("hex").slice(0, 16);
 const byText = (left: any, right: any) => (left < right ? -1 : left > right ? 1 : 0);
@@ -342,6 +344,23 @@ export async function createCodeClones({ directory }: { directory: string }) {
       const base = await cloneOf(workspace, repository);
       if (!base) return null;
       return isCommit(commit) && (await commitsOf(base)).has(commit);
+    },
+
+    /**
+     * Where a commit is in the clone: { defaultBranch, onDefault, branches, branchCount } with defaultBranch the branch the remote's HEAD names or null,
+     * onDefault whether that branch holds the commit, and branches the first BRANCHES_SHOWN other branches by name that hold it, of branchCount in all;
+     * or null without a clone or for a commit that no branch holds.
+     */
+    async branchesHolding(workspace: any, repository: string, commit: string) {
+      const base = await cloneOf(workspace, repository);
+      if (!base || !isCommit(commit) || !(await commitsOf(base)).has(commit)) return null;
+      const head = await git(base, ["symbolic-ref", "--quiet", "HEAD"]);
+      const defaultBranch = head.ok && head.text.trim().startsWith(BRANCHES) ? head.text.trim().slice(BRANCHES.length) : null;
+      const listed = await git(base, ["for-each-ref", "--format=%(refname)", "--contains", commit, BRANCHES]);
+      if (!listed.ok) return null;
+      const holding = listed.text.split("\n").filter(Boolean).map((ref) => ref.slice(BRANCHES.length)).sort(byText);
+      const others = holding.filter((name) => name !== defaultBranch);
+      return { defaultBranch, onDefault: defaultBranch !== null && holding.includes(defaultBranch), branches: others.slice(0, BRANCHES_SHOWN), branchCount: others.length };
     },
 
     /**

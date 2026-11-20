@@ -657,6 +657,8 @@ Each run records only a fingerprint of each file, its Git blob hash, and never i
 While the repository's code content is on, the page reads each file at the verified commit when a branch of the repository holds that commit.
 After a squash merge or force push removes the verified commit, the page reads the files at the commit of the default branch that Prism recorded when the initiative shipped.
 Each file is marked **same as verified** when its content at that commit is the content the run tested, and **changed after verification** when it differs, as for a file the run tested with an uncommitted change.
+**On branches** names the branches that hold that commit, up to five besides the default branch.
+When the default branch does not hold it, as for a feature branch not merged yet or a ship commit that a force push took off the default branch, the card says **not on the default branch yet**, unless the commit recorded at ship is on the default branch, as after a squash merge that kept the feature branch.
 When neither commit is in the repository's code clone, or the repository's code content is off or unreachable, each file is **not available** and the card says why; a slice without a passing run has no verified files yet.
 
 Work on a slice that exists only on the machine that holds it, unpushed or uncommitted, shows only as its presence under **Work in progress**, such as `in progress in feature-x on vm, not pushed`, named from the slice's latest verification run and its live claim, and never as its content.
