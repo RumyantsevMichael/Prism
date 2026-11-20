@@ -64,7 +64,7 @@ const pluginManifest = JSON.parse(await readFile(pluginURL(".codex-plugin/plugin
 // The host reads this process's stdout as the protocol, so the log goes to the shared Prism log file, and warnings also to stderr, which hosts keep.
 startProcessLog("mcp", { version: pluginManifest.version, cwd: process.cwd() }, { mirror: true });
 
-function decisionDataDirectory(argumentsValue) {
+function decisionDataDirectory(argumentsValue: any) {
   const configured = process.env.PLUGIN_DATA || process.env.CLAUDE_PLUGIN_DATA;
   if (configured && argumentsValue.dataDirectory && path.resolve(argumentsValue.dataDirectory) !== path.resolve(configured)) {
     throw new Error("The dataDirectory argument does not match the host plugin data directory.");
@@ -72,7 +72,7 @@ function decisionDataDirectory(argumentsValue) {
   return argumentsValue.dataDirectory || configured;
 }
 
-async function recordAutomaticDecision(input) {
+async function recordAutomaticDecision(input: any) {
   try {
     return await appendDecision(input);
   } catch {
@@ -80,14 +80,14 @@ async function recordAutomaticDecision(input) {
   }
 }
 
-function estimateReasons(plan) {
+function estimateReasons(plan: any) {
   if (plan.tokenEstimate?.expected !== null) return [];
   const result = [];
   const diagnostics = plan.diagnostics || {};
   if (diagnostics.noAnchors) result.push("no_anchors");
   if (diagnostics.unresolvedRequired?.length) result.push("unresolved_required");
   if (diagnostics.unresolvedConcepts?.length) result.push("unresolved_concepts");
-  for (const [name, enabled] of Object.entries(plan.provider?.capabilities || {})) {
+  for (const [name, enabled] of Object.entries<any>(plan.provider?.capabilities || {})) {
     if (["lexicalSearch", "semanticSearch", "symbolGraph", "verifiedSource"].includes(name) && enabled !== true) {
       result.push(`${name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}_unavailable`);
     }
@@ -96,7 +96,7 @@ function estimateReasons(plan) {
   return result;
 }
 
-function contextDecision(plan, requestedProvider, exclusions = []) {
+function contextDecision(plan: any, requestedProvider: any, exclusions = []) {
   const ranges = [plan.mustRead || [], plan.likelyRead || [], plan.possibleRead || []];
   const verifiedTokens = plan.observedSource?.approximateTokens ?? ranges.flat().reduce((sum, item) => sum + (item.rangeComplete && Number.isSafeInteger(item.sourceTokens) ? item.sourceTokens : 0), 0);
   return {
@@ -106,14 +106,14 @@ function contextDecision(plan, requestedProvider, exclusions = []) {
     selectedProvider: plan.provider?.selection?.selected || "native",
     reasonCodes: [
       ...estimateReasons(plan),
-      ...exclusions.map((item) => `${item.provider}_${item.reasonCode}`.replace(/[^a-z0-9_-]/g, "_"))
+      ...exclusions.map((item: any) => `${item.provider}_${item.reasonCode}`.replace(/[^a-z0-9_-]/g, "_"))
     ],
     counts: { must: ranges[0].length, likely: ranges[1].length, possible: ranges[2].length, verifiedTokens },
     estimate: { lower: plan.tokenEstimate?.lower ?? null, expected: plan.tokenEstimate?.expected ?? null, upper: plan.tokenEstimate?.upper ?? null }
   };
 }
 
-function taskId(metadata = {}) {
+function taskId(metadata: any = {}) {
   return metadata["x-codex-turn-metadata"]?.thread_id ?? metadata.threadId ?? "mcp-process";
 }
 
@@ -121,9 +121,9 @@ function taskId(metadata = {}) {
 const namedRoots = new Set();
 
 // A projectRoot argument that the server cannot use is the caller's mistake, which the log records as a refusal rather than as a failure of the server.
-const projectRootRefusal = (message) => Object.assign(new Error(message), { refusal: true });
+const projectRootRefusal = (message: any) => Object.assign(new Error(message), { refusal: true });
 
-async function requestedProjectRoot(argumentsValue) {
+async function requestedProjectRoot(argumentsValue: any) {
   const hostProjectRoot = process.env.CLAUDE_PROJECT_DIR;
   const hasSuppliedProjectRoot = Object.hasOwn(argumentsValue, "projectRoot");
   if (
@@ -163,7 +163,7 @@ async function requestedProjectRoot(argumentsValue) {
   return resolvedRoot;
 }
 
-async function server(argumentsValue, metadata) {
+async function server(argumentsValue: any, metadata: any) {
   const id = taskId(metadata);
   const projectRoot = await requestedProjectRoot(argumentsValue);
   return reviewServers.get(projectRoot, id);
@@ -172,19 +172,19 @@ async function server(argumentsValue, metadata) {
 // Claude Code gives its agent only the structured content of a result that has one, so the text items after the first, which carry notes such as a move report or a saved conflict,
 // also go into the structured content as notes, in their order, after any notes it already holds.
 // Prism's refusal codes are lower-case words joined by "_", such as validation_failed, unlike Node's system error codes, such as ENOENT.
-const isRefusal = (error) => error?.refusal === true || (typeof error?.code === "string" && /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(error.code));
+const isRefusal = (error: any) => error?.refusal === true || (typeof error?.code === "string" && /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(error.code));
 
-function withNotesInStructure(value) {
+function withNotesInStructure(value: any) {
   const structured = value?.structuredContent;
   if (!structured || typeof structured !== "object" || Array.isArray(structured) || !Array.isArray(value.content) || value.content.length < 2) return value;
-  const notes = value.content.slice(1).filter((item) => item?.type === "text" && typeof item.text === "string" && item.text).map((item) => item.text);
+  const notes = value.content.slice(1).filter((item: any) => item?.type === "text" && typeof item.text === "string" && item.text).map((item: any) => item.text);
   if (!notes.length) return value;
   return { ...value, structuredContent: { ...structured, notes: [...(Array.isArray(structured.notes) ? structured.notes : []), ...notes] } };
 }
 
 // Write a result to the host: whether the write reached standard output.
-function result(id, value) {
-  return new Promise((resolve) => {
+function result(id: string, value: any) {
+  return new Promise<any>((resolve) => {
     try {
       process.stdout.write(jsonLine({ jsonrpc: "2.0", id, result: withNotesInStructure(value) }), (error) => resolve(!error));
     } catch {
@@ -193,7 +193,7 @@ function result(id, value) {
   });
 }
 
-function requestedTabs(argumentsValue) {
+function requestedTabs(argumentsValue: any) {
   const hasArtifact = Object.hasOwn(argumentsValue, "artifact");
   const hasArtifacts = Object.hasOwn(argumentsValue, "artifacts");
   if (hasArtifact && hasArtifacts) {
@@ -208,7 +208,7 @@ function requestedTabs(argumentsValue) {
 // An agent may name the tab group its presented tabs join, such as the piece of work they belong to.
 // A named group also names the presenting agent, so the review app shows who opened it: the holder finds the agent's claim, and the model is
 // recorded only when the call is positively the session's main agent's, as a claim records it.
-async function requestedGroup(argumentsValue) {
+async function requestedGroup(argumentsValue: any) {
   if (!Object.hasOwn(argumentsValue, "group")) return {};
   if (argumentsValue.group === null || argumentsValue.group === undefined) return { group: argumentsValue.group };
   const holder = claimHolder();
@@ -217,33 +217,33 @@ async function requestedGroup(argumentsValue) {
 }
 
 // A session that fell back to its own review server tells the agent, so two review pages for one project reach the user as a known cause.
-function reviewContent(url, review) {
+function reviewContent(url: string, review: any) {
   const fallback = review.privateServer?.();
   return fallback
     ? `Human review URL: ${url}\nThis session serves the project from its own review server, because the shared review app could not be reached: ${fallback.reason} Another session may show the same project at a different URL, so tell the user that this link belongs to this session.`
     : `Human review URL: ${url}`;
 }
 
-function stateContent(result) {
+function stateContent(result: any) {
   const validity = result.valid ? "valid" : "invalid";
   const revision = result.revision ?? "none";
-  const opened = `${result.openedGates?.length ? `\nOpened user gates: ${result.openedGates.map((gate) => gate.id).join(", ")}` : ""}${result.supersededGates?.length ? `\nAnswered correctness gates superseded and closed: ${result.supersededGates.join(", ")}` : ""}`;
-  const answered = (result.state?.pending ?? []).filter((gate) => gate?.answer);
-  const gates = `${opened}${answered.length ? `\nUser gates answered in the review browser: ${answered.map((gate) => gate.id).join(", ")}` : ""}`;
+  const opened = `${result.openedGates?.length ? `\nOpened user gates: ${result.openedGates.map((gate: any) => gate.id).join(", ")}` : ""}${result.supersededGates?.length ? `\nAnswered correctness gates superseded and closed: ${result.supersededGates.join(", ")}` : ""}`;
+  const answered = (result.state?.pending ?? []).filter((gate: any) => gate?.answer);
+  const gates = `${opened}${answered.length ? `\nUser gates answered in the review browser: ${answered.map((gate: any) => gate.id).join(", ")}` : ""}`;
   return `Coordination state ${validity}: ${result.initiative}\nRevision: ${revision}${gates}`;
 }
 
 // A read of a shipped initiative that marked its slice documents asks to commit those in the checkout apart from the task's changes, and says that the record store shares its own.
-async function historyMarksContent(projectRoot, history) {
+async function historyMarksContent(projectRoot: string, history: any) {
   return history?.marked?.length ? [{ type: "text", text: await historyMarksText(projectRoot, history.initiative, history.marked) }] : [];
 }
 
 // The coordination state text of a shipped initiative carries the history message as a line of its own.
-async function shippedHistoryContent(projectRoot, history) {
+async function shippedHistoryContent(projectRoot: string, history: any) {
   return history ? [{ type: "text", text: history.message }, ...await historyMarksContent(projectRoot, history)] : [];
 }
 
-function contextPlanContent(plan) {
+function contextPlanContent(plan: any) {
   return [
     `Repository context plan for commit ${plan.commit}.`,
     `Must read: ${plan.mustRead.length}.`,
@@ -254,7 +254,7 @@ function contextPlanContent(plan) {
   ].join("\n");
 }
 
-function repositoryFitContent(result) {
+function repositoryFitContent(result: any) {
   if (result.status === "UNSUPPORTED") {
     return `Repository fit: UNSUPPORTED.\nReason: ${result.reason}${result.reasonCode ? `\nReason code: ${result.reasonCode}.` : ""}`;
   }
@@ -266,7 +266,7 @@ function repositoryFitContent(result) {
   ].join("\n");
 }
 
-function sessionCapacityContent(result) {
+function sessionCapacityContent(result: any) {
   if (result.status === "UNSUPPORTED") {
     return `Session capacity: UNSUPPORTED.\nReason: ${result.reason}${result.reasonCode ? `\nReason code: ${result.reasonCode}.` : ""}`;
   }
@@ -278,11 +278,11 @@ function sessionCapacityContent(result) {
   ].join("\n");
 }
 
-function providerListContent(providers) {
-  return providers.map(({ id, status, diagnosticCode }) => `${id}: ${status}${diagnosticCode ? ` (${diagnosticCode})` : ""}`).join("\n");
+function providerListContent(providers: any) {
+  return providers.map(({ id, status, diagnosticCode }: { id: string; status: any; diagnosticCode: any }) => `${id}: ${status}${diagnosticCode ? ` (${diagnosticCode})` : ""}`).join("\n");
 }
 
-function sessionConsumptionContent(summary) {
+function sessionConsumptionContent(summary: any) {
   if (summary.status === "UNSUPPORTED") {
     return `Session consumption: UNSUPPORTED.\nReason: ${summary.reason}${summary.reasonCode ? `\nReason code: ${summary.reasonCode}.` : ""}`;
   }
@@ -297,51 +297,51 @@ function sessionConsumptionContent(summary) {
   ].join("\n");
 }
 
-function privateServerContent(review) {
+function privateServerContent(review: any) {
   const fallback = review.privateServer?.();
   return fallback ? { privateServer: fallback } : {};
 }
 
-function runMeasureText({ value, coverage }) {
+function runMeasureText({ value, coverage }: { value: any; coverage: any }) {
   return value === null ? coverage : `${value} (${coverage})`;
 }
 
-function attributedTargetText({ initiative, slice, kind, wave, designRun }) {
+function attributedTargetText({ initiative, slice, kind, wave, designRun }: { initiative: string; slice: string; kind: any; wave: any; designRun: any }) {
   if (kind === "wave") return `${initiative}/${slice} wave ${wave}`;
   if (kind === "design-run") return `${initiative}/${slice} design run ${designRun}`;
   return `${initiative}/${slice}`;
 }
 
-function attributedMeasuresText(measures) {
+function attributedMeasuresText(measures: any) {
   return `wall ms ${runMeasureText(measures.wallTimeMs)}, active ms ${runMeasureText(measures.activeTimeMs)}, input ${runMeasureText(measures.inputTokens)}, cache-write ${runMeasureText(measures.cacheWriteTokens)}, cache-read ${runMeasureText(measures.cacheReadTokens)}, output ${runMeasureText(measures.outputTokens)}, tool calls ${runMeasureText(measures.toolCalls)}`;
 }
 
-function runTotalsText(totals) {
+function runTotalsText(totals: any) {
   return `runs ${runMeasureText(totals.runs)}, wall ms ${runMeasureText(totals.wallTimeMs)}, elapsed active ms ${runMeasureText(totals.elapsedActiveTimeMs)}, summed active ms ${runMeasureText(totals.summedActiveTimeMs)}, input ${runMeasureText(totals.inputTokens)}, cache-write ${runMeasureText(totals.cacheWriteTokens)}, cache-read ${runMeasureText(totals.cacheReadTokens)}, output ${runMeasureText(totals.outputTokens)}, tool calls ${runMeasureText(totals.toolCalls)}`;
 }
 
-function runMeasuresContent(runMeasures) {
+function runMeasuresContent(runMeasures: any) {
   if (!runMeasures) return [];
   const attribution = runMeasures.attribution;
   return [
     `Run statistics collection: ${runMeasures.collection}.`,
-    ...runMeasures.executions.map((row) => `Run measures ${row.execution}${row.host ? ` ${row.host}` : ""}: wall ms ${runMeasureText(row.wallTimeMs)}, active ms ${runMeasureText(row.activeTimeMs)} (idle over ${runMeasures.idleThresholdMs} ms excluded), input ${runMeasureText(row.inputTokens)}, cache-write ${runMeasureText(row.cacheWriteTokens)}, cache-read ${runMeasureText(row.cacheReadTokens)}, output ${runMeasureText(row.outputTokens)}, tool calls ${runMeasureText(row.toolCalls)}${row.ended ? ", ended" : ""}${row.belowSession ? `, below session ${row.belowSession}` : ""}.`),
+    ...runMeasures.executions.map((row: any) => `Run measures ${row.execution}${row.host ? ` ${row.host}` : ""}: wall ms ${runMeasureText(row.wallTimeMs)}, active ms ${runMeasureText(row.activeTimeMs)} (idle over ${runMeasures.idleThresholdMs} ms excluded), input ${runMeasureText(row.inputTokens)}, cache-write ${runMeasureText(row.cacheWriteTokens)}, cache-read ${runMeasureText(row.cacheReadTokens)}, output ${runMeasureText(row.outputTokens)}, tool calls ${runMeasureText(row.toolCalls)}${row.ended ? ", ended" : ""}${row.belowSession ? `, below session ${row.belowSession}` : ""}.`),
     ...(attribution
       ? [
-          ...attribution.targets.map((entry) => `Attributed to ${attributedTargetText(entry.target)} as ${entry.role} (${entry.attribution}): ${attributedMeasuresText(entry)}.`),
+          ...attribution.targets.map((entry: any) => `Attributed to ${attributedTargetText(entry.target)} as ${entry.role} (${entry.attribution}): ${attributedMeasuresText(entry)}.`),
           `Unattributed: ${attributedMeasuresText(attribution.unattributed)}.`
         ]
       : []),
     ...(runMeasures.recorded ? [`Recorded run totals: ${runTotalsText(runMeasures.recorded)}.`] : []),
-    ...(runMeasures.inProgress?.targets ?? []).map((entry) => `In progress for ${attributedTargetText(entry.target)} as ${entry.role} (${entry.attribution}), not yet recorded: ${attributedMeasuresText(entry)}.`)
+    ...(runMeasures.inProgress?.targets ?? []).map((entry: any) => `In progress for ${attributedTargetText(entry.target)} as ${entry.role} (${entry.attribution}), not yet recorded: ${attributedMeasuresText(entry)}.`)
   ];
 }
 
-function reviewSessionContent(review) {
+function reviewSessionContent(review: any) {
   return review.getSession();
 }
 
-function assertExactToolArguments(value, allowed, required, name) {
+function assertExactToolArguments(value: any, allowed: any, required: any, name: string) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${name} must be an object.`);
   }
@@ -357,22 +357,22 @@ function assertExactToolArguments(value, allowed, required, name) {
   }
 }
 
-function activeCapacityRequest(argumentsValue, projectRoot) {
+function activeCapacityRequest(argumentsValue: any, projectRoot: string) {
   return createActiveSessionCapacityRequest(argumentsValue.session, {
     dataDirectory: process.env.PLUGIN_DATA || process.env.CLAUDE_PLUGIN_DATA,
     projectRoot
   });
 }
 
-function failure(id, code, message, data) {
-  const response = { jsonrpc: "2.0", id, error: { code, message } };
+function failure(id: string, code: any, message: any, data?: any) {
+  const response: any = { jsonrpc: "2.0", id, error: { code, message } };
   if (data !== undefined) {
     response.error.data = data;
   }
   process.stdout.write(jsonLine(response));
 }
 
-function stateErrorData(error) {
+function stateErrorData(error: any) {
   // A refused repository name carries the name the store would accept, so a client can offer the line to commit.
   if (error?.name === "RecordStoreError" && REPOSITORY_REFUSALS.includes(error.code)) {
     return { code: error.code, proposed: error.proposed ?? null };
@@ -402,7 +402,7 @@ function stateErrorData(error) {
     if (["validation_failed", "invalid_path", "lock_timeout", "stale_snapshot", "preparation_failed", "unsupported_runtime", "corrupt_asset", "resource_limit", "incomplete_structure", "evidence_missing", "gate_blocked", "revision_conflict", "deferral_refused"].includes(error.code)) return { code: error.code, ...Object.fromEntries(["errors", "problems", "currentRevision", "expectedSnapshot", "currentSnapshot", "evidenceId"].filter(key => error[key] !== undefined).map(key => [key, Array.isArray(error[key]) && !(error.code === "deferral_refused" && key === "problems") ? error[key].slice(0, 100) : error[key]])) };
     return undefined;
   }
-  const data = { code: error.code };
+  const data: Record<string, any> = { code: error.code };
   for (const key of ["errors", "warnings", "current", "validation"]) {
     if (error[key] !== undefined) {
       data[key] = error[key];
@@ -414,11 +414,11 @@ function stateErrorData(error) {
 // Hosts show agents the error message but not the error data, so the message also lists the problems that the data holds.
 // A problem that the message already states is not listed again.
 const LISTED_PROBLEMS = 20;
-function errorMessage(error, data) {
-  const stated = (item) => error.message.includes(typeof item === "string" ? item : item.message || "\0");
+function errorMessage(error: any, data: any) {
+  const stated = (item: any) => error.message.includes(typeof item === "string" ? item : item.message || "\0");
   const items = [...(Array.isArray(data?.problems) ? data.problems : []), ...(Array.isArray(data?.errors) ? data.errors : [])].filter((item) => !stated(item));
   if (!items.length) return error.message;
-  const line = (item) => typeof item === "string" ? item : [item.code, item.id || item.file || item.path || item.field, item.message].filter(Boolean).join(": ") || JSON.stringify(item);
+  const line = (item: any) => typeof item === "string" ? item : [item.code, item.id || item.file || item.path || item.field, item.message].filter(Boolean).join(": ") || JSON.stringify(item);
   const listed = items.slice(0, LISTED_PROBLEMS).map((item) => `- ${line(item)}`);
   if (items.length > LISTED_PROBLEMS) listed.push(`- ${items.length - LISTED_PROBLEMS} more problems are in the error data.`);
   return `${error.message}\n${listed.join("\n")}`;
@@ -914,10 +914,10 @@ const pendingWaits = new Map();
 const endingWaits = new Set();
 // A deferred wait's gates stay held this long for the Stop hook's wait to start and renew them.
 const DEFERRED_HOLD_MS = 2 * 60000;
-let clientName = null;
-let clientVersion = null;
+let clientName: any = null;
+let clientVersion: any = null;
 
-function olderThan(version, minimum) {
+function olderThan(version: any, minimum: any) {
   const parts = String(version ?? "").split(/[.-]/).slice(0, 3).map(Number);
   if (parts.length < 3 || parts.some((part) => !Number.isInteger(part))) return false;
   for (let index = 0; index < 3; index += 1) {
@@ -937,28 +937,28 @@ function waitUnsupportedReason() {
   return null;
 }
 
-function progress(progressToken, value, message) {
+function progress(progressToken: any, value: any, message: any) {
   process.stdout.write(jsonLine({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken, progress: value, message } }));
 }
 
 // An approval answer reaches only the checkout whose ask_approval recorded its gate, which this machine remembers; a get_artifact read that returns the answer
 // as latestAnswer is one way that checkout receives it. Failing to remember never fails the call, whose store change already happened.
-async function noteApprovalDelivery(name, projectRoot, value) {
+async function noteApprovalDelivery(name: string, projectRoot: string, value: any) {
   try {
-    if (name === "update_artifact") await recordAskedGates(projectRoot, (value.artifacts ?? []).map((entry) => entry.gate).filter((gate) => typeof gate === "string"));
+    if (name === "update_artifact") await recordAskedGates(projectRoot, (value.artifacts ?? []).map((entry: any) => entry.gate).filter((gate: any) => typeof gate === "string"));
     else if (typeof value.latestAnswer?.gate === "string") await forgetAskedGates(projectRoot, [value.latestAnswer.gate]);
   } catch {
   }
 }
 
-async function callGateWait(argumentsValue, metadata, requestId) {
+async function callGateWait(argumentsValue: any, metadata: any, requestId: any) {
   const projectRoot = await requestedProjectRoot(argumentsValue);
   const gateIds = argumentsValue.gateIds ?? (argumentsValue.gateId === undefined ? undefined : [argumentsValue.gateId]);
   if (!Array.isArray(gateIds) || !gateIds.length) {
     throw new Error("Pass the recorded gate ids in gateIds.");
   }
   // A wait names the initiative whose coordination state holds the gates, or the artifact whose status record holds them.
-  const source = typeof argumentsValue.artifact === "string" && argumentsValue.artifact
+  const source: any = typeof argumentsValue.artifact === "string" && argumentsValue.artifact
     ? { artifact: argumentsValue.artifact, ...(argumentsValue.scope === undefined ? {} : { scope: argumentsValue.scope }) }
     : { initiative: argumentsValue.initiative };
   if (source.artifact === undefined && (typeof source.initiative !== "string" || !source.initiative)) {
@@ -1008,7 +1008,7 @@ async function callGateWait(argumentsValue, metadata, requestId) {
         watchChanges: coordinates,
         heartbeatMs: Number(process.env.PRISM_GATE_WAIT_HEARTBEAT_MS) || 60000,
         settleMs: process.env.PRISM_GATE_WAIT_SETTLE_MS === undefined ? undefined : Number(process.env.PRISM_GATE_WAIT_SETTLE_MS),
-        onProgress: progressToken === undefined ? undefined : (seconds) => progress(progressToken, seconds, "Waiting for the user's answer in the review browser")
+        onProgress: progressToken === undefined ? undefined : (seconds: any) => progress(progressToken, seconds, "Waiting for the user's answer in the review browser")
       });
       endingWaits.add(running);
       try {
@@ -1021,7 +1021,7 @@ async function callGateWait(argumentsValue, metadata, requestId) {
     }
   }
   const list = value.gateIds.join(", ");
-  const text = {
+  const text = ({
     changed: () => changedText(value),
     answered: () => [...value.answered.map(answerText), value.waiting.length ? `Still waiting on: ${value.waiting.join(", ")}.` : ""].filter(Boolean).join("\n"),
     resolved: () => source.artifact ? `Approval gates ${list} of ${source.artifact} closed without an answer: a later ask_approval replaced them, or the artifact was removed or left the scopes this checkout sees.` : `User gates ${list} were resolved without a browser answer; they were answered in the conversation or withdrawn.`,
@@ -1030,19 +1030,19 @@ async function callGateWait(argumentsValue, metadata, requestId) {
     deferred: () => `This host cannot wait during a tool call, so Prism waits after this turn ends: end your turn now, and the session continues with the answer when the user answers user gates ${list} in the review browser within ${value.maxWaitMinutes} minutes. If it does not continue, the user's next message delivers any browser answer.`,
     unsupported_host: () => `The wait returned at once because it cannot run in the background here: ${value.reason} The user's next message delivers any browser answer.`,
     cancelled: () => `The wait for user gates ${list} was cancelled.`
-  }[value.status]();
+  } as Record<string, any>)[value.status]();
   return { content: [{ type: "text", text }], structuredContent: value };
 }
 const repositoryTools = new Set([...NATIVE_INTELLIGENCE_TOOLS.map(tool => tool.name), "list_repository_intelligence_providers", "plan_repository_context", "resolve_session_capacity", "evaluate_repository_fit", "summarize_session_consumption", "set_workflow_recording", "read_workflow_decisions", "record_workflow_decision"]);
 
 // A record tool's result in a project with a record store names the store, so an agent never takes recordPath for a file in the checkout.
-async function withRecordStore(projectRoot, value) {
+async function withRecordStore(projectRoot: string, value: any) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const recordStore = await recordStoreSummary(projectRoot).catch(() => null);
   return recordStore ? { ...value, recordStore } : value;
 }
 
-async function callStateTool(name, argumentsValue) {
+async function callStateTool(name: string, argumentsValue: any) {
   const projectRoot = await requestedProjectRoot(argumentsValue);
   const input = { ...argumentsValue, projectRoot };
   let resultValue;
@@ -1080,16 +1080,16 @@ async function callStateTool(name, argumentsValue) {
   return { content, structuredContent: resultValue };
 }
 
-async function callRepositoryTool(name, argumentsValue) {
+async function callRepositoryTool(name: string, argumentsValue: any) {
   // Agents often write a directory as "src/", so a trailing slash is dropped before the strict path checks.
-  if (Array.isArray(argumentsValue?.filters?.paths)) argumentsValue = { ...argumentsValue, filters: { ...argumentsValue.filters, paths: argumentsValue.filters.paths.map(value => typeof value === "string" && value.length > 1 ? value.replace(/\/+$/, "") : value) } };
+  if (Array.isArray(argumentsValue?.filters?.paths)) argumentsValue = { ...argumentsValue, filters: { ...argumentsValue.filters, paths: argumentsValue.filters.paths.map((value: any) => typeof value === "string" && value.length > 1 ? value.replace(/\/+$/, "") : value) } };
   if (NATIVE_INTELLIGENCE_TOOLS.some(tool => tool.name === name)) {
-    const schema = NATIVE_INTELLIGENCE_TOOLS.find(tool => tool.name === name).inputSchema;
-    assertInput(schema, argumentsValue);
+    const schema = NATIVE_INTELLIGENCE_TOOLS!.find(tool => tool.name === name)!.inputSchema;
+    assertInput((schema as any), argumentsValue);
     try { assertExactToolArguments(argumentsValue, Object.keys(schema.properties), schema.required, `${name} arguments`); }
     catch (error) { error.code = "validation_failed"; throw error; }
     const projectRoot = await requestedProjectRoot(argumentsValue).catch(error => { error.code = "invalid_path"; throw error; });
-    let value = name === "search_repository_concepts" ? await searchRepositoryConcepts({ ...argumentsValue, projectRoot })
+    let value: any = name === "search_repository_concepts" ? await searchRepositoryConcepts({ ...argumentsValue, projectRoot })
       : name === "find_shared_dependencies" ? await findSharedDependencies({ ...argumentsValue, projectRoot })
       : name === "report_module_interfaces" ? await reportModuleInterfaces({ ...argumentsValue, projectRoot })
       : name === "find_shared_literals" ? await findSharedLiterals({ ...argumentsValue, projectRoot })
@@ -1099,7 +1099,7 @@ async function callRepositoryTool(name, argumentsValue) {
       : await nativeSemanticRuntime.status(projectRoot, argumentsValue.waitMs);
     if (!["search_repository_concepts", "find_shared_dependencies", "report_module_interfaces", "find_shared_literals", "report_cohesion_clusters", "find_same_name_units", "report_complex_units"].includes(name)) {
       const diagnostics = value.diagnostics || [], offset = argumentsValue.offset || 0, limit = argumentsValue.limit || 20;
-      value = { ...value, diagnostics: diagnostics.slice(offset, offset + limit), totalDiagnostics: diagnostics.length, nextOffset: offset + limit < diagnostics.length ? offset + limit : null };
+      value = { ...value, diagnostics: diagnostics.slice(offset, offset + limit), totalDiagnostics: (diagnostics.length as any), nextOffset: offset + limit < diagnostics.length ? offset + limit : null };
     }
     return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value };
   }
@@ -1118,7 +1118,7 @@ async function callRepositoryTool(name, argumentsValue) {
   if (name === "record_workflow_decision") {
     assertExactToolArguments(argumentsValue, ["projectRoot", "dataDirectory", "correlationKey", "decision"], ["projectRoot", "dataDirectory", "decision"], "record_workflow_decision arguments");
     const projectRoot = await requestedProjectRoot(argumentsValue);
-    const result = await appendDecision({ projectRoot, dataDirectory: decisionDataDirectory(argumentsValue), correlationKey: argumentsValue.correlationKey, decision: argumentsValue.decision, source: "agent_checkpoint" });
+    const result = await appendDecision(({ projectRoot, dataDirectory: decisionDataDirectory(argumentsValue), correlationKey: argumentsValue.correlationKey, decision: argumentsValue.decision, source: "agent_checkpoint" } as any));
     return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
   }
   if (name === "summarize_session_consumption") {
@@ -1193,9 +1193,9 @@ async function callRepositoryTool(name, argumentsValue) {
       }
     }
     let plan;
-    const exclusions = [];
+    const exclusions: any[] = [];
     try {
-      plan = await withRepositoryIntelligence(projectRoot, (provider) => planRepositoryContext({
+      plan = await withRepositoryIntelligence(projectRoot, (provider: any) => planRepositoryContext({
       task: argumentsValue.task,
       hints: argumentsValue.hints,
       provider,
@@ -1204,7 +1204,7 @@ async function callRepositoryTool(name, argumentsValue) {
         searchHits: argumentsValue.searchHits,
         graphNodes: argumentsValue.graphNodes
       }
-      }), { selection: argumentsValue.provider || "auto", ...(native ? { openNative: async () => native.provider } : {}), onExclusion: (item) => exclusions.push(item) });
+      }), { selection: argumentsValue.provider || "auto", ...(native ? { openNative: async () => native.provider } : {}), onExclusion: (item: any) => exclusions.push(item) });
     } catch (error) {
       const dataDirectory = decisionDataDirectory(argumentsValue);
       if (dataDirectory) await recordAutomaticDecision({ projectRoot, dataDirectory, correlationKey: argumentsValue.correlationKey,
@@ -1214,7 +1214,7 @@ async function callRepositoryTool(name, argumentsValue) {
     const dataDirectory = decisionDataDirectory(argumentsValue);
     if (dataDirectory) {
       const recording = await recordAutomaticDecision({ projectRoot, dataDirectory, correlationKey: argumentsValue.correlationKey,
-        decision: contextDecision(plan, argumentsValue.provider || "auto", exclusions) });
+        decision: contextDecision(plan, argumentsValue.provider || "auto", (exclusions as any)) });
       if (recording.status === "unavailable") plan = { ...plan, decisionRecording: recording };
     }
     return { content: [{ type: "text", text: contextPlanContent(plan) }], structuredContent: plan };
@@ -1225,7 +1225,7 @@ async function callRepositoryTool(name, argumentsValue) {
 // Hosts that cannot keep a long call open get an early running answer before their own tool timeout, and call again to keep waiting.
 const VERIFY_EARLY_RETURN_MS = 45000;
 
-async function callVerifySlice(argumentsValue, metadata, requestId) {
+async function callVerifySlice(argumentsValue: any, metadata: any, requestId: any) {
   const projectRoot = await requestedProjectRoot(argumentsValue);
   const controller = new AbortController();
   if (requestId !== undefined) pendingWaits.set(requestId, controller);
@@ -1236,7 +1236,7 @@ async function callVerifySlice(argumentsValue, metadata, requestId) {
       projectRoot,
       signal: controller.signal,
       maxWaitMs: waitUnsupportedReason() ? Number(process.env.PRISM_VERIFY_EARLY_RETURN_MS) || VERIFY_EARLY_RETURN_MS : Infinity,
-      onProgress: progressToken === undefined ? undefined : (seconds) => progress(progressToken, seconds, `Running the test command (${seconds} s)`)
+      onProgress: progressToken === undefined ? undefined : (seconds: any) => progress(progressToken, seconds, `Running the test command (${seconds} s)`)
     });
     // A passing run with a source snapshot gets its change map derived in the background, so the review browser can show it.
     if (value.status === "passed" && value.snapshotId) startChangeMapDerivation({ projectRoot, initiative: argumentsValue.initiative, slice: argumentsValue.slice });
@@ -1250,33 +1250,33 @@ async function callVerifySlice(argumentsValue, metadata, requestId) {
 }
 
 // The first write after an upgrade moves files in the user's work tree, so its result says which, to commit on their own.
-const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+const plural = (count: any, noun: any) => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
 // A saved artifact named as the checkout names it, by its path and scope label, or by its store location when the checkout gives it no path.
-async function savedArtifactLine(item, argumentsValue) {
+async function savedArtifactLine(item: any, argumentsValue: any) {
   return `- ${await savedArtifactWhere(item.store, item.location, argumentsValue)} (this machine's version: ${item.savedAs})`;
 }
 
-async function savedArtifactWhere(store, location, argumentsValue) {
+async function savedArtifactWhere(store: any, location: any, argumentsValue: any) {
   const projectRoot = await requestedProjectRoot(argumentsValue ?? {}).catch(() => null);
   const named = projectRoot ? await artifactAtLocation(projectRoot, store, location).catch(() => null) : null;
   return named?.path ? `${named.path} in scope ${named.scope.label}` : `artifacts/${location} in the record store at ${store}${named ? `, scope ${named.scope.label}` : ""}`;
 }
 
 // A local move that a store sync sent elsewhere, named by the path and scope label that the store keeps the artifact at and the scope label this machine moved it to.
-async function undoneMoveLine(item, argumentsValue) {
+async function undoneMoveLine(item: any, argumentsValue: any) {
   const projectRoot = await requestedProjectRoot(argumentsValue ?? {}).catch(() => null);
   const movedTo = projectRoot ? await artifactAtLocation(projectRoot, item.store, item.movedTo).catch(() => null) : null;
   return `- ${await savedArtifactWhere(item.store, item.undoneMove, argumentsValue)}, which this machine moved to scope ${movedTo?.scope.label ?? `artifacts/${item.movedTo}`}`;
 }
 
 // Whether the store at storeBase holds an artifact at a location below artifacts/, told from the file's entry alone, so no byte of a file above its kind's bound is read.
-const holdsArtifact = (storeBase, location) => lstat(path.join(storeBase, "artifacts", ...location.split("/"))).then((stats) => stats.isFile(), () => false);
+const holdsArtifact = (storeBase: any, location: any) => lstat(path.join(storeBase, "artifacts", ...location.split("/"))).then((stats) => stats.isFile(), () => false);
 
 // A saved status record or comment named by the artifact it belongs to, and a comment also by its line and text, quoted only from a comment of the exact form Prism writes,
 // since the saved copy may be any file that another machine's store brought, and any other file is named by its path, scope, and saved copy alone.
 // where, when given, is the location at which the store keeps the artifact, as for a file whose path there would be too long, while the saved file names the location it was made at, and copy names whose copy it is.
-async function savedDerivedLine(item, argumentsValue, where = null, copy = "saved copy") {
+async function savedDerivedLine(item: any, argumentsValue: any, where = null, copy = "saved copy") {
   const line = await savedArtifactWhere(item.store, where ?? item.statusOf ?? item.commentOn, argumentsValue);
   if (item.statusOf) return `${line}, its status record (${copy}: ${item.savedAs})`;
   const comment = await savedComment(item.savedAs, item.commentOn).catch(() => null);
@@ -1289,18 +1289,18 @@ async function savedDerivedLine(item, argumentsValue, where = null, copy = "save
 // and a last line counts them and names the store's sync folder, which holds every saved copy. Returns the lines.
 const SAVED_NOTE_MAX = 32 * 1024;
 const SAVED_FOLDER = `${path.sep}.prism-sync${path.sep}conflicts${path.sep}`;
-async function savedFilesNote(sections) {
+async function savedFilesNote(sections: any) {
   if (!sections.length) return [];
-  const bytes = (line) => Buffer.byteLength(line, "utf8") + 1;
+  const bytes = (line: string) => Buffer.byteLength(line, "utf8") + 1;
   // A local change that a sync undid has no saved copy, so it names the store's sync folder for its saved copies as it is.
-  const folders = [...new Set(sections.flatMap((section) => section.items).map((item) => {
+  const folders = [...new Set(sections.flatMap((section: any) => section.items).map((item: any) => {
     if (!item.savedAs) return item.folder;
     const at = item.savedAs.lastIndexOf(SAVED_FOLDER);
     return at < 0 ? path.dirname(item.savedAs) : item.savedAs.slice(0, at + SAVED_FOLDER.length - 1);
   }))];
   const where = folders.length === 1 ? `the store's sync folder ${folders[0]} holds` : `the stores' sync folders ${folders.join(", ")} hold`;
-  const closing = (count) => `Prism left ${count} more saved ${count === 1 ? "file" : "files"} out of this note to keep it short; ${where} every saved copy.`;
-  let budget = SAVED_NOTE_MAX - bytes(closing(Number.MAX_SAFE_INTEGER)) - sections.reduce((sum, section) => sum + bytes(section.header), 0);
+  const closing = (count: number) => `Prism left ${count} more saved ${count === 1 ? "file" : "files"} out of this note to keep it short; ${where} every saved copy.`;
+  let budget = SAVED_NOTE_MAX - bytes(closing(Number.MAX_SAFE_INTEGER)) - sections.reduce((sum: any, section: any) => sum + bytes(section.header), 0);
   const lines = [];
   let omitted = 0;
   for (const section of sections) {
@@ -1321,7 +1321,7 @@ async function savedFilesNote(sections) {
 // Its text holds at most ARTIFACT_MOVE_NOTE_MAX bytes: every section's header, which gives its count, always stays, list entries past that are left out from the end, and its last line counts them and names the ledger, which lists every move and kept file.
 // Every path it prints goes through shownPath, so no file name begins or ends a line of Prism's text.
 const ARTIFACT_MOVE_NOTE_MAX = 32 * 1024;
-function artifactMoveNote(move) {
+function artifactMoveNote(move: any) {
   const store = shownPath(move.store);
   if (move.unlisted) return `Git could not list this checkout's files, so Prism moved none of the files under its artifact paths into the record store at ${store}; they stay in the checkout until a later first access in a checkout that Git lists.`;
   if (move.operation) {
@@ -1330,30 +1330,30 @@ function artifactMoveNote(move) {
     return `Git has ${named} in progress in this checkout, so the checkout's descriptive files wait until it is finished or aborted before they move into the record store at ${store}: the work tree holds bytes that no commit holds yet and the operation's next commit would take every staged change, so Prism moved, removed, and recorded nothing, the files stay in the checkout, and each later tool call of this checkout looks again.`;
   }
   if (move.deferred) return `This checkout's descriptive files wait for a pull from the record store's remote before they move into the record store at ${store}: the store's sync could not complete the pull (sync state ${move.deferred.state}), so Prism moved, removed, and recorded nothing, the files stay in the checkout, and a later tool call of this checkout tries again.`;
-  const them = (count) => count === 1 ? "it" : "them";
+  const them = (count: number) => count === 1 ? "it" : "them";
   const sections = [];
   // Kept and untracked files come first, since each waits for a person, and a long move's list of moves is what the closing line leaves to the ledger.
-  if (move.kept.length) sections.push({ header: `Prism kept ${plural(move.kept.length, "tracked file")} under the artifact paths in the checkout, where ${move.kept.length === 1 ? "it stays" : "they stay"} until a person settles ${move.kept.length === 1 ? "it" : "each"}:`, entries: move.kept.map((item) => `- ${shownPath(item.path)} (${item.reason}): ${keptExplanation(item)}.`) });
+  if (move.kept.length) sections.push({ header: `Prism kept ${plural(move.kept.length, "tracked file")} under the artifact paths in the checkout, where ${move.kept.length === 1 ? "it stays" : "they stay"} until a person settles ${move.kept.length === 1 ? "it" : "each"}:`, entries: move.kept.map((item: any) => `- ${shownPath(item.path)} (${item.reason}): ${keptExplanation(item)}.`) });
   const passed = move.passed ?? [];
-  if (passed.length) sections.push({ header: `Git's index does not let Prism take ${plural(passed.length, "tracked file")} under the artifact paths, so ${passed.length === 1 ? "it stays" : "they stay"} in the checkout; a later session's move decides each once Git sees its changes again:`, entries: passed.map((item) => `- ${shownPath(item.path)} (${item.reason}): ${keptExplanation(item)}.`) });
-  if (move.untracked.length) sections.push({ header: `${plural(move.untracked.length, "file")} under the artifact paths ${move.untracked.length === 1 ? "is" : "are"} not tracked by Git, so ${move.untracked.length === 1 ? "it stays" : "they stay"} in the checkout and no ledger names ${them(move.untracked.length)}; a person commits such a file for a later first access to move it, or writes it into the store with update_artifact:`, entries: move.untracked.map((file) => `- ${shownPath(file)} (untracked)`) });
-  if (move.moved.length) sections.push({ header: `Prism moved ${plural(move.moved.length, "descriptive file")} of this checkout into the record store at ${store}, scope ${shownPath(move.repository)}, and removed ${them(move.moved.length)} from the checkout; read and change ${them(move.moved.length)} with get_artifact and update_artifact by the same paths, and commit the removal on its own, apart from the task's changes.`, entries: move.moved.map((item) => `- ${shownPath(item.from)} -> ${shownPath(`artifacts/${item.to}`)}`) });
+  if (passed.length) sections.push({ header: `Git's index does not let Prism take ${plural(passed.length, "tracked file")} under the artifact paths, so ${passed.length === 1 ? "it stays" : "they stay"} in the checkout; a later session's move decides each once Git sees its changes again:`, entries: passed.map((item: any) => `- ${shownPath(item.path)} (${item.reason}): ${keptExplanation(item)}.`) });
+  if (move.untracked.length) sections.push({ header: `${plural(move.untracked.length, "file")} under the artifact paths ${move.untracked.length === 1 ? "is" : "are"} not tracked by Git, so ${move.untracked.length === 1 ? "it stays" : "they stay"} in the checkout and no ledger names ${them(move.untracked.length)}; a person commits such a file for a later first access to move it, or writes it into the store with update_artifact:`, entries: move.untracked.map((file: string) => `- ${shownPath(file)} (untracked)`) });
+  if (move.moved.length) sections.push({ header: `Prism moved ${plural(move.moved.length, "descriptive file")} of this checkout into the record store at ${store}, scope ${shownPath(move.repository)}, and removed ${them(move.moved.length)} from the checkout; read and change ${them(move.moved.length)} with get_artifact and update_artifact by the same paths, and commit the removal on its own, apart from the task's changes.`, entries: move.moved.map((item: any) => `- ${shownPath(item.from)} -> ${shownPath(`artifacts/${item.to}`)}`) });
   const earlier = move.earlier ?? [];
-  if (earlier.length) sections.push({ header: `Prism moved ${plural(earlier.length, "descriptive file")} of this checkout into the record store at ${store}, scope ${shownPath(move.repository)}, earlier and removed ${them(earlier.length)} from the checkout, and Git's index still lists ${them(earlier.length)}; read and change ${them(earlier.length)} with get_artifact and update_artifact by the same paths, and commit the removal on its own, apart from the task's changes, since each later session reports ${them(earlier.length)} again until a person stages or commits the removal.`, entries: earlier.map((item) => `- ${shownPath(item.from)} -> ${shownPath(`artifacts/${item.to}`)}`) });
+  if (earlier.length) sections.push({ header: `Prism moved ${plural(earlier.length, "descriptive file")} of this checkout into the record store at ${store}, scope ${shownPath(move.repository)}, earlier and removed ${them(earlier.length)} from the checkout, and Git's index still lists ${them(earlier.length)}; read and change ${them(earlier.length)} with get_artifact and update_artifact by the same paths, and commit the removal on its own, apart from the task's changes, since each later session reports ${them(earlier.length)} again until a person stages or commits the removal.`, entries: earlier.map((item: any) => `- ${shownPath(item.from)} -> ${shownPath(`artifacts/${item.to}`)}`) });
   const fixed = move.ignored ? [`${plural(move.ignored, "ignored file")} under the artifact paths ${move.ignored === 1 ? "stays" : "stay"} in the checkout: Git ignores ${them(move.ignored)}, so Prism neither moves nor names ${them(move.ignored)}.`] : [];
   if (move.references.length) {
     const total = move.references.length + move.moreReferences;
-    const entries = move.references.map((item) => `- ${shownPath(item.file)}:${item.lines.join(",")}${item.more ? ` and ${item.more} more ${item.more === 1 ? "line" : "lines"}` : ""}`);
+    const entries = move.references.map((item: any) => `- ${shownPath(item.file)}:${item.lines.join(",")}${item.more ? ` and ${item.more} more ${item.more === 1 ? "line" : "lines"}` : ""}`);
     if (move.moreReferences) entries.push(`- and ${plural(move.moreReferences, "more file")}`);
     sections.push({ header: `${plural(total, "tracked file")} in the checkout still ${total === 1 ? "names" : "name"} the former path of a file moved now or earlier, or a configured folder that lost files, by line; the configured paths stay the artifacts' addresses, so update only text that tells readers to open these files in the checkout:`, entries });
   }
   if (!sections.length && !fixed.length) return null;
   // A long move writes its ledger as several files, and the closing line names each, which together list every move and kept file.
-  const ledgers = (Array.isArray(move.ledger) ? move.ledger : move.ledger ? [move.ledger] : []).map((name) => shownPath(`${ARTIFACT_MIGRATIONS}/${name}`));
+  const ledgers = (Array.isArray(move.ledger) ? move.ledger : move.ledger ? [move.ledger] : []).map((name: string) => shownPath(`${ARTIFACT_MIGRATIONS}/${name}`));
   const ledger = ledgers.length === 1 ? ` and the ledger ${ledgers[0]} in the record store at ${store} lists every move and kept file`
     : ledgers.length ? ` and the ledger files ${ledgers.slice(0, -1).join(", ")} and ${ledgers.at(-1)} in the record store at ${store} together list every move and kept file` : "";
-  const closing = (count) => `Prism left ${count} more ${count === 1 ? "entry" : "entries"} out of this report to keep it short${ledger}.`;
-  const bytes = (line) => Buffer.byteLength(line, "utf8") + 1;
+  const closing = (count: number) => `Prism left ${count} more ${count === 1 ? "entry" : "entries"} out of this report to keep it short${ledger}.`;
+  const bytes = (line: string) => Buffer.byteLength(line, "utf8") + 1;
   // Room for the closing line, which names the ledger and counts what was left out, and for every header and fixed line, which say what moved and what stayed and how many.
   let budget = ARTIFACT_MOVE_NOTE_MAX - bytes(closing(Number.MAX_SAFE_INTEGER)) - [...fixed, ...sections.map((section) => section.header)].reduce((sum, line) => sum + bytes(line), 0);
   const lines = [...fixed];
@@ -1374,7 +1374,7 @@ function artifactMoveNote(move) {
 // A saved version stays pending until a tool result carries it, so a server that stopped before naming it leaves it to the next one.
 // Returns the result with the notes, and what to do once it was written or was not: a written result confirms the saved versions it names, and one never written leaves them for the next result.
 // proceed() says whether the result is still to be written, such as while the host has not cancelled the call.
-async function withRecordNotes(value, argumentsValue, call, proceed = () => true) {
+async function withRecordNotes(value: any, argumentsValue: any, call: any, proceed = () => true) {
   const none = { value, written: async () => {}, unwritten: () => {} };
   if (!Array.isArray(value?.content)) return none;
   // The other notes are taken first, so the move's removals come as close as they can before the result is written.
@@ -1402,25 +1402,25 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
   const sections = [];
   // The local removals and moves that a sync undid come first, since each is a deliberate change of this machine that the store no longer shows.
   if (removals.length) {
-    sections.push({ header: `Store sync undid this machine's removal of ${plural(removals.length, "artifact")}, because another machine edited ${removals.length === 1 ? "its" : "their"} text, as approving a file does, before this machine's removal reached the store; the store holds ${removals.length === 1 ? "it" : "them"} again with the other machine's changes. Read each one again with get_artifact and remove it again with update_artifact if the removal still matters.`, items: removals, line: async (item) => `- ${await savedArtifactWhere(item.store, item.undoneRemoval, argumentsValue)}` });
+    sections.push({ header: `Store sync undid this machine's removal of ${plural(removals.length, "artifact")}, because another machine edited ${removals.length === 1 ? "its" : "their"} text, as approving a file does, before this machine's removal reached the store; the store holds ${removals.length === 1 ? "it" : "them"} again with the other machine's changes. Read each one again with get_artifact and remove it again with update_artifact if the removal still matters.`, items: removals, line: async (item: any) => `- ${await savedArtifactWhere(item.store, item.undoneRemoval, argumentsValue)}` });
   }
   if (fileRemovals.length) {
     const them = fileRemovals.length === 1 ? "it" : "them";
-    sections.push({ header: `Store sync undid this machine's removal of ${plural(fileRemovals.length, "store file")} at the store's root, such as its README, because another machine changed ${them} before this machine's removal reached the store; the store holds ${them} again with the other machine's version. Remove ${them} from the store again if the removal still matters.`, items: fileRemovals, line: async (item) => `- ${item.undoneFile} in the record store at ${item.store}` });
+    sections.push({ header: `Store sync undid this machine's removal of ${plural(fileRemovals.length, "store file")} at the store's root, such as its README, because another machine changed ${them} before this machine's removal reached the store; the store holds ${them} again with the other machine's version. Remove ${them} from the store again if the removal still matters.`, items: fileRemovals, line: async (item: any) => `- ${item.undoneFile} in the record store at ${item.store}` });
   }
   if (recordRemovals.length) {
     const them = recordRemovals.length === 1 ? "it" : "them";
-    sections.push({ header: `Store sync undid this machine's removal of ${plural(recordRemovals.length, "record")}, because another machine changed ${them} before this machine's removal reached the store; the store holds ${them} again with the other machine's version. Read each record again, and redo the removal if it still matters.`, items: recordRemovals, line: async (item) => `- ${item.undoneRecord} in the record store at ${item.store}` });
+    sections.push({ header: `Store sync undid this machine's removal of ${plural(recordRemovals.length, "record")}, because another machine changed ${them} before this machine's removal reached the store; the store holds ${them} again with the other machine's version. Read each record again, and redo the removal if it still matters.`, items: recordRemovals, line: async (item: any) => `- ${item.undoneRecord} in the record store at ${item.store}` });
   }
   if (moves.length) {
-    sections.push({ header: `Store sync undid this machine's move of ${plural(moves.length, "artifact")} to another scope, because another machine moved ${moves.length === 1 ? "it" : "them"} elsewhere, or kept its own file at the path this machine moved ${moves.length === 1 ? "it" : "them"} to, before this machine's move reached the store; the store keeps each in the first scope named below, with this machine's other changes to it. Read each one again with get_artifact and move it again with move_scope if the move still matters.`, items: moves, line: (item) => undoneMoveLine(item, argumentsValue) });
+    sections.push({ header: `Store sync undid this machine's move of ${plural(moves.length, "artifact")} to another scope, because another machine moved ${moves.length === 1 ? "it" : "them"} elsewhere, or kept its own file at the path this machine moved ${moves.length === 1 ? "it" : "them"} to, before this machine's move reached the store; the store keeps each in the first scope named below, with this machine's other changes to it. Read each one again with get_artifact and move it again with move_scope if the move still matters.`, items: moves, line: (item: any) => undoneMoveLine(item, argumentsValue) });
   }
   if (theirs.length) {
-    sections.push({ header: `Store sync saved ${plural(theirs.length, "change")} that another machine made to an artifact that this machine had removed, which left the file's text as it was, such as a comment or an approval asked; this machine's removal stands, so the store holds no such artifact, or holds the file that this machine wrote or moved to its path, and saved ${theirs.length === 1 ? "that change" : "those changes"} beside the store. Tell the person, and redo what still matters on an artifact the store holds.`, items: theirs, line: async (item) => `- ${item.location ? await savedArtifactWhere(item.store, item.location, argumentsValue) + ` (the other machine's version: ${item.savedAs})` : await savedDerivedLine(item, argumentsValue)}` });
+    sections.push({ header: `Store sync saved ${plural(theirs.length, "change")} that another machine made to an artifact that this machine had removed, which left the file's text as it was, such as a comment or an approval asked; this machine's removal stands, so the store holds no such artifact, or holds the file that this machine wrote or moved to its path, and saved ${theirs.length === 1 ? "that change" : "those changes"} beside the store. Tell the person, and redo what still matters on an artifact the store holds.`, items: theirs, line: async (item: any) => `- ${item.location ? await savedArtifactWhere(item.store, item.location, argumentsValue) + ` (the other machine's version: ${item.savedAs})` : await savedDerivedLine(item, argumentsValue)}` });
   }
   if (tooLong.length) {
     const one = tooLong.length === 1;
-    const line = async (item) => {
+    const line = async (item: any) => {
       const whose = item.theirs ? "the other machine's version" : "this machine's version";
       if (item.location) return `- ${await savedArtifactWhere(item.store, item.tooLongAt, argumentsValue)} (${whose}: ${item.savedAs})`;
       return `- ${await savedDerivedLine(item, argumentsValue, item.tooLongAt, whose)}`;
@@ -1428,14 +1428,14 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
     sections.push({ header: `Store sync saved ${plural(tooLong.length, "file")}, such as a comment or a status record, that one machine changed on an artifact while the other machine moved the artifact, because ${one ? "its path" : "their paths"} at the artifact's new location would hold a name of more than ${STORE_NAME_BYTES_MAX} bytes or more than ${STORE_PATH_BYTES_MAX} bytes in all, too long for a store to share; the store keeps the artifact at the new location named below without ${one ? "that file" : "those files"}, and saved ${one ? "it" : "them"} beside the store. Tell the person, and redo what still matters on the artifact there, after moving it to a shorter location if the change needs a file of its own.`, items: tooLong, line });
   }
   if (saved.length) {
-    sections.push({ header: `Store sync found ${plural(saved.length, "record")} that someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each record again and redo the change through Prism's tools if it still matters.`, items: saved, line: async (item) => `- ${item.record} (this machine's version: ${item.savedAs})` });
+    sections.push({ header: `Store sync found ${plural(saved.length, "record")} that someone else changed before this machine's change was pushed; the store kept their version and saved this machine's version. Read each record again and redo the change through Prism's tools if it still matters.`, items: saved, line: async (item: any) => `- ${item.record} (this machine's version: ${item.savedAs})` });
   }
   if (artifacts.length) {
-    sections.push({ header: `Store sync found ${plural(artifacts.length, "artifact")} that this machine changed while another machine changed the same lines, or removed the file and wrote or moved another one to its path; the store kept the other machine's version and saved this machine's version. Read each artifact again with get_artifact and redo the change with update_artifact if it still matters.`, items: artifacts, line: (item) => savedArtifactLine(item, argumentsValue) });
+    sections.push({ header: `Store sync found ${plural(artifacts.length, "artifact")} that this machine changed while another machine changed the same lines, or removed the file and wrote or moved another one to its path; the store kept the other machine's version and saved this machine's version. Read each artifact again with get_artifact and redo the change with update_artifact if it still matters.`, items: artifacts, line: (item: any) => savedArtifactLine(item, argumentsValue) });
   }
   if (overBound.length) {
     const one = overBound.length === 1;
-    const line = async (item) => {
+    const line = async (item: any) => {
       const copy = `this machine's copy: ${item.savedAs}`;
       if (item.location) return `- ${await savedArtifactWhere(item.store, item.location, argumentsValue)} (${copy})`;
       if (item.statusOf) return `- ${await savedArtifactWhere(item.store, item.statusOf, argumentsValue)}, its status record (${copy})`;
@@ -1446,22 +1446,22 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
   }
   const records = derived.filter((entry) => entry.kept).map((entry) => entry.item);
   if (records.length) {
-    sections.push({ header: `Store sync found ${plural(records.length, "status record")} of an artifact that this machine changed while another machine changed the same record, or removed the artifact and wrote or moved another one to its path; the store kept the other machine's record and saved this machine's. Read each artifact again with get_artifact, and ask its approval again with ask_approval if this machine's answer still matters for the file the store now holds.`, items: records, line: async (item) => `- ${await savedDerivedLine(item, argumentsValue)}` });
+    sections.push({ header: `Store sync found ${plural(records.length, "status record")} of an artifact that this machine changed while another machine changed the same record, or removed the artifact and wrote or moved another one to its path; the store kept the other machine's record and saved this machine's. Read each artifact again with get_artifact, and ask its approval again with ask_approval if this machine's answer still matters for the file the store now holds.`, items: records, line: async (item: any) => `- ${await savedDerivedLine(item, argumentsValue)}` });
   }
   if (surplus.length) {
-    sections.push({ header: `Store sync saved ${plural(surplus.length, "comment")} that this machine made on a file that already holds the ${COMMENTS_PER_ARTIFACT_MAX} comments that a file may hold, because other machines' comments on it reached the store first; the store keeps the file and those comments, and saved ${surplus.length === 1 ? "this comment" : "these comments"} beside the store, where no page shows ${surplus.length === 1 ? "it" : "them"}. Tell the person what ${surplus.length === 1 ? "it says" : "they say"}, since the file takes no further comment.`, items: surplus, line: async (item) => `- ${await savedDerivedLine(item, argumentsValue)}` });
+    sections.push({ header: `Store sync saved ${plural(surplus.length, "comment")} that this machine made on a file that already holds the ${COMMENTS_PER_ARTIFACT_MAX} comments that a file may hold, because other machines' comments on it reached the store first; the store keeps the file and those comments, and saved ${surplus.length === 1 ? "this comment" : "these comments"} beside the store, where no page shows ${surplus.length === 1 ? "it" : "them"}. Tell the person what ${surplus.length === 1 ? "it says" : "they say"}, since the file takes no further comment.`, items: surplus, line: async (item: any) => `- ${await savedDerivedLine(item, argumentsValue)}` });
   }
   const stranded = derived.filter((entry) => !entry.kept).map((entry) => entry.item);
   if (stranded.length) {
     const counted = [[stranded.filter((item) => item.statusOf).length, "status record"], [stranded.filter((item) => item.commentOn).length, "comment"]].filter(([count]) => count).map(([count, noun]) => plural(count, noun)).join(" and ");
-    sections.push({ header: `Store sync took ${counted} out of the store because the store no longer holds the artifact ${stranded.length === 1 ? "it was" : "they were"} made on, as when one machine changed an artifact while another removed it, also when that machine then wrote another file at its path, and saved ${stranded.length === 1 ? "it" : "them"} beside the store. Tell the person, and redo what still matters on an artifact the store holds.`, items: stranded, line: async (item) => `- ${await savedDerivedLine(item, argumentsValue)}` });
+    sections.push({ header: `Store sync took ${counted} out of the store because the store no longer holds the artifact ${stranded.length === 1 ? "it was" : "they were"} made on, as when one machine changed an artifact while another removed it, also when that machine then wrote another file at its path, and saved ${stranded.length === 1 ? "it" : "them"} beside the store. Tell the person, and redo what still matters on an artifact the store holds.`, items: stranded, line: async (item: any) => `- ${await savedDerivedLine(item, argumentsValue)}` });
   }
   if (bothChanged.length) {
     const them = bothChanged.length === 1 ? "that file" : "those files";
-    sections.push({ header: `Store sync found ${plural(bothChanged.length, "store file")} at the store's root, such as its README, that this machine changed while another machine also changed ${them}; the store keeps the other machine's version, and this machine's copy is saved at the path named below. Fix the file from the saved copy if the change still matters.`, items: bothChanged, line: async (item) => `- ${item.file} in the record store at ${item.store} (this machine's copy: ${item.savedAs})` });
+    sections.push({ header: `Store sync found ${plural(bothChanged.length, "store file")} at the store's root, such as its README, that this machine changed while another machine also changed ${them}; the store keeps the other machine's version, and this machine's copy is saved at the path named below. Fix the file from the saved copy if the change still matters.`, items: bothChanged, line: async (item: any) => `- ${item.file} in the record store at ${item.store} (this machine's copy: ${item.savedAs})` });
   }
   if (files.length) {
-    sections.push({ header: `Store sync took the upstream's version of ${plural(files.length, "store file")} whose local version this machine's sync had withheld, because another machine could not take it; the store kept the upstream's version and saved this machine's version. Fix the file from the saved copy if the change still matters.`, items: files, line: async (item) => `- ${item.file} in the record store at ${item.store} (this machine's version: ${item.savedAs})` });
+    sections.push({ header: `Store sync took the upstream's version of ${plural(files.length, "store file")} whose local version this machine's sync had withheld, because another machine could not take it; the store kept the upstream's version and saved this machine's version. Fix the file from the saved copy if the change still matters.`, items: files, line: async (item: any) => `- ${item.file} in the record store at ${item.store} (this machine's version: ${item.savedAs})` });
   }
   const conflictLines = await savedFilesNote(sections);
   // A decided move, the call's own or one that a refused, cancelled, or background call left, removes the checkout's files only here, right before a result of a tool call of the checkout is written,
@@ -1478,9 +1478,9 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
     const kept = report.store ? "the record store" : ".prism";
     if (report.moved.length) {
       const removal = report.store ? "commit their removal from the project" : "commit these moves";
-      lines.push(`Prism moved ${plural(report.moved.length, "record file")} into ${into}; ${removal} on its own, apart from the task's changes.`, ...report.moved.map((move) => move.from === move.to ? `- ${move.from}` : `- ${move.from} -> ${move.to}`));
+      lines.push(`Prism moved ${plural(report.moved.length, "record file")} into ${into}; ${removal} on its own, apart from the task's changes.`, ...report.moved.map((move: any) => move.from === move.to ? `- ${move.from}` : `- ${move.from} -> ${move.to}`));
     }
-    if (report.conflicts.length) lines.push(`${report.conflicts.length} old files were kept because ${kept} already holds a different record: ${report.conflicts.map((move) => move.from).join(", ")}.`);
+    if (report.conflicts.length) lines.push(`${report.conflicts.length} old files were kept because ${kept} already holds a different record: ${report.conflicts.map((move: any) => move.from).join(", ")}.`);
   }
   lines.push(...conflictLines);
   return {
@@ -1491,11 +1491,11 @@ async function withRecordNotes(value, argumentsValue, call, proceed = () => true
 }
 
 // A successful claim, or start of a slice, makes its agent the initiative's coordinator in the session.
-const coordinatingCall = (name, argumentsValue) => name === "update_initiative" && Array.isArray(argumentsValue?.operations)
-  && argumentsValue.operations.some((operation) => operation?.op === "claim" || (operation?.op === "set_status" && operation.status === "in-progress"));
+const coordinatingCall = (name: string, argumentsValue: any) => name === "update_initiative" && Array.isArray(argumentsValue?.operations)
+  && argumentsValue.operations.some((operation: any) => operation?.op === "claim" || (operation?.op === "set_status" && operation.status === "in-progress"));
 
 // A successful call that names an initiative tells the initiative's coordinator in the session, once, of the person's changes in the review app that the session has not been shown.
-async function withPersonChanges(name, argumentsValue, value) {
+async function withPersonChanges(name: string, argumentsValue: any, value: any) {
   if (typeof argumentsValue?.initiative !== "string" || !Array.isArray(value?.content) || value.structuredContent?.status === "cancelled") return value;
   let changes;
   try {
@@ -1512,7 +1512,7 @@ async function withPersonChanges(name, argumentsValue, value) {
 const SLICE_WORK_TOOLS = new Set(["verify_slice", "update_review", "update_change_map", "update_design_view"]);
 
 // An agent's tool call that works on slices is refused before it changes anything unless the caller holds the claim; the person's actions in the review app never come through here.
-async function requireCallClaims(name, argumentsValue) {
+async function requireCallClaims(name: string, argumentsValue: any) {
   if (typeof argumentsValue?.initiative !== "string") return;
   if (name === "update_initiative") {
     const projectRoot = await requestedProjectRoot(argumentsValue);
@@ -1527,7 +1527,7 @@ async function requireCallClaims(name, argumentsValue) {
   await requireClaimedWork({ projectRoot, initiative: argumentsValue.initiative, tool: name, work: [{ slug: argumentsValue.slice, own: true }] });
 }
 
-async function callTool(name, argumentsValue = {}, metadata, requestId) {
+async function callTool(name: string, argumentsValue: any = {}, metadata: any, requestId: any) {
   await requireCallClaims(name, argumentsValue);
   if (name === "wait_for_user_gate") {
     return callGateWait(argumentsValue, metadata, requestId);
@@ -1537,10 +1537,10 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
   }
   if (CONSERVATION_TOOLS.some(tool => tool.name === name)) {
     const projectRoot = await requestedProjectRoot(argumentsValue);
-    let value = await callConservationTool(name, { ...argumentsValue, projectRoot });
-    if (name === "get_review") value = { ...value, runTotals: await readReviewRunTotals(projectRoot, argumentsValue) };
+    let value: any = await callConservationTool(name, { ...argumentsValue, projectRoot });
+    if (name === "get_review") value = { ...value, runTotals: (await readReviewRunTotals(projectRoot, argumentsValue) as any) };
     const history = name === "get_review" && typeof argumentsValue.initiative === "string" ? await shippedHistory(projectRoot, argumentsValue.initiative) : null;
-    if (history) value = { ...value, shippedHistory: history };
+    if (history) value = { ...value, shippedHistory: (history as any) };
     return { content: [{ type: "text", text: JSON.stringify(value) }, ...await historyMarksContent(projectRoot, history)], structuredContent: value };
   }
   if (name === "update_design_view") {
@@ -1566,7 +1566,7 @@ async function callTool(name, argumentsValue = {}, metadata, requestId) {
     if (name === "get_initiative") value = { ...value, runTotals: await readInitiativeRecordRunTotals(projectRoot, value.initiative, value) };
     value = await withRecordStore(projectRoot, value);
     const marks = name === "get_initiative" ? await historyMarksContent(projectRoot, value.shippedHistory)
-      : name === "get_roadmap" ? await Promise.all((value.markedHistory ?? []).map(async (item) => ({ type: "text", text: await historyMarksText(projectRoot, item.initiative, item.marked) })))
+      : name === "get_roadmap" ? await Promise.all((value.markedHistory ?? []).map(async (item: any) => ({ type: "text", text: await historyMarksText(projectRoot, item.initiative, item.marked) })))
       : [];
     return { content: [{ type: "text", text: JSON.stringify(value) }, ...marks], structuredContent: value };
   }
@@ -1623,7 +1623,7 @@ input.on("line", async (line) => {
   if (!line.trim()) {
     return;
   }
-  let request;
+  let request: any;
   try {
     request = JSON.parse(line);
     if (request.method === "initialize") {
@@ -1645,7 +1645,7 @@ input.on("line", async (line) => {
       callNames.set(request.id, name);
       const started = performance.now(), done = log.doing(`call:${request.id}`, String(name));
       const call = toolCallContext();
-      const value = await withToolCall(call, () => withCallSession(meta, async () => {
+      const value: any = await withToolCall(call, () => withCallSession(meta, async () => {
         const agent = await callAgent(meta).catch(() => undefined);
         // A claim records the session's main agent model only when the call is positively that agent's.
         const role = await callAgentRole(meta).catch(() => "unknown");
@@ -1692,7 +1692,7 @@ input.on("line", async (line) => {
 configureRecordSync({ watchPending: true, log });
 const CLOSE_GRACE_MS = 5000;
 let closing = false;
-async function stop(reason) {
+async function stop(reason: string) {
   if (closing) return;
   closing = true;
   handOffRecordSyncs();

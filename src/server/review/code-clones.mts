@@ -19,16 +19,16 @@ const SAVED = "code-content.json";
 const REGISTRATION_MAX_BYTES = 64 * 1024;
 const BRANCHES = "refs/heads/";
 
-const sha16 = (value) => createHash("sha256").update(value).digest("hex").slice(0, 16);
-const byText = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
-const exists = (target) => stat(target).then(() => true, () => false);
+const sha16 = (value: any) => createHash("sha256").update(value).digest("hex").slice(0, 16);
+const byText = (left: any, right: any) => (left < right ? -1 : left > right ? 1 : 0);
+const exists = (target: string) => stat(target).then(() => true, () => false);
 
 // Git's reason without any URL in it, so no answer of a code route names a Git host.
-const withoutUrls = (text) => text.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/gi, "the repository's remote").replace(/\b[^\s@'"/]+@[A-Za-z0-9.-]+:[^\s'"]+/g, "the repository's remote");
-const reasonOf = (result) => withoutUrls(gitReason(result.stderr || `git exited with code ${result.code}`));
+const withoutUrls = (text: string) => text.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/gi, "the repository's remote").replace(/\b[^\s@'"/]+@[A-Za-z0-9.-]+:[^\s'"]+/g, "the repository's remote");
+const reasonOf = (result: any) => withoutUrls(gitReason(result.stderr || `git exited with code ${result.code}`));
 
 // A folder below the repository's root as a code route names it, or null when it climbs out or is no plain relative path; "" is the root.
-export function codeFolder(value) {
+export function codeFolder(value: any) {
   const trimmed = String(value ?? "").replace(/^\/+|\/+$/g, "");
   if (trimmed === "") return "";
   if (/[\\\0]/.test(trimmed)) return null;
@@ -36,7 +36,7 @@ export function codeFolder(value) {
 }
 
 /** The registered remotes of each repository of a store folder, by name: the remotes its registration lists, in order, or none when it lists none or cannot be read. */
-export async function registeredRemotes(folder) {
+export async function registeredRemotes(folder: string) {
   const remotes = new Map();
   if (!folder) return remotes;
   const names = await readdir(path.join(folder, REPOSITORIES)).catch(() => []);
@@ -48,7 +48,7 @@ export async function registeredRemotes(folder) {
       const target = path.join(folder, REPOSITORIES, file);
       if ((await stat(target)).size <= REGISTRATION_MAX_BYTES) {
         const parsed = parseStoreJson(await readFile(target, "utf8"));
-        if (Array.isArray(parsed?.remotes)) listed = parsed.remotes.filter((remote) => typeof remote === "string" && remote);
+        if (Array.isArray(parsed?.remotes)) listed = parsed.remotes.filter((remote: any) => typeof remote === "string" && remote);
       }
     } catch { /* An unreadable registration lists no remote. */ }
     remotes.set(name, listed);
@@ -65,10 +65,10 @@ const NO_PROMPT_CONFIG = ["-c", "core.askPass=", "-c", "credential.interactive=f
 
 // One Git command in a clone, with the sanitized store environment and timeout, and never a password prompt.
 // A command that reads a blob may fetch it from the remote, so it says it connects, and its SSH command is the person's own in batch mode as a fetch's is.
-const git = (folder, args, { connects = false } = {}) => runGit(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV, connects });
+const git = (folder: string, args: string[], { connects = false }: any = {}) => runGit(folder, [...NO_PROMPT_CONFIG, ...args], { env: NO_PROMPT_ENV, connects });
 
 // The branches of a clone, { name, commit } sorted by name.
-async function branchesOf(folder) {
+async function branchesOf(folder: string) {
   const listed = await git(folder, ["for-each-ref", "--format=%(refname)%00%(objectname)", BRANCHES]);
   if (!listed.ok) return [];
   return listed.text.split("\n").filter(Boolean).map((line) => {
@@ -78,7 +78,7 @@ async function branchesOf(folder) {
 }
 
 // The entries of a tree-ish below a folder, read from trees alone: { path, type, blob } for each blob or tree directly in it.
-async function treeEntries(folder, commit, below, { recursive = false } = {}) {
+async function treeEntries(folder: string, commit: string, below: any, { recursive = false }: any = {}) {
   const listed = await git(folder, ["ls-tree", "-z", ...(recursive ? ["-r"] : []), commit, ...(below ? ["--", `${below}/`] : [])]);
   if (!listed.ok) return [];
   return listed.stdout.toString("utf8").split("\0").filter(Boolean).flatMap((line) => {
@@ -90,7 +90,7 @@ async function treeEntries(folder, commit, below, { recursive = false } = {}) {
 }
 
 // The blob of a path at a commit, read from trees alone, or null when the commit holds no file there.
-async function blobAt(folder, commit, file) {
+async function blobAt(folder: string, commit: string, file: any) {
   const listed = await git(folder, ["ls-tree", "-z", commit, "--", file]);
   if (!listed.ok) return null;
   const line = listed.stdout.toString("utf8").split("\0").find((item) => item.slice(item.indexOf("\t") + 1) === file);
@@ -100,7 +100,7 @@ async function blobAt(folder, commit, file) {
 }
 
 // A blob's bytes, which a blobless clone fetches from its remote now, or null when it is over the size limit or cannot be read.
-async function blobBytes(folder, blob) {
+async function blobBytes(folder: string, blob: any) {
   const size = await git(folder, ["cat-file", "-s", blob], { connects: true });
   if (!size.ok || Number(size.text) > SOURCE_SIZE_LIMIT) return null;
   const read = await git(folder, ["cat-file", "blob", blob], { connects: true });
@@ -111,21 +111,21 @@ async function blobBytes(folder, blob) {
  * The code content of one app folder: which repositories of which workspace have it on, each one's clone, and what the clones answer.
  * Every change and fetch of one clone runs one at a time, and the set of repositories with code content on is saved in the app folder after each change.
  */
-export async function createCodeClones({ directory }) {
+export async function createCodeClones({ directory }: { directory: string }) {
   const codeDirectory = path.join(directory, CODE);
   const savedFile = path.join(directory, SAVED);
   // Each entry is { workspace, repository, remote, clone, state, message, fetchedAt }, with clone the folder name below code/ and state on or unreachable.
-  let entries = [];
+  let entries: any[] = [];
   try {
     const parsed = parseStoreJson(await readFile(savedFile, "utf8"));
     if (Array.isArray(parsed?.repositories)) {
-      entries = parsed.repositories.filter((entry) => entry && typeof entry.workspace === "string" && typeof entry.repository === "string" && typeof entry.remote === "string" && /^[0-9a-f]{16}\.git$/.test(entry.clone ?? ""))
-        .map(({ workspace, repository, remote, clone, state, message, fetchedAt }) => ({ workspace, repository, remote, clone, state: state === "unreachable" ? "unreachable" : "on", message: typeof message === "string" ? message : null, fetchedAt: typeof fetchedAt === "string" ? fetchedAt : null }));
+      entries = parsed.repositories.filter((entry: any) => entry && typeof entry.workspace === "string" && typeof entry.repository === "string" && typeof entry.remote === "string" && /^[0-9a-f]{16}\.git$/.test(entry.clone ?? ""))
+        .map(({ workspace, repository, remote, clone, state, message, fetchedAt }: { workspace: any; repository: string; remote: any; clone: any; state: any; message: any; fetchedAt: any }) => ({ workspace, repository, remote, clone, state: state === "unreachable" ? "unreachable" : "on", message: typeof message === "string" ? message : null, fetchedAt: typeof fetchedAt === "string" ? fetchedAt : null }));
     }
   } catch { /* No saved code content yet. */ }
 
   const queues = new Map();
-  const serial = (key, action) => {
+  const serial = (key: any, action: any) => {
     const run = (queues.get(key) ?? Promise.resolve()).then(action);
     queues.set(key, run.catch(() => {}));
     return run;
@@ -138,7 +138,7 @@ export async function createCodeClones({ directory }) {
   };
   // The commits that the branches of a clone hold, by clone folder and branch tips, so a page that asks about many commits lists the history once.
   const heldCommits = new Map();
-  async function commitsOf(folder) {
+  async function commitsOf(folder: string) {
     const tips = (await branchesOf(folder)).map((branch) => branch.commit).join(" ");
     const cached = heldCommits.get(folder);
     if (cached?.tips === tips) return cached.commits;
@@ -148,14 +148,14 @@ export async function createCodeClones({ directory }) {
     heldCommits.set(folder, { tips, commits });
     return commits;
   }
-  const isCommit = (value) => typeof value === "string" && /^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(value);
-  const entryOf = (workspace, repository) => entries.find((entry) => entry.workspace === workspace && entry.repository === repository) ?? null;
-  const folderOf = (entry) => path.join(codeDirectory, entry.clone);
+  const isCommit = (value: any) => typeof value === "string" && /^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(value);
+  const entryOf = (workspace: any, repository: string) => entries.find((entry) => entry.workspace === workspace && entry.repository === repository) ?? null;
+  const folderOf = (entry: any) => path.join(codeDirectory, entry.clone);
   // Reads of the default branch's files, by clone folder and commit, so a link check lists a commit's tree once.
   const defaultFiles = new Map();
 
   // Clone the remote into a temporary sibling that is renamed into place, so code/ never holds a partial clone, and a failed clone leaves no folder.
-  async function cloneInto(entry) {
+  async function cloneInto(entry: any) {
     await mkdir(codeDirectory, { recursive: true, mode: 0o700 });
     const temporary = path.join(codeDirectory, `.${entry.clone}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
     try {
@@ -173,7 +173,7 @@ export async function createCodeClones({ directory }) {
   }
 
   // Fetch every branch of the remote, removing branches that left it, and point HEAD at the branch that the remote's HEAD names now.
-  async function fetchInto(entry) {
+  async function fetchInto(entry: any) {
     const folder = folderOf(entry);
     const fetched = await git(folder, ["-c", "transfer.fsckObjects=true", "fetch", "--quiet", "--prune", "--no-tags", "origin"]);
     if (!fetched.ok) return { ok: false, message: reasonOf(fetched) };
@@ -184,7 +184,7 @@ export async function createCodeClones({ directory }) {
   }
 
   // Bring one repository's clone up to date, cloning it when it is not there yet, and record whether its remote could be reached.
-  function refresh(entry) {
+  function refresh(entry: any) {
     return serial(entry.clone, async () => {
       const cloned = await exists(folderOf(entry));
       const outcome = cloned ? await fetchInto(entry) : await cloneInto(entry);
@@ -198,7 +198,7 @@ export async function createCodeClones({ directory }) {
   }
 
   // Drop a repository's entry, and its clone once no other entry uses the same remote.
-  async function forget(entry) {
+  async function forget(entry: any) {
     entries = entries.filter((item) => item !== entry);
     await save();
     if (entries.some((item) => item.clone === entry.clone)) return;
@@ -208,7 +208,7 @@ export async function createCodeClones({ directory }) {
   }
 
   // A repository's code state: off, on with its branches, or unreachable with Git's reason and the branches of the clone it fetched last, none when it never cloned.
-  async function stateOf(entry) {
+  async function stateOf(entry: any) {
     if (!entry) return { state: "off" };
     const branches = await exists(folderOf(entry)) ? await branchesOf(folderOf(entry)) : [];
     if (entry.state === "unreachable") return { state: "unreachable", message: entry.message, branches, fetchedAt: entry.fetchedAt };
@@ -216,14 +216,14 @@ export async function createCodeClones({ directory }) {
   }
 
   // The folder of a repository's clone while its code content is on and the clone exists, else null.
-  async function cloneOf(workspace, repository) {
+  async function cloneOf(workspace: any, repository: string) {
     const entry = entryOf(workspace, repository);
     return entry && await exists(folderOf(entry)) ? folderOf(entry) : null;
   }
 
   return {
     /** Turn a repository's code content on with the remote its registration lists first, clone or fetch it, and answer its code state. */
-    async enable(workspace, repository, remote) {
+    async enable(workspace: any, repository: string, remote: any) {
       const identity = await storeIdentity(remote);
       if (!identity || identity.startsWith("file:")) throw Object.assign(new Error(`The repository ${repository} registers no network remote, so Prism cannot keep a clone of its code.`), { status: 409, code: "no_remote" });
       const clone = `${sha16(identity)}.git`;
@@ -242,7 +242,7 @@ export async function createCodeClones({ directory }) {
     },
 
     /** Turn a repository's code content off and delete its clone, unless another workspace's repository still has the same remote's code on. */
-    async disable(workspace, repository) {
+    async disable(workspace: any, repository: string) {
       await serial(SAVED, async () => {
         const entry = entryOf(workspace, repository);
         if (entry) await forget(entry);
@@ -251,22 +251,22 @@ export async function createCodeClones({ directory }) {
     },
 
     /** Turn code content off for every repository of a workspace, as disable does for each. */
-    async disableWorkspace(workspace) {
+    async disableWorkspace(workspace: any) {
       await serial(SAVED, async () => {
         for (const entry of entries.filter((item) => item.workspace === workspace)) await forget(entry);
       });
     },
 
     /** The code state of a repository of a workspace. */
-    state: (workspace, repository) => stateOf(entryOf(workspace, repository)),
+    state: (workspace: any, repository: string) => stateOf(entryOf(workspace, repository)),
 
     /** Fetch every repository of a workspace whose code content is on. */
-    async fetchAll(workspace) {
+    async fetchAll(workspace: any) {
       await Promise.all(entries.filter((entry) => entry.workspace === workspace).map((entry) => refresh(entry)));
     },
 
     /** The entries of a folder on every branch: { path, type, branches } sorted by path, branches { branch, blob } sorted by branch; null without a clone. */
-    async tree(workspace, repository, folder) {
+    async tree(workspace: any, repository: string, folder: string) {
       const base = await cloneOf(workspace, repository);
       if (!base) return null;
       const byPath = new Map();
@@ -285,7 +285,7 @@ export async function createCodeClones({ directory }) {
      * { repository, branch, commit, path, blob, withheld } with withheld binary or too_large for a file it holds but does not show,
      * and null for no clone, an unknown branch or commit, a path the commit does not hold as a file, or a secret.
      */
-    async file(workspace, repository, { branch = null, commit = null, path: file }) {
+    async file(workspace: any, repository: string, { branch = null, commit = null, path: file }: { branch?: string | null; commit?: string | null; path: any }) {
       const base = await cloneOf(workspace, repository);
       if (!base || typeof file !== "string" || codeFolder(file) === null || codeFolder(file) === "" || secretPath(file)) return null;
       const branches = await branchesOf(base);
@@ -313,7 +313,7 @@ export async function createCodeClones({ directory }) {
      * { base, branches: [{ branch, changes: [{ path, change: "added" | "modified" | "deleted" }] }] } with base the branch named, or else the branch the remote's HEAD names,
      * or null without a clone or with no such branch.
      */
-    async compare(workspace, repository, base = null) {
+    async compare(workspace: any, repository: string, base = null) {
       const folder = await cloneOf(workspace, repository);
       if (!folder) return null;
       const branches = await branchesOf(folder);
@@ -321,7 +321,7 @@ export async function createCodeClones({ directory }) {
       const named = base ?? (head.ok && head.text.trim().startsWith(BRANCHES) ? head.text.trim().slice(BRANCHES.length) : branches[0]?.name ?? null);
       const from = branches.find((branch) => branch.name === named);
       if (!from) return null;
-      const CHANGES = { A: "added", M: "modified", D: "deleted", T: "modified" };
+      const CHANGES: Record<string, any> = { A: "added", M: "modified", D: "deleted", T: "modified" };
       const compared = [];
       for (const branch of branches) {
         if (branch.name === from.name) continue;
@@ -338,7 +338,7 @@ export async function createCodeClones({ directory }) {
     },
 
     /** Whether a branch of the repository's clone holds a commit: true or false, or null without a clone. */
-    async reachable(workspace, repository, commit) {
+    async reachable(workspace: any, repository: string, commit: string) {
       const base = await cloneOf(workspace, repository);
       if (!base) return null;
       return isCommit(commit) && (await commitsOf(base)).has(commit);
@@ -348,15 +348,15 @@ export async function createCodeClones({ directory }) {
      * The blob of each path at a commit that a branch of the clone holds, read from trees alone: a Map of path to blob, null where the commit holds no file there,
      * or null without a clone or for a commit that no branch holds.
      */
-    async blobs(workspace, repository, commit, paths) {
+    async blobs(workspace: any, repository: string, commit: string, paths: string[]) {
       const base = await cloneOf(workspace, repository);
       if (!base || !isCommit(commit) || !(await commitsOf(base)).has(commit)) return null;
       const files = new Map((await treeEntries(base, commit, "", { recursive: true })).filter((entry) => entry.type === "file").map((entry) => [entry.path, entry.blob]));
-      return new Map(paths.map((file) => [file, files.get(file) ?? null]));
+      return new Map(paths.map((file: string) => [file, files.get(file) ?? null]));
     },
 
     /** A file read from the clone at the remote's default branch, as file reads one, or null where file answers null. */
-    async defaultFile(workspace, repository, file) {
+    async defaultFile(workspace: any, repository: string, file: string) {
       const base = await cloneOf(workspace, repository);
       if (!base) return null;
       const head = await git(base, ["symbolic-ref", "--quiet", "HEAD"]);
@@ -365,7 +365,7 @@ export async function createCodeClones({ directory }) {
     },
 
     /** The files of the remote's default branch that a link may open, as a Set of paths without secrets, or null without a clone or a default branch. */
-    async defaultFiles(workspace, repository) {
+    async defaultFiles(workspace: any, repository: string) {
       const base = await cloneOf(workspace, repository);
       if (!base) return null;
       const head = await git(base, ["symbolic-ref", "--quiet", "HEAD"]);
@@ -381,7 +381,7 @@ export async function createCodeClones({ directory }) {
     },
 
     /** The components each branch's .prism/workflow.md declares: { components, problems }, or null without a clone. */
-    async components(workspace, repository) {
+    async components(workspace: any, repository: string) {
       const base = await cloneOf(workspace, repository);
       if (!base) return null;
       const found = new Map();

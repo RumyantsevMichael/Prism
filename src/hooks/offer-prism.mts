@@ -13,7 +13,7 @@ const MAX_HOOK_INPUT_BYTES = 4 * 1024 * 1024;
 const NEW_CONVERSATION = new Set(["startup", "clear"]);
 const MAX_INITIATIVES_NAMED = 5;
 
-async function readHookInput(input) {
+async function readHookInput(input: any) {
   const chunks = [];
   let size = 0;
   for await (const chunk of input) {
@@ -27,12 +27,12 @@ async function readHookInput(input) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-const nonempty = (value) => (typeof value === "string" && value.trim() ? value.trim() : null);
+const nonempty = (value: any) => (typeof value === "string" && value.trim() ? value.trim() : null);
 
 const WHEN = "when the person's first request asks for code that adds or changes behavior their requirements, ADRs, or feature files describe, or should describe";
 const SKIP = "Do not ask when the request is a question about the code, a change no requirement or ADR covers (a color, a typo, a rename), or already names a Prism skill, and never ask twice in this conversation; when unsure, ask, because a needless offer costs one answer";
 
-export function offerText({ configured, initiatives }) {
+export function offerText({ configured, initiatives }: { configured: any; initiatives: any }) {
   if (!configured) {
     return `Prism is installed but not set up in this project. ${WHEN[0].toUpperCase()}${WHEN.slice(1)}, ask once whether to set Prism up for it, and on yes load the prism:setup skill, then continue with the request. ${SKIP}.`;
   }
@@ -44,14 +44,14 @@ export function offerText({ configured, initiatives }) {
   return lines.join("\n");
 }
 
-async function isCodexSubagent(hookInput, environment, projectRoot) {
+async function isCodexSubagent(hookInput: any, environment: NodeJS.ProcessEnv, projectRoot: string) {
   if (Object.hasOwn(hookInput, "subagent")) return true;
   if (!nonempty(environment.CODEX_VERSION) && !nonempty(hookInput.turn_id)) return false;
-  const metadata = await inspectCodexTranscriptMetadata({ transcriptPath: hookInput.transcript_path, sessionId: hookInput.session_id, projectRoot }).catch(() => null);
+  const metadata: any = await inspectCodexTranscriptMetadata({ transcriptPath: hookInput.transcript_path, sessionId: hookInput.session_id, projectRoot }).catch(() => null);
   return metadata?.execution === "subagent";
 }
 
-export async function offerPrism({ input = process.stdin, environment = process.env } = {}) {
+export async function offerPrism({ input = process.stdin, environment = process.env }: any = {}) {
   const hookInput = JSON.parse(await readHookInput(input));
   if (hookInput.hook_event_name !== "SessionStart" || !NEW_CONVERSATION.has(hookInput.source)) return null;
   if (nonempty(hookInput.agent_id)) return null;

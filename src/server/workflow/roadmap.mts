@@ -459,7 +459,7 @@ async function deriveItem(projectRoot: string, config: any, item: any, ship: any
     return await withOpenWork(projectRoot, item, result) ?? result;
   }
   if (!loaded.valid) {
-    const result = { derived: { ...base, state: "planned", diagnostics: loaded.errors.map((message) => ({ code: "invalid_initiative", message })) }, blocker: leaves };
+    const result = { derived: { ...base, state: "planned", diagnostics: loaded.errors.map((message: any) => ({ code: "invalid_initiative", message })) }, blocker: leaves };
     return await withOpenWork(projectRoot, item, result) ?? result;
   }
   const analysis = loaded.analysis!;
@@ -472,7 +472,7 @@ async function deriveItem(projectRoot: string, config: any, item: any, ship: any
   } catch (error) {
     base.diagnostics.push({ code: error.code ?? "state_unreadable", message: error.message });
   }
-  const started = analysis.leaves.some((slug) => analysis.slices[slug].status !== "not-started") || active.length > 0;
+  const started = analysis.leaves.some((slug: string) => analysis.slices[slug].status !== "not-started") || active.length > 0;
   const derived: Record<string, any> = { ...base, state: started ? "in-progress" : "planned", readyToShip: analysis.complete[analysis.root] === true, progress, active, root: analysis.root };
   if (state) {
     // With a record store, a ship waits on a correctness gate, so the newest pending one leaves the initiative ready to ship with that gate as afterGate.

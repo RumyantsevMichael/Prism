@@ -4,12 +4,12 @@ import { listLaunches } from "../session/launched-sessions.mjs";
 import { loadHeldClaims, loadRoadmapView } from "./workspace-model.mjs";
 
 const GROUPS = ["needs-you", "launched", "other", "expired"];
-const time = (value) => Date.parse(value ?? "") || 0;
+const time = (value: any) => Date.parse(value ?? "") || 0;
 
-const launchAction = (state) => (state === "waiting" ? "answer" : state === "running" ? "stop" : "open");
-const launchGroup = (state) => (state === "failed" || state === "waiting" ? "needs-you" : "launched");
+const launchAction = (state: any) => (state === "waiting" ? "answer" : state === "running" ? "stop" : "open");
+const launchGroup = (state: any) => (state === "failed" || state === "waiting" ? "needs-you" : "launched");
 
-function launchEntry(launch, title, claim) {
+function launchEntry(launch: any, title: string, claim: any) {
   return {
     id: `launch:${launch.id}`,
     kind: "launch",
@@ -28,7 +28,7 @@ function launchEntry(launch, title, claim) {
   };
 }
 
-function claimEntry(claim, expired) {
+function claimEntry(claim: any, expired: any) {
   return {
     id: `claim:${claim.initiative}/${claim.slug}`,
     kind: "claim",
@@ -48,7 +48,7 @@ function claimEntry(claim, expired) {
 }
 
 // Within needs-you, failed before waiting; launches the latest launched first; live claims the one that lapses first first; expired ones the latest to lapse first.
-function order(left, right) {
+function order(left: any, right: any) {
   const group = GROUPS.indexOf(left.group) - GROUPS.indexOf(right.group);
   if (group) return group;
   if (left.group === "needs-you" && left.state !== right.state) return left.state === "failed" ? -1 : right.state === "failed" ? 1 : 0;
@@ -58,19 +58,19 @@ function order(left, right) {
 }
 
 /** `{ agents, counts }` for the checkout: a launch holds every claim of its initiative whose holder is the launch's holder. */
-export async function listAgents({ projectRoot, env = process.env, now = Date.now() }) {
+export async function listAgents({ projectRoot, env = process.env, now = Date.now() }: { projectRoot: string; env?: NodeJS.ProcessEnv; now?: number }) {
   const [{ launches }, { claims }, roadmap] = await Promise.all([
     listLaunches({ projectRoot, env, now }),
     loadHeldClaims(projectRoot).catch(() => ({ claims: [] })),
     loadRoadmapView(projectRoot).catch(() => ({ items: [] }))
   ]);
-  const titles = new Map((roadmap.items ?? []).map((item) => [item.id, item.title ?? item.id]));
+  const titles = new Map((roadmap.items ?? []).map((item: any) => [item.id, item.title ?? item.id]));
   for (const claim of claims) if (!titles.has(claim.initiative)) titles.set(claim.initiative, claim.initiativeTitle);
-  const lapsed = (claim) => claim.expired || time(claim.expiresAt) <= now;
-  const holds = (launch, claim) => typeof launch.holder === "string" && claim.holder === launch.holder && claim.initiative === launch.initiative;
-  const agents = [];
+  const lapsed = (claim: any) => claim.expired || time(claim.expiresAt) <= now;
+  const holds = (launch: any, claim: any) => typeof launch.holder === "string" && claim.holder === launch.holder && claim.initiative === launch.initiative;
+  const agents: any[] = [];
   for (const launch of launches) {
-    const live = claims.find((claim) => holds(launch, claim) && !lapsed(claim)) ?? null;
+    const live = claims.find((claim: any) => holds(launch, claim) && !lapsed(claim)) ?? null;
     agents.push(launchEntry(launch, titles.get(launch.initiative) ?? launch.initiative, live));
   }
   for (const claim of claims) {
@@ -78,16 +78,16 @@ export async function listAgents({ projectRoot, env = process.env, now = Date.no
     agents.push(claimEntry(claim, lapsed(claim)));
   }
   agents.sort(order);
-  const count = (accept) => agents.filter(accept).length;
+  const count = (accept: any) => agents.filter(accept).length;
   const counts = {
     all: agents.length,
-    needsYou: count((agent) => agent.group === "needs-you"),
-    failed: count((agent) => agent.kind === "launch" && agent.state === "failed"),
-    waiting: count((agent) => agent.kind === "launch" && agent.state === "waiting"),
-    thisComputer: count((agent) => agent.kind === "launch"),
-    other: count((agent) => agent.group === "other"),
-    expired: count((agent) => agent.group === "expired"),
-    working: count((agent) => (agent.kind === "launch" ? agent.state === "running" || agent.state === "waiting" : agent.group === "other"))
+    needsYou: count((agent: any) => agent.group === "needs-you"),
+    failed: count((agent: any) => agent.kind === "launch" && agent.state === "failed"),
+    waiting: count((agent: any) => agent.kind === "launch" && agent.state === "waiting"),
+    thisComputer: count((agent: any) => agent.kind === "launch"),
+    other: count((agent: any) => agent.group === "other"),
+    expired: count((agent: any) => agent.group === "expired"),
+    working: count((agent: any) => (agent.kind === "launch" ? agent.state === "running" || agent.state === "waiting" : agent.group === "other"))
   };
   return { agents, counts };
 }

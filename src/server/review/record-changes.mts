@@ -15,8 +15,8 @@ export const UNAVAILABLE = Object.freeze({
 // Git's messages are read in English whatever the locale.
 // Git takes no optional lock, so a status read never rewrites the index or makes the person's own `git add` find it locked.
 // A failure keeps Git's exit code, which is a number only when Git ran to its end, and its message, so a command that was killed or overflowed reads as Git not running.
-function git(root, args) {
-  return new Promise((resolve) => {
+function git(root: string, args: string[]) {
+  return new Promise<any>((resolve) => {
     execFile("git", ["-c", "core.quotePath=false", ...args], { cwd: root, env: { ...process.env, LC_ALL: "C", LANGUAGE: "C", GIT_OPTIONAL_LOCKS: "0" }, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_BUFFER, encoding: "utf8", windowsHide: true }, (error, stdout, stderr) => {
       resolve(error ? { ok: false, code: error.killed || typeof error.code !== "number" ? null : error.code, stderr: String(stderr ?? ""), stdout: "" } : { ok: true, stdout });
     });
@@ -24,11 +24,11 @@ function git(root, args) {
 }
 
 // Git says a folder is outside every repository with exit code 128 and this message; any other failure means Git could not answer.
-const notRepository = (result) => result.code === 128 && /not a git repository/i.test(result.stderr);
+const notRepository = (result: any) => result.code === 128 && /not a git repository/i.test(result.stderr);
 // `rev-parse --verify --quiet HEAD` exits 1 without a message when the repository has no commit yet.
-const noCommit = (result) => result.code === 1 && !result.stderr.trim();
+const noCommit = (result: any) => result.code === 1 && !result.stderr.trim();
 
-const unavailable = (reason, records) => ({ available: false, reason, records: [], undated: records.map(({ kind, title, ref }) => ({ kind, title, ref })) });
+const unavailable = (reason: string, records: any) => ({ available: false, reason, records: [], undated: records.map(({ kind, title, ref }: { kind: any; title: string; ref: any }) => ({ kind, title, ref })) });
 
 /**
  * The record files changed in the last 7 days: those Git reports modified, added, or untracked first, marked uncommitted,
@@ -37,15 +37,15 @@ const unavailable = (reason, records) => ({ available: false, reason, records: [
  * A merge commit counts with what it changed against its first parent.
  * Without Git, a repository, or a commit, nothing is dated and every record file is listed as undated.
  */
-export async function recordChanges(projectRoot, records, pathspecs, { now = Date.now() } = {}) {
+export async function recordChanges(projectRoot: string, records: any, pathspecs: any, { now = Date.now() }: any = {}) {
   const top = await git(projectRoot, ["rev-parse", "--show-prefix"]);
   if (!top.ok) return unavailable(notRepository(top) ? UNAVAILABLE.notRepository : UNAVAILABLE.noGit, records);
   const head = await git(projectRoot, ["rev-parse", "--verify", "--quiet", "HEAD"]);
   if (!head.ok) return unavailable(noCommit(head) ? UNAVAILABLE.noCommits : UNAVAILABLE.noGit, records);
   // Git names files from the repository's top, so a project inside a larger repository drops its own folder from each name.
   const prefix = top.stdout.trim();
-  const local = (name) => prefix && name.startsWith(prefix) ? name.slice(prefix.length) : prefix ? null : name;
-  const byRef = new Map(records.map((record) => [record.ref, record]));
+  const local = (name: string) => prefix && name.startsWith(prefix) ? name.slice(prefix.length) : prefix ? null : name;
+  const byRef = new Map<any, any>(records.map((record: any) => [record.ref, record]));
   const specs = pathspecs.filter(Boolean);
   if (!specs.length || !byRef.size) return { available: true, reason: null, records: [], undated: [] };
   const status = await git(projectRoot, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...specs]);
@@ -76,9 +76,9 @@ export async function recordChanges(projectRoot, records, pathspecs, { now = Dat
       committed.set(ref, { at: Number.isFinite(at) ? new Date(at).toISOString() : null, author: author?.trim() || null });
     }
   }
-  const entry = (ref, change) => ({ kind: byRef.get(ref).kind, title: byRef.get(ref).title, ref, at: change.at, author: change.author, uncommitted: change.uncommitted });
+  const entry = (ref: any, change: any) => ({ kind: byRef.get(ref).kind, title: byRef.get(ref).title, ref, at: change.at, author: change.author, uncommitted: change.uncommitted });
   const listed = [
-    ...records.filter((record) => uncommitted.has(record.ref)).map((record) => entry(record.ref, { at: null, author: null, uncommitted: true })),
+    ...records.filter((record: any) => uncommitted.has(record.ref)).map((record: any) => entry(record.ref, { at: null, author: null, uncommitted: true })),
     ...[...committed.entries()].map(([ref, change]) => entry(ref, { ...change, uncommitted: false })).sort((left, right) => (Date.parse(right.at ?? "") || 0) - (Date.parse(left.at ?? "") || 0))
   ];
   return { available: true, reason: null, records: listed, undated: [] };

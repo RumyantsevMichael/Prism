@@ -48,7 +48,8 @@ test("a running build publishes its current step beside the index and removes it
   }
   assert.equal(seen.state, "preparing");
   assert.deepEqual(seen.progress, { phase: "embedding", current: 8, total: 32 });
-  release(); await preparing; await runtime.status(root, 1000);
+  // The wait ends as soon as the build has published its index, and a slow disk can take longer than a second to do so.
+  release(); await preparing; await runtime.status(root, 30000);
   const ready = await status(root, cache);
   assert.equal(ready.state, "ready");
   assert.equal(ready.stale, false);

@@ -13,7 +13,7 @@ const MARKER_FOLDER = "orchestrator-executions";
 // A marker older than this belongs to a session that ended without a SessionEnd event.
 const MARKER_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 
-async function readHookInput(input) {
+async function readHookInput(input: any) {
   const chunks = [];
   let size = 0;
   for await (const chunk of input) {
@@ -27,11 +27,11 @@ async function readHookInput(input) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-const nonempty = (value) => (typeof value === "string" && value.trim() ? value : null);
+const nonempty = (value: any) => (typeof value === "string" && value.trim() ? value : null);
 
 // A Prism skill name as the host writes it, such as `prism:design`, reduced to `design`; a project-local or other
 // plugin's skill of the same name is null, so the hook never refuses it.
-export function prismSkill(name) {
+export function prismSkill(name: string) {
   const value = nonempty(name)?.trim().replace(/^\//, "");
   if (!value) return null;
   const match = /^prism:([a-z][a-z0-9-]*)$/.exec(value);
@@ -39,12 +39,12 @@ export function prismSkill(name) {
 }
 
 // A slash command typed as the prompt, such as `/prism:orchestrate reports`, names the skill the person invoked.
-export function promptSkill(prompt) {
+export function promptSkill(prompt: any) {
   const match = /^\s*\/prism:([a-z][a-z0-9-]*)(?:\s|$)/.exec(typeof prompt === "string" ? prompt : "");
   return match ? match[1] : null;
 }
 
-function markerPath(dataDirectory, hookInput) {
+function markerPath(dataDirectory: any, hookInput: any) {
   const sessionId = nonempty(hookInput.session_id);
   if (!sessionId) return null;
   const execution = nonempty(hookInput.agent_id) ? `agent:${hookInput.agent_id}` : "root";
@@ -52,7 +52,7 @@ function markerPath(dataDirectory, hookInput) {
   return path.join(dataDirectory, MARKER_FOLDER, digest);
 }
 
-async function isOrchestrating(marker) {
+async function isOrchestrating(marker: any) {
   try {
     return Date.now() - (await stat(marker)).mtimeMs < MARKER_LIFETIME_MS;
   } catch {
@@ -60,12 +60,12 @@ async function isOrchestrating(marker) {
   }
 }
 
-async function markOrchestrating(marker) {
+async function markOrchestrating(marker: any) {
   await mkdir(path.dirname(marker), { recursive: true });
   await writeFile(marker, "");
 }
 
-const deny = (skill) => ({
+const deny = (skill: any) => ({
   hookSpecificOutput: {
     hookEventName: "PreToolUse",
     permissionDecision: "deny",
@@ -73,7 +73,7 @@ const deny = (skill) => ({
   }
 });
 
-export async function keepOrchestratorRole({ input = process.stdin, environment = process.env } = {}) {
+export async function keepOrchestratorRole({ input = process.stdin, environment = process.env }: any = {}) {
   const hookInput = JSON.parse(await readHookInput(input));
   const dataDirectory = nonempty(environment.PLUGIN_DATA) || nonempty(environment.CLAUDE_PLUGIN_DATA);
   if (!dataDirectory) return null;
@@ -93,7 +93,7 @@ export async function keepOrchestratorRole({ input = process.stdin, environment 
     const skill = promptSkill(hookInput.prompt);
     // The person may switch roles by invoking a skill themselves; that invocation never passes through the tool.
     if (skill === ORCHESTRATE) await markOrchestrating(marker);
-    else if (CHILD_SKILLS.has(skill)) await rm(marker, { force: true });
+    else if (CHILD_SKILLS.has((skill as any))) await rm(marker, { force: true });
     return null;
   }
   if (event !== "PreToolUse" || hookInput.tool_name !== "Skill") return null;
@@ -102,7 +102,7 @@ export async function keepOrchestratorRole({ input = process.stdin, environment 
     await markOrchestrating(marker);
     return null;
   }
-  if (CHILD_SKILLS.has(skill) && await isOrchestrating(marker)) return deny(skill);
+  if (CHILD_SKILLS.has((skill as any)) && await isOrchestrating(marker)) return deny(skill);
   return null;
 }
 

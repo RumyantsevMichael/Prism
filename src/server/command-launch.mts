@@ -5,7 +5,7 @@ import path from "node:path";
 // Node finds only executables on PATH and Windows starts a shim only through cmd.exe, so on Windows the command is looked up on PATH with PATHEXT:
 // an executable starts directly by its full path, a shim through the shell with each word quoted, and a command found nowhere starts as named, so its spawn fails with ENOENT.
 // Windows paths cannot contain a double quote.
-export function commandLaunch(command, args, platform = process.platform, environment = process.env) {
+export function commandLaunch(command: string, args: string[], platform = process.platform, environment = process.env) {
   if (platform !== "win32") return { command, args, shell: false };
   const found = windowsCommand(command, environment);
   if (!found) return { command, args, shell: false };
@@ -13,8 +13,8 @@ export function commandLaunch(command, args, platform = process.platform, enviro
   return { command: `"${found}"`, args: args.map((value) => `"${value}"`), shell: true };
 }
 
-function windowsCommand(command, environment) {
-  const value = (name) => Object.entries(environment).find(([key]) => key.toUpperCase() === name)?.[1] ?? "";
+function windowsCommand(command: string, environment: NodeJS.ProcessEnv) {
+  const value = (name: string) => Object.entries<any>(environment).find(([key]) => key.toUpperCase() === name)?.[1] ?? "";
   const extensions = path.extname(command) ? [""] : (value("PATHEXT") || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
   const folders = /[\\/]/.test(command) ? [""] : value("PATH").split(";").filter(Boolean);
   for (const folder of folders) {
@@ -26,6 +26,6 @@ function windowsCommand(command, environment) {
   return null;
 }
 
-function isFile(candidate) {
+function isFile(candidate: any) {
   try { return statSync(candidate).isFile(); } catch { return false; }
 }

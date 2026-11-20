@@ -9,7 +9,9 @@ const GIT_TIMEOUT_MS = 10000;
 const SLICE_PATTERN = /^([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)$/;
 
 export class TouchedError extends Error {
-  constructor(code, message, status) {
+  declare code: any;
+  declare status: any;
+  constructor(code: any, message: any, status: any) {
     super(message);
     this.code = code;
     this.status = status;
@@ -19,15 +21,15 @@ export class TouchedError extends Error {
 const WHY = Object.freeze({ linked: "Linked from the design", planned: "Planned by the design", verified: "Changed by the verified result" });
 
 // "Section 1" or "Sections 1, 2", and the same for clauses, in number order.
-function numbered(word, numbers) {
+function numbered(word: any, numbers: any) {
   const sorted = [...new Set(numbers)].sort((left, right) => Number(left) - Number(right) || String(left).localeCompare(String(right)));
   return `${sorted.length === 1 ? word : `${word}s`} ${sorted.join(", ")}`;
 }
 
-const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // A term occurs in a clause as a whole word, ignoring case, with any run of spaces between its words.
-function namesTerm(text, term) {
+function namesTerm(text: string, term: any) {
   const pattern = term.trim().split(/\s+/).map(escapeRegExp).join("\\s+");
   return pattern ? new RegExp(`(?<![\\p{L}\\p{N}_])${pattern}(?![\\p{L}\\p{N}_])`, "iu").test(text) : false;
 }
@@ -37,7 +39,7 @@ function namesTerm(text, term) {
  * as { files } with project-relative paths, { unreadable: true } when Git cannot read either, or null when the slice has no such pair.
  * Both trees come from records a cloned repository can carry, so a value that is not a Git object identifier counts as no pair and never reaches Git.
  */
-async function verifiedChanges(projectRoot, id, slug, slice) {
+async function verifiedChanges(projectRoot: string, id: string, slug: string, slice: any) {
   const start = slice?.design?.startTree;
   if (!treeId(start)) return null;
   const entries = await listRecordEntries(projectRoot, { kind: "runs", initiative: id, slice: slug }).catch(() => []);
@@ -53,7 +55,7 @@ async function verifiedChanges(projectRoot, id, slug, slice) {
  * Touched by my work for one slice, given as `<initiative>/<slug>`: what its contract cites, from the slice's design, and what the work changes,
  * planned by the design or changed by the verified result, each record with its kind, title, status, and why it is listed.
  */
-export async function touchedRecords(projectRoot, sliceId) {
+export async function touchedRecords(projectRoot: string, sliceId: any) {
   const match = SLICE_PATTERN.exec(String(sliceId ?? ""));
   if (!match) throw new TouchedError("invalid_slice", "Name the slice as <initiative>/<slug>.", 400);
   const [, id, slug] = match;
@@ -71,13 +73,13 @@ export async function touchedRecords(projectRoot, sliceId) {
   const designSource = designPath ? await readArtifactText(projectRoot, designPath).catch(() => null) : null;
 
   const group = () => new Map();
-  const add = (target, key, record, why) => {
+  const add = (target: any, key: any, record: any, why: any) => {
     const entry = target.get(key) ?? { kind: record.kind, title: record.title, status: record.status, ref: record.ref, why: [] };
     if (!entry.why.includes(why)) entry.why.push(why);
     target.set(key, entry);
   };
   // A record file of a kind the group lists; a path that names no record, such as code, is left out.
-  const recordAt = (ref, kinds) => {
+  const recordAt = (ref: any, kinds: any) => {
     const record = byRef.get(ref);
     return record && kinds.includes(record.kind) ? record : null;
   };
@@ -115,7 +117,7 @@ export async function touchedRecords(projectRoot, sliceId) {
     if (record) add(changes, file, record, WHY.verified);
   }
 
-  const listed = (target) => [...target.values()].map((entry) => ({ ...entry, status: entry.status ?? null }));
+  const listed = (target: any) => [...target.values()].map((entry) => ({ ...entry, status: entry.status ?? null }));
   return {
     initiative: { id, title },
     slice: { slug, title: slice.title },

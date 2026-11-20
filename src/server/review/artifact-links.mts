@@ -13,7 +13,7 @@ const FENCE = /^(`{3,}|~{3,})/;
 const NOT_RELATIVE = /^(?:[a-z][a-z0-9+.-]*:|\/|#)/i;
 
 // The path a link names without its anchor and query, decoded where it is percent-encoded, or null when nothing is left.
-function linkPath(href) {
+function linkPath(href: any) {
   const bare = href.split("#")[0].split("?")[0];
   if (!bare) return null;
   try { return decodeURIComponent(bare); }
@@ -21,15 +21,15 @@ function linkPath(href) {
 }
 
 // A path joined to a folder and normalized, or null when it climbs above the root.
-function joined(folder, target) {
+function joined(folder: string, target: string) {
   const normalized = path.posix.normalize(path.posix.join(folder, target));
   return normalized === "." || normalized === ".." || normalized.startsWith("../") ? null : normalized;
 }
 
 /** The relative Markdown links of a text in order, as { line, href }, with line counted from 1; links inside fenced code blocks and inline code are left out. */
-export function markdownLinks(content) {
-  const links = [];
-  let fence = null;
+export function markdownLinks(content: any) {
+  const links: any[] = [];
+  let fence: any = null;
   String(content ?? "").split(/\r?\n/).forEach((text, index) => {
     const marker = text.trim().match(FENCE);
     if (marker) {
@@ -45,18 +45,18 @@ export function markdownLinks(content) {
 }
 
 /** The project-relative path that a checkout configured by kinds gives a store artifact address, or null when it configures none for the kind or the path names another kind. */
-export function checkoutPathOf(kinds, { kind, rest }) {
+export function checkoutPathOf(kinds: any, { kind, rest }: { kind: any; rest: any }) {
   const file = artifactPathOf(kinds, kind, rest);
   if (file === null) return null;
   const address = artifactAddress(kinds, file);
-  return address?.kind === kind && address.rest === rest ? file : null;
+  return address?.kind === kind && address!.rest === rest ? file : null;
 }
 
 /** The code-repository ref of a file, code:<repository>:<path>. */
-export const codeRefOf = (repository, file) => `code:${repository}:${file}`;
+export const codeRefOf = (repository: string, file: string) => `code:${repository}:${file}`;
 
 /** The repository and path that a code-repository ref names, or null when it is no such ref. */
-export function parseCodeRef(ref) {
+export function parseCodeRef(ref: any) {
   const match = /^code:([^:/]+):(.+)$/.exec(typeof ref === "string" ? ref : "");
   return match ? { repository: match[1], path: match[2] } : null;
 }
@@ -70,7 +70,7 @@ export function parseCodeRef(ref) {
  * or, for a path the kinds give no artifact kind, to a code file: resolved when a checkout lists it or the clone holds it,
  * and otherwise resolved null with reason code_not_available when no checkout of the repository is registered.
  */
-export function resolveLinks({ content, location, kinds, has, repository = null, sources = null, cloned = null }) {
+export function resolveLinks({ content, location, kinds, has, repository = null, sources = null, cloned = null }: { content: any; location: any; kinds: any; has: any; repository?: string | null; sources?: any; cloned?: any }) {
   const artifact = locationArtifact(location);
   const own = artifact ? checkoutPathOf(kinds, artifact) : null;
   return markdownLinks(content).map(({ line, href }) => {
@@ -85,7 +85,7 @@ export function resolveLinks({ content, location, kinds, has, repository = null,
 }
 
 // What a link names: { store } with the store ref of an artifact, { code } with the checkout path of a file outside every artifact kind, or null.
-function resolveLink(href, { location, artifact, own, kinds, has }) {
+function resolveLink(href: any, { location, artifact, own, kinds, has }: { location: any; artifact: any; own: any; kinds: any; has: any }) {
   const wanted = linkPath(href);
   if (wanted === null) return null;
   const direct = joined(path.posix.dirname(location), wanted);
@@ -104,7 +104,7 @@ function resolveLink(href, { location, artifact, own, kinds, has }) {
 }
 
 // The project-relative targets of a Markdown document's links, resolved against the document's folder, without their anchors.
-export function relativeLinkTargets(source, documentPath) {
+export function relativeLinkTargets(source: any, documentPath: any) {
   const targets = [];
   for (const match of (source ?? "").matchAll(/!?\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g)) {
     const raw = match[1].split("#")[0];

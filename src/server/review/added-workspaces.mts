@@ -18,34 +18,36 @@ const CREDENTIALS = "Prism refused the address because it carries credentials. G
 
 /** A refusal of an add or a remove, with the HTTP status and code the review app answers. */
 export class WorkspaceError extends Error {
-  constructor(status, code, message) {
+  declare code: any;
+  declare status: any;
+  constructor(status: any, code: any, message: any) {
     super(withoutCredentials(message));
     this.status = status;
     this.code = code;
   }
 }
 
-const fail = (status, code, message) => new WorkspaceError(status, code, message);
-const exists = (target) => lstat(target).then(() => true, () => false);
-const plaintext = (identity) => /^(?:http|git):\/\//.test(identity);
+const fail = (status: any, code: any, message: any) => new WorkspaceError(status, code, message);
+const exists = (target: string) => lstat(target).then(() => true, () => false);
+const plaintext = (identity: string) => /^(?:http|git):\/\//.test(identity);
 // The managed clone folder of a network store identity: the first 16 hexadecimal characters of the SHA-256 of the identity.
-const storeFolderName = (identity) => createHash("sha256").update(identity).digest("hex").slice(0, 16);
+const storeFolderName = (identity: string) => createHash("sha256").update(identity).digest("hex").slice(0, 16);
 
 /** The added workspaces of an app folder, [{ identity, urls, addedAt }], or none while the file is missing or unreadable. */
-export async function readAddedWorkspaces(directory) {
+export async function readAddedWorkspaces(directory: string) {
   let parsed;
   try { parsed = parseStoreJson(await readFile(path.join(directory, FILE), "utf8")); } catch { return []; }
   const listed = Array.isArray(parsed?.workspaces) ? parsed.workspaces : [];
-  return listed.filter((entry) => typeof entry?.identity === "string" && Array.isArray(entry.urls) && entry.urls.every((url) => typeof url === "string"))
-    .map(({ identity, urls, addedAt }) => ({ identity, urls: storeAddresses(urls), addedAt: typeof addedAt === "string" ? addedAt : null }));
+  return listed.filter((entry: any) => typeof entry?.identity === "string" && Array.isArray(entry.urls) && entry.urls.every((url: string) => typeof url === "string"))
+    .map(({ identity, urls, addedAt }: { identity: string; urls: any; addedAt: any }) => ({ identity, urls: storeAddresses(urls), addedAt: typeof addedAt === "string" ? addedAt : null }));
 }
 
 /**
  * Store addresses fit to save or show, in their order: each credential is taken out, and an address that is then already listed, or still carries one, is dropped.
  * A checkout's Store value can carry a token, and the saved list and the workspace list must never repeat it.
  */
-export function storeAddresses(urls) {
-  const kept = [];
+export function storeAddresses(urls: any) {
+  const kept: any[] = [];
   for (const url of urls) {
     const address = addressWithoutCredentials(url);
     if (address !== null && !kept.includes(address)) kept.push(address);
@@ -53,24 +55,24 @@ export function storeAddresses(urls) {
   return kept;
 }
 
-async function writeAddedWorkspaces(directory, entries) {
-  const workspaces = entries.map(({ identity, urls, addedAt }) => ({ identity, urls, addedAt }));
+async function writeAddedWorkspaces(directory: string, entries: any) {
+  const workspaces = entries.map(({ identity, urls, addedAt }: { identity: string; urls: any; addedAt: any }) => ({ identity, urls, addedAt }));
   await writeAtomically(path.join(directory, FILE), `${JSON.stringify({ schemaVersion: SCHEMA_VERSION, workspaces }, null, 2)}\n`, { mode: 0o600 });
 }
 
 // The root commits of a clone's branch, which every clone of one repository shares; none for a clone without a commit.
-async function rootCommits(base) {
+async function rootCommits(base: string) {
   const roots = await runGit(base, ["rev-list", "--max-parents=0", "HEAD"]);
   return roots.ok ? new Set(roots.text.split("\n").filter(Boolean)) : new Set();
 }
 
 // A clone holds no commit while its HEAD names no commit.
-async function holdsNoCommit(base) {
+async function holdsNoCommit(base: string) {
   return !(await runGit(base, ["rev-parse", "--verify", "--quiet", "HEAD"])).ok;
 }
 
 // A folder store is the person's own folder, named by its absolute path or a file:// URL.
-async function folderStore(url) {
+async function folderStore(url: string) {
   const identity = await storeIdentity(url);
   if (!identity?.startsWith("file:")) return null;
   const folder = identity.slice("file:".length);
@@ -82,20 +84,20 @@ async function folderStore(url) {
  * The added workspaces of one app folder, read once and written after every change, with adds and removes one at a time.
  * add and remove answer { identity, merged } and { clone, message }; each refusal is a WorkspaceError.
  */
-export async function createAddedWorkspaces({ directory, storesDirectory = () => managedStoresDirectory() }) {
+export async function createAddedWorkspaces({ directory, storesDirectory = () => managedStoresDirectory() }: { directory: string; storesDirectory?: any }): Promise<any> {
   const entries = await readAddedWorkspaces(directory);
   let queue = Promise.resolve();
-  const serial = (action) => {
+  const serial = (action: any) => {
     const run = queue.then(action);
     queue = run.catch(() => {});
     return run;
   };
   const save = () => writeAddedWorkspaces(directory, entries);
-  const byIdentity = (identity) => entries.find((entry) => entry.identity === identity) ?? null;
-  const cloneFolder = (identity) => path.join(storesDirectory(), storeFolderName(identity));
+  const byIdentity = (identity: string) => entries.find((entry: any) => entry.identity === identity) ?? null;
+  const cloneFolder = (identity: string) => path.join(storesDirectory(), storeFolderName(identity));
 
   // The URLs the app already saw for the workspace, such as a registered checkout's, come before the added one, so the saved list keeps the order first seen across restarts.
-  async function remember(identity, url, seenUrls) {
+  async function remember(identity: string, url: string, seenUrls: any) {
     let entry = byIdentity(identity);
     if (!entry) entries.push(entry = { identity, urls: [], addedAt: new Date().toISOString() });
     entry.urls = storeAddresses([...entry.urls, ...seenUrls(identity), url]);
@@ -108,7 +110,7 @@ export async function createAddedWorkspaces({ directory, storesDirectory = () =>
    * so a newly cloned store whose root commit one of them shares joins that workspace instead.
    * seenUrls(identity) lists the URLs the app already saw for that store's workspace, in the order first seen.
    */
-  async function add(url, { confirmEmpty = false, keptStores = async () => [], seenUrls = () => [] } = {}) {
+  async function add(url: string, { confirmEmpty = false, keptStores = async () => [], seenUrls = () => [] }: any = {}) {
     // The address is checked before any Git command runs or any folder is made, so a credential in it reaches neither Git nor the disk.
     // A control character, such as a line break, belongs in no address and would only reach Git's arguments and the saved list.
     if (typeof url !== "string" || !url.trim() || url.length > URL_MAX || /[\u0000-\u001f\u007f]/.test(url.trim())) throw fail(400, "url_invalid", "Give the store's address: an HTTPS or SSH URL, a host:path address, or the absolute path of a folder.");
@@ -170,9 +172,9 @@ export async function createAddedWorkspaces({ directory, storesDirectory = () =>
    * Remove an added workspace by id. checkoutsNaming(identity) lists the checkouts on this machine that name its store, each as { path, url } with the URL it names the store by.
    * The clone is deleted only when none does, and it holds no commit its upstream lacks, no store file that differs from its commit, and no saved conflict copy.
    */
-  function remove(id, { checkoutsNaming = async () => [] } = {}) {
+  function remove(id: string, { checkoutsNaming = async () => [] }: any = {}) {
     return serial(async () => {
-      const index = entries.findIndex((entry) => storeWorkspaceId(entry.identity) === id);
+      const index = entries.findIndex((entry: any) => storeWorkspaceId(entry.identity) === id);
       if (index < 0) return null;
       const [entry] = entries.splice(index, 1);
       await save();
@@ -180,7 +182,7 @@ export async function createAddedWorkspaces({ directory, storesDirectory = () =>
     });
   }
 
-  async function settleClone(entry, checkouts) {
+  async function settleClone(entry: any, checkouts: any) {
     const label = remoteLabel(entry.urls[0]) ?? entry.identity;
     if (entry.identity.startsWith("file:")) return { clone: "kept", message: `The store is the folder ${entry.identity.slice("file:".length)}, which Prism never deletes.` };
     // The checkout is quoted with its own spelling of the store, which after a merge is not the spelling the workspace was added by.
@@ -209,15 +211,15 @@ export async function createAddedWorkspaces({ directory, storesDirectory = () =>
   }
 
   return {
-    list: () => entries.map((entry) => ({ ...entry, id: storeWorkspaceId(entry.identity), urls: [...entry.urls] })),
-    has: (id) => entries.some((entry) => storeWorkspaceId(entry.identity) === id),
+    list: () => entries.map((entry: any) => ({ ...entry, id: storeWorkspaceId(entry.identity), urls: [...entry.urls] })),
+    has: (id: string) => entries.some((entry: any) => storeWorkspaceId(entry.identity) === id),
     add,
     remove
   };
 }
 
 // Why a clone must stay, or null when deleting it loses nothing: it must be the top of a Git clone whose origin is this store, with nothing that its upstream lacks.
-async function keptReason(folder, identity) {
+async function keptReason(folder: string, identity: string) {
   let base;
   try { base = await realpath(folder); } catch { return "it cannot be resolved"; }
   const top = await runGit(base, ["rev-parse", "--show-toplevel"]);
