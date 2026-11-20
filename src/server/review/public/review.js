@@ -1197,8 +1197,9 @@ function requireApp() {
   return false;
 }
 
-// Settings, from the status bar's gear or Ctrl+,: sections down its start edge for the appearance, the layout, the record store, and About Prism.
+// Settings, from the status bar's gear or Ctrl+,: sections down its start edge for the appearance, the layout, the person's own settings, the record store, and About Prism.
 // Each choice applies at once and is kept as the person's preference, as the appearance menu's did.
+// The person's own settings live on this machine beside Prism's application data, so the section reads them again each time Settings opens.
 const settingsDialog = document.getElementById("settings-dialog");
 
 function startSettings() {
@@ -1236,6 +1237,9 @@ function startSettings() {
   });
   sidebarChoice.addEventListener("change", (event) => setSidebarCollapsed(event.detail?.value === "hidden"));
   document.getElementById("settings-sidebar-reset").addEventListener("click", () => setSidebarWidth(null, { remember: true }));
+  for (const choice of settingsDialog.querySelectorAll("prism-segmented[data-setting]")) {
+    choice.addEventListener("change", (event) => savePersonalSetting(choice.dataset.setting, event.detail?.value));
+  }
   document.getElementById("settings-store-open").addEventListener("click", () => {
     settingsDialog.close();
     document.getElementById("store-status").click();
@@ -1252,6 +1256,72 @@ function openSettings() {
   document.getElementById("settings-store-state").textContent = store.hidden ? "This workspace keeps no records yet." : (store.getAttribute("tip") ?? "").split("\n")[0];
   document.getElementById("settings-store-open").hidden = store.hidden;
   settingsDialog.show();
+  loadPersonalSettings();
+}
+
+const PERSONAL_SETTINGS_ROUTE = "./api/personal-settings";
+const PERSONAL_SOURCES = {
+  chosen: { label: "Your choice", tone: "accent" },
+  adopted: { label: "Adopted from a repository's configuration", tone: "info" },
+  repository: { label: "From this repository's configuration", tone: "neutral" },
+  default: { label: "Default", tone: "neutral" }
+};
+let personalSettings = null;
+let personalReads = 0;
+
+// Shows each setting at the value Prism uses, its source, and the warning when Prism cannot read the person's settings file.
+function showPersonalSettings(answer) {
+  personalSettings = answer;
+  for (const choice of settingsDialog.querySelectorAll("prism-segmented[data-setting]")) {
+    const value = answer?.settings?.[choice.dataset.setting];
+    if (typeof value === "string") choice.setAttribute("value", value);
+  }
+  for (const holder of settingsDialog.querySelectorAll(".settings-source[data-source]")) {
+    const source = PERSONAL_SOURCES[answer?.sources?.[holder.dataset.source]];
+    holder.hidden = !source;
+    if (!source) continue;
+    const badge = holder.querySelector("prism-badge");
+    badge.setAttribute("tone", source.tone);
+    badge.textContent = source.label;
+  }
+  document.getElementById("settings-personal-problem").hidden = !answer?.problem;
+}
+
+async function loadPersonalSettings() {
+  const read = ++personalReads;
+  try {
+    const answer = await fetchJson(PERSONAL_SETTINGS_ROUTE);
+    if (read === personalReads) showPersonalSettings(answer);
+  } catch {
+    // An unreachable review app keeps the values the section last showed.
+  }
+}
+
+// Saves one choice at once; a refusal names Prism's reason and checks the value Prism uses again.
+async function savePersonalSetting(name, value) {
+  if (!name || typeof value !== "string") return;
+  const read = ++personalReads;
+  let message = null;
+  try {
+    const response = await appFetch(PERSONAL_SETTINGS_ROUTE, { method: "PUT", headers: { "Content-Type": "application/json", ...writeHeaders() }, body: JSON.stringify({ [name]: value }) });
+    const text = await response.text();
+    let answer = null;
+    try {
+      answer = JSON.parse(text);
+    } catch {
+    }
+    if (response.ok && answer) {
+      if (read === personalReads) showPersonalSettings(answer);
+      showToast("Saved on this machine. This change reaches no one else.", { tone: "success" });
+      return;
+    }
+    message = answer?.message || text || `the review app answered ${response.status}.`;
+  } catch (error) {
+    message = error?.message || "the review app did not answer.";
+  }
+  showToast(`Prism could not save this change: ${message}`, { tone: "danger" });
+  if (personalSettings) showPersonalSettings(personalSettings);
+  await loadPersonalSettings();
 }
 
 function openCatalog() {

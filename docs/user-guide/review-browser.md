@@ -33,6 +33,11 @@ The **Settings** button, the gear at the start of the status bar, or Ctrl+, (Cmd
 **Appearance** offers the themes System, Light, and Dark and the densities Compact and Comfortable.
 A choice applies at once, and System follows the operating system again.
 **Layout** shows or hides the sidebar on windows wider than 1100 pixels and returns the sidebar to its default width.
+**Personal** shows your [personal settings](workflow.md#personal-settings), which stay on this machine and apply to every project and every host you run Prism in: **Questions** (Question tool or Numbered options), **Review browser** (Auto, Internal, or External), **Open at session start** (On or Off), and **Offer Prism** (Ask or Off).
+Each row shows the value Prism uses and where it comes from: **Your choice**, **Adopted from a repository's configuration**, **From this repository's configuration**, or **Default**.
+A choice saves at once on this machine, reaches no one else, and the row then says **Your choice**; agents see it the next time they read your settings.
+Settings reads your settings again each time it opens, so it shows a change an agent made meanwhile.
+When Prism cannot read `personal-settings.json` in its application folder, the section warns that it uses the repository's values and its defaults, and it refuses every change until you fix or remove the file, so nothing in it is overwritten.
 **Record store** says where the project's records live and opens the store's details.
 **About Prism** names the version of Prism that runs the review app, and **Open the catalog** opens the review app's component catalog in a new tab, which shows every control of the interface with its options, states, and keys.
 The catalog's own toolbar changes its theme, density, and width for that tab only, and stores nothing.
