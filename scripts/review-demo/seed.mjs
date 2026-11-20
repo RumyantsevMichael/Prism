@@ -178,9 +178,9 @@ try {
 }
 
 // Agents at work for the Agents page: claims of other sessions, live and expired, with the harness and model each records, written as a Prism server
-// writes them, and sessions launched on this computer whose runs have ended, so nothing in the demo runs or can be stopped.
+// writes them, and sessions launched on this computer whose runs have ended, one of them archived, so nothing in the demo runs or can be stopped.
 async function seedAgents(waitedGate) {
-  const { createLaunchFolder, prepareLaunchesDirectory, storeLocation, writeGateRecord, writeLaunchRecord } = await import("../../dist/server/session/launch-records.mjs");
+  const { createLaunchFolder, prepareLaunchesDirectory, storeLocation, writeArchiveMark, writeGateRecord, writeLaunchRecord } = await import("../../dist/server/session/launch-records.mjs");
   const env = { ...process.env, PRISM_REVIEW_APP_DIR: agentsFolder };
   const now = Date.now();
   const at = (minutes) => new Date(now + minutes * 60000).toISOString();
@@ -202,15 +202,19 @@ async function seedAgents(waitedGate) {
     startedAt: at(-minutesAgo - ran), heartbeatAt: at(-minutesAgo), outputAt: at(-minutesAgo), model, endedAt: at(-minutesAgo), exit,
     refusals: [], refusalCount: 0, hostError: null, stderr: null, stopGraceMs: 10000, stopRequestedAt: null, ...rest
   });
-  const launch = async (number, initiative, host, hostSessionId, run, gates = null) => {
+  const launch = async (number, initiative, host, hostSessionId, run, gates = null, archivedAt = null) => {
     const id = `launch-${createHash("sha256").update(`demo-${number}`).digest("hex").slice(0, 16)}`;
     const folder = await createLaunchFolder(env, id);
     await writeLaunchRecord(folder, { id, initiative, host, checkout: realRoot, store, createdAt: run.startedAt, hostSessionId, runs: [run] });
     if (gates) await writeGateRecord(folder, gates);
+    if (archivedAt) await writeArchiveMark(folder, { archivedAt, runs: 1 });
   };
   await launch(1, "search-indexing", "codex", "019a2f4e-5b1c-7d20-9e8f-3a4b5c6d7e8f", ended({ minutesAgo: 4, ran: 0.15, model: "gpt-5.5-codex", exit: { code: 1, signal: null }, hostError: "the model is not offered for this account." }));
   const waiting = "6b1f0c3e-2d4a-4e5b-8c7d-9e0f1a2b3c4d";
   await launch(2, "activity-reports", "claude-code", waiting, ended({ minutesAgo: 2, ran: 41, model: "claude-fable-5-2" }), waitedGate ? { marks: [{ gate: waitedGate, at: at(-2) }], answers: [] } : null);
   await claim("activity-reports", "authorize", { label: "Claude on this computer", host: "Claude Code", model: "claude-fable-5-2", activity: "design", minutesLeft: 26, holder: holderOf(waiting) });
   await launch(3, "retry-hardening", "claude-code", "a7c9e1f3-5b7d-4f9a-8c2e-4d6f8a0b2c4e", ended({ minutesAgo: 6, ran: 12, model: "claude-opus-5-5", refusals: [{ tool: "Bash", reason: "Denied by auto mode." }], refusalCount: 1 }));
+  await launch(4, "activity-reports", "claude-code", "c2e4a6b8-0d1f-4a3c-9e5b-7d9f1b3d5f70", ended({ minutesAgo: 35, ran: 26, model: "claude-opus-5-5" }));
+  await launch(5, "retry-hardening", "claude-code", "d3f5b7c9-1e2a-4b4d-8f6c-8e0a2c4e6a81", ended({ minutesAgo: 52, ran: 7.7, model: "claude-sonnet-5-5", exit: { code: null, signal: "SIGTERM" }, stopRequestedAt: at(-52) }));
+  await launch(6, "activity-reports", "claude-code", "e4a6c8d0-2f3b-4c5e-9a7d-9f1b3d5f7b92", ended({ minutesAgo: 60 * 49, ran: 54, model: "claude-fable-5-2" }), null, at(-60 * 48));
 }

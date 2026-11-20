@@ -301,7 +301,7 @@ A launched session holds the claims its own agent takes, so its slice shows in i
 **Launched from Prism** shows the **Needs you** and **Launched from Prism** groups, every launched session that is not archived, **Expired** shows every expired claim however long ago it expired, and **Archived** shows only the archived sessions.
 The addresses `agents:needs-you`, `agents:this-computer`, `agents:other`, `agents:expired`, and `agents:archived` open the page with that choice made.
 
-The table's columns are **Agent**, **Host · model**, **Working on**, **State**, and **Time**, and a last column holds a row's one action.
+The table's columns are **Agent**, **Host · model**, **Working on**, **State**, and **Time**, and a last column holds a row's actions.
 Its groups come in this order, each with the count of what the Show choice shows of it, and a group without agents is left out:
 
 | Group | What it lists |
@@ -318,11 +318,12 @@ A claim's name is the claim's label, such as `Dana on studio-mac`, which opens t
 **Working on** says `Ended <time> ago: <reason>` for a failed session, and otherwise the activity and the slice, such as `design · Retention policy`, or the session's reason.
 **Time** is how long a launched session has run, which counts every second while it runs, `<n> min left` for a live claim, and `expired <time> ago` for an expired one.
 A session that waits offers **Answer**, which opens Attention with the question it waits on selected and its answer form shown; a running session offers **Stop**; any other session offers **Open**, which unfolds its details under its row.
+A finished, failed, stopped, or blocked session that is not archived also offers **Archive** beside **Open**, and an archived one offers **Unarchive** there.
 A claim offers no action.
 
 The details hold the session's reason, the command that continues it in a terminal while no run runs and the host reported its session id, `claude --resume <session id>` or `codex resume <thread id>`, with the folder to run it in and **Copy**, which copies the command, and the session's own actions, such as **Resume**.
 The page reads the list again every 5 seconds and after each action you apply there, and moves a claim to **Claims that expired** once its lease passes.
-In a tab that cannot make changes the page says so, **Stop** stays unavailable, and the details offer no action, while **Answer** still opens the question.
+In a tab that cannot make changes the page says so, **Stop**, **Archive**, **Unarchive**, and **Archive all ended** stay unavailable with the tip `This tab can only read.`, and the details offer no action, while **Answer** still opens the question.
 With no agent and no launched session it says `No agent works on this workspace, and nothing was launched on this computer.`.
 
 A launched session's state is one of these:
@@ -337,6 +338,19 @@ A launched session's state is one of these:
 | Stopped | You stopped the last run. |
 
 A session whose supervisor ended without recording the run's end shows `Prism stopped supervising this session; its host process may still run.`.
+
+### Archive a session
+
+Archive a session that ended so that it stops asking for you: an archived failed session leaves **Needs you**, the agents menu, and the mark on the top bar's **Agents** button.
+**Archive** on a finished, failed, stopped, or blocked session's row archives it, and the row leaves its group and every count at once while the toast says `Archived. The Archived filter keeps it.`.
+When the session ran again before you pressed it, the row stays and the toast says why, such as `Only a finished, failed, stopped, or blocked session can be archived.`.
+**Archive all ended** beside **Show** archives every finished, failed, stopped, and blocked session at once, without asking, and the toast counts them, such as `Archived 3 sessions. The Archived filter keeps them.`.
+It shows while the Show choice includes **Needs you** or **Launched from Prism** and one of the sessions it shows can be archived.
+
+**Show** **Archived** lists the archived sessions, each with its state, **Open**, which unfolds its terminal command, **Copy**, and **Resume** as for any launched session, and **Unarchive**, which brings it back to its group with the toast `Unarchived.`.
+An archived session that runs or waits for you again leaves the archive by itself, and shows in its group and counts again by the next refresh.
+An archived session is removed 14 days after its last run ended, as any other launched session is, and until then keeps its record and its terminal command.
+Archiving is kept on this computer only, beside the session's record, so it changes nothing in the project, its records, or its history, and a teammate's page is not affected.
 
 ### Stop, resume, or continue a session
 

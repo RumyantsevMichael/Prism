@@ -237,7 +237,7 @@ A change to a screen that the UI kit mockup shows is done only when the rendered
 node scripts/review-demo/mockup-compare.mjs --out /tmp/mockup-compare
 ```
 
-It puts the demo app into the state of each mockup scene (Attention with a gate and Settings open, a slice with its diagram beside it, the command palette, the navigation drawer, and, beside the approved pictures of their mockups in `scripts/review-demo/mockups/agent-activity/`, the roadmap with the agents menu open, the closed phone top bar, and the Agents page) and writes one picture per scene, width, theme, and density, the mockup on the left and the app on the right, with an `index.html` that shows them in pairs.
+It puts the demo app into the state of each mockup scene (Attention with a gate and Settings open, a slice with its diagram beside it, the command palette, the navigation drawer, and, beside the approved pictures of their mockups, the closed phone top bar from `scripts/review-demo/mockups/agent-activity/` and, from the archive pictures in `scripts/review-demo/mockups/agent-session-archive/`, the roadmap with the agents menu open, the Agents page, and the Agents page showing Archived with one session's details open) and writes one picture per scene, width, theme, and density, the mockup on the left and the app on the right, with an `index.html` that shows them in pairs.
 `--scenes`, `--widths`, `--themes`, and `--densities` narrow the run.
 Read every pair: the layout check finds broken layouts, but only this comparison shows a screen that works and still looks nothing like the design.
 Differences that come from the demo's data, or from mockup content that is deliberately out of scope, are expected; name them in the pull request.
