@@ -28,6 +28,8 @@ test("clause 10: migrate-artifact carries out one run that Prism started, throug
   assert.match(migrate, /recommendation/i);
   assert.match(migrate, /answer/i, "it applies the person's answers when the run holds them");
   for (const removed of ["`apply_migration`", "`get_migration`"]) assert.equal(migrate.includes(removed), false, `${removed} is gone`);
+  assert.doesNotMatch(body(migrate), /`git |\bgit log\b|\bBash\b/i, "the run reads Git history from get_migration_run and runs no shell or Git command");
+  assert.match(migrate, /`get_migration_run`[^\n]*(Git history|history)|(Git history|history)[^\n]*`get_migration_run`/i, "the sources' Git history comes from get_migration_run");
 });
 
 test("clause 11: migrate-artifact asks the person nothing, waits for no gate, commits nothing, and names no Prism storage", async () => {

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readdir } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 import { CONFORMING, PATHS, REQUIREMENT } from "./fixtures/artifact-formats.mjs";
 import { AUDIT, AUDIT_SOURCE, auditProposal, listedTools, readRun, runCheckout, runFor, serve, stubHosts, waitFor } from "./fixtures/format-migration-runs.mjs";
@@ -10,6 +12,12 @@ const posixOnly = process.platform === "win32" ? "the stub hosts are POSIX scrip
 const UNANCHORED = REQUIREMENT.replace('<a id="2"></a>\n', "");
 const BROKEN = { ...CONFORMING, [PATHS.requirements]: UNANCHORED };
 const claudePrompt = (run) => ({ type: "user", message: { role: "user", content: `/prism:migrate-artifact ${run}` } });
+// Whether a folder is the checkout, lies inside it, or holds it.
+const touches = (folder, root) => {
+  const inside = (child, parent) => child === parent || child.startsWith(`${parent}${path.sep}`);
+  return inside(path.resolve(folder), root) || inside(root, path.resolve(folder));
+};
+const optionValues = (argv, name) => argv.flatMap((arg, index) => arg === name ? [argv[index + 1]] : []);
 const statusOf = async (call, run, statuses) => waitFor(async () => {
   const record = await readRun(call, run);
   return statuses.includes(record.status) ? record : null;
@@ -19,7 +27,7 @@ const launches = async (hosts, root) => {
   return (await listLaunches({ projectRoot: root, env: { ...process.env, ...hosts.env, PRISM_REVIEW_APP_DIR: hosts.app } })).launches ?? [];
 };
 
-test("clauses 1, 2, 3, 4: a new run launches Claude Code at once with the migrate-artifact prompt alone and no model, and records its launch", { skip: posixOnly }, async (context) => {
+test("clauses 1, 2, 3, 4, 16: a new run launches Claude Code at once in an empty folder of its own outside the checkout, with the migrate-artifact prompt alone, no model, and no read of the checkout, and records its launch", { skip: posixOnly }, async (context) => {
   const { root, call, hosts } = await runCheckout(context, BROKEN, { hosts: ["claude", "codex"] });
   const run = await runFor(call, PATHS.requirements);
   const record = await statusOf(call, run, ["running"]);
@@ -27,7 +35,13 @@ test("clauses 1, 2, 3, 4: a new run launches Claude Code at once with the migrat
   assert.match(record.launch.id, /^launch-[0-9a-f]{16}$/);
   const [started] = await waitFor(() => hosts.runs("claude").length ? hosts.runs("claude") : null, { what: "the Claude Code stub to start" });
   assert.equal(hosts.runs("codex").length, 0);
-  assert.equal(started.cwd, root);
+  assert.notEqual(started.cwd, root);
+  assert.equal(touches(started.cwd, root), false, "the session works outside the checkout");
+  assert.deepEqual(await readdir(started.cwd), [], "the working folder starts empty");
+  assert.equal(optionValues(started.argv, "--tools").join(",").includes("Bash"), false, "no shell tool");
+  assert.equal(optionValues(started.argv, "--allowedTools").join(",").includes("Bash"), false, "no shell call is allowed");
+  const added = started.argv.flatMap((arg, index) => arg === "--add-dir" ? started.argv.slice(index + 1).filter((value, at, rest) => !rest.slice(0, at + 1).some((item) => item.startsWith("--"))) : []);
+  assert.equal(added.some((folder) => touches(folder, root)), false, `no added folder reaches the checkout: ${added.join(", ")}`);
   assert.equal(started.argv.includes("--model"), false, "the host uses its own default model");
   assert.equal(started.argv.some((arg) => arg.includes(run) || arg.includes("migrate-artifact")), false, "nothing of the run reaches the command line");
   await waitFor(() => hosts.inputs(started.pid).length ? true : null, { what: "the prompt" });
@@ -40,14 +54,20 @@ test("clauses 1, 2, 3, 4: a new run launches Claude Code at once with the migrat
   assert.equal(hosts.runs("claude").length, 1, "no second session starts while the run runs");
 });
 
-test("clauses 2, 3: with only Codex available the run starts a Codex turn whose input is the migrate-artifact prompt", { skip: posixOnly }, async (context) => {
-  const { call, hosts } = await runCheckout(context, BROKEN, { hosts: ["codex"] });
+test("clauses 2, 3, 16: with only Codex available the run starts a Codex turn outside the checkout whose input is the migrate-artifact prompt and whose sandbox reads nothing of the checkout", { skip: posixOnly }, async (context) => {
+  const { root, call, hosts } = await runCheckout(context, BROKEN, { hosts: ["codex"] });
   const run = await runFor(call, PATHS.requirements);
   const record = await statusOf(call, run, ["running"]);
   assert.equal(record.launch.host, "codex");
   const [started] = await waitFor(() => hosts.runs("codex").length ? hosts.runs("codex") : null, { what: "the Codex stub to start" });
   const turn = await waitFor(() => hosts.inputs(started.pid).find((message) => message.method === "turn/start") ?? null, { what: "the Codex turn" });
   assert.deepEqual(turn.params.input, [{ type: "text", text: `$prism:migrate-artifact ${run}` }]);
+  const thread = hosts.inputs(started.pid).find((message) => message.method === "thread/start");
+  assert.ok(thread && typeof thread.params.cwd === "string", JSON.stringify(thread));
+  assert.equal(touches(thread.params.cwd, root), false, "the thread works outside the checkout");
+  const readable = turn.params.sandboxPolicy?.access?.readableRoots ?? [];
+  assert.ok(readable.length >= 1, JSON.stringify(turn.params.sandboxPolicy));
+  assert.equal(readable.some((folder) => touches(folder, root)), false, `no readable root reaches the checkout: ${readable.join(", ")}`);
   assert.equal(JSON.stringify(hosts.inputs(started.pid)).includes("model"), false, "no model is chosen");
 });
 
