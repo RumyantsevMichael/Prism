@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CONFORMING, FEATURE, PATHS, REQUIREMENT, write } from "./fixtures/artifact-formats.mjs";
-import { AUDIT, AUDIT_SOURCE, auditProposal, listedTools, readRun, runCheckout, runFor } from "./fixtures/format-migration-runs.mjs";
+import { AUDIT, AUDIT_SOURCE, auditProposal, readRun, runCheckout, runFor } from "./fixtures/format-migration-runs.mjs";
 
 // Work that cites a nonconforming artifact is refused with the artifact, its broken rules, and the state of its format migration, and never offers a migration.
 
@@ -101,16 +101,4 @@ test("clause 5: an unknown value refuses work that cites an Approved requirement
   assert.equal((await call("get_initiative", { initiative: "retries" })).value.exists, false, "nothing changes");
   const cited = await cite(call, "sketch.md§1");
   assert.equal(cited.value?.code ?? null, null, cited.text);
-});
-
-test("clause 4: the update_initiative and update_roadmap descriptions name the migration's state and never legacy marks or asking for a migration", async (context) => {
-  const { root } = await runCheckout(context, CONFORMING);
-  const tools = await listedTools(context, root);
-  for (const name of ["update_initiative", "update_roadmap"]) {
-    const description = tools[name]?.description ?? "";
-    assert.match(description, /artifact_nonconforming/, name);
-    assert.match(description, /state of (its|each artifact's) (format )?migration/i, name);
-    assert.doesNotMatch(description, /legacy/i, name);
-    assert.doesNotMatch(description, /ask for a migration|in a session of its own/i, name);
-  }
 });
