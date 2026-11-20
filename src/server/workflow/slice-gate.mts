@@ -167,6 +167,30 @@ async function sameVerifiedContent(projectRoot: string, config: WorkflowConfig, 
   }
 }
 
+const STALE_PATHS_SHOWN = 20;
+/**
+ * The review_stale problem of an accepted implementation review whose verified tree is not the tree of the slice's latest verification run, or null when they match.
+ * It names the project-relative paths that differ between the two trees, so a coordinator sees which change made the review stale.
+ */
+async function reviewStale(projectRoot: string, review: { wave?: string; tree?: string }, latest: { tree?: string } | null | undefined) {
+  if (!review.tree || !latest || review.tree === latest.tree) return null;
+  const paths = await changedPaths(projectRoot, review.tree, latest.tree);
+  const shown = (paths ?? []).slice(0, STALE_PATHS_SHOWN), more = (paths?.length ?? 0) - shown.length;
+  const named = paths === null ? "" : paths.length ? ` The paths that changed since the reviewed result: ${shown.join(", ")}${more > 0 ? ` and ${more} more` : ""}.` : "";
+  return { code: "review_stale", message: `The accepted review ${review.wave} covers an earlier verified result.${named} Review the current result in a new wave.`, ...(paths === null ? {} : { paths }) };
+}
+/**
+ * check_review_gate: the review ledger's own gate, and for completion of a slice whose accepted design requires review, the same comparison with the latest verification run that set_status done applies,
+ * so a gate that reads ready is one that set_status done accepts on its review.
+ */
+export async function checkReviewCompletion(input: Parameters<typeof checkReviewGate>[0]): Promise<any> {
+  const result: any = await checkReviewGate(input);
+  if (input.gate !== "completion" || !result.wave) return result;
+  const design = await acceptedDesign(input.projectRoot, input.initiative, input.slice);
+  if (!design || design.review !== "required") return result;
+  const stale = await reviewStale(input.projectRoot, result, await latestVerification(input.projectRoot, input.initiative, input.slice));
+  return stale ? { ...result, ready: false, problems: [...result.problems, stale] } : result;
+}
 // A slice with an accepted design starts implementation at once and completes on a fresh passing verification run,
 // plus an accepted implementation review when its design marks review as required.
 // A slice designed before verification runs existed keeps the review-ledger gates.
@@ -191,7 +215,8 @@ export async function checkSliceGate({ projectRoot, initiative, slice, gate }: {
   if (design.review === "required") {
     review = await checkReviewGate({ projectRoot, initiative, slice, gate: "completion" }).catch((error) => ({ ready: false, problems: [{ code: error.code ?? "evidence_missing", message: error.message }] }));
     problems.push(...(review.problems ?? []));
-    if (review.ready && review.tree && review.tree !== latest?.tree) problems.push({ code: "review_stale", message: `The accepted review ${review.wave} covers an earlier verified result. Review the current result in a new wave.` });
+    const stale = review.ready ? await reviewStale(projectRoot, review, latest) : null;
+    if (stale) problems.push(stale);
   }
   return { ready: problems.length === 0, design: true, ...(latest ? { verification: latest.id, tree: latest.tree } : {}), ...(review?.wave ? { wave: review.wave } : {}), problems };
 }

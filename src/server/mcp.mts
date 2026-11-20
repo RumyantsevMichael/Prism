@@ -38,7 +38,7 @@ import { reviewAppDirectory, reviewAppDisabled } from "./review/review-app-disco
 import { checkpointPause, effectiveSettings, readCoordinationState, updateCoordinationState, validateCoordinationState } from "./workflow/state.mjs";
 import { historyMarksText, shippedHistory } from "./workflow/shipped-history.mjs";
 import { INITIATIVE_TOOLS, InitiativeError, claimedByUpdate, getInitiative, initiativeAcknowledgement, initiativeWork, readInitiative, requireClaimedWork, updateInitiative } from "./workflow/initiative.mjs";
-import { ROADMAP_TOOLS, RoadmapError, getRoadmap, updateRoadmap } from "./workflow/roadmap.mjs";
+import { ROADMAP_TOOLS, RoadmapError, getRoadmap, roadmapAcknowledgement, updateRoadmap } from "./workflow/roadmap.mjs";
 import { ARTIFACT_TOOLS, artifactAtLocation, getArtifact, updateArtifact } from "./workflow/store-artifacts.mjs";
 import { savedComment } from "./workflow/artifact-comments.mjs";
 import { keptExplanation, shownPath } from "./workflow/artifact-migration.mjs";
@@ -822,7 +822,7 @@ const tools = [
   },
   {
     name: "update_coordination_state",
-    description: "Apply a validated atomic update to an initiative's coordination state, including pending user gates that the review browser lists as waiting on the user. Read the current state first and pass its revision as expectedRevision; an update that only resolves gates by id goes through after other changes, such as the browser answer that prompted it.",
+    description: "Apply a validated atomic update to an initiative's coordination state, including pending user gates that the review browser lists as waiting on the user. Read the current state first and pass its revision as expectedRevision; an update that only resolves gates by id goes through after other changes, such as the browser answer that prompted it. The result is brief: the new revision, the opened gates, and the state without the person's history and setting marks and without each pending gate's context and artifacts, which get_coordination_state reads.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1125,6 +1125,16 @@ async function callStateTool(name: string, argumentsValue: any) {
   if (resultValue?.state?.closed) {
     const { closed, ...state } = resultValue.state;
     resultValue = { ...resultValue, state };
+  }
+  // An update answers with what its caller needs next, the revision, the settings, and the open work; the person's history and each gate's context and artifacts, which the caller wrote or can read with get_coordination_state, stay out of it.
+  if (name === "update_coordination_state" && resultValue?.state) {
+    const { history, personSettings, ...state } = resultValue.state;
+    const pending = Array.isArray(state.pending) ? state.pending.map((gate: any) => {
+      if (!gate || typeof gate !== "object") return gate;
+      const { context, artifacts, ...brief } = gate;
+      return brief;
+    }) : state.pending;
+    resultValue = { ...resultValue, state: { ...state, ...(pending === undefined ? {} : { pending }) } };
   }
   const content = [{ type: "text", text: stateContent(resultValue) }, ...await shippedHistoryContent(projectRoot, resultValue?.shippedHistory)];
   if (Array.isArray(resultValue?.keptSettings) && resultValue.keptSettings.length) content.push({ type: "text", text: keptSettingsText(resultValue.keptSettings) });
@@ -1611,7 +1621,7 @@ async function callTool(name: string, argumentsValue: any = {}, metadata: any, r
     const projectRoot = await requestedProjectRoot(argumentsValue);
     const input = { ...argumentsValue, projectRoot };
     let value = name === "get_roadmap" ? await getRoadmap(input)
-      : name === "update_roadmap" ? await updateRoadmap(input)
+      : name === "update_roadmap" ? roadmapAcknowledgement(await updateRoadmap(input), input.operations)
       : name === "get_initiative" ? await getInitiative(input)
       : initiativeAcknowledgement(await updateInitiative(input), input.operations);
     if (name === "get_initiative") value = { ...value, runTotals: await readInitiativeRecordRunTotals(projectRoot, value.initiative, value) };
