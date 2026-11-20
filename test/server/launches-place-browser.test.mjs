@@ -94,7 +94,7 @@ test("the initiative page's Launch opens its run configuration, whose one launch
   await launcher.waitFor();
   const button = launcher.getByRole("button", { name: /^Launch with / });
   assert.equal(await settled(() => button.count(), 1), 1, "one launch, of the shown host");
-  assert.equal(await button.innerText(), "Launch with Claude Code");
+  assert.equal(await launcher.getByRole("button", { name: "Launch with Claude Code", exact: true }).count(), 1, "the launch names the initiative's host");
   assert.deepEqual(page.errors, []);
 });
 

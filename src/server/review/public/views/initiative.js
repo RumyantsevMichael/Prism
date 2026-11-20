@@ -206,7 +206,7 @@ function overlays(data, ctx, ids, head) {
       <div data-launch-settings></div>
       <span slot="footer-note">Launching saves these choices as this initiative's settings.</span>
       <prism-button slot="footer" data-launch-cancel>Cancel</prism-button>
-      <prism-button slot="footer" variant="primary" text="Launch" data-launch-confirm disabled><prism-icon name="play" size="xs"></prism-icon></prism-button>
+      <prism-button slot="footer" variant="primary" data-launch-confirm disabled><prism-icon name="play" size="xs"></prism-icon><span data-launch-label>Launch</span></prism-button>
     </prism-dialog>` : ""}
     <prism-dialog class="initiative-settings-dialog" heading="Settings of ${escapeHtml(title)}" size="lg" data-initiative-settings-dialog>
       <p class="initiative-settings-lead">How agents run this initiative's slices. Changes apply when you press Apply.</p>
@@ -297,7 +297,8 @@ const LAUNCH_SECTIONS = Object.freeze([
 function mountLaunch(container, data, ctx, endRoot, refreshLatest) {
   const dialog = container.querySelector("[data-launch-dialog]");
   const confirm = dialog?.querySelector("[data-launch-confirm]");
-  if (!dialog || !confirm) return;
+  const confirmLabel = confirm?.querySelector("[data-launch-label]");
+  if (!dialog || !confirm || !confirmLabel) return;
   // Each banner keeps its lines in its own child, which the banner places in its body.
   const hold = dialog.querySelector("[data-launch-hold]");
   const failure = dialog.querySelector("[data-launch-error]");
@@ -323,7 +324,7 @@ function mountLaunch(container, data, ctx, endRoot, refreshLatest) {
     const shown = list.input("initiative.host")?.value ?? null;
     const option = options.find((item) => item.value === shown) ?? null;
     const text = option ? `Launch with ${option.label ?? option.value}` : "Launch";
-    if (confirm.getAttribute("text") !== text) confirm.setAttribute("text", text);
+    if (confirmLabel.textContent !== text) confirmLabel.textContent = text;
     const reasons = [];
     if (launch && !launch.available) {
       const hostReason = options.find((item) => item.value === hostAction?.value)?.reason ?? null;

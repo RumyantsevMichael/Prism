@@ -69,11 +69,6 @@ button {
   margin-inline-end: 0;
 }
 
-/* A caption drawn from the text option follows the children, so a lone icon before it keeps its distance. */
-:host([text]:not([text=""])) ::slotted(prism-icon:last-child) {
-  margin-inline-end: var(--prism-space-3);
-}
-
 /* An icon after the label, such as the chevron of a button that opens a menu, keeps its distance from the label before it; the label then goes in a span, so the leading icon is not the last child. */
 ::slotted(prism-icon:last-child:not(:first-child)) {
   margin-inline-start: var(--prism-space-2);

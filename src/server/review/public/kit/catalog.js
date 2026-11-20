@@ -132,7 +132,7 @@ function groupedTabsOf(items, label = "Tab groups") {
 const SPECIMENS = {
   "prism-button": {
     default: `<prism-button>Apply</prism-button>`,
-    primary: `<prism-button variant="primary">Accept the design</prism-button><prism-button variant="primary" text="Launch with Claude Code"><prism-icon name="play" size="xs"></prism-icon></prism-button>`,
+    primary: `<prism-button variant="primary">Accept the design</prism-button>`,
     ghost: `<prism-button variant="ghost"><prism-icon name="copy" size="sm"></prism-icon>Copy link</prism-button>`,
     danger: `<prism-button variant="danger">Request changes</prism-button>`,
     small: `<prism-button size="sm">Small</prism-button><prism-button size="sm" variant="primary">Small primary</prism-button>`,
