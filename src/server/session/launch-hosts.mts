@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { access, constants, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { acpHostDefinition, acpHosts, isAcpHost } from "./acp-agents.mjs";
 import { isAgentModel } from "./agent-models.mjs";
 
 // The hosts that a launched session runs, the commands Prism runs for them, and the readers of their output streams.
@@ -79,8 +80,22 @@ export function redactSessionId<T>(text: T, hostSessionId: unknown): T {
   return text.replace(new RegExp(hostSessionId, "gi"), SESSION_ID_PLACEHOLDER) as T;
 }
 
-export function hostDefinition(host: string) {
+/** Claude Code's or Codex's definition, or null for any other host. */
+export function builtinHost(host: unknown) {
   return HOSTS.find((definition) => definition.host === host) ?? null;
+}
+
+/** A host's definition: Claude Code, Codex, or an ACP agent offered now, whose declaration or install record is read again on every call. */
+export function hostDefinition(host: string, env: NodeJS.ProcessEnv = process.env): { host: string; label: string; executable: string; acp?: unknown } | null {
+  return builtinHost(host) ?? (isAcpHost(host) ? acpHostDefinition(host, env) : null);
+}
+
+/** Why a launch on an ACP agent does not start yet: Prism lists the agent as a host before it runs launched sessions on it. */
+export const acpLaunchPending = (label: string) => `Prism cannot launch ${label} yet: it lists ACP agents as hosts but does not run launched sessions on them.`;
+
+/** Every host in list order: Claude Code, Codex, then the ACP agents offered now in install and then declaration order. */
+export function hostDefinitions(env: NodeJS.ProcessEnv = process.env) {
+  return [...HOSTS, ...acpHosts(env)];
 }
 
 async function executableFile(file: string) {
@@ -116,8 +131,17 @@ async function npmShimScript(file: string) {
 export interface ResolvedHost { host: string; label: string; executable: string | null; available: boolean; command: string | null; prefix: string[]; reason: string | null }
 
 export async function resolveHost(host: string, env = process.env): Promise<ResolvedHost | null> {
-  const definition = hostDefinition(host);
-  if (!definition) return null;
+  const definition = hostDefinition(host, env);
+  return definition ? resolveDefinition(definition, env) : null;
+}
+
+/** How one host definition is run on this machine, as resolveHost answers it. */
+export async function resolveDefinition(definition: { host: string; label: string; executable: string }, env: NodeJS.ProcessEnv): Promise<ResolvedHost> {
+  // An ACP agent's command may be an absolute path, which is run as it is.
+  if (path.isAbsolute(definition.executable)) {
+    if (await executableFile(definition.executable)) return { ...definition, available: true, executable: definition.executable, command: definition.executable, prefix: [], reason: null };
+    return { ...definition, available: false, executable: null, command: null, prefix: [], reason: `${definition.label} was not found: no executable file at ${definition.executable}.` };
+  }
   const missing: ResolvedHost = { ...definition, available: false, executable: null, command: null, prefix: [], reason: `${definition.label} was not found: no ${definition.executable} executable on PATH.` };
   const entries = pathEntries(env);
   if (process.platform !== "win32") {
@@ -140,10 +164,15 @@ export async function resolveHost(host: string, env = process.env): Promise<Reso
   return missing;
 }
 
-/** One entry per host in order: { host, label, available, executable, reason }. */
-export async function hostAvailability({ env = process.env } = {}) {
-  return Promise.all(HOSTS.map(async ({ host }) => {
-    const { label, available, executable, reason } = (await resolveHost(host, env))!;
+/**
+ * One entry per host in order: { host, label, available, executable, reason }; acp false lists only Claude Code and Codex.
+ * The ACP agents are read again on every call.
+ */
+export async function hostAvailability({ env = process.env, acp = true }: { env?: NodeJS.ProcessEnv; acp?: boolean } = {}) {
+  const definitions = acp ? hostDefinitions(env) : [...HOSTS];
+  return Promise.all(definitions.map(async (definition) => {
+    const { host } = definition;
+    const { label, available, executable, reason } = await resolveDefinition(definition, env);
     return { host, label, available, executable, reason };
   }));
 }

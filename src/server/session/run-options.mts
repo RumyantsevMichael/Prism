@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { EFFORT_PATTERN, HOST_REQUEST_REFUSAL, HOSTS, hostDefinition, lineSplitter, MODEL_PATTERN, PROVIDER_PATTERN, resolveHost, strippedEnvironment } from "./launch-hosts.mjs";
+import { EFFORT_PATTERN, HOST_REQUEST_REFUSAL, builtinHost, HOSTS, lineSplitter, MODEL_PATTERN, PROVIDER_PATTERN, resolveHost, strippedEnvironment } from "./launch-hosts.mjs";
 
 // The run options of a host, read from the host itself and mapped into one ordered shape: provider, model, and effort, each with
 // the host default first as a null value. Prism reads a host's report with no model turn and no kept session, keeps a report for
@@ -88,7 +88,7 @@ const supportedHosts = () => {
 };
 
 function checkedSelection({ host, purpose, provider = null, model = null, effort = null, typed = false }: any) {
-  const definition = hostDefinition(host);
+  const definition = builtinHost(host);
   if (!definition) throw new RunOptionsError(400, "unknown_host", `Prism supports no host ${host}; it supports ${supportedHosts()}.`);
   if (!PURPOSES.includes(purpose)) throw new RunOptionsError(400, "invalid_request", "for must be coordinator or agents.");
   const breach = nameRuleBreach({ provider, model, effort });

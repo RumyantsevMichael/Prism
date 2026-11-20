@@ -15,7 +15,8 @@ import { ambiguousApprovalMessage, answerArtifactApproval, commentOnArtifact, pe
 import { readWorkflowConfig } from "./workflow-config.mjs";
 import { checkoutLabel, readWorkspaceIdentity } from "../review/workspace-identity.mjs";
 import { confirmLaunch } from "../session/launch-confirmation.mjs";
-import { HOSTS, hostDefinition } from "../session/launch-hosts.mjs";
+import { acpLaunchPending, HOSTS } from "../session/launch-hosts.mjs";
+import { isAcpHost } from "../session/acp-agents.mjs";
 import { LAUNCH_ID_PATTERN } from "../session/launch-records.mjs";
 import { AUTOMATIC, AUTOMATIC_LABEL, PrismRunsError, readPrismRunsChoice, writePrismRunsChoice } from "../session/prism-runs.mjs";
 import { choiceReasons, nameRuleBreach, NAME_RULE_MESSAGES, readRunOptions, RUN_KINDS, validProvider } from "../session/run-options.mjs";
@@ -244,13 +245,18 @@ const autonomyOf = (context: any) => settingsOf(context).autonomy ?? "conservati
 
 // ---- Host and models ----
 
-// Each supported host in order, with the reason this computer lacks it, or null where it is found.
-function hostOptions(context: any, consequence: (label: string) => string) {
-  return HOSTS.map(({ host, label }) => {
-    const availability = context.hosts?.find((item: any) => item.host === host);
-    return { value: host, label, consequence: consequence(label), reason: availability?.available ? null : availability?.reason ?? `${label} was not found.` };
+// Each host in order, Claude Code, Codex, and then the ACP agents that this computer offers, read again for each request, with the
+// reason this computer lacks it, or null where it is found; Prism's own runs list every ACP agent as unavailable.
+const OWN_RUNS_ON_ACP = "Prism's own runs do not run on ACP agents.";
+function hostOptions(context: any, consequence: (label: string) => string, { ownRuns = false } = {}) {
+  const hosts = context.hosts ?? HOSTS.map(({ host, label }) => ({ host, label, available: false, reason: null }));
+  return hosts.map(({ host, label, available, reason }: any) => {
+    const why = ownRuns && isAcpHost(host) ? OWN_RUNS_ON_ACP : available ? null : reason ?? `${label} was not found.`;
+    return { value: host, label, consequence: consequence(label), reason: why };
   });
 }
+
+const hostLabel = (context: any, host: string) => context.hosts?.find((item: any) => item.host === host)?.label ?? host;
 
 const firstFoundHost = (context: any) => context.hosts?.find((item: any) => item.available)?.host ?? null;
 const HOST_DEFAULT_CHOICE = Object.freeze({ model: null, effort: null, typed: false });
@@ -267,9 +273,11 @@ function fullEntry(stored: any): any {
   return { provider: typeof entry.provider === "string" ? entry.provider : null, ...Object.fromEntries(RUN_KINDS.map(({ kind }) => [kind, choiceOf(entry[kind])])) };
 }
 
+// Every listed host has an entry, and an ACP agent's stored entry stays while this computer does not offer that agent.
 const modelsOf = (context: any) => {
   const stored = isRecord(settingsOf(context).models) ? settingsOf(context).models : {};
-  return Object.fromEntries(HOSTS.map(({ host }) => [host, fullEntry(stored[host])]));
+  const hosts = [...new Set([...(context.hosts ?? HOSTS).map(({ host }: any) => host), ...Object.keys(stored).filter(isAcpHost)])];
+  return Object.fromEntries(hosts.map((host) => [host, fullEntry(stored[host])]));
 };
 
 // The stored form leaves out every host default, and every host whose entry is then empty.
@@ -325,9 +333,9 @@ function modelsFields(context: any) {
 // the host, the provider, then each choice as listed in choices, { name, purpose, choice }. Only what the host reports, or a model
 // name typed as such, is taken, and refuse(name, message) builds each refusal. The host is read only for a value it must offer, so
 // host defaults and a typed model without an effort start no host process.
-async function checkHostChoices(context: any, { host, provider, choices }: any, refuse: any) {
-  const { label } = hostDefinition(host)!;
-  const missing = hostOptions(context, () => "").find((item) => item.value === host)?.reason;
+async function checkHostChoices(context: any, { host, provider, choices, ownRuns = false }: any, refuse: any) {
+  const label = hostLabel(context, host);
+  const missing = hostOptions(context, () => "", { ownRuns }).find((item: any) => item.value === host)?.reason;
   if (missing) throw refuse("host", missing);
   if (provider !== null) {
     if (!validProvider(provider)) throw refuse("provider", NAME_RULE_MESSAGES.provider);
@@ -373,8 +381,9 @@ const SETTING_DEFINITIONS = [
     value: (context: any) => settingsOf(context).host ?? firstFoundHost(context),
     stored: (context: any) => settingsOf(context).host ?? null,
     after: (values: any, context: any) => {
-      const chosen = hostOptions(context, () => "").find((item) => item.value === values.value);
-      if (chosen?.reason) throw invalid("value", HOSTS.map(({ host }) => host), chosen.reason);
+      const options = hostOptions(context, () => "");
+      const chosen = options.find((item: any) => item.value === values.value);
+      if (chosen?.reason) throw invalid("value", options.map((item: any) => item.value), chosen.reason);
       return values.value;
     }
   }),
@@ -567,7 +576,7 @@ const notOffered = (label: any, reason: any) => fail("choice_not_offered", `${la
 // effort, needs none, so a launch whose choices are all host defaults reads no host. A read that failed offers only the host
 // defaults, so the field that needed it is refused with the read's own reason rather than as a choice the host does not offer.
 async function checkedLaunchChoices(context: any, host: any) {
-  const { label } = hostDefinition(host)!;
+  const label = hostLabel(context, host);
   const entry = modelsOf(context)[host];
   const { provider } = entry;
   const report = async (fieldLabel: any, selection: any) => {
@@ -607,7 +616,8 @@ const LAUNCH_RUN = {
     if (context.coordination.exists && !context.coordination.valid) return UNREADABLE_STATE;
     const host = launchHostOf(context);
     const availability = context.hosts.find((item: any) => item.host === host);
-    if (!availability?.available) return availability?.reason ?? `${hostDefinition(host)?.label ?? host} was not found.`;
+    if (!availability?.available) return availability?.reason ?? `${hostLabel(context, host)} was not found.`;
+    if (isAcpHost(host)) return acpLaunchPending(availability.label);
     return context.launchRunning ? launchRunningMessage(context.initiative) : null;
   },
   after: () => null,
@@ -690,7 +700,7 @@ const MACHINE_PRISM_RUNS = {
   fields: (context: any) => [
     choice("host", "Host", [
       { value: AUTOMATIC, label: AUTOMATIC_LABEL, consequence: "Each run starts on the first host Prism finds on this computer, with its default model.", reason: null },
-      ...hostOptions(context, (label) => `${label} runs Prism's own runs.`)
+      ...hostOptions(context, (label) => `${label} runs Prism's own runs.`, { ownRuns: true })
     ], { required: true, ...(context.prismRuns.state === "unreadable" ? { hint: UNREADABLE_PRISM_RUNS } : {}) }),
     field("provider", "run-option", "Provider", { for: "coordinator", option: "provider", hint: PROVIDER_HINT, fixedWhen: { field: "host", values: [AUTOMATIC] } }),
     field("run", "run-choice", "Model", { for: "coordinator", heading: "Model of Prism's own runs", hint: "The model and effort of each run, from what the host reports.", fixedWhen: { field: "host", values: [AUTOMATIC] } })
@@ -710,7 +720,7 @@ const MACHINE_PRISM_RUNS = {
       if (run.model !== null || run.effort !== null || run.typed) throw refuseChoice("run", AUTOMATIC_ONLY_DEFAULTS);
       return { host, provider: null, run: { ...HOST_DEFAULT_CHOICE } };
     }
-    await checkHostChoices(context, { host, provider, choices: [{ name: "run", purpose: "coordinator", choice: run }] }, refuseChoice);
+    await checkHostChoices(context, { host, provider, choices: [{ name: "run", purpose: "coordinator", choice: run }], ownRuns: true }, refuseChoice);
     return { host, provider, run: { model: run.model, effort: run.effort, typed: run.typed } };
   }
 };

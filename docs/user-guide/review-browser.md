@@ -216,7 +216,7 @@ An initiative has these settings, each with its default and the moment an agent 
 
 | Setting | Values | Default | Takes effect |
 | --- | --- | --- | --- |
-| Host | Each host Prism supports, Claude Code and Codex | None stored, shown as the first host found on this computer | For launches started after the change; a running or resumed session keeps the host it started on. |
+| Host | Each host Prism supports: Claude Code, Codex, and each [ACP agent](#acp-agents) this computer offers | None stored, shown as the first host found on this computer | For launches started after the change; a running or resumed session keeps the host it started on. |
 | Autonomy | `conservative`, `broad`, `full` | `conservative` | Decides which later gates wait for you; a gate already open keeps waiting for you. |
 | Commit | `off`, `on` | `on` with `full` autonomy, otherwise `off` | For agents started after the change. |
 | Push | `off`, `on` | `off` | For agents started after the change. |
@@ -225,6 +225,7 @@ An initiative has these settings, each with its default and the moment an agent 
 | Models | For each host, a provider and the model and effort of the coordinator, design and implementation, code review, security review, and design gate summary agents | The host's own default for each | The coordinator's for launches started after the change, and each agent's for agents started after it. |
 
 Choosing a host that is not found on this computer is refused with its reason, such as `Claude Code was not found: no claude executable on PATH.`
+An ACP agent is stored as `acp-<id>`, and a checkout on a computer that does not offer that agent shows it as not found.
 A change to Models names one host and keeps the choices of every other host.
 It takes only a provider, model, or effort that the host reports, its default, or a model name you typed, which Prism cannot check; a value the host does not offer is refused with a reason such as `Claude Code on this computer does not offer the model claude-opus-3.`
 While the host cannot report its options, Models takes only the host's defaults and typed model names.
@@ -268,6 +269,51 @@ Each component that `## Components` declares has its own index target, named `<r
 Rebuilding a component's index prepares only that component, also one that has no index yet, retries it when its last build failed, and reuses its index without a build while it is up to date.
 A rebuild is refused while that component's index is already being built, and a rebuild of another component waits for the running build without stopping it.
 In a repository without components, the root component's rebuild prepares the checkout's one index.
+
+## ACP agents
+
+Besides Claude Code and Codex, Prism lists as a host each Agent Client Protocol (ACP) agent that you declare on this computer, and each one installed in the review app folder's `agents/` folder, whose `current.json` names the version in use.
+Every host list reads the declarations and installs again on each request, so an agent you declare, install, or remove appears or disappears without restarting the review app.
+The **Host** setting lists Claude Code, then Codex, then the installed agents in the order they were installed, then the declared ones in file order, each as `acp-<id>` with its label.
+Prism's own runs do not run on ACP agents, so **Prism's own runs** lists each of them as unavailable.
+Launching a session on an ACP agent is Planned: until then, **Launch** names the agent and says that Prism does not run launched sessions on it yet.
+
+Declare agents in `acp-agents.json`, which Prism only reads and never writes:
+
+| Platform | File |
+| --- | --- |
+| Any | The file that `PRISM_ACP_AGENTS` names, when it is set |
+| Windows | `%APPDATA%\Prism\acp-agents.json` |
+| macOS | `~/Library/Application Support/Prism/acp-agents.json` |
+| Linux and others | `$XDG_CONFIG_HOME/prism/acp-agents.json`, or `~/.config/prism/acp-agents.json` without that variable |
+
+```json
+{
+  "agents": [
+    { "id": "gemini", "label": "Gemini CLI", "command": "gemini" }
+  ]
+}
+```
+
+Each entry takes these fields:
+
+| Field | Rule |
+| --- | --- |
+| `id` | 1 to 40 lowercase letters, digits, and `-`, starting with a letter or digit; the host is `acp-<id>`. |
+| `label` | 1 to 60 characters without control characters. |
+| `command` | An absolute path, or a bare name of 1 to 100 letters, digits, `.`, `_`, and `-` that `PATH` resolves. |
+| `args` | Optional: at most 32 strings of at most 2000 characters. |
+| `env` | Optional: at most 32 names of the form `[A-Za-z_][A-Za-z0-9_]*`, each with a string of at most 2000 characters. |
+| `autoMode` | Optional: the agent's mode value, of at most 100 characters, that runs without asking for each step. |
+| `resumeCommand` | Optional: at most 500 characters holding `{session}`, the terminal command that continues a session. |
+
+Prism takes an agent's command, arguments, and environment only from this file or an install record, and the review page cannot name any of them.
+An entry that breaks a rule, repeats an earlier entry's `id`, or takes the `id` of an installed agent is no host.
+The ids `claude-acp` and `codex-acp` are no hosts either, because Prism runs Claude Code and Codex through its own integrations.
+A missing file declares no agent, and a file that cannot be read or parsed declares none.
+An agent whose command is not found shows its reason, such as `Gemini CLI was not found: no gemini executable on PATH.`
+
+`GET api/coding-agents` lists every installed and declared agent with its origin, its installed version, and whether it can be launched, with the reason when it cannot, such as the rule its entry breaks, and an unreadable declaration file is listed once with its reason.
 
 ## Launched sessions
 

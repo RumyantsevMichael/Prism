@@ -28,6 +28,7 @@ import { applyAction, componentIndexingStatus, listActions, listActionTargets, p
 import { listLaunches } from "../session/launched-sessions.mjs";
 import { readRunOptions, runOptionsQuery } from "../session/run-options.mjs";
 import { listAgents } from "./agents.mjs";
+import { listCodingAgents } from "../session/coding-agents.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
 import { readStoredPreferences, writePreferences } from "./review-preferences.mjs";
 import { createWriteSessions, withWriteGrant } from "./write-sessions.mjs";
@@ -1558,6 +1559,9 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
         if (error?.name !== "RunOptionsError") throw error;
         sendJson(response, error.status, { code: error.code, message: error.message, ...(error.field ? { field: error.field } : {}) });
       }
+    } else if (route === "/api/coding-agents" && request.method === "GET") {
+      // The installed and declared ACP agents with their launch availability, read again on every request; reading needs no write session.
+      sendJson(response, 200, await listCodingAgents({ env: process.env }));
     } else if (route === "/api/agents" && request.method === "GET") {
       // Every agent once: this computer's launched sessions and the workspace's claims that none of them holds; reading needs no write session.
       sendJson(response, 200, await listAgents({ projectRoot, env: process.env }));
