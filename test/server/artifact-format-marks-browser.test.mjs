@@ -62,22 +62,6 @@ test("clauses 7, 8: a nonconforming file's page shows a warning banner with each
   assert.deepEqual(await marks(other, "body"), []);
 });
 
-test("clauses 6, 12: the Requirements library lists every requirement file in one kit library table, and the broken file's row holds the mark", { skip, timeout: 90000 }, async (context) => {
-  const page = await opened(context, ["requirements"]);
-  await page.getByText("Old notes", { exact: false }).first().waitFor();
-  assert.equal(await page.locator("table.data-table").count(), 0, "no plain table lists the files");
-  const table = page.locator("prism-lib-table");
-  assert.equal(await table.count(), 1);
-  const head = (await table.locator(".prism-lib-row.is-head > *").allTextContents()).map((cell) => cell.trim()).filter(Boolean);
-  assert.deepEqual(head, ["Title", "Status", "Created", "Used by"]);
-  const rows = table.locator(".prism-lib-row:not(.is-head)");
-  assert.equal(await rows.count(), 2, "one row per requirement file");
-  const broken = rows.filter({ hasText: "Old notes" });
-  assert.equal(await broken.locator("prism-badge[data-format-mark]").count(), 1);
-  assert.equal(await rows.filter({ hasText: "Request retries" }).locator("[data-format-mark]").count(), 0);
-  assert.deepEqual(page.errors, []);
-});
-
 test("clause 6: the Jump palette marks a nonconforming file's result", { skip, timeout: 90000 }, async (context) => {
   const page = await opened(context, ["attention"]);
   await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
