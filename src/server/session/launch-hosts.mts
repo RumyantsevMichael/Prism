@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { access, constants, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
 import { isAgentModel } from "./agent-models.mjs";
 
 // The hosts that a launched session runs, the commands Prism runs for them, and the readers of their output streams.
@@ -70,8 +71,18 @@ export const MIGRATION_RUN_TOOLS = Object.freeze(["get_migration_run", "get_arti
  */
 export const MIGRATION_SERVER = "prism-run";
 const PRISM_SERVER = fileURLToPath(new URL("../mcp.mjs", import.meta.url));
-export function migrationServerDefinition({ run, project }: { run: string; project: string }) {
-  return { command: process.execPath, args: [PRISM_SERVER], env: { NODE_USE_ENV_PROXY: "1", [MIGRATION_SCOPE_VARIABLE]: run, [MIGRATION_PROJECT_VARIABLE]: project } };
+/**
+ * The definition of that server for the launch `launch` of the run `run` in `project`, from the launching Prism's environment `env`:
+ * its own environment names the launch, the run, and the project, and holds the review app folder of that Prism, and XDG_STATE_HOME and LOCALAPPDATA
+ * as that Prism has them, each left out when unset, so the server keeps the same review app folder, launch records, and state whatever the host passes it.
+ */
+export function migrationServerDefinition({ run, project, launch, env = process.env }: { run: string; project: string; launch: string; env?: NodeJS.ProcessEnv }) {
+  const state = Object.fromEntries(["XDG_STATE_HOME", "LOCALAPPDATA"].filter((name) => typeof env[name] === "string" && env[name]).map((name) => [name, env[name] as string]));
+  return {
+    command: process.execPath,
+    args: [PRISM_SERVER],
+    env: { NODE_USE_ENV_PROXY: "1", [MIGRATION_SCOPE_VARIABLE]: run, [MIGRATION_PROJECT_VARIABLE]: project, PRISM_LAUNCH: launch, PRISM_REVIEW_APP_DIR: reviewAppDirectory(env), ...state }
+  };
 }
 const CLAUDE_READ_ONLY_TOOLS = MIGRATION_RUN_TOOLS.map((tool) => `mcp__${MIGRATION_SERVER}__${tool}`).join(",");
 const CLAUDE_NO_CONNECTORS = JSON.stringify({ disableClaudeAiConnectors: true });

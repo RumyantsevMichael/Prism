@@ -64,8 +64,9 @@ test("a run's Codex thread runs in the read-only sandbox, readable only in its f
   const { root, call, hosts } = await runCheckout(context, BROKEN, { hosts: ["codex"] });
   const run = await runFor(call, PATHS.requirements);
   await running(call, run);
-  const [started] = await waitFor(() => hosts.runs("codex").length ? hosts.runs("codex") : null, { what: "the Codex stub" });
-  const thread = await waitFor(() => hosts.inputs(started.pid).find((message) => message.method === "thread/start") ?? null, { what: "the thread start" });
+  // A read of Codex's model list runs first in an app server of its own, so the run's own app server is the one that opens a thread.
+  const started = await waitFor(() => hosts.runs("codex").find((entry) => hosts.inputs(entry.pid).some((message) => message.method === "thread/start")) ?? null, { what: "the thread start" });
+  const thread = hosts.inputs(started.pid).find((message) => message.method === "thread/start");
   assert.equal(thread.params.sandbox, "read-only");
   assert.equal(thread.params.approvalPolicy, "never");
   // The thread's configuration names Prism's scoped server as its only MCP server.

@@ -670,9 +670,9 @@ const LAUNCH_RESUME = {
 // ---- This computer ----
 
 // The host and model of Prism's own runs, such as the runs that move records to a new format: one choice per computer, kept in the
-// review app folder, from the same host reports as a launch's coordinator. Any available host starts each run on the first host
-// found with its defaults, so it takes no provider, model, or effort.
-const AUTOMATIC_ONLY_DEFAULTS = "Any available host takes only the host's default model.";
+// review app folder, from the same host reports as a launch's coordinator. Any available host starts each run with Codex and its GPT-6 Luna model
+// where Codex lists it, and otherwise on the first host found with a small model, so it takes no provider, model, or effort.
+const AUTOMATIC_ONLY_DEFAULTS = "Any available host chooses its model itself.";
 // A choice that cannot be read shows no host, so the page offers to store a readable one, and any choice applied over it is stored.
 const UNREADABLE_PRISM_RUNS = "The stored choice could not be read, so each run starts on the first host Prism finds with its default model until you apply a host.";
 const prismRunsValue = (context: any) => {
@@ -691,7 +691,7 @@ const MACHINE_PRISM_RUNS = {
   target: (context: any) => context.reference,
   fields: (context: any) => [
     choice("host", "Host", [
-      { value: AUTOMATIC, label: AUTOMATIC_LABEL, consequence: "Each run starts on the first host Prism finds on this computer, with its default model.", reason: null },
+      { value: AUTOMATIC, label: AUTOMATIC_LABEL, consequence: "Each run starts with Codex and its GPT-6 Luna model where Codex lists it, and otherwise on the first host Prism finds on this computer with a small model.", reason: null },
       ...hostOptions(context, (label) => `${label} runs Prism's own runs.`)
     ], { required: true, ...(context.prismRuns.state === "unreadable" ? { hint: UNREADABLE_PRISM_RUNS } : {}) }),
     field("provider", "run-option", "Provider", { for: "coordinator", option: "provider", hint: PROVIDER_HINT, fixedWhen: { field: "host", values: [AUTOMATIC] } }),

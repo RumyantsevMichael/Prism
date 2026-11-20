@@ -79,7 +79,7 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
   }
   // A format migration run's session has one MCP server, Prism's own scoped to the run, which Claude Code reads from the launch's own folder.
   const migration = typeof record.migrationRun === "string";
-  const migrationServer = migration ? migrationServerDefinition({ run: record.migrationRun, project: record.checkout }) : null;
+  const migrationServer = migration ? migrationServerDefinition({ run: record.migrationRun, project: record.checkout, launch: record.id, env }) : null;
   let mcpConfig: string | null = null;
   if (migration) {
     mcpConfig = path.join(folder, "mcp-config.json");

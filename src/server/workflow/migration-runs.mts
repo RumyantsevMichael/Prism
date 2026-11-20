@@ -167,23 +167,56 @@ const LAUNCHED_FROM = new Set(["starting", "waiting-for-host"]);
 
 /**
  * The host, coordinator choice, and access of a format migration run's session on this machine: { host, coordinator, model, access, reason },
- * with coordinator { provider, model, effort, typed } and model its model. The host and model are the computer's choice for Prism's own runs,
- * as prismRunLaunch reads it for the checkout, with its reason when the chosen host is not found or the choice cannot be read, which the run keeps;
- * without a supported host found there, the first available host of Claude Code and Codex, in that order, with its own default model,
- * and when no host is available, host is null and reason says why for each host.
+ * with coordinator { provider, model, effort, typed } and model its model.
+ * While this machine stores no choice for Prism's own runs, or stores Any available host, the run starts with Codex and DEFAULT_CODEX_MODEL
+ * when Codex is available and lists that model for its default provider, and otherwise on the first available of Claude Code and Codex, in that order,
+ * with its small model: Claude Code's CLAUDE_SMALL_MODEL, and Codex's first listed model whose value ends in one of CODEX_SMALL_ENDINGS, or its own default.
+ * Codex's models are read as the review app reads its run options, in an app server of its own that starts no thread, and a failed read lists none.
+ * A stored choice whose host is available starts that host with that choice and reads no models, and a stored host that is not found or a choice
+ * that cannot be read starts the first available host with its default model, with the reason that prismRunLaunch gives, which the run keeps.
+ * With no host available, host is null and reason says why for each host.
+ * `models: false` skips the read of Codex's models, for a caller that only asks whether a host is available.
  * The access is read-only: the session reads artifact text that others wrote, so it gets Prism's tools, file reads, and `git log`, and nothing that writes or runs.
  * This is the only choice of a run's host, model, and access.
  */
-export async function migrationRunHost(env: NodeJS.ProcessEnv = process.env, { checkout = null }: { checkout?: string | null } = {}) {
-  const { prismRunLaunch } = await import("../session/prism-runs.mjs");
-  const chosen = await prismRunLaunch({ checkout, env });
-  if (chosen) return { host: chosen.host, coordinator: chosen.coordinator, model: chosen.coordinator.model, access: "read-only", reason: typeof chosen.reason === "string" && chosen.reason ? chosen.reason : null };
+export async function migrationRunHost(env: NodeJS.ProcessEnv = process.env, { checkout = null, models = true }: { checkout?: string | null; models?: boolean } = {}) {
+  const { prismRunLaunch, readPrismRunsChoice, AUTOMATIC } = await import("../session/prism-runs.mjs");
   const { hostAvailability, HOST_DEFAULT_COORDINATOR } = await import("../session/launch-hosts.mjs");
+  const stored = await readPrismRunsChoice(env);
+  const unchosen = stored.state === "none" || (stored.state === "chosen" && stored.choice?.host === AUTOMATIC);
+  const run = (host: string, model: string | null, reason: string | null = null, coordinator: any = { ...HOST_DEFAULT_COORDINATOR, model }) => ({ host, coordinator, model: coordinator.model, access: "read-only", reason });
+  if (!unchosen) {
+    const chosen = await prismRunLaunch({ checkout, env });
+    if (chosen) return run(chosen.host, null, typeof chosen.reason === "string" && chosen.reason ? chosen.reason : null, chosen.coordinator);
+  }
   const hosts = await hostAvailability({ env });
   const found = hosts.find((entry: any) => entry.available);
-  const coordinator = { ...HOST_DEFAULT_COORDINATOR };
-  if (found) return { host: found.host, coordinator, model: null, access: "read-only", reason: null };
-  return { host: null, coordinator, model: null, access: "read-only", reason: `No host is available on this machine: ${hosts.map((entry: any) => entry.reason).join(" ")}` };
+  if (!found) return { host: null, coordinator: { ...HOST_DEFAULT_COORDINATOR }, model: null, access: "read-only", reason: `No host is available on this machine: ${hosts.map((entry: any) => entry.reason).join(" ")}` };
+  const codex = hosts.some((entry: any) => entry.host === "codex" && entry.available);
+  const listed = codex && models ? await codexModels(checkout, env) : [];
+  if (listed.includes(DEFAULT_CODEX_MODEL)) return run("codex", DEFAULT_CODEX_MODEL);
+  if (found.host === "claude-code") return run("claude-code", CLAUDE_SMALL_MODEL);
+  return run(found.host, listed.find((value) => CODEX_SMALL_ENDINGS.some((ending) => value.endsWith(ending))) ?? null);
+}
+
+/** The Codex model that a migration run starts with while nobody chose a host and model, where Codex lists it. */
+export const DEFAULT_CODEX_MODEL = "gpt-6-luna";
+/** Claude Code's small model, which a run with no chosen host and model starts with on Claude Code, passed without reading Claude Code's models. */
+export const CLAUDE_SMALL_MODEL = "haiku";
+/** The endings of the values of Codex's small models, in the order that Codex lists them. */
+export const CODEX_SMALL_ENDINGS = Object.freeze(["-luna", "-mini"]);
+
+// The values of the visible models that Codex lists for its default provider, in its order; a read that fails or lists no models gives none.
+async function codexModels(checkout: string | null, env: NodeJS.ProcessEnv) {
+  const { readRunOptions } = await import("../session/run-options.mjs");
+  try {
+    const report = await readRunOptions({ host: "codex", purpose: "coordinator", checkout: checkout ?? process.cwd(), env });
+    if (report?.state !== "ready" || report.reason) return [];
+    const options = report.options.find((option: any) => option.id === "model");
+    return (options?.values ?? []).map((entry: any) => entry.value).filter((value: unknown): value is string => typeof value === "string" && value.length > 0);
+  } catch {
+    return [];
+  }
 }
 
 // Record a run's launch, its status, or both, unless the run ended: the status changes only from one of `from`, so a run that asked or failed meanwhile keeps that.
@@ -457,7 +490,7 @@ async function relaunchWaiting(root: any, waiting: any) {
     const claim = await withRunLock(root, run.id, async () => {
       const current = await readRun(root, run.id);
       if (current?.status !== "waiting-for-host") return null;
-      const choice = await migrationRunHost(process.env, { checkout: root });
+      const choice = await migrationRunHost(process.env, { checkout: root, models: false });
       if (!choice.host) return null;
       const next = { ...current, status: "starting", reason: null, waitedFor: current.reason ?? null, startingAt: new Date().toISOString(), nonce: randomBytes(8).toString("hex") };
       await writeRun(root, next);

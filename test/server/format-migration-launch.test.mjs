@@ -5,7 +5,7 @@ import test from "node:test";
 import { CONFORMING, PATHS, REQUIREMENT } from "./fixtures/artifact-formats.mjs";
 import { AUDIT, AUDIT_SOURCE, auditProposal, listedTools, readRun, runCheckout, runFor, serve, stubHosts, waitFor } from "./fixtures/format-migration-runs.mjs";
 
-// Prism launches each format migration run on this machine at once, on the first available host with its default model,
+// Prism launches each format migration run on this machine at once, on the first available host with a small model when no host and model are chosen,
 // with the migrate-artifact prompt alone, and fails a run whose session ends before it finishes.
 
 const posixOnly = process.platform === "win32" ? "the stub hosts are POSIX scripts" : false;
@@ -27,14 +27,14 @@ const launches = async (hosts, root) => {
   return (await listLaunches({ projectRoot: root, env: { ...process.env, ...hosts.env, PRISM_REVIEW_APP_DIR: hosts.app } })).launches ?? [];
 };
 
-test("clauses 1, 2, 3, 4, 16: a new run launches Claude Code at once in an empty folder of its own outside the checkout, with the migrate-artifact prompt alone, no model, and no read of the checkout, and records its launch", { skip: posixOnly }, async (context) => {
+test("clauses 1, 2, 3, 4, 16: a new run launches Claude Code at once in an empty folder of its own outside the checkout, with the migrate-artifact prompt alone, the haiku model, and no read of the checkout, and records its launch", { skip: posixOnly }, async (context) => {
   const { root, call, hosts } = await runCheckout(context, BROKEN, { hosts: ["claude", "codex"] });
   const run = await runFor(call, PATHS.requirements);
   const record = await statusOf(call, run, ["running"]);
   assert.equal(record.launch.host, "claude-code", "Claude Code comes first when both hosts are available");
   assert.match(record.launch.id, /^launch-[0-9a-f]{16}$/);
   const [started] = await waitFor(() => hosts.runs("claude").length ? hosts.runs("claude") : null, { what: "the Claude Code stub to start" });
-  assert.equal(hosts.runs("codex").length, 0);
+  assert.equal(hosts.runs("codex").some((entry) => hosts.inputs(entry.pid).some((message) => message.method === "thread/start")), false, "Codex, which lists no gpt-6-luna, opens no thread");
   assert.notEqual(started.cwd, root);
   assert.equal(touches(started.cwd, root), false, "the session works outside the checkout");
   assert.deepEqual(await readdir(started.cwd), [], "the working folder starts empty");
@@ -42,7 +42,7 @@ test("clauses 1, 2, 3, 4, 16: a new run launches Claude Code at once in an empty
   assert.equal(optionValues(started.argv, "--allowedTools").join(",").includes("Bash"), false, "no shell call is allowed");
   const added = started.argv.flatMap((arg, index) => arg === "--add-dir" ? started.argv.slice(index + 1).filter((value, at, rest) => !rest.slice(0, at + 1).some((item) => item.startsWith("--"))) : []);
   assert.equal(added.some((folder) => touches(folder, root)), false, `no added folder reaches the checkout: ${added.join(", ")}`);
-  assert.equal(started.argv.includes("--model"), false, "the host uses its own default model");
+  assert.deepEqual(optionValues(started.argv, "--model"), ["haiku"], "a run with no chosen model uses Claude Code's small model");
   assert.equal(started.argv.some((arg) => arg.includes(run) || arg.includes("migrate-artifact")), false, "nothing of the run reaches the command line");
   await waitFor(() => hosts.inputs(started.pid).length ? true : null, { what: "the prompt" });
   assert.deepEqual(hosts.inputs(started.pid), [claudePrompt(run)]);
@@ -54,13 +54,14 @@ test("clauses 1, 2, 3, 4, 16: a new run launches Claude Code at once in an empty
   assert.equal(hosts.runs("claude").length, 1, "no second session starts while the run runs");
 });
 
-test("clauses 2, 3, 16: with only Codex available the run starts a Codex turn outside the checkout whose input is the migrate-artifact prompt and whose sandbox reads nothing of the checkout", { skip: posixOnly }, async (context) => {
+test("clauses 2, 3, 16: with only Codex available the run starts a Codex turn outside the checkout whose input is the migrate-artifact prompt, with Codex's default model when it lists no small one, and whose sandbox reads nothing of the checkout", { skip: posixOnly }, async (context) => {
   const { root, call, hosts } = await runCheckout(context, BROKEN, { hosts: ["codex"] });
   const run = await runFor(call, PATHS.requirements);
   const record = await statusOf(call, run, ["running"]);
   assert.equal(record.launch.host, "codex");
-  const [started] = await waitFor(() => hosts.runs("codex").length ? hosts.runs("codex") : null, { what: "the Codex stub to start" });
-  const turn = await waitFor(() => hosts.inputs(started.pid).find((message) => message.method === "turn/start") ?? null, { what: "the Codex turn" });
+  // A read of Codex's model list may run first in an app server of its own, so the run's own app server is the one that opens a thread.
+  const started = await waitFor(() => hosts.runs("codex").find((entry) => hosts.inputs(entry.pid).some((message) => message.method === "turn/start")) ?? null, { what: "the Codex turn" });
+  const turn = hosts.inputs(started.pid).find((message) => message.method === "turn/start");
   assert.deepEqual(turn.params.input, [{ type: "text", text: `$prism:migrate-artifact ${run}` }]);
   const thread = hosts.inputs(started.pid).find((message) => message.method === "thread/start");
   assert.ok(thread && typeof thread.params.cwd === "string", JSON.stringify(thread));
@@ -68,7 +69,8 @@ test("clauses 2, 3, 16: with only Codex available the run starts a Codex turn ou
   const readable = turn.params.sandboxPolicy?.access?.readableRoots ?? [];
   assert.ok(readable.length >= 1, JSON.stringify(turn.params.sandboxPolicy));
   assert.equal(readable.some((folder) => touches(folder, root)), false, `no readable root reaches the checkout: ${readable.join(", ")}`);
-  assert.equal(JSON.stringify(hosts.inputs(started.pid)).includes("model"), false, "no model is chosen");
+  assert.equal("model" in thread.params, false, "the stub lists no model, so Codex uses its own default model");
+  assert.equal("effort" in turn.params, false);
 });
 
 test("clause 5: with no host available the run waits for one, and a check on the machine once a host is there launches it", { skip: posixOnly }, async (context) => {
