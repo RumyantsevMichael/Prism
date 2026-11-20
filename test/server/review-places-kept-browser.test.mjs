@@ -46,6 +46,8 @@ test("clause 27: the strip of tabs keeps its preview, a double click to keep it,
   assert.deepEqual(await tabs(page), ["initiative:activity-reports(p)", "decisions*"], "Ctrl-click kept a tab");
   await page.getByRole("tab", { name: /^Export activity reports/ }).dblclick();
   assert.deepEqual(await settled(() => tabs(page), ["initiative:activity-reports*", "decisions"]), ["initiative:activity-reports*", "decisions"], "a double click kept the preview tab");
+  // The strip keeps the tab at once and saves the session after it, so a reload before the server holds that save would bring the preview back.
+  assert.equal(await settled(async () => (await (await fetch(`${base}/api/session`)).json()).previewTab, null), null, "the server holds the kept tab");
   await page.reload();
   // The page draws the tabs once the review server answers with the session, which takes longer than a second on a slow disk.
   await page.waitForFunction(() => document.querySelectorAll("#open-tabs prism-doc-tab").length > 0, null, { timeout: 15000 }).catch(() => {});
