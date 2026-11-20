@@ -165,7 +165,8 @@ try {
     await applyAction({ projectRoot: realRoot, target, action: id, input: { value }, revision: action.revision });
   }
 
-  process.stdout.write(`Demo project: ${realRoot}\nPrivate evidence: ${dataDir}\n\nStart the review browser with:\n  cd ${realRoot} && PLUGIN_DATA=${dataDir} ${path.join(ROOT, "bin/prism")} review\n`);
+  // The printed command keeps a real Claude Code or Codex off the review app's PATH, since the demo holds a nonconforming file whose format migration run Prism would launch.
+  process.stdout.write(`Demo project: ${realRoot}\nPrivate evidence: ${dataDir}\n\nStart the review browser with:\n  cd ${realRoot} && PATH="$(node ${path.join(ROOT, "scripts/hostless-path.mjs")})" PLUGIN_DATA=${dataDir} ${path.join(ROOT, "bin/prism")} review\n`);
 } finally {
   close();
 }

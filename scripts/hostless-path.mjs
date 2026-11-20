@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync, readdirSync, symlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 // Prism launches a headless Claude Code or Codex session by itself for each format migration run it starts, finding the host on PATH.
 // The tests and the review demo scripts run Prism on throwaway projects, so they must never find a real host:
@@ -29,3 +30,6 @@ export function hostlessPath(value = "") {
 }
 
 for (const name of Object.keys(process.env)) if (name.toUpperCase() === "PATH") process.env[name] = hostlessPath(process.env[name]);
+
+// Run as a command, it prints the hostless PATH, so a printed demo command can start Prism with it: PATH="$(node scripts/hostless-path.mjs)" ...
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) process.stdout.write(`${process.env.PATH ?? ""}\n`);
