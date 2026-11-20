@@ -1,7 +1,7 @@
 import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { MIGRATION_PROJECT_VARIABLE, MIGRATION_RUN_TOOLS, MIGRATION_SCOPE_VARIABLE } from "../session/launch-hosts.mjs";
-import { artifactLocations, artifactTypeOf } from "./artifact-check.mjs";
+import { artifactLocations, listedArtifactType } from "./artifact-check.mjs";
 import { readRun } from "./migration-runs.mjs";
 import { artifactVersion } from "./store-artifacts.mjs";
 import { readWorkflowConfig } from "./workflow-config.mjs";
@@ -91,8 +91,11 @@ async function runOf(projectRoot: any, run: any) {
   }
 }
 
-// Whether the scope takes a project-relative path: an artifact of the run's set, or a path under the configured path of the set's type.
-const accepted = (record: any, config: any, file: string) => Boolean(setArtifact(record, file)) || artifactTypeOf(artifactLocations(config), file) === record.set?.type;
+// Whether the scope takes a project-relative path: never a dot-file or a path under a dot-folder, such as .env, .git, or .prism, and otherwise an artifact
+// of the run's set, or a file that a listing of the set's type would hold, by that type's folder, extension, depth, and name rules, so a configured path
+// of `.` covers only the type's own files and no other file of the checkout.
+const dotted = (file: string) => file.split("/").some((part) => part.startsWith("."));
+const accepted = (record: any, config: any, file: string) => !dotted(file) && (Boolean(setArtifact(record, file)) || listedArtifactType(artifactLocations(config), file) === record.set?.type);
 
 const setArtifact = (record: any, file: string) => (record.set?.artifacts ?? []).find((artifact: any) => relativePath(artifact.path) === file) ?? null;
 

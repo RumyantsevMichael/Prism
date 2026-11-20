@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import readline from "node:readline";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { CONFORMING, PATHS, REQUIREMENT, write } from "./fixtures/artifact-formats.mjs";
 import { COMPONENTS, STORE_PATHS } from "./fixtures/artifact-formats-store.mjs";
 import { listedTools, readRun, runCheckout, runFor, serve, stubHosts, waitFor } from "./fixtures/format-migration-runs.mjs";
+import { isolatedEnv } from "./fixtures/isolated-env.mjs";
 import { checkout, isolateGit, syncedWorkspace } from "./fixtures/workspace-artifacts.mjs";
 
 // A run's session reads only, an artifact has at most one open run, and a run whose owner is gone fails so that it can run again.
@@ -33,6 +36,9 @@ test("a run's Claude Code session works in its own folder with only the reading 
   assert.equal(after("--tools"), "Read,Grep,Glob");
   // No bare Read, Grep, or Glob is allowed, so a read outside the working folder and the added folders asks, and nothing asks.
   assert.equal(after("--allowedTools"), RUN_TOOLS.map((tool) => `mcp__plugin_prism_prism-review__${tool}`).join(","));
+  // Deny rules win over every allow rule and added folder, also those of the person's own settings, so no setting reads the checkout again.
+  const real = await realpath(root);
+  assert.equal(after("--disallowedTools"), `Read(/${real}),Read(/${real}/**)`);
   const added = started.argv.slice(started.argv.indexOf("--add-dir") + 1, started.argv.indexOf("--permission-mode"));
   assert.ok(added.includes(PRISM_ROOT), "Prism's own folder, which holds the format references, is readable");
   assert.ok(added.every((folder) => path.isAbsolute(folder) && folder !== os.homedir()), `only fixed folders are added: ${added}`);
@@ -92,6 +98,60 @@ test("a Prism server that a run's session starts lists and takes only the run's 
   // A read of the run's own artifact passes the scope, and the checkout's own answer follows.
   assert.notEqual((await scoped("get_artifact", { path: PATHS.requirements })).value?.code, "migration_scope");
   assert.equal((await readRun(call, run)).status, "waiting-for-host", "nothing the scope refused changed the run");
+});
+
+/** A Prism server started in an empty folder outside the checkout, as a run's session starts it, scoped to the run and its project: its get_artifact. */
+async function scopedRead(context, root, run) {
+  const folder = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-run-folder-")));
+  context.after(() => rm(folder, { recursive: true, force: true }));
+  const env = isolatedEnv({
+    PRISM_REVIEW_APP: "off",
+    PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)),
+    CLAUDE_PROJECT_DIR: folder, PRISM_MIGRATION_RUN: run, PRISM_MIGRATION_PROJECT: root
+  });
+  const child = spawn(process.execPath, [fileURLToPath(new URL("../../dist/server/mcp.mjs", import.meta.url))], { cwd: folder, env, stdio: ["pipe", "pipe", "pipe"] });
+  context.after(() => { if (child.exitCode === null) child.kill("SIGKILL"); });
+  const answers = new Map();
+  readline.createInterface({ input: child.stdout }).on("line", (line) => {
+    const message = JSON.parse(line);
+    if (message.id !== undefined) answers.set(message.id, message);
+  });
+  let next = 1;
+  const request = (method, params) => {
+    const id = next++;
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+    return waitFor(() => answers.get(id) ?? null, { what: method });
+  };
+  await request("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "run-scope-test", version: "1" } });
+  return async (file) => {
+    const message = await request("tools/call", { name: "get_artifact", arguments: { path: file } });
+    return { code: message.result?.structuredContent?.code ?? message.error?.data?.code ?? null, text: JSON.stringify(message) };
+  };
+}
+
+test("the run's server serves only files of the set's type under its folder, never a dot-file, a dot-folder, or a link to one, also with a configured path of .", { skip: posixOnly }, async (context) => {
+  const { root, call } = await runCheckout(context, BROKEN, { hosts: [] });
+  const run = await runFor(call, PATHS.requirements);
+  const secrets = { ".env": "TOKEN=env-secret\n", ".npmrc": "//registry.npmjs.org/:_authToken=npm-secret\n" };
+  for (const [file, text] of Object.entries(secrets)) await writeFile(path.join(root, file), text);
+  await mkdir(path.join(root, "docs/requirements/sub"), { recursive: true });
+  await symlink("../../../.env", path.join(root, "docs/requirements/sub/link.md"));
+  await writeFile(path.join(root, "docs/requirements/notes.txt"), "PLAIN=not-a-requirement\n");
+  const read = await scopedRead(context, root, run);
+  const refusedAll = async (files) => {
+    for (const file of files) {
+      const answer = await read(file);
+      assert.equal(answer.code, "migration_scope", `${file}: ${answer.text}`);
+      assert.doesNotMatch(answer.text, /secret|not-a-requirement/, file);
+    }
+  };
+  await refusedAll(["docs/requirements/notes.txt", "docs/requirements/sub/link.md", "docs/requirements/../../.env", "./.env", ".prism/workflow.md"]);
+  assert.equal((await read(PATHS.requirements)).code, null, "the run's own source is served");
+  // With the requirements at the project root, only requirement files there are the type's; every dot-file, dot-folder, and other file stays refused.
+  const config = path.join(root, ".prism/workflow.md");
+  await writeFile(config, (await readFile(config, "utf8")).replace("- Requirements: docs/requirements/", "- Requirements: ."));
+  await refusedAll([".env", ".npmrc", ".prism/workflow.md", ".git/config", "docs/requirements/sub/link.md", "docs/requirements/notes.txt", "package.json"]);
+  assert.equal((await read(PATHS.requirements)).code, null, "the run's own source is still served");
 });
 
 test("a newer nonconforming version of an artifact ends its open run and stops its session, so one run and one session hold it", { skip: posixOnly }, async (context) => {

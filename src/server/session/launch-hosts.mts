@@ -64,8 +64,20 @@ export const MIGRATION_PROJECT_VARIABLE = "PRISM_MIGRATION_PROJECT";
 export const MIGRATION_RUN_TOOLS = Object.freeze(["get_migration_run", "get_artifact", "propose_migration", "finish_migration_run", "fail_migration_run"]);
 const PRISM_TOOL_PREFIX = "mcp__plugin_prism_prism-review__";
 const CLAUDE_READ_ONLY_TOOLS = MIGRATION_RUN_TOOLS.map((tool) => `${PRISM_TOOL_PREFIX}${tool}`).join(",");
-const claudeReadOnly = (readRoots: string[]) => ["--input-format", "stream-json", "--output-format", "stream-json", "--tools", "Read,Grep,Glob", "--allowedTools", CLAUDE_READ_ONLY_TOOLS,
+const claudeReadOnly = (readRoots: string[], denied: string[]) => ["--input-format", "stream-json", "--output-format", "stream-json", "--tools", "Read,Grep,Glob", "--allowedTools", CLAUDE_READ_ONLY_TOOLS,
+  ...(denied.length ? ["--disallowedTools", denied.flatMap(deniedReads).join(",")] : []),
   ...(readRoots.length ? ["--add-dir", ...readRoots] : []), "--permission-mode", "dontAsk", "--permission-prompts", "none"];
+/**
+ * The deny rules that keep a folder and everything below it unread by Claude Code's file tools, whose Read rules also cover Grep and Glob:
+ * a deny rule wins over every allow rule and added folder, also over those of the person's own Claude Code settings, so no setting reads the checkout.
+ * A folder whose path a rule cannot hold as written is refused, so a session never starts with a rule that matches less than the folder.
+ */
+function deniedReads(folder: string) {
+  const posix = folder.replaceAll("\\", "/");
+  if (!path.isAbsolute(folder) || /[,()*?[\]!\\]/.test(posix.replace(/^[A-Za-z]:/, ""))) throw new Error(`Prism cannot deny the reads of ${folder} to the session, so it does not start it.`);
+  const absolute = `/${posix.replace(/^\/+/, "")}`;
+  return [`Read(/${absolute})`, `Read(/${absolute}/**)`];
+}
 const CODEX_READ_ONLY = Object.freeze({ approvalPolicy: "never", sandbox: "read-only" });
 /** The sandbox of a read-only Codex turn: reads only in the run's working folder, the given folders, and the platform's own. */
 const codexReadOnlySandbox = (folder: string, readRoots: string[]) => ({ type: "readOnly", access: { type: "restricted", includePlatformDefaults: true, readableRoots: [folder, ...readRoots] } });
@@ -209,11 +221,11 @@ function coordinatorOf(coordinator: unknown): CoordinatorChoice {
  * coordinator's choice, each left out for the host default, or Codex's app server, which takes the choice in its requests.
  * A read-only run, a format migration run's, takes only the reading tools and the run's own Prism tools, and reads in readRoots too.
  */
-export function hostArguments({ host, hostSessionId, resume, coordinator = null, access = "full", readRoots = [] }: { host: string; hostSessionId: unknown; resume?: boolean; coordinator?: unknown; access?: string; readRoots?: string[] }) {
+export function hostArguments({ host, hostSessionId, resume, coordinator = null, access = "full", readRoots = [], deniedRoots = [] }: { host: string; hostSessionId: unknown; resume?: boolean; coordinator?: unknown; access?: string; readRoots?: string[]; deniedRoots?: string[] }) {
   if (host === "claude-code") {
     if (!validHostSessionId(hostSessionId)) throw new Error("The host session id is not one Prism can pass to a host.");
     const { model, effort } = coordinatorOf(coordinator);
-    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...(readOnly(access) ? claudeReadOnly(rootsOf(readRoots)) : CLAUDE_FLAGS), ...(model === null ? [] : ["--model", model]), ...(effort === null ? [] : ["--effort", effort])];
+    return ["-p", "--verbose", resume ? "--resume" : "--session-id", hostSessionId, ...(readOnly(access) ? claudeReadOnly(rootsOf(readRoots), rootsOf(deniedRoots)) : CLAUDE_FLAGS), ...(model === null ? [] : ["--model", model]), ...(effort === null ? [] : ["--effort", effort])];
   }
   if (host === "codex") return ["app-server"];
   throw new Error(`Unknown host ${host}.`);

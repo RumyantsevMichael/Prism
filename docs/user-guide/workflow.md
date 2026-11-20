@@ -157,7 +157,7 @@ A run whose session's supervision was lost, or whose session ended without repor
 A run's session reads only, because it reads artifact text that others wrote.
 It works in an empty folder of its own outside the checkout and reads no file of the checkout, so it cannot copy a file such as `.env` or `.git/config` into the record store.
 Beside its own folder it reads files only in Prism's own folder and in the host's plugin cache, where the format references are: Claude Code gets only its reading tools and runs no shell command, and Codex runs in its read-only sandbox and never asks to run a command outside it.
-Of Prism's tools, the session can call only the run's own: reading the run, with the project's configured paths and each source's Git history, reading the run's artifacts and others under the same configured path, in the record store or the checkout, proposing the run's format migrations, and finishing or failing the run.
+Of Prism's tools, the session can call only the run's own: reading the run, with the project's configured paths and each source's Git history, reading the run's artifacts and other files of their type under the same configured path, never a dot-file or a dot-folder, in the record store or the checkout, proposing the run's format migrations, and finishing or failing the run.
 Prism refuses every other tool, such as changing an artifact, the roadmap, an initiative, or a review, to that session, so nothing written into an artifact can make the session change them.
 No Prism tool that an agent calls starts, continues, or runs again a run's session.
 

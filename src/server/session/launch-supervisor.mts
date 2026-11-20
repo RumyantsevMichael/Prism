@@ -75,7 +75,9 @@ export async function superviseRun({ folder, cause, token, env = process.env }: 
     await failStart("The format migration run's launch has no working folder of its own, so its session cannot start.");
     return;
   }
-  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, coordinator, access: record.access ?? "full", readRoots: record.readRoots ?? [] });
+  const args = hostArguments({ host: record.host, hostSessionId: record.hostSessionId, resume, coordinator, access: record.access ?? "full", readRoots: record.readRoots ?? [],
+    // A format migration run's Claude Code session is denied every read of the checkout, whatever the person's own settings allow.
+    deniedRoots: typeof record.migrationRun === "string" ? [record.checkout] : [] });
   const number = record.runs.length + 1;
   const graceMs = stopGraceMs(env);
   let stderr = Buffer.alloc(0);
