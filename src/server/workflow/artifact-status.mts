@@ -173,7 +173,7 @@ export function statusMismatch(kind: string, file: string, text: string, record:
  * Record a pending approval gate on a requirement or ADR at its current version: { record, gate }.
  * A new question replaces the artifact's earlier pending ones, which close as superseded, so one artifact waits on one approval at a time.
  */
-export function askApproval(kind: string, file: string, record: any, { status, question, context, version, shipped, now = new Date() }: { status: any; question: any; context: any; version: any; shipped: any; now?: any }) {
+export function askApproval(kind: string, file: string, record: any, { status, question, context, version, shipped, now = new Date() }: { status: any; question: any; context: any; version: any; shipped?: any; now?: any }) {
   if (!hasStatus(kind)) throw notAStatusArtifact(file);
   const wanted = typeof status === "string" ? status.trim() : shipped ? SHIP_STATUS : "Approved";
   if (!wanted || wanted.length > STATUS_MAX || /[\r\n]/.test(wanted)) throw fail("validation_failed", `The status of an approval gate is one line of 1 to ${STATUS_MAX} characters, such as Approved.`);

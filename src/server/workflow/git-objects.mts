@@ -256,7 +256,7 @@ export const TREE_DEPTH_TEXT = "exceeded maximum allowed tree depth";
  * trees holds the bytes of the trees a walk would reach, as Map(object, bytes); a folder whose tree it lacks does not count, as Git skips a tree that the fetching machine already holds before it counts it.
  * Returns { root, depth, names }, where names are the bytes of the folder names on the deepest path from that root, or null.
  */
-export function tooDeepTree(roots: string[], trees: Map<string, Buffer>) {
+export function tooDeepTree(roots: Iterable<string>, trees: Map<string, Buffer>) {
   type Depth = { depth: number; via: TreeEntry | null };
   const deepest = new Map<string, Depth>();
   const folders = (tree: string) => treeEntries(trees.get(tree)!, tree.length / 2).filter((entry) => isTreeMode(entry.mode) && trees.has(entry.object));
