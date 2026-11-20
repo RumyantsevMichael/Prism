@@ -13,11 +13,13 @@ It is not the move of a checkout's files into the store.
 
 ## 1. Prepare
 
-1. Read the project's Prism configuration and instructions for the configured paths.
-2. Call `get_migration_run` with the run id for its set, status, earlier proposals, question, and answers.
-3. Read the target format's reference: the [requirement format](../write-requirements/references/requirement-format.md), the [ADR format](../write-adr/references/adr-format.md), the [glossary format](../workflow/references/glossary-format.md), or the [feature format](../write-feature/references/feature-format.md).
-4. For each artifact of the set, read it and any existing target, each [store artifact](../workflow/SKILL.md#common-terms) through `get_artifact` with its scope, and its current findings from the run.
-5. Read each source file's Git history, such as `git log --follow --format=%as -- <path>`, for dates that the source does not state.
+1. Call `get_migration_run` with the run id for its set, status, earlier proposals, question, answers, the project's configured paths, and each source's Git history.
+2. Read the target format's reference beside this skill: the [requirement format](../write-requirements/references/requirement-format.md), the [ADR format](../write-adr/references/adr-format.md), the [glossary format](../workflow/references/glossary-format.md), or the [feature format](../write-feature/references/feature-format.md).
+3. For each artifact of the set, read it and any existing target through `get_artifact` with its scope, and take its current findings from the run.
+4. Take dates that a source does not state from its Git history in the run.
+
+- Don't
+  - Read a file of the project yourself, or run a shell or version control command: this session works outside the project, and the run's tools serve everything it reads.
 
 ## 2. Write each artifact's content
 
