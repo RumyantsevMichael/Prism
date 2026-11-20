@@ -262,10 +262,6 @@
   max-width: var(--prism-list-width);
 }
 
-.data-table td.dates {
-  white-space: nowrap;
-}
-
 /* A slice count bar: done, in progress, blocked, and deferred shares of an initiative's slices. */
 .progress {
   display: flex;
@@ -348,8 +344,7 @@
 /* ---------- Attention: a list of what needs the person beside the picked item ---------- */
 
 /* The summary figures sit in the page head beside the title. */
-.attention-stats,
-.roadmap-controls {
+.attention-stats {
   display: flex;
   flex-wrap: wrap;
   gap: var(--prism-space-4);
@@ -358,13 +353,24 @@
 }
 
 /* The page titles take the room the summary leaves them, so the summary sits beside a title as long as the titles keep a readable width. */
-.artifact-header:has(.attention-stats, .roadmap-controls) > :first-child {
+.artifact-header:has(.attention-stats) > :first-child {
   flex: 1 1 calc(var(--prism-sidebar-width) + var(--prism-space-8));
 }
 
 /* The list and the detail run to the island's edges below the page head, as an inbox does, so Attention's page drops its padding and only its head keeps it. */
+/* The page fills the workspace and the list and the detail scroll apart, so the picked item stays in view however far the list is scrolled. */
 .artifact-view:has(.attention-inbox) {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   padding: 0;
+}
+
+.artifact-view:has(.attention-inbox) > .structured-view {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .artifact-view:has(.attention-inbox) > .artifact-header {
@@ -374,8 +380,10 @@
 
 .attention-inbox {
   display: grid;
+  flex: 1 1 auto;
   grid-template-columns: var(--prism-list-width) minmax(0, 1fr);
   min-width: 0;
+  min-height: 0;
   border-top: var(--prism-stroke) solid var(--prism-color-line);
 }
 
@@ -385,6 +393,8 @@
   gap: var(--prism-space-1);
   min-width: 0;
   padding: var(--prism-space-4);
+  overflow: auto;
+  overscroll-behavior: contain;
   border-right: var(--prism-stroke) solid var(--prism-color-line);
   background: var(--prism-color-sunken);
 }
@@ -500,11 +510,14 @@
 }
 
 .attention-detail {
+  container: attention-detail / size;
   display: flex;
   flex-direction: column;
   gap: var(--prism-space-5);
   min-width: 0;
   padding: var(--prism-space-6);
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .attention-sheet {
@@ -526,7 +539,8 @@
   min-width: 0;
   max-width: calc(var(--prism-measure) * 1.5);
   padding: var(--prism-space-7);
-  overflow: hidden;
+  /* Clip, not hidden: a hidden overflow would make the sheet a scroll container and stop the answer from sticking. */
+  overflow: clip;
   border: var(--prism-stroke) solid var(--prism-color-line);
   border-radius: var(--prism-radius-lg);
   background: var(--prism-color-raised);
@@ -641,6 +655,15 @@
 @container gate (min-width: 660px) {
   .gate-body {
     grid-template-columns: minmax(0, 1fr) minmax(calc(var(--prism-sidebar-width) - var(--prism-space-4)), 36%);
+  }
+
+  /* Beside a long question the answer stays in view while the question scrolls, and scrolls inside itself when it is taller than the detail. */
+  .gate-answer {
+    position: sticky;
+    top: var(--prism-space-5);
+    max-height: calc(100cqh - 2 * var(--prism-space-5));
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 }
 
@@ -806,8 +829,14 @@ a.inspect-tile:focus-visible {
   min-width: 0;
 }
 
-.gate-choices > :last-child:not(:first-child):not(:nth-child(2)) {
-  justify-self: start;
+/* "Your answer" with Clear choice at its end; the row keeps the button's height, so the options do not move when it shows. */
+.gate-choices-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  min-height: var(--prism-control-height-sm);
 }
 
 .gate-note {
@@ -948,6 +977,14 @@ a.inspect-tile:focus-visible {
 .recent-change:first-child {
   padding-top: 0;
   border-top: 0;
+}
+
+/* An answer names the question it answered above the answer, so the list reads as a record of decisions. */
+.recent-change-question {
+  margin: 0;
+  color: var(--prism-color-ink);
+  font-weight: var(--prism-font-weight-semibold);
+  overflow-wrap: anywhere;
 }
 
 .recent-change-values,
@@ -1148,44 +1185,127 @@ a.inspect-tile:focus-visible {
   font-size: var(--prism-font-size-xs);
 }
 
-.roadmap-questions {
+/* The metrics and the count of open questions share one row, which wraps the count below the metrics in a narrow window. */
+.roadmap-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-3) var(--prism-space-5);
   min-width: 0;
-  padding: var(--prism-space-5);
-  border: var(--prism-stroke) solid var(--prism-color-line);
-  border-radius: var(--prism-radius-lg);
 }
 
-.roadmap-questions h2 {
+.roadmap-meta > .roadmap-metrics {
+  flex: 1 1 auto;
+}
+
+/* The view, the grouping, and the archive toggle sit in one toolbar above what they change; the archive toggle keeps to the end of the row. */
+.roadmap-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-3) var(--prism-space-6);
+  min-width: 0;
+}
+
+.roadmap-toolbar-group {
   display: flex;
   align-items: center;
   gap: var(--prism-space-3);
-  margin: 0 0 var(--prism-space-3);
-  font-size: var(--prism-font-size-md);
-  font-weight: var(--prism-font-weight-semibold);
+  min-width: 0;
 }
 
-.roadmap-questions ul {
-  display: grid;
+.roadmap-toolbar-label {
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  white-space: nowrap;
+}
+
+.roadmap-toolbar-archive {
+  margin-left: auto;
+}
+
+/* The card's footer keeps its signals and holders at the start and the dependency icons at its end. */
+.roadmap-item-foot-start {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.roadmap-deps {
+  display: flex;
+  flex: none;
   gap: var(--prism-space-2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
+  margin-inline-start: auto;
 }
 
-.roadmap-questions li {
+/* While a dependency icon is traced, the cards it names keep their look with an accent ring and every other card fades. */
+.roadmap-item {
+  transition: opacity var(--prism-duration-fast) var(--prism-easing-standard);
+}
+
+.roadmap-board.is-tracing .roadmap-item:not(.is-related, .is-source) {
+  opacity: 0.4;
+}
+
+.roadmap-board.is-tracing .roadmap-item.is-related {
+  border-color: var(--prism-color-accent);
+  box-shadow: 0 0 0 var(--prism-stroke) var(--prism-color-accent), var(--prism-shadow-island);
+}
+
+/* The list's title cell holds the rank, then the title, the intent, and the dependency links, which wrap under the title. */
+.roadmap-list {
+  --prism-lib-columns: minmax(0, 3fr) minmax(0, 1fr) minmax(calc(var(--prism-space-8) * 5), 1.2fr) minmax(0, 1.4fr);
+}
+
+.roadmap-list-title {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: var(--prism-space-3);
   min-width: 0;
 }
 
-.roadmap-questions li > span {
+.roadmap-list-title > .item-rank {
+  flex: none;
+  white-space: nowrap;
+}
+
+.roadmap-list-text {
+  display: grid;
+  gap: var(--prism-space-1);
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.roadmap-questions li > :first-child {
-  color: var(--prism-color-accent-text);
+.roadmap-rels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--prism-space-1) var(--prism-space-5);
+  min-width: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+}
+
+.roadmap-rel {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-1) var(--prism-space-2);
+  min-width: 0;
+}
+
+.roadmap-rel-word {
+  white-space: nowrap;
+}
+
+.roadmap-list-signals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2);
+  min-width: 0;
 }
 
 .item-rank {
@@ -1193,6 +1313,97 @@ a.inspect-tile:focus-visible {
 }
 
 /* ---------- Initiative ---------- */
+
+/* The page head keeps the initiative's controls level with its eyebrow, and they wrap below the title in a narrow window. */
+.artifact-header:has(> .page-end) {
+  align-items: flex-start;
+}
+
+.page-end {
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.initiative-facts {
+  min-width: 0;
+}
+
+/* The view switch and the slices that can be designed next share one row above the slices. */
+.initiative-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-3) var(--prism-space-5);
+  min-width: 0;
+}
+
+.initiative-frontier {
+  display: flex;
+  flex: 1 1 calc(var(--prism-sidebar-width) * 1.5);
+  align-items: baseline;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+/* The glyph keeps its size however long the line beside it grows. */
+.initiative-frontier-glyph {
+  display: inline-flex;
+  flex: none;
+}
+
+/* The latest launched run leads the run configuration, its reason wrapping under its state. */
+.initiative-latest-run {
+  display: grid;
+  gap: var(--prism-space-2);
+  padding-bottom: var(--prism-space-4);
+  margin-bottom: var(--prism-space-3);
+  border-bottom: 1px solid var(--prism-color-line);
+  min-width: 0;
+}
+
+.initiative-latest-run[hidden],
+.initiative-last-run-slot:empty {
+  display: none;
+}
+
+.initiative-latest-run-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2) var(--prism-space-4);
+  min-width: 0;
+}
+
+.initiative-latest-run-title {
+  min-width: 0;
+  font-weight: var(--prism-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.initiative-latest-run-reason {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.initiative-settings-lead {
+  margin: 0 0 var(--prism-space-4);
+  color: var(--prism-color-ink-muted);
+}
+
+/* A launch held by a choice or a host, or refused, says why above the settings. */
+.initiative-launch-note {
+  margin: 0 0 var(--prism-space-4);
+}
+
+.initiative-launch-note[hidden] {
+  display: none;
+}
 
 .slice-columns {
   display: grid;
@@ -1283,19 +1494,42 @@ a.inspect-tile:focus-visible {
 
 /* ---------- Slice ---------- */
 
-.slice-claim-strip {
+/* Each verified file names its path, which wraps when long, and then its state. */
+.slice-verified-files {
   min-width: 0;
 }
 
-/* The claim strip runs the page's full width; a covering scope's note follows it. */
-.slice-claim-strip > .claim-held {
-  display: flex;
-  flex-wrap: wrap;
-  width: 100%;
+.slice-file-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
+/* The tag line holds the phase and the slice's chips at the start and the claim at the end, whose times show on hover. */
 .slice-head-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--prism-space-3) var(--prism-space-5);
+  min-width: 0;
   margin-top: calc(-1 * var(--prism-space-2));
+}
+
+/* The claim keeps to the end of the line, also when it wraps onto a line of its own. */
+.slice-head-claim {
+  margin-inline-start: auto;
+}
+
+.slice-head-tags > .chip-row,
+.slice-head-claim,
+.slice-head-claim > .claim-held {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .slice-details-facts {
@@ -1496,82 +1730,73 @@ a.inspect-tile:focus-visible {
   min-width: 0;
 }
 
-.decision-list > li > .muted {
-  margin-left: auto;
-  font-size: var(--prism-font-size-xs);
-}
+/* ---------- Agents: the Show choice over one library table of agents, and a launched session's details under its row ---------- */
 
-/* ---------- Launched sessions: one card per session, its facts, its terminal command, and its actions ---------- */
-
-.launches,
-.launches-list {
+.agents {
   display: grid;
   gap: var(--prism-space-5);
   min-width: 0;
 }
 
-.launches-notice:empty,
-.launches-error[hidden] {
+.agents-notice:empty,
+.agents-error[hidden],
+.agents-toolbar[hidden],
+.agents-none[hidden],
+.agents-table[hidden] {
   display: none;
 }
 
-.launch-info {
-  display: grid;
-  gap: var(--prism-space-3);
-  min-width: 0;
-}
-
-.launch-head {
+.agents-toolbar {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: var(--prism-space-3) var(--prism-space-4);
   min-width: 0;
 }
 
-.launch-title {
-  min-width: 0;
-  margin: 0;
-  font-size: var(--prism-font-size-lg);
-  overflow-wrap: anywhere;
+/* The agent and what it works on take the room; the state, the time, and the one action keep a share each, so every row's cells line up. */
+.agents-table {
+  --prism-lib-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) minmax(0, 1.8fr) minmax(0, 0.8fr) minmax(0, 0.6fr) minmax(0, 0.5fr);
 }
 
-.view-section .launch-reason {
-  margin: 0;
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-sm);
-  overflow-wrap: anywhere;
-}
-
-.launch-info .key-values {
-  margin: 0;
-}
-
-.launch-running {
+.agents-time {
   font-variant-numeric: tabular-nums;
 }
 
-.launch-resume {
+.agents-action {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.agents-details {
+  display: grid;
+  gap: var(--prism-space-3);
+}
+
+.agents-details-body {
   display: grid;
   gap: var(--prism-space-2);
   min-width: 0;
 }
 
-.view-section .launch-resume-lead {
+.agents-details-reason,
+.agents-details-lead {
   margin: 0;
   color: var(--prism-color-ink-muted);
   font-size: var(--prism-font-size-sm);
   overflow-wrap: anywhere;
 }
 
-.launch-folder {
+.agents-details-reason {
+  color: var(--prism-color-ink);
+}
+
+.agents-folder {
   color: var(--prism-color-ink);
   font-family: var(--prism-font-code);
   font-size: var(--prism-font-size-code);
   overflow-wrap: anywhere;
 }
 
-.launch-command {
+.agents-command {
   display: flex;
   align-items: center;
   gap: var(--prism-space-3);
@@ -1579,22 +1804,20 @@ a.inspect-tile:focus-visible {
 }
 
 /* The command takes the room its Copy button leaves, so a long command scrolls inside its block and the button keeps its width. */
-.launch-code {
+.agents-code {
   flex: 1 1 0;
   min-width: 0;
 }
 
-.launch-actions {
+.agents-details-actions {
   min-width: 0;
-  margin-top: var(--prism-space-3);
-  border-top: var(--prism-stroke) solid var(--prism-color-line);
 }
 
-.launch-actions:empty {
+.agents-details-actions:empty {
   display: none;
 }
 
-.launch-action-effect {
+.agents-action-effect {
   color: var(--prism-color-ink-muted);
   font-size: var(--prism-font-size-sm);
   font-weight: var(--prism-font-weight-regular);
@@ -1664,44 +1887,4 @@ a.inspect-tile:focus-visible {
   .change-where {
     margin-left: 0;
   }
-}
-
-/* ---------- Slice review card ---------- */
-
-.deferred-list {
-  display: grid;
-  gap: var(--prism-space-2);
-  min-width: 0;
-  margin: var(--prism-space-2) 0 var(--prism-space-4);
-  padding: 0;
-  list-style: none;
-}
-
-.deferred-list li {
-  display: grid;
-  gap: var(--prism-space-1);
-  min-width: 0;
-  padding: var(--prism-space-2) var(--prism-space-3);
-  border: var(--prism-stroke) solid var(--prism-color-line);
-  border-radius: var(--prism-radius-sm);
-  background: var(--prism-color-surface);
-  font-size: var(--prism-font-size-sm);
-  overflow-wrap: anywhere;
-}
-
-.deferred-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--prism-space-2);
-  min-width: 0;
-}
-
-.deferred-title {
-  min-width: 0;
-}
-
-.deferred-meta code {
-  font-family: var(--prism-font-code);
-  font-size: var(--prism-font-size-code);
 }

@@ -15,7 +15,7 @@ import { parseArgs } from "node:util";
 import { ROOT } from "./project.mjs";
 import { auditPage as audit, checkCatalog, checkNames, CHROMIUM_OPTIONS, loadPlaywright as installedPlaywright, VIEWPORTS } from "./layout-audit.mjs";
 
-const PLACES = ["attention", "roadmap", "requirements", "decisions", "glossary"];
+const PLACES = ["attention", "roadmap", "requirements", "decisions", "glossary", "agents"];
 
 const { values } = parseArgs({ options: { viewports: { type: "string", default: "phone,tablet,laptop,wide" }, themes: { type: "string", default: "light" }, screenshots: { type: "string" }, catalog: { type: "string" }, part: { type: "string", default: "1/1" } } });
 const viewports = values.viewports.split(",");
@@ -72,7 +72,8 @@ function record(finding, where) {
 try {
   const projects = [];
   for (const [name, seed] of [["demo", "seed.mjs"], ["stress", "seed-stress.mjs"]]) {
-    execFileSync(process.execPath, [path.join(ROOT, "scripts/review-demo", seed), path.join(parent, name)], { stdio: "ignore" });
+    // The demo also has agents at work, so the Agents page lists every group and a launched session's row.
+    execFileSync(process.execPath, [path.join(ROOT, "scripts/review-demo", seed), path.join(parent, name), ...(name === "demo" ? ["--agents", appDirectory] : [])], { stdio: "ignore" });
     projects.push({ name, root: path.join(parent, name), data: path.join(parent, `${name}-data`) });
   }
   const empty = path.join(parent, "empty");
@@ -141,7 +142,7 @@ try {
         "project menu": ["attention", () => page.click("#project-button")],
         "index panel": ["attention", () => page.click("#indexing-button")],
         // Each overlay opens the way a reader opens it, through its kit control.
-        "who's working": ["attention", () => page.locator("header").getByRole("button", { name: /working/ }).click()],
+        "agents menu": ["attention", () => page.locator("header").getByRole("button", { name: /^Agents:/ }).click()],
         "navigation drawer": ["roadmap", async () => {
           const navigation = page.locator("header").getByRole("button", { name: "Navigation", exact: true });
           if (await navigation.isVisible()) await navigation.click();

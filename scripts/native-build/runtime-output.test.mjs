@@ -66,6 +66,26 @@ test("freshness checks reject missing, edited, obsolete, and wrong-mode output w
   }
 });
 
+test("compiles browser TypeScript to JavaScript and keeps an executable module's hashbang first", async t => {
+  const { root, write } = await fixture(t);
+  await write("src/server/public/view.ts", "export const label = (value: string): string => value ?? `fallback`;\n");
+  await write("src/server/public/view-types.ts", "export interface View { label: string }\n");
+  await write("src/server/public/ambient.d.ts", "declare const shared: string;\n");
+  const script = await write("src/server/supervisor.mts", "#!/usr/bin/env node\nexport const role: string = 'supervisor';\n");
+  await chmod(script, 0o755);
+  await generateRuntime(root);
+  const view = await readFile(path.join(root, "dist/server/public/view.js"), "utf8");
+  assert.match(view, /^\/\/ Generated from src\/server\/public\/view\.ts/);
+  assert.match(view, /value \?\? `fallback`/, "browser output keeps modern syntax as written");
+  assert.equal((await import(pathToFileURL(path.join(root, "dist/server/public/view.js")).href)).label("ok"), "ok");
+  await assert.rejects(access(path.join(root, "dist/server/public/view-types.js")), { code: "ENOENT" });
+  await assert.rejects(access(path.join(root, "dist/server/public/ambient.d.ts")), { code: "ENOENT" });
+  await assert.rejects(access(path.join(root, "dist/server/public/ambient.js")), { code: "ENOENT" });
+  const supervisor = await readFile(path.join(root, "dist/server/supervisor.mjs"), "utf8");
+  assert.match(supervisor, /^#!\/usr\/bin\/env node\n\/\/ Generated from src\/server\/supervisor\.mts/);
+  if (process.platform !== "win32") assert.equal((await stat(path.join(root, "dist/server/supervisor.mjs"))).mode & 0o777, 0o755);
+});
+
 test("builds remove directories left empty by moved sources", async t => {
   const { root, write } = await fixture(t);
   await write("dist/server/old-group/obsolete.mjs", "obsolete\n");

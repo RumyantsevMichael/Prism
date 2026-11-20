@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { INITIATIVE, launchFixture, waitFor } from "./fixtures/launched-sessions.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { apply, get, pageSession, startActionReview } from "./fixtures/review-actions.mjs";
 
 // Review checks of the launch actions beyond the frozen tests: which asks mark a gate, what a stop leaves for a later answer, and the bounds of the gate record.
@@ -39,11 +40,18 @@ const historyOf = async (root) => {
   return (await readCoordinationState({ projectRoot: root, initiative: INITIATIVE })).state?.history ?? [];
 };
 
+// The initiative's host setting, written as an agent writes it, so the one launch action runs that host.
+async function useHost(root, host) {
+  const { readCoordinationState, updateCoordinationState } = await import("../../dist/server/workflow/state.mjs");
+  const read = await readCoordinationState({ projectRoot: root, initiative: INITIATIVE });
+  await updateCoordinationState({ projectRoot: root, initiative: INITIATIVE, expectedRevision: read.exists ? read.revision : null, changes: { settings: { host } } });
+}
+
 const gatesFile = (s, id) => path.join(s.app, "launches", id, "gates.json");
 
 test("an ask marks a gate only for a launch of this machine of the same initiative", { skip: posixOnly }, async (t) => {
   const s = await setup(t, { plans: { claude: [{ hold: "forever" }] } });
-  const id = (await apply(s.base, { action: "launch.claude-code", target: `initiative:${INITIATIVE}`, input: {}, revision: null }, s.headers)).json.launch.id;
+  const id = (await apply(s.base, { action: "launch.run", target: `initiative:${INITIATIVE}`, input: {}, revision: null }, s.headers)).json.launch.id;
   await ask(s.root, id, "search");
   await ask(s.root, "launch-0000000000000000");
   await assert.rejects(readFile(gatesFile(s, id), "utf8"), (error) => error.code === "ENOENT", "an ask of another initiative marks nothing");
@@ -55,7 +63,8 @@ test("an ask marks a gate only for a launch of this machine of the same initiati
 
 test("an answer kept for a run that the person then stops causes no resume, even when the host exits 0", { skip: posixOnly }, async (t) => {
   const s = await setup(t, { plans: { codex: [{ hold: "forever" }, { hold: 50 }] } });
-  const id = (await apply(s.base, { action: "launch.codex", target: `initiative:${INITIATIVE}`, input: {}, revision: null }, s.headers)).json.launch.id;
+  await useHost(s.root, "codex");
+  const id = (await apply(s.base, { action: "launch.run", target: `initiative:${INITIATIVE}`, input: {}, revision: null }, s.headers)).json.launch.id;
   const gateId = await ask(s.root, id);
   const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
   const read = await readCoordinationState({ projectRoot: s.root, initiative: INITIATIVE });
@@ -65,7 +74,7 @@ test("an answer kept for a run that the person then stops causes no resume, even
   assert.equal(stopped.status, 200, stopped.text);
   assert.equal(stopped.json.launch.state, "stopped");
   assert.deepEqual(stopped.json.launch.exit, { code: 0, signal: null });
-  await new Promise((resolve) => setTimeout(resolve, 800));
+  await pause(800, "no resume may follow, and a change that must not happen leaves nothing to wait for");
   assert.equal(s.runs("codex").length, 1, "a stop is never followed by a resume for an answer");
 });
 
@@ -90,15 +99,16 @@ test("the gate record keeps its newest marks and answers and drops malformed ent
 
 test("a stop request written for a run that already exited 0 keeps its supervisor from resuming for an answer", { skip: posixOnly }, async (t) => {
   const s = await setup(t, { plans: { claude: [{ hold: 50 }, { hold: 50 }] } });
-  const id = (await apply(s.base, { action: "launch.claude-code", target: `initiative:${INITIATIVE}`, input: {}, revision: null }, s.headers)).json.launch.id;
+  const id = (await apply(s.base, { action: "launch.run", target: `initiative:${INITIATIVE}`, input: {}, revision: null }, s.headers)).json.launch.id;
   const gateId = await ask(s.root, id);
   await waitFor(async () => (await s.launchView(id))?.resumeCommand, { what: "the run to end" });
   // The answer as it is kept for a run that was running when the person answered, and the stop the person pressed while the run's end was recorded.
+  // The stop is written first: the supervisor resumes for an answer once after the run's end is recorded, so an answer that it read before the stop would resume the session.
   const folder = path.join(s.app, "launches", id);
   const { token } = JSON.parse(await readFile(path.join(folder, "launch.json"), "utf8")).runs[0];
+  await writeFile(path.join(folder, "stop.json"), JSON.stringify({ token, requestedAt: new Date().toISOString() }));
   const gates = JSON.parse(await readFile(gatesFile(s, id), "utf8"));
   await writeFile(gatesFile(s, id), JSON.stringify({ ...gates, answers: [{ entry: "c".repeat(32), gate: gateId, run: token, resumed: false }] }));
-  await writeFile(path.join(folder, "stop.json"), JSON.stringify({ token, requestedAt: new Date().toISOString() }));
   const { resumeForAnswers } = await import("../../dist/server/session/launched-sessions.mjs");
   assert.equal(await resumeForAnswers({ id, token, env: s.env }), false);
   assert.equal(s.runs("claude").length, 1);
@@ -109,7 +119,7 @@ test("a stop request written for a run that already exited 0 keeps its superviso
 
 test("a resume whose initiative shipped while the confirmation was open starts nothing and records nothing", { skip: posixOnly }, async (t) => {
   const s = await setup(t, { plans: { claude: [{ hold: 50 }, { hold: "forever" }] } });
-  const id = (await apply(s.base, { action: "launch.claude-code", target: `initiative:${INITIATIVE}`, input: {}, revision: null }, s.headers)).json.launch.id;
+  const id = (await apply(s.base, { action: "launch.run", target: `initiative:${INITIATIVE}`, input: {}, revision: null }, s.headers)).json.launch.id;
   await waitFor(async () => (await s.launchView(id))?.state === "finished", { what: "the run to finish" });
   await writeFile(path.join(s.app, "launches", "window.json"), JSON.stringify({ confirmedAt: new Date(Date.now() - 40 * 60000).toISOString(), endsAt: new Date(Date.now() - 10 * 60000).toISOString() }));
   // The dialog ships the initiative before it confirms, as an orchestrate run elsewhere might while the person reads it.
@@ -130,7 +140,7 @@ import(pathToFileURL(${JSON.stringify(path.resolve("dist/server/workflow/record-
   const resumed = await apply(s.base, { action: "launch.resume", target: `launch:${id}`, input: {}, revision: null }, s.headers);
   assert.equal(resumed.status, 409, resumed.text);
   assert.equal(resumed.json.code, "action_unavailable");
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  await pause(500, "no resume may follow, and a change that must not happen leaves nothing to wait for");
   assert.equal(s.runs("claude").length, 1);
   assert.deepEqual(await historyOf(s.root), before);
 });

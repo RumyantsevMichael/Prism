@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { boundaryFailures, contrastFailures, demoProject, escapes, launch, movingElements, openPage, paintedBackgrounds, reviewUrl, serveProject, skip, stateFileNames, useAppDirectory, waitForView, writeClaim } from "./fixtures/kit-browser.mjs";
+import { repainted } from "./fixtures/wait.mjs";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §2, §3, §7, §8, §9.
 // Contract: docs/plans/review-app-ui-kit/slice.md clauses 20, 21, 22, 66, 67, 68, 69, 74, 75, 76, 77, and 78.
-// The shell of the real review page runs over the demo and edge-case projects: the top bar, the sidebar and its drawer, the page bar, the islands, the status bar, the command palette, and Who's working.
+// The shell of the real review page runs over the demo and edge-case projects: the top bar, the sidebar and its drawer, the page bar, the islands, the status bar, the command palette, and the agents button.
 
 const SHELL = "header, #sidebar, #page-bar, #statusbar, #side-panel";
 const SLICE = "Retry timed-out requests until a total deadline";
@@ -177,27 +178,34 @@ test("clause 78: the command palette opens on Ctrl+K and Meta+K, drives kinded r
   assert.deepEqual(await escapes(narrow, "body"), [], "the palette fits 390px");
 });
 
-test("clauses 66, 67, 68: the sidebar and Who's working show every claim read-only, live ones breathing in the top bar", { skip }, async (context) => {
+test("clauses 66, 67, 68: the sidebar, the agents button, and the Agents page show every claim read-only, live ones breathing in the top bar", { skip }, async (context) => {
   const { page } = await open(context, "slice:retry-hardening/timeout-retries");
   await page.getByRole("navigation", { name: "Places" }).getByRole("button", { name: /^Work/ }).click();
   const sidebar = page.locator("#sidebar");
   const row = sidebar.getByRole("treeitem", { name: new RegExp(SLICE) });
   assert.equal(await row.locator("prism-claim").count(), 1, "the claimed slice's tree item ends with its claim");
   assert.equal(await row.locator("prism-claim").getAttribute("variant"), "avatar");
-  const who = page.locator("header").getByRole("button", { name: /1 working/ });
+  const who = page.locator("header").getByRole("button", { name: /^Agents: 1 working/ });
+  await who.waitFor();
   assert.equal(await who.count(), 1, "the top bar counts the live claims");
   const stack = await who.evaluate((button) => {
     const deep = (root) => [...root.querySelectorAll("*")].flatMap((node) => node.shadowRoot ? [node, ...deep(node.shadowRoot)] : [node]);
-    return deep(button.getRootNode().host ?? button).concat(deep(button)).filter((node) => node.tagName.toLowerCase() === "prism-avatar").map((avatar) => ({ live: avatar.hasAttribute("live"), breathing: avatar.hasAttribute("breathing") }));
+    return deep(button).filter((node) => node.tagName.toLowerCase() === "prism-avatar").map((avatar) => ({ live: avatar.hasAttribute("live"), breathing: avatar.hasAttribute("breathing") }));
   });
   assert.ok(stack.length >= 1 && stack.length <= 3, "the button shows up to three avatars");
   assert.ok(stack.every((avatar) => avatar.live && avatar.breathing), "the top bar's avatars are live and breathing");
   await who.click();
-  const popover = page.getByRole("dialog", { name: "Who's working" });
+  const popover = page.getByRole("dialog", { name: "Agents" });
   await popover.waitFor();
-  const text = await popover.innerText();
-  assert.match(text, /Claude on build-2[\s\S]*Agent[\s\S]*implementation[\s\S]*Retry timed-out requests until a total deadline[\s\S]*min left/, "the popover lists the live claim");
-  assert.match(text, /Codex on ci[\s\S]*Expired 4 min ago/, "the popover lists the expired claim");
+  const menuText = (await popover.innerText()).replace(/\s+/g, " ");
+  assert.equal(menuText.includes("Claude on build-2"), false, "the menu counts claims and lists none");
+  assert.match(menuText, /Other sessions 1\b[\s\S]*Expired claims 1\b/, "the menu counts the live and the expired claim");
+  await popover.getByRole("button", { name: "Open Agents" }).click();
+  const claims = page.locator('#artifact [data-agent^="claim:"]');
+  await claims.nth(1).waitFor();
+  const text = (await claims.allInnerTexts()).join("\n");
+  assert.match(text, /Claude on build-2[\s\S]*Agent[\s\S]*implementation · Retry timed-out requests until a total deadline[\s\S]*min left/, "the Agents page lists the live claim");
+  assert.match(text, /Codex on ci[\s\S]*Expired[\s\S]*expired 4 min ago/, "the Agents page lists the expired claim");
   assert.ok(text.indexOf("Claude on build-2") < text.indexOf("Codex on ci"), "live claims come before expired ones");
   const offered = await page.evaluate(() => {
     const deep = (root) => [...root.querySelectorAll("*")].flatMap((node) => node.shadowRoot ? [node, ...deep(node.shadowRoot)] : [node]);
@@ -206,7 +214,6 @@ test("clauses 66, 67, 68: the sidebar and Who's working show every claim read-on
   assert.deepEqual(offered, [], "nothing offers a claim action");
   const breathing = await page.evaluate(() => [...document.querySelectorAll("prism-avatar[breathing]")].filter((avatar) => !avatar.closest("header") && !avatar.closest("prism-claim[variant=strip]")).length);
   assert.equal(breathing, 0, "only the top bar and the claim strip breathe");
-  await page.keyboard.press("Escape");
   const still = await openPage(page.context().browser(), page.url(), { reducedMotion: "reduce" });
   await waitForView(still);
   assert.deepEqual(await movingElements(still, "header"), [], "under reduced motion the top bar's live dots stand still");
@@ -223,13 +230,14 @@ test("clauses 20, 21, 22: the shell's text and fields reach WCAG AA, glass overl
     assert.deepEqual(await boundaryFailures(page, SHELL), [], `shell fields, ${theme}`);
     painted[theme] = await paintedBackgrounds(page, SHELL);
     await page.locator("header").getByRole("button", { name: /working/ }).click();
-    await page.getByRole("dialog", { name: "Who's working" }).waitFor();
-    assert.deepEqual(await contrastFailures(page, "body"), [], `Who's working over the page, ${theme}`);
+    await page.getByRole("dialog", { name: "Agents" }).waitFor();
+    assert.deepEqual(await contrastFailures(page, "body"), [], `the agents menu over the page, ${theme}`);
     await page.keyboard.press("Escape");
     await page.keyboard.press("Control+k");
     await page.getByRole("dialog", { name: "Command palette" }).waitFor();
     await page.keyboard.type("retry");
-    await page.waitForTimeout(400);
+    await page.getByRole("dialog", { name: "Command palette" }).getByRole("option").first().waitFor();
+    await repainted(page);
     assert.deepEqual(await contrastFailures(page, "body"), [], `the palette over the page, ${theme}`);
     assert.deepEqual(await boundaryFailures(page, "body"), [], `the palette's field on glass, ${theme}`);
     await page.context().close();
@@ -247,7 +255,8 @@ test("clause 69: the shell names Prism's records by title and kind, never by fil
     await page.keyboard.press("Control+k");
     await page.getByRole("dialog", { name: "Command palette" }).waitFor();
     await page.keyboard.type("retry");
-    await page.waitForTimeout(500);
+    await page.getByRole("dialog", { name: "Command palette" }).getByRole("option").first().waitFor();
+    await repainted(page);
     assert.deepEqual(await stateFileNames(page, '[role="dialog"]'), [], `the palette on ${ref}, its Files group aside`);
     await page.context().close();
   }
@@ -272,7 +281,8 @@ test("clauses 36, 77, 78: with long names the shell stays inside a phone and a l
     await page.keyboard.press("Control+k");
     await page.getByRole("dialog", { name: "Command palette" }).waitFor();
     await page.keyboard.type("slice");
-    await page.waitForTimeout(600);
+    await page.getByRole("dialog", { name: "Command palette" }).getByRole("option").first().waitFor();
+    await repainted(page);
     assert.deepEqual(await escapes(page, "body"), [], `the palette at ${viewport.width}px`);
     await page.context().close();
   }

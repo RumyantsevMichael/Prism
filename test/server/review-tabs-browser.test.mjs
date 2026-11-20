@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { demoProject, launch, openPage, reviewUrl, shownTooltip, skip, useAppDirectory, waitForView } from "./fixtures/kit-browser.mjs";
+import { demoProject, launch, openPage, reviewUrl, shownTooltip, skip, useAppDirectory, waitForView, writeClaim } from "./fixtures/kit-browser.mjs";
+import { pause, settled as reading } from "./fixtures/wait.mjs";
 
 // The strip of open documents at the top of the main island, run on the real review page over the demo project:
 // the one preview tab, kept tabs, where a new tab goes, closing, missing targets, agent-presented tabs, the session every window shares, the history, keys, and a phone width.
@@ -47,11 +48,10 @@ const deepFocus = (page) => page.evaluate(() => {
 // Waits until the page settles on `ref` and the server's session agrees, since a tab change is saved after it shows.
 async function settled(page, base, ref) {
   await page.waitForFunction((ref) => new URL(location.href).searchParams.get("artifact") === ref && document.querySelector("#artifact")?.getAttribute("aria-busy") === "false", ref, { timeout: 10000 });
-  for (let tries = 0; tries < 40 && (await session(base)).activeTab !== ref; tries += 1) await page.waitForTimeout(100);
-  await page.waitForTimeout(150);
+  await reading(async () => (await session(base)).activeTab, ref);
 }
 
-test("a link opens in the one italic preview tab that the next link replaces, and Ctrl-click, a double click, and Keep keep a tab", { skip, timeout: 60000 }, async (context) => {
+test("a link opens in the one italic preview tab that the next link replaces, and Ctrl-click, a double click, and Ctrl+Enter keep a tab", { skip, timeout: 60000 }, async (context) => {
   const { base, browser } = await demo(context);
   const page = await openPage(browser, reviewUrl(base, "attention"), { viewport: { width: 1440, height: 900 } });
   await waitForView(page);
@@ -73,10 +73,11 @@ test("a link opens in the one italic preview tab that the next link replaces, an
   await openFromSidebar(page, "Glossary");
   await settled(page, base, "glossary");
   assert.deepEqual(await tabs(page), ["requirements", "glossary*(p)", "decisions"], "a new tab goes right after the selected tab, not at the end");
-  await strip(page).getByRole("button", { name: "Keep", exact: true }).click();
-  await page.waitForTimeout(300);
-  assert.deepEqual(await tabs(page), ["requirements", "glossary*", "decisions"], "Keep kept the preview tab");
-  assert.equal((await session(base)).previewTab, null, "the kept tab is saved in the session");
+  assert.equal(await strip(page).getByRole("button", { name: /^Keep/ }).count(), 0, "the preview tab offers no Keep button");
+  await page.getByRole("tab", { name: /^Glossary/ }).focus();
+  await page.keyboard.press("Control+Enter");
+  assert.deepEqual(await reading(() => tabs(page), ["requirements", "glossary*", "decisions"]), ["requirements", "glossary*", "decisions"], "Ctrl+Enter on the focused preview tab kept it");
+  assert.equal(await reading(async () => (await session(base)).previewTab, null), null, "the kept tab is saved in the session");
   assert.deepEqual(page.errors, []);
 });
 
@@ -131,8 +132,7 @@ test("a tab closes from its close button or a middle click, and closing the last
   await settled(page, base, "decisions");
   assert.deepEqual(await tabs(page), ["attention(p)", "roadmap", "decisions*"]);
   await tab(page, "roadmap").click({ button: "middle" });
-  await page.waitForTimeout(300);
-  assert.deepEqual(await tabs(page), ["attention(p)", "decisions*"], "a middle click closed a tab that was not selected");
+  assert.deepEqual(await reading(() => tabs(page), ["attention(p)", "decisions*"]), ["attention(p)", "decisions*"], "a middle click closed a tab that was not selected");
   assert.equal(await shownPage(page), "decisions");
   await strip(page).getByRole("button", { name: "Close Decisions" }).click();
   await settled(page, base, "attention");
@@ -142,8 +142,7 @@ test("a tab closes from its close button or a middle click, and closing the last
   assert.deepEqual(await tabs(page), []);
   assert.equal(await strip(page).isVisible(), false, "an empty strip takes no room");
   assert.equal(await shownPage(page), null, "the address names no page");
-  for (let tries = 0; tries < 40 && (await session(base)).openTabs.length; tries += 1) await page.waitForTimeout(100);
-  assert.deepEqual((await session(base)).openTabs, [], "the session holds no tab");
+  assert.deepEqual(await reading(async () => (await session(base)).openTabs, []), [], "the session holds no tab");
   assert.deepEqual(page.errors, []);
 });
 
@@ -162,11 +161,9 @@ test("a tab whose file is gone is dimmed and struck through, says so, and its pa
   assert.equal(await page.getByRole("tab", { name: /no longer exists/ }).count(), 1, "the missing tab says so to assistive technology");
   await page.locator('#artifact prism-empty-state[heading="This file no longer exists"]').waitFor();
   await page.getByRole("tab", { name: /no longer exists/ }).hover();
-  await page.waitForTimeout(700);
-  assert.match(await shownTooltip(page) ?? "", /no longer exists/, "the tooltip says why the tab is dimmed");
+  assert.match(await reading(async () => await shownTooltip(page) ?? "", (tip) => /no longer exists/.test(tip)), /no longer exists/, "the tooltip says why the tab is dimmed");
   await page.locator("#artifact").getByRole("button", { name: "Close tab" }).click();
-  await page.waitForTimeout(400);
-  assert.equal((await tabs(page)).some((value) => value.startsWith(gone)), false, "Close tab closed the missing tab");
+  assert.equal((await reading(() => tabs(page), (shown) => !shown.some((value) => value.startsWith(gone)))).some((value) => value.startsWith(gone)), false, "Close tab closed the missing tab");
   assert.deepEqual(page.errors, []);
 });
 
@@ -182,9 +179,16 @@ test("an agent presentation of several artifacts opens each as a marked tab, foc
   assert.deepEqual(await tabs(page), ["attention(p)", `${presented[0]}*(a)`, `${presented[1]}(a)`, `${presented[2]}(a)`], "every presented artifact has its own tab, and the first shows");
   assert.equal(await page.getByRole("tab", { name: /presented by the agent/ }).count(), 3, "each agent tab says it was presented by the agent");
   assert.equal(await tab(page, presented[1]).evaluate((host) => host.shadowRoot.querySelector(".mark").checkVisibility()), true, "each agent tab shows the agent mark");
+  // The mark takes the room before the title, as wide as the close button's room at its end, and the title starts where every tab's title starts.
+  const marks = await tab(page, presented[1]).evaluate((host) => {
+    const box = (selector) => host.shadowRoot.querySelector(selector).getBoundingClientRect();
+    return { markInLead: box(".lead").left <= box(".mark").left && box(".mark").right <= box(".lead").right, leadWidth: Math.round(box(".lead").width), closeWidth: Math.round(box(".close").width), textAfterLead: box(".text").left >= box(".lead").right };
+  });
+  assert.deepEqual(marks, { markInLead: true, leadWidth: marks.closeWidth, closeWidth: marks.closeWidth, textAfterLead: true });
+  const titleStart = (ref) => tab(page, ref).evaluate((host) => host.shadowRoot.querySelector(".text").getBoundingClientRect().left - host.getBoundingClientRect().left);
+  assert.equal(await titleStart(presented[1]), await titleStart("attention"), "an agent tab's title starts where a tab without the mark starts its title");
   await page.getByRole("tab", { name: /presented by the agent/ }).nth(1).hover();
-  await page.waitForTimeout(700);
-  assert.match(await shownTooltip(page) ?? "", /Presented by the agent\./);
+  assert.match(await reading(async () => await shownTooltip(page) ?? "", (tip) => /Presented by the agent\./.test(tip)), /Presented by the agent\./);
   const other = await (await browser.newContext({ viewport: { width: 1280, height: 800 } })).newPage();
   await other.goto(`${base}/review`);
   await waitForView(other);
@@ -193,8 +197,8 @@ test("an agent presentation of several artifacts opens each as a marked tab, foc
   // A tab chosen in another window changes that window only, so this window's page and history hold only what it showed.
   const length = await page.evaluate(() => history.length);
   await tab(other, presented[2]).click();
-  for (let tries = 0; tries < 40 && (await session(base)).activeTab !== presented[2]; tries += 1) await page.waitForTimeout(100);
-  await page.waitForTimeout(500);
+  await reading(async () => (await session(base)).activeTab, presented[2]);
+  await pause(500, "this window must not follow the other window's choice, and a change that does not happen leaves nothing to wait for");
   assert.equal(await shownPage(page), presented[0], "a tab chosen in another window leaves this window's page");
   assert.equal(await page.evaluate(() => history.length), length, "and adds nothing to this window's history");
   await page.reload();
@@ -272,13 +276,12 @@ test("dragging a tab or Ctrl+Shift+arrows move it, Escape puts a dragged tab bac
   }
   const order = async () => (await tabs(page)).map((item) => item.replace(/[*(].*$/, ""));
   const waitForOrder = async (expected) => {
-    for (let tries = 0; tries < 40 && JSON.stringify((await session(base)).openTabs) !== JSON.stringify(expected); tries += 1) await page.waitForTimeout(100);
-    assert.deepEqual((await session(base)).openTabs, expected, "the session keeps the new order");
+    assert.deepEqual(await reading(async () => (await session(base)).openTabs, expected), expected, "the session keeps the new order");
   };
   const drag = async (ref, target, { cancel = false } = {}) => {
     const from = await tab(page, ref).boundingBox();
     const to = await tab(page, target).boundingBox();
-    // The press lands on the tab's title, away from its Keep and close buttons.
+    // The press lands on the tab's title, away from its close button.
     await page.mouse.move(from.x + 16, from.y + from.height / 2);
     await page.mouse.down();
     await page.mouse.move(from.x + 26, from.y + from.height / 2, { steps: 2 });
@@ -308,6 +311,44 @@ test("dragging a tab or Ctrl+Shift+arrows move it, Escape puts a dragged tab bac
   assert.deepEqual(page.errors, []);
 });
 
+test("a group an agent opened shows the claim that agent held, or its harness and model, before the group's name", { skip, timeout: 90000 }, async (context) => {
+  await useAppDirectory(context);
+  const root = await demoProject(context);
+  if (!process.env.PLUGIN_DATA) process.env.PLUGIN_DATA = path.join(path.dirname(root), "data");
+  await writeClaim(root, "retry-hardening", "timeout-retries", { label: "Dana on studio", host: "Some Harness", model: "a-model", holder: "session-1111111111111111", minutesLeft: 24 });
+  const { startReviewServer } = await import("../../dist/server/review/review-server.mjs");
+  const review = await startReviewServer({ projectRoot: root, openBrowser: async () => false });
+  context.after(() => review.close());
+  const base = review.baseUrl.replace(/\/$/, "");
+  await review.open(["roadmap", "requirements"], { group: "Retry requests", by: { holder: "session-1111111111111111", host: "Some Harness", model: "a-model" } });
+  await review.open(["decisions"], { group: "Unclaimed", by: { holder: "session-2222222222222222", host: "Other Harness" } });
+  const page = await openPage(await launch(context), reviewUrl(base, "roadmap"), { viewport: { width: 1440, height: 900 } });
+  await waitForView(page);
+  const head = (name) => page.locator(`#open-tabs prism-doc-tab-group[name="${name}"]`);
+  await page.waitForFunction(() => document.querySelector('#open-tabs prism-doc-tab-group[name="Retry requests"] prism-claim[slot="opener"]'), null, { timeout: 15000 });
+  // The claimed group shows that claim's avatar with its live dot in the room before the name, and the other its harness's agent avatar.
+  const shown = await head("Retry requests").evaluate((host) => {
+    const claim = host.querySelector('[slot="opener"]');
+    const lead = host.shadowRoot.querySelector(".lead").getBoundingClientRect();
+    const avatar = claim.getBoundingClientRect();
+    return { tag: claim.tagName, live: claim.querySelector("prism-avatar").hasAttribute("live"), inLead: lead.left <= avatar.left && avatar.right <= lead.right, beforeName: avatar.right <= host.shadowRoot.querySelector(".name").getBoundingClientRect().left, label: host.shadowRoot.querySelector(".head").getAttribute("aria-label") };
+  });
+  assert.deepEqual(shown, { tag: "PRISM-CLAIM", live: true, inLead: true, beforeName: true, label: "Retry requests, group of 2 tabs, opened by Some Harness · a-model, implementing Retry timed-out requests until a total deadline" });
+  assert.match(await head("Retry requests").locator("prism-claim").getAttribute("tip"), /Dana on studio · Some Harness · a-model · implementation · 2\d min left/);
+  const other = await head("Unclaimed").evaluate((host) => {
+    const avatar = host.querySelector('[slot="opener"]');
+    return { tag: avatar.tagName, kind: avatar.getAttribute("kind"), tip: avatar.getAttribute("tip") };
+  });
+  assert.deepEqual(other, { tag: "PRISM-AVATAR", kind: "agent", tip: "Opened by Other Harness" });
+  // Collapsing the group keeps its avatar, and the avatar's element stays the same while nothing about the claim changes.
+  await page.evaluate(() => { window.openerElement = document.querySelector('#open-tabs prism-doc-tab-group[name="Retry requests"] [slot="opener"]'); });
+  await head("Retry requests").click();
+  await page.waitForFunction(() => document.querySelector('#open-tabs prism-doc-tab-group[name="Retry requests"]')?.hasAttribute("collapsed"));
+  assert.equal(await page.evaluate(() => document.querySelector('#open-tabs prism-doc-tab-group[name="Retry requests"] [slot="opener"]') === window.openerElement), true);
+  // The avatar sits beside the name, which stays the head's only text.
+  assert.equal(await head("Retry requests").evaluate((host) => [...host.childNodes].filter((node) => node.nodeType === 3).map((node) => node.textContent).join("")), "Retry requests");
+});
+
 test("a named tab group shows its head before its tabs, collapses, takes and lets go of tabs by drag and Ctrl+Shift+arrows, moves whole, and closes its tabs", { skip, timeout: 90000 }, async (context) => {
   const { base, browser } = await demo(context);
   const put = (body) => fetch(`${base}/api/session`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -316,8 +357,7 @@ test("a named tab group shows its head before its tabs, collapses, takes and let
   await waitForView(page);
   const layout = () => page.evaluate(() => [...document.querySelector("#open-tabs").children].map((node) => node.tagName === "PRISM-DOC-TAB-GROUP" ? `[${node.getAttribute("name")}:${node.getAttribute("count")}${node.hasAttribute("collapsed") ? ":c" : ""}]` : `${node.getAttribute("value")}${node.getAttribute("group") ? "+" : ""}${node.hidden ? "(h)" : ""}`));
   const waitFor = async (check, message) => {
-    for (let tries = 0; tries < 40 && !check(await session(base)); tries += 1) await page.waitForTimeout(100);
-    const last = await session(base);
+    const last = await reading(() => session(base), check);
     // A failure names the session and the strip as they ended, so a failure under load says which step did not land.
     assert.ok(check(last), `${message}: session ${JSON.stringify({ openTabs: last.openTabs, groups: last.groups, activeTab: last.activeTab })}, strip ${JSON.stringify(await layout())}`);
   };
@@ -407,22 +447,21 @@ test("at 390px the strip scrolls inside itself, keeps the selected tab in view, 
   // An address without a page opens the session's selected tab.
   await page.goto(`${base}/review`);
   await waitForView(page);
-  await page.waitForTimeout(300);
-  const box = await page.evaluate(() => {
+  const expectedBox = { scrolls: true, scrolled: true, inView: true, window: false };
+  const box = await reading(() => page.evaluate(() => {
     const strip = document.querySelector("#open-tabs");
     const selected = strip.querySelector("prism-doc-tab[selected]").getBoundingClientRect();
     const bounds = strip.getBoundingClientRect();
     return { scrolls: strip.scrollWidth > strip.clientWidth, scrolled: strip.scrollLeft > 0, inView: selected.left >= bounds.left - 1 && selected.right <= bounds.right + 1, window: document.documentElement.scrollWidth > document.documentElement.clientWidth };
-  });
-  assert.deepEqual(box, { scrolls: true, scrolled: true, inView: true, window: false }, "the strip scrolls, the selected tab shows whole, and the window does not scroll");
+  }), expectedBox);
+  assert.deepEqual(box, expectedBox, "the strip scrolls, the selected tab shows whole, and the window does not scroll");
   const title = await page.evaluate(() => {
     const text = document.querySelector("#open-tabs prism-doc-tab[selected]").shadowRoot.querySelector(".text");
     return { shortened: text.scrollWidth > text.clientWidth, overflow: getComputedStyle(text).textOverflow };
   });
   assert.deepEqual(title, { shortened: true, overflow: "ellipsis" }, "the slice's long title ends with an ellipsis");
   await page.getByRole("tab", { name: /^Retry timed-out/ }).focus();
-  await page.waitForTimeout(200);
-  assert.match(await shownTooltip(page) ?? "", /Retry timed-out requests until a total deadline/, "the full title shows on keyboard focus");
+  assert.match(await reading(async () => await shownTooltip(page) ?? "", (tip) => /Retry timed-out requests until a total deadline/.test(tip)), /Retry timed-out requests until a total deadline/, "the full title shows on keyboard focus");
   assert.equal(await strip(page).getByRole("button", { name: /^Close Retry timed-out/ }).isVisible(), true, "the close button shows without a pointer to hover");
   assert.deepEqual(page.errors, []);
 });

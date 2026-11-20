@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 import { boundaryFailures, choicesWithoutIndicator, contrastFailures, escapes, focusRing, launch, openPage, ROOT, serveProject, shownTooltip, skip, useAppDirectory } from "./fixtures/kit-browser.mjs";
+import { repainted, pause, settled } from "./fixtures/wait.mjs";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 
@@ -14,7 +15,7 @@ const CONTROLS = ["prism-button", "prism-icon", "prism-chip", "prism-badge", "pr
 const HOLDS_ITEMS = ["prism-tabs", "prism-menu", "prism-choice"];
 // Clause 28: every tag the kit registers, the first eleven in shadow DOM and the rest in light DOM.
 const SHADOW = ["prism-button", "prism-icon", "prism-chip", "prism-badge", "prism-tab", "prism-menu-item", "prism-tooltip", "prism-stat", "prism-meter", "prism-spinner", "prism-avatar"];
-const LIGHT = ["prism-tabs", "prism-menu", "prism-menu-group", "prism-field", "prism-option", "prism-choice", "prism-choice-option", "prism-panel", "prism-tree", "prism-tree-item", "prism-listbox", "prism-list-item", "prism-dialog", "prism-popover", "prism-disclosure", "prism-empty-state", "prism-banner", "prism-toast", "prism-claim", "prism-stepper", "prism-step", "prism-breadcrumbs", "prism-doc", "prism-code"];
+const LIGHT = ["prism-tabs", "prism-menu", "prism-menu-group", "prism-field", "prism-picker", "prism-option", "prism-choice", "prism-choice-option", "prism-panel", "prism-tree", "prism-tree-item", "prism-listbox", "prism-list-item", "prism-dialog", "prism-popover", "prism-disclosure", "prism-empty-state", "prism-banner", "prism-toast", "prism-claim", "prism-stepper", "prism-step", "prism-breadcrumbs", "prism-doc", "prism-code"];
 const LONG = "A caption that is far longer than the room any control gives it, so it has to end early";
 const UNBROKEN = "slice-with-a-very-long-name-that-has-no-spaces-anywhere-and-cannot-wrap-at-all";
 
@@ -47,7 +48,7 @@ async function mount(page, html, { width = "600px" } = {}) {
     document.body.prepend(region);
     window.scrollTo(0, 0);
   }, [html, width]);
-  await page.waitForTimeout(150);
+  await repainted(page);
 }
 
 // The focused element through shadow roots, reported as its nearest kit host.
@@ -252,6 +253,20 @@ test("clauses 31, 32: chips are static text, links, or buttons, and badges are s
   assert.deepEqual(roles.filter((role) => ["button", "link", "checkbox", "option", "tab", "menuitem"].includes(role)), [], "a badge carries no control role");
 });
 
+test("clause 31: a chip too narrow for its label shortens the label first and keeps short secondary text whole", { skip }, async (context) => {
+  const { page } = await catalog(context);
+  await mount(page, `<prism-chip id="narrow" interactive>${UNBROKEN}<span slot="meta">30</span></prism-chip><br><prism-chip id="wide" interactive>short<span slot="meta">30</span></prism-chip>`, { width: "120px" });
+  const sizes = await page.evaluate(() => {
+    const part = (id, name) => document.querySelector(id).shadowRoot.querySelector(name);
+    const meta = part("#narrow", ".meta");
+    const text = part("#narrow", ".text");
+    return { chip: document.querySelector("#narrow").getBoundingClientRect().width, meta: meta.getBoundingClientRect().width, metaOverflow: meta.scrollWidth - meta.clientWidth, metaWide: part("#wide", ".meta").getBoundingClientRect().width, text: text.getBoundingClientRect().width, textWhole: text.scrollWidth };
+  });
+  assert.ok(sizes.chip <= 120.5, `the chip stays inside its container: ${JSON.stringify(sizes)}`);
+  assert.ok(sizes.text < sizes.textWhole, `the label shortens: ${JSON.stringify(sizes)}`);
+  assert.ok(sizes.metaOverflow <= 0 && Math.abs(sizes.meta - sizes.metaWide) < 0.5, `the count is shown whole, as wide as in a chip with room: ${JSON.stringify(sizes)}`);
+});
+
 test("clauses 33, 34: tabs are a named tablist with one selected tab, move focus with arrow keys, and select with Enter", { skip }, async (context) => {
   const { page } = await catalog(context);
   await mount(page, `<prism-button id="before">Before</prism-button><prism-tabs id="tabs" label="Slice"><prism-tab value="a" selected>Design</prism-tab><prism-tab value="b">Diagram</prism-tab><prism-tab value="c">Files</prism-tab></prism-tabs><prism-button id="after">After</prism-button>`);
@@ -370,7 +385,7 @@ test("clause 36: a menu near the bottom of the window opens above its button and
     holder.innerHTML = `<prism-button id="low-trigger">Appearance</prism-button><prism-menu for="low-trigger">${Array.from({ length: 6 }, (_, index) => `<prism-menu-item value="v${index}">Item number ${index} with a longer caption</prism-menu-item>`).join("")}</prism-menu>`;
     document.body.append(holder);
   });
-  await page.waitForTimeout(150);
+  await repainted(page);
   await page.locator("#low-trigger").click();
   const boxes = await page.evaluate(() => {
     const menu = document.querySelector("#low prism-menu");
@@ -393,7 +408,7 @@ test("clauses 37, 38: shortened text shows its full text in a tooltip on hover a
     <prism-button id="tipped" tip="Opens the roadmap">Roadmap</prism-button>`);
   // The page's style policy refuses inline style attributes, so the narrow widths go through the CSSOM.
   await page.evaluate(() => { for (const box of document.querySelectorAll("#fixture .narrow")) box.style.setProperty("width", "140px"); });
-  await page.waitForTimeout(200);
+  await repainted(page);
   assert.deepEqual(await escapes(page, "#fixture"), [], "shortened elements stay inside their containers");
   const attribute = (id) => page.evaluate((id) => document.getElementById(id).hasAttribute("shortened"), id);
   assert.equal(await attribute("long"), true);
@@ -402,33 +417,27 @@ test("clauses 37, 38: shortened text shows its full text in a tooltip on hover a
   assert.equal(await attribute("short"), false);
   assert.equal(await page.evaluate(() => [...document.querySelectorAll("#fixture *")].some((node) => node.hasAttribute("title") || [...(node.shadowRoot?.querySelectorAll("[title]") ?? [])].length)), false, "no kit element renders a native title tooltip");
   await page.locator("#long").hover();
-  await page.waitForTimeout(700);
-  assert.equal(await shownTooltip(page), LONG, "hovering shows the full text after the delay");
+  assert.equal(await settled(() => shownTooltip(page), LONG), LONG, "hovering shows the full text after the delay");
   const describedBy = await page.evaluate(() => document.getElementById("long").getAttribute("aria-describedby"));
   assert.equal(await page.evaluate((id) => document.getElementById(id)?.getAttribute("role"), describedBy), "tooltip", "the element names its tooltip");
   await page.mouse.move(700, 700);
-  await page.waitForTimeout(300);
-  assert.equal(await shownTooltip(page), null, "leaving hides the tooltip");
+  assert.equal(await settled(() => shownTooltip(page), null), null, "leaving hides the tooltip");
   await page.locator("#short").hover();
-  await page.waitForTimeout(700);
+  await pause(700, "a tooltip that must not appear leaves nothing to wait for, so the test waits out the hover delay");
   assert.equal(await shownTooltip(page), null, "text that fits shows no tooltip");
   await page.locator("#before").focus();
   await page.keyboard.press("Tab");
   assert.equal((await focused(page)).id, "long", "a shortened static chip joins the Tab order");
-  await page.waitForTimeout(60);
-  assert.equal(await shownTooltip(page), LONG, "keyboard focus shows the full text at once");
+  assert.equal(await settled(() => shownTooltip(page), LONG), LONG, "keyboard focus shows the full text at once");
   await page.keyboard.press("Escape");
   assert.equal(await shownTooltip(page), null, "Escape hides the tooltip");
   await page.keyboard.press("Tab");
-  await page.waitForTimeout(60);
-  assert.equal(await shownTooltip(page), UNBROKEN);
+  assert.equal(await settled(() => shownTooltip(page), UNBROKEN), UNBROKEN);
   await page.keyboard.press("Tab");
-  await page.waitForTimeout(60);
-  assert.equal(await shownTooltip(page), LONG, "a shortened button shows its full caption");
+  assert.equal(await settled(() => shownTooltip(page), LONG), LONG, "a shortened button shows its full caption");
   await page.keyboard.press("Tab");
   assert.equal((await focused(page)).id, "tipped", "a chip that fits stays out of the Tab order");
-  await page.waitForTimeout(60);
-  assert.equal(await shownTooltip(page), "Opens the roadmap", "a tip shows on focus");
+  assert.equal(await settled(() => shownTooltip(page), "Opens the roadmap"), "Opens the roadmap", "a tip shows on focus");
 });
 
 test("clause 39: a field creates a labelled native control whose value and events reach the page", { skip }, async (context) => {

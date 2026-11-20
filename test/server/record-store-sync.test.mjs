@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { splitEvidence } from "./fixtures/split-evidence.mjs";
+import { pause } from "./fixtures/wait.mjs";
 
 // Git runs with a private home and configuration, a fixed identity, and only local repositories.
 const environment = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-sync-env-")));
@@ -88,7 +89,7 @@ test("creates no commits when store sync is off", async (context) => {
   const { storeA, parent } = await machines(context);
   const root = await project(parent, "project-off", syncConfig("store-a", "off"));
   await writeRecord(root, STATE, "{}\n");
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  await pause(100, "sync is off, so no commit may follow, and a change that must not happen leaves nothing to wait for");
   assert.equal(git(storeA, "rev-list", "--count", "HEAD"), "1");
   assert.equal(await exists(path.join(storeA, ".prism-sync")), false);
   assert.match(git(storeA, "status", "--porcelain"), /initiatives\//);
@@ -164,7 +165,7 @@ test("makes a record read wait while the merge step replaces record files", asyn
   await syncRecordStore(storeA, { beforeApply: async () => {
     let settled = false;
     read = readRecord(a, STATE).then((result) => { settled = true; return result; });
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await pause(200, "the read must keep waiting for the merge step, and a change that must not happen leaves nothing to wait for");
     assert.equal(settled, false, "the read waits for the merge step");
   } });
   assert.equal((await read).bytes.toString(), complete);

@@ -9,7 +9,7 @@ import { ROOT, skip } from "./fixtures/kit-browser.mjs";
 // The places comparison leaves a format mark out of the app's outline, and still reports the same element without the mark's attribute.
 
 const SCRIPT = path.join(ROOT, "scripts/review-demo/places-compare.mjs");
-const MOCKUP = path.join(ROOT, "docs/plans/review-app-places/mockup/mockup.html");
+const MOCKUP = path.join(ROOT, "scripts/review-demo/mockups/review-app-places/mockup.html");
 const BADGE = (attribute) => `<prism-badge ${attribute} tone="warning" title="requirements.header">Breaks its format</prism-badge>`;
 
 async function folder(context) {

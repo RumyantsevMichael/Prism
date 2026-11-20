@@ -106,6 +106,9 @@ Native code structure covers JavaScript, TypeScript, Python, Go, Rust, Java, C#,
 Markdown sections and rules, JSON keys, and YAML keys have source locations and typed containment or reference relationships.
 Unsupported constructs, missing dependencies, malformed files, unresolved links, and denied configuration reads are disclosed as incomplete structure.
 Relevant incomplete structure prevents a numeric fit estimate.
+A call into a library, the platform, or another component no longer makes a code file uncovered, while the diagnostics still list every reference that did not resolve.
+A code file stays uncovered when it did not parse, when another diagnostic names it, or when a reference it could not resolve could point inside the indexed source.
+Such a reference is a relative import, one whose module name starts with `.` or `/`, or any other reference whose name after its last `.`, `::`, or `#` matches a unit of a code file in the same index.
 
 If preparation exceeds ten seconds, search and planning return `preparing` with a stable preparation ID.
 Call `get_repository_intelligence_status` with `projectRoot` and optional `waitMs` up to 30000, then repeat the original request.
@@ -114,24 +117,86 @@ A `preparing` response is unfinished discovery, not an empty search result.
 Keep the original `snapshotId` through retries and edits so new code cannot appear as preexisting reuse evidence.
 Use `discover_repository_intelligence` for native runtime, model, index, and coverage status without starting downloads or preparation.
 
+An index build has no limit on its total duration, so a large repository finishes as long as its build keeps making progress.
+A build makes progress when it reaches a new phase, moves its count, file, or item forward, or embeds more fragments.
+A build that makes no progress for the stall period is stopped, and its index or component fails with the code `stalled`, which names the phase it stalled in:
+
+```json
+{"code": "stalled", "message": "The index build made no progress for 10 minutes during embedding.", "phase": "embedding", "recovery": "Repeat the call to resume the build from its saved work."}
+```
+
+The stall period is 10 minutes.
+Set `PRISM_INDEX_STALL_MINUTES` to a whole number of minutes from 1 through 1440 to change it; Prism ignores any other value.
+A search keeps its 30 minute limit and fails with `resource_limit` when it reaches it.
+
+A build saves the embeddings it makes as it makes them, in a private embedding store beside the index.
+A stall is not a native limit, so the next call that needs the index prepares it again.
+That build, and any later build of the same index or component in any session that shares the storage, reuses every saved embedding of unchanged fragment text and embeds only the rest.
+A build that failed or ended with its process keeps its saved embeddings the same way.
+
+Each index, or each component's index, also keeps a private mirror of the files its builds read, beside the index in the same storage.
+A rebuild copies into the mirror only the files that changed since the previous build, removes the files that no longer exist, and its `snapshot-copy` phase counts only the copied files.
+The code structure is then updated for the changed and removed files only, and the units and fragments of the other files are reused, so a rebuild after a small edit parses and fragments only what changed.
+A rebuild returns the same index that a build from scratch of the same files returns.
+When the mirror or the kept structure cannot be trusted, for example after it was removed or written by another version, the next build copies and parses every file again.
+When a file in the mirror was edited, the build that reads it fails once with `stale_snapshot` and drops the mirror's manifest, and the build after it empties the mirror, then copies and parses every file again.
+The mirror takes about as much disk space as the indexed source, and the kept structure takes less than the index, because it holds no embeddings.
+
+#### Answer from structure while embeddings fill
+
+A build publishes the structure of its files, their units, references, coverage, and fragments, before it embeds any fragment.
+Structure is a small share of a build, so it is ready within seconds or minutes while embedding a large repository can take much longer.
+The structure stays published in the storage that every session on the machine shares, and the complete index of the same files replaces it when the build finishes.
+A structure never replaces a complete index of the same files.
+
+While a structure is published, the six structural reports, conservation analysis of a retained baseline, and the review browser's units answer from it without waiting for embeddings.
+A report that answers from a structure has `status: "ready"` and that structure's revision as `indexRevision`, and its groups, modules, and coverage are the same as the complete index's.
+A later call with the same files still finishes the build, so embeddings keep filling in the background.
+A build that fails after it published its structure, for example at a native limit while embedding, leaves that structure stored, and these reports keep answering from it with the failure among their diagnostics.
+
+`get_repository_intelligence_status` and `discover_repository_intelligence` give `stage`, which is `none` before any index exists, `structure` while only the structure is published, and `complete` once the complete index is stored.
+A build that embeds after it published its structure stays `preparing`.
+
+`search_repository_concepts` waits its usual bound for the complete index, and when only the structure is ready, it searches the structure's fragment text lexically.
+Each of its results has a `cosineSimilarity` of `null`, and `capabilities.semanticSearch` and `capabilities.hybridSearch` are `false` unless another answering index is complete.
+The result names the indexes that answered without embeddings in an `embeddings_pending` diagnostic:
+
+```json
+{"code": "embeddings_pending", "message": "Lexical results answered without embeddings for the index; repeat the search after the build finishes for a hybrid ranking."}
+```
+
+A search receipt from a lexical answer does not prove a semantic search, so an addition in a change map needs a search after the build finishes.
+`plan_repository_context` keeps returning `preparing` until the complete index is ready, because a context plan needs semantic evidence.
+
 #### Index a repository per component
 
 A repository that declares components under `## Components` in `.prism/workflow.md` has one native index per component.
 Each declared component's index holds only the files in its folder, and the root component's index holds every other file, including documents outside every declared folder.
-The native limits of 20,000 files, 64 MiB of source, a 512 MiB index file, and 30 minutes of preparation apply to each component's index on its own.
+The native limits of 20,000 files, 64 MiB of source, a 512 MiB index file, and the stall period apply to each component's index on its own.
 A repository without components keeps one index of the whole repository, so an index that it prepared earlier is reused.
 
 A search of the current files with `filters.paths` prepares and reads only the components that hold a file at or under those paths.
 A search without paths prepares and reads every component that holds a file.
 Prism builds one index at a time: the declared components in declaration order, then the root component, which usually holds the largest tree of documents and would otherwise hold back every package queued behind it.
-The components that a later call needs move ahead of components that only an earlier call waits for, and the running build always finishes.
+The components that a later call needs move ahead of components that only an earlier call waits for.
+When a call needs a component that has no index at all and is not being built, and the running build is of a component that the call does not need, Prism pauses that build at once and starts the call's components, once that build has sent its request to the native runtime.
+Before that, while it checks the runtime assets, waits for its storage lock, or copies its files, the running build is not paused, and the call's components start directly after it.
+A call that needs the component of the running build never pauses it, and while that build embeds after it published its structure, the component answers from that structure.
+A paused build records no failure, is reported `waiting`, runs again directly after the call's components, and resumes from the embeddings it saved, so it loses at most the batch it was embedding.
+A component that only has an out-of-date index keeps answering from it and waits its turn without pausing the running build.
 A component whose index for its current files is already stored, as after a restart, only loads it, which runs at once beside the running build instead of waiting in the queue.
 A component is prepared again only when its own files change, and its new index reuses the embeddings of its unchanged fragments.
 A component that another session is preparing is reported `preparing`, and this server tries it again every few seconds while it prepares the other components.
+A component that waits carries `waitingFor` in its entry of `components`, in a status and in a result, and no other entry carries it.
+While it waits in this server's queue, `waitingFor` is `{ "component": <identity>, "preparationId": <id>, "reason": "queue" }`, naming the build that runs in this server, or a stored index that loads while no build runs.
+While another session holds its storage lock, `waitingFor` is `{ "component": <its own identity>, "preparationId": <id or null>, "reason": "lock" }`, with the preparation id of that session's live progress record, or `null` when it has none.
+A repository without components carries `waitingFor` at the top of `get_repository_intelligence_status` while its one build waits, naming its root component's identity `<repository>/<repository>`.
 A component whose storage lock names a running process but has gone unrenewed for more than 30 seconds, as when a killed session's process id was reused, fails with `lock_timeout`, and its diagnostic names the lock file to delete when no session is preparing that component.
 Each component's index is reused across sessions and after the repository's name changes.
 
 Each result lists the components it read in `components`, in component order, with each one's identity `<repository>/<component>`, `folder`, `status`, `indexRevision`, and `failure`.
+A component that answered from its published structure is `included` and its entry also carries `"embeddings": "pending"`, which no other entry carries.
+A search names such components in its `embeddings_pending` diagnostic, directly after any `components_missing` diagnostic, with their identities in its message and in `components`.
 A component's `status` is `included` when its up-to-date index answered, `waiting` while it is queued, `preparing` while it is built, and `failed` when its preparation failed.
 The result's `status` is `ready` when every component it read is included, `partial` when only some are, `preparing` when none is included yet, and `degraded` when every one failed.
 A result that leaves out a component starts its diagnostics with `components_missing`, whose `components` lists the components it left out and whose message says why for each one.
@@ -140,8 +205,12 @@ The result's `snapshot` covers only the components it read, so an edit in anothe
 
 Each search result names the identity of its component in `component`.
 When one component is included, its results keep that index's order and `fusedRank`.
-When several components are included, each one answers the query with the search's filters and `limit`, and the merged results are ordered by `cosineSimilarity` from highest to lowest, with equal similarities in component order and then in each index's order.
-A result without a similarity, such as a container returned for its grouped members, stays directly after the result that it follows in its component's index.
+When several components are included, each one answers the query with the search's filters and `limit`, and Prism ranks the answers together with reciprocal rank fusion of vector and lexical evidence.
+A result's vector rank is its place among every merged result with a `cosineSimilarity`, from highest to lowest, because similarity compares across indexes.
+A result's lexical rank comes from its place among its own component's results with a `lexicalScore`, so each component's best lexical match ranks ahead of every component's second, and results at the same place rank by their score's share of their component's highest score.
+Each rank `r` adds `1 / (60 + r)` for vector evidence and `w / (60 + r)` for lexical evidence, where `w` is 0.5 for a query that looks like an identifier, such as `retryRequest`, `retry_request`, or a quoted name, and 0.25 otherwise, as inside one index.
+Results whose file, name, qualified name, or selector equals the trimmed query come first, then the rest by that fused score, with ties in component order and then in each index's order.
+A result with neither score, such as a container returned for its grouped members, stays directly after the result that it follows in its component's index.
 Such a result counts toward `limit` like any other, so it is left out when the result it follows is the last one kept.
 The merged list keeps the first `limit` results and numbers `fusedRank` from 1.
 Each result keeps the `fusedScore` and `lexicalScore` that its component's index computed, and those scores depend on that index's own files, so compare them only between results of one component.
@@ -153,7 +222,7 @@ Its `failure` gives a `code` and a `message`, and a component that reached a nat
 The same server does not prepare that component again until its files change, while any other failure is retried by the next call that needs the component.
 
 In a repository with components, `get_repository_intelligence_status` and `discover_repository_intelligence` list each component that holds a file in `components`.
-Each entry gives the component's `status`, `preparationId`, `snapshot`, `indexRevision`, `builtAt`, `progress`, `coverage`, `failure`, and `diagnosticCount`, where `status` is `unprepared`, `waiting`, `preparing`, `ready`, `indexed`, or `degraded`.
+Each entry gives the component's `status`, `preparationId`, `stage`, `snapshot`, `indexRevision`, `builtAt`, `progress`, `coverage`, `failure`, and `diagnosticCount`, where `status` is `unprepared`, `waiting`, `preparing`, `ready`, `indexed`, or `degraded`, and `stage` is `none`, `structure`, or `complete`.
 The top-level `status` is `preparing` while a component waits or prepares, else `degraded` when a component's latest preparation in this server failed, else `indexed` when a component has an index, else `unprepared`.
 The top-level `progress` is the running preparation's progress with its `component`, and each diagnostic names its `component`.
 An invalid `## Components` declaration refuses the native index and status tools before any preparation, with the declaration's error code.
@@ -162,10 +231,15 @@ A search, a structural report, or a context plan builds the components it reads,
 #### Report and plan across component indexes
 
 In a repository with components, the six structural reports select and prepare components as a search does.
-A report with `filters.paths` reads only the components that hold a file at or under those paths, and a report without paths reads every component that holds a file.
+A report without paths reads every component that holds a file.
+`report_cohesion_clusters` and `report_complex_units` with `filters.paths` read only the components that hold a file at or under those paths.
+`find_shared_dependencies`, `find_shared_literals`, `find_same_name_units`, and `report_module_interfaces` with `filters.paths` read every component that holds a file, because a group's members and a module's importers can sit in any component.
+They report only the groups or modules that have a member inside the paths, with their members and importers in every component they read.
+Such a report prepares the components that hold the paths as a search does, and every other component with structure only, which builds that component's structure without starting its embeddings.
+The component is then `ready` with a structure-only index, and a later search that needs its embeddings builds it in full.
+A component outside the paths that is not yet included is named by the `components_missing` diagnostic and leaves the result `partial`, so repeat the report once it is ready.
 A report runs over its included components as over one index that held all of their units, references, and files, so its ordering, `limit`, `offset`, totals, and `coverage` apply to that union.
-A group of `find_shared_dependencies`, `find_shared_literals`, or `find_same_name_units` keeps only members in the components that the report reads, and `report_module_interfaces` counts only importers in those components.
-A path-scoped report sees only the components that hold those paths, so matches in other components appear only in an unscoped report.
+A group keeps only members in the components that the report reads, and `report_module_interfaces` counts only importers in those components.
 Each report result has the `components`, `status`, `components_missing` diagnostic, `snapshot`, and `indexRevision` that a search result has, and a `preparing` result has a `preparationId` of `null`.
 A component's index does not resolve references into other components, so a report that includes such a component can report incomplete structure.
 A search or report with `snapshotId` splits the retained baseline's files into components by the current declaration and prepares one index per component from the baseline's content.
@@ -240,7 +314,7 @@ Test code is left out unless `includeTests` is true.
 Test code is a file in a test directory or with a test name, such as `store.test.ts`, `test_store.py`, `store_test.go`, or `StoreTest.java`, and a Rust `#[cfg(test)]` module or `#[test]` function.
 Generated, vendored, and minified files are always left out.
 With `filters.paths`, a group is reported when one of its members is inside the paths, and it keeps its members elsewhere, so a scoped analysis still sees code that the scope repeats.
-In a repository with components, `filters.paths` also selects the components that the report reads, so a group keeps only its members in the components that hold those paths, as [Report and plan across component indexes](#report-and-plan-across-component-indexes) describes.
+In a repository with components, a report with `filters.paths` still reads every component, so a group keeps its members in other components, as [Report and plan across component indexes](#report-and-plan-across-component-indexes) describes.
 A function that only uses core operations has no dependency profile, so use search for small helpers.
 `coverage` gives the number of profiled units, and a `dependency_names_unavailable` diagnostic means that the index was prepared without library call names.
 A shared dependency set identifies candidates for investigation and does not establish equivalent behavior.
@@ -267,7 +341,7 @@ A test-only export is often a deliberate test seam.
 `namesPerImporter` is the median number of exports that one importer uses, so a low value on a module with many exports shows that each caller needs only a small part of the interface.
 By default, only modules with unused or test-only exports appear, and `allModules` reports every exporting module.
 With `filters.paths`, only modules inside the paths are reported, while importers outside the paths still count.
-In a repository with components, only importers in the components that hold those paths count.
+In a repository with components, importers in every component count, also with `filters.paths`.
 Use `offset` and `nextOffset` to page through modules.
 
 Imports resolve through relative paths, `package.json` names and `exports` maps of workspace packages, `tsconfig` path aliases, and built output that mirrors a `src/` file.

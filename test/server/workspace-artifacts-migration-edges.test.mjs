@@ -74,8 +74,9 @@ test("with store sync on, the moved files and their ledger reach the remote in o
   assert.ok(commit.some((file) => file.startsWith("artifact-status/repositories/api/requirements/billing.md/")), "its status record is in the same commit");
 });
 
-// A move makes a fixed number of file-system calls for each file it takes, which Windows answers several times slower, while a move that listed the store again for each file would take minutes there.
-const MOVE_BOUND = process.platform === "win32" ? 90000 : 30000;
+// A move makes a fixed number of file-system calls for each file it takes, while a move that listed the store again for each file would take minutes on Windows.
+// The move takes about 5 s on an idle machine, but a busy Linux runner once took 35 s, so one bound serves every platform.
+const MOVE_BOUND = 90000;
 
 test("one write that the store refuses keeps only its file, and the rest of a long move goes on without listing the store again for each file", async (context) => {
   const place = await workspace(context);
@@ -202,10 +203,13 @@ test("with store sync on, after a deferred move a pull that another sync complet
 
 test("with store sync on, a file whose location is too long stays in the checkout even where the store, not yet pulled, still holds that location", async (context) => {
   const place = await syncedWorkspace(context);
-  const rest = `reports/${"abcdefghij/".repeat(11)}x.md`;
+  // A location of 464 bytes, above the 455 a location may hold, while its artifact and identity paths stay within the 512 bytes a store shares.
+  const rest = `reports/${"abcdefghij/".repeat(39)}x.md`;
   const file = `docs/plans/${rest}`;
   const location = `artifacts/repositories/api/plans/${rest}`;
   const api = await checkout(place.a, "api");
+  // Git for Windows reaches these paths only with core.longpaths, as Prism turns it on for every store command.
+  for (const folder of [api, place.storeA, place.storeB]) git(folder, "config", "core.longpaths", "true");
   const registering = await server(context, place.a, api);
   ok(await registering.call("get_artifact", {}));
   await registering.close();

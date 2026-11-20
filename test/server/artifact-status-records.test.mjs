@@ -9,6 +9,7 @@ import { answerApproval, newRecord, parseRecord, rewriteStatusLines, serializeRe
 import { startStandaloneReview } from "../../dist/server/review/review-server-pool.mjs";
 import { answerArtifactApproval } from "../../dist/server/workflow/store-artifacts.mjs";
 import { actionOf, apply as applyOn, listing, writeHeaders } from "./fixtures/review-actions.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { adrFile, answerGate, browserRequest, checkout, eventually, git, isolateGit, ok, remoteFile, requirementFile, reviewBrowser, server, syncedWorkspace, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
 // Status records of store artifacts: how status lines are read and rewritten, and that a record syncs with its artifact.
@@ -180,7 +181,8 @@ function viewerEvents(context, url, name, count) {
   });
 }
 
-test("an applied approval reaches the tabs of each checkout of the shared app that sees the artifact, and of no other", async (context) => {
+// Every checkout of a workspace opens the workspace's one page, so each tab of it receives every approval applied there.
+test("an applied approval reaches every tab of the workspace that its checkouts open", async (context) => {
   const { place, api, prism } = await project(context);
   const web = await checkout(place, "web");
   const own = "docs/requirements/api-only.md";
@@ -197,15 +199,16 @@ test("an applied approval reaches the tabs of each checkout of the shared app th
   const opened = [];
   const env = { ...process.env, PRISM_REVIEW_APP_DIR: directory };
   const openBrowser = (url) => { opened.push(url); return true; };
-  const baseOf = (url) => /^(.*\/p\/[0-9a-f]{16})/.exec(new URL(url).href)[1];
+  const baseOf = (url) => /^(.*\/[pw]\/[0-9a-f]{16})/.exec(new URL(url).href)[1];
   const apiBase = baseOf((await startStandaloneReview({ projectRoot: api, env, openBrowser })).url);
   const headers = await writeHeaders(apiBase, opened.at(-1));
   const webBase = baseOf((await startStandaloneReview({ projectRoot: web, env, openBrowser })).url);
-  const onWeb = viewerEvents(context, `${webBase}/api/events`, "action", 1);
+  assert.equal(webBase, apiBase, "both checkouts of the workspace open its one page");
+  const onWeb = viewerEvents(context, `${webBase}/api/events`, "action", 2);
   const onApi = viewerEvents(context, `${apiBase}/api/events`, "action", 2);
   await new Promise((resolve) => setTimeout(resolve, 200));
   const answered = [];
-  // The repository's own file is answered first, so the other checkout's first event shows that it never received it.
+  // The repository's own file is answered first, and every tab of the workspace receives both answers in order.
   for (const id of [local, shared]) {
     const action = actionOf(await listing(apiBase, `approval:${id}`, headers), "gate.answer");
     const applied = await applyOn(apiBase, { action: "gate.answer", target: `approval:${id}`, input: { choice: "approve" }, revision: action.revision }, headers);
@@ -214,7 +217,7 @@ test("an applied approval reaches the tabs of each checkout of the shared app th
   }
   const [webEvents, apiEvents] = await Promise.all([onWeb, onApi]);
   assert.deepEqual(apiEvents.map((event) => [event.id, event.artifact.path, event.artifact.scope.label, event.initiative]), [[answered[0].id, own, "api", null], [answered[1].id, FILE, "workspace", null]]);
-  assert.deepEqual(webEvents.map((event) => [event.id, event.artifact.path, event.artifact.scope.label]), [[answered[1].id, FILE, "workspace"]], "the other checkout's tab receives only the approval of the file it sees");
+  assert.deepEqual(webEvents.map((event) => [event.id, event.artifact.path, event.artifact.scope.label]), [[answered[0].id, own, "api"], [answered[1].id, FILE, "workspace"]], "another tab of the workspace receives each approval");
 });
 
 test("a wait on an artifact's approval gate ends as resolved when the artifact is removed", async (context) => {
@@ -292,7 +295,7 @@ test("an approval answer that a wait returned is not delivered again with the ne
   const gate = await askApproval(prism);
   const review = await reviewBrowser(context, api);
   const waiting = prism.call("wait_for_user_gate", { artifact: FILE, gateIds: [gate], maxWaitMinutes: 1 });
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await pause(1000, "lets the wait start before the answer, so the answer ends a running wait");
   assert.equal((await answer(review, { artifact: FILE, scope: "workspace", id: gate, choice: "request-changes", note: "Name the currency." })).status, 200);
   assert.equal(ok(await waiting).status, "answered");
   assert.equal(await hook("UserPromptSubmit", api, place.app), null);

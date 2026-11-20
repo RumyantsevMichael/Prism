@@ -23,8 +23,9 @@ test.after(() => rm(privateData, { recursive: true, force: true }));
 const target = `initiative:${INITIATIVE}`;
 const choice = (name, values, extra = {}) => ({ name, kind: "choice", label: name === "value" ? "Value" : name, options: values.map((value) => ({ value, label: value })), required: true, requiredWhen: null, maxLength: null, multiline: null, ...extra });
 const text = (name, label, extra = {}) => ({ name, kind: "text", label, options: null, required: false, requiredWhen: null, maxLength: 200, multiline: false, ...extra });
-const push = { id: "initiative.push", label: "Push", group: "Initiative settings", target, value: "off", fields: [{ ...choice("value", ["off", "on"]), kind: "toggle" }], effect: "Applies to child sessions started after the change.", available: true, reason: null, confirm: { field: "value", values: ["on"], message: "Agents will push finished slices beyond this machine." }, revision: "r1" };
-const models = { id: "initiative.models", label: "Models", group: "Initiative settings", target, value: "host defaults", fields: [choice("mode", ["host defaults", "custom"]), text("delivery", "Delivery", { requiredWhen: { field: "mode", values: ["custom"] } }), text("review", "Review", { requiredWhen: { field: "mode", values: ["custom"] } }), text("securityReview", "Security review", { requiredWhen: { field: "mode", values: ["custom"] } }), text("examples", "Examples")], effect: "Applies to child sessions started after the change.", available: true, reason: null, confirm: null, revision: "r1" };
+const push = { id: "initiative.push", label: "Push", group: "Initiative settings", target, value: "off", fields: [{ ...choice("value", ["off", "on"]), kind: "toggle" }], effect: "Applies to agents started after the change.", available: true, reason: null, confirm: { field: "value", values: ["on"], message: "Agents will push finished slices beyond this machine." }, revision: "r1" };
+// A synthetic action whose text fields a choice makes required, as no shipped setting does any longer.
+const conditional = { id: "example.conditional", label: "Conditional", group: "Example", target, value: "none", fields: [choice("mode", ["none", "custom"]), text("first", "First", { requiredWhen: { field: "mode", values: ["custom"] } }), text("second", "Second", { requiredWhen: { field: "mode", values: ["custom"] } }), text("third", "Third", { requiredWhen: { field: "mode", values: ["custom"] } }), text("optional", "Optional")], effect: "Applies to agents started after the change.", available: true, reason: null, confirm: null, revision: "r1" };
 
 test("a control is ready only for a changed, complete input of an available action, and names its confirmation", () => {
   assert.deepEqual(actionFormState(push, { values: {} }), { input: { value: "off" }, ready: false, confirm: null, hint: "" }, "the current value is not a change");
@@ -35,11 +36,11 @@ test("a control is ready only for a changed, complete input of an available acti
 });
 
 test("a required field follows the field it depends on, and the hint names the first empty one", () => {
-  const custom = actionFormState(models, { values: { mode: "custom", review: "sonnet" } });
+  const custom = actionFormState(conditional, { values: { mode: "custom", second: "sonnet" } });
   assert.equal(custom.ready, false);
-  assert.equal(custom.hint, "Fill in Delivery.");
+  assert.equal(custom.hint, "Fill in First.");
   assert.equal(custom.input.mode, "custom");
-  const complete = actionFormState(models, { values: { mode: "custom", delivery: "opus", review: "sonnet", securityReview: "opus" } });
+  const complete = actionFormState(conditional, { values: { mode: "custom", first: "opus", second: "sonnet", third: "opus" } });
   assert.deepEqual([complete.ready, complete.hint, complete.confirm], [true, "", null]);
   const answer = { id: "gate.answer", label: "Answer", group: "Gate", target: "gate:reports/gate-00000001", value: null, fields: [choice("choice", ["approve", "request-changes"]), text("note", "Note", { maxLength: 4000, multiline: true, requiredWhen: { field: "choice", values: ["request-changes"] } })], effect: "Reaches the agent that asked.", available: true, reason: null, confirm: null, revision: "r1" };
   assert.deepEqual([actionFormState(answer, { values: { choice: "request-changes" } }).ready, actionFormState(answer, { values: { choice: "request-changes" } }).hint], [false, "Fill in Note."]);
@@ -110,15 +111,16 @@ test("Attention lists the newest applied actions across initiatives and the chec
   const attention = (await get(base, "api/entity?ref=attention")).json.data;
   assert.ok(Array.isArray(attention.recentChanges));
   assert.deepEqual(attention.recentChanges.map((entry) => [entry.action, entry.initiative]), [["index.rebuild", null], ["gate.answer", INITIATIVE], ["initiative.continuation", INITIATIVE]]);
-  assert.deepEqual(attention.recentChanges[1], { ...entries.find((entry) => entry.action === "gate.answer"), initiative: INITIATIVE });
+  assert.deepEqual(attention.recentChanges[1], { ...entries.find((entry) => entry.action === "gate.answer"), initiative: INITIATIVE, question: "Install the signing key." }, "an answer names the question it answered");
   for (const entry of attention.recentChanges) assert.deepEqual(entry.by, authorOf(root), "each change names who made it and from which checkout");
   assert.ok(attention.recentChanges.length <= 20);
 });
 
-// The shared app's project base, the prefix of one checkout's routes.
-const projectBase = (url) => /^(.*\/p\/[0-9a-f]{16})/.exec(new URL(url).href)[1];
+// The shared app's workspace base, the prefix of one workspace's routes, or of one checkout's routes in a link from before workspaces.
+const projectBase = (url) => /^(.*\/[pw]\/[0-9a-f]{16})/.exec(new URL(url).href)[1];
 
-test("an applied action reaches the tabs of every checkout of the workspace, and an index rebuild only its own checkout's", async (context) => {
+// Every checkout of a workspace opens the workspace's one page, so every tab of the workspace receives each applied action.
+test("an applied action reaches the tabs of every checkout of the workspace", async (context) => {
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-controls-workspace-")));
   const directory = path.join(parent, "app");
   context.after(async () => {
@@ -140,12 +142,9 @@ test("an applied action reaches the tabs of every checkout of the workspace, and
   const headers = await writeHeaders(billingBase, opened.at(-1));
   const second = await startStandaloneReview({ projectRoot: portal, env, openBrowser });
   const portalBase = projectBase(second.url);
-  assert.notEqual(portalBase, billingBase);
-  const portalTargets = (await get(portalBase, "api/actions/targets?kind=index")).json.targets;
-  assert.deepEqual(portalTargets, ["index:portal/portal"], "a checkout's page lists only its own index");
-  assert.equal((await listing(portalBase, "index:billing/billing")).status, 404, "another checkout's index is not a target of this page");
-  assert.equal((await listing(portalBase, target)).status, 200, "every checkout of the workspace lists the shared initiative's actions");
-  const onPortal = events(context, `${portalBase}/api/events`, "action", 1);
+  assert.equal(portalBase, billingBase, "both checkouts of the workspace open its one page");
+  assert.equal((await listing(portalBase, target)).status, 200, "the workspace's page lists the shared initiative's actions");
+  const onPortal = events(context, `${portalBase}/api/events`, "action", 2);
   const onBilling = events(context, `${billingBase}/api/events`, "action", 2);
   await new Promise((resolve) => setTimeout(resolve, 200));
   const rebuild = actionOf(await listing(billingBase, "index:billing/billing", headers), "index.rebuild");
@@ -156,10 +155,11 @@ test("an applied action reaches the tabs of every checkout of the workspace, and
   assert.equal(applied.status, 200, applied.text);
   assert.equal(applied.json.applied.by.checkout.startsWith("billing/main on "), true, "the author's checkout is the one whose page applied it");
   const [portalEvents, billingEvents] = await Promise.all([onPortal, onBilling]);
-  assert.deepEqual(portalEvents, [{ ...applied.json.applied, initiative: INITIATIVE }], "the other checkout's tab receives the shared change but not the index rebuild");
+  assert.deepEqual(portalEvents[1], { ...applied.json.applied, initiative: INITIATIVE }, "another tab of the workspace receives the shared change");
+  assert.deepEqual(portalEvents.map((event) => event.action), ["index.rebuild", "initiative.continuation"]);
   assert.deepEqual(billingEvents.map((event) => event.action), ["index.rebuild", "initiative.continuation"]);
   const attention = (await get(portalBase, "api/entity?ref=attention")).json.data;
-  assert.deepEqual(attention.recentChanges.map((entry) => entry.action), ["initiative.continuation"], "Attention of the other checkout shows the shared history and only its own index history");
+  assert.ok(attention.recentChanges.some((entry) => entry.action === "initiative.continuation"), "Attention of the workspace shows the shared history");
 });
 
 test("the page loads the generic action view", async (context) => {

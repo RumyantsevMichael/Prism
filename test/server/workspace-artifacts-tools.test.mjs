@@ -151,7 +151,8 @@ test("clause 2: no update creates a component folder whose name is a Windows dev
   assert.equal(await exists(path.join(held, "b.md")), false);
 });
 
-test("clauses 5 and 10: a checkout lists the workspace's artifacts and its own repository's, sorted and labeled, without other repositories' ones", async (context) => {
+// Agents now read every scope of the store, other repositories' ones included, as the workspace view's artifact index lists them.
+test("clauses 5 and 10: a checkout lists the workspace's artifacts and every repository's, sorted and labeled", async (context) => {
   const place = await workspace(context);
   const api = await checkout(place, "api", { components: ["- billing: packages/billing"] });
   const web = await checkout(place, "web");
@@ -168,7 +169,8 @@ test("clauses 5 and 10: a checkout lists the workspace's artifacts and its own r
     ["docs/plans/reports/slice.md", "workspace"],
     ["docs/requirements/api.md", "api"],
     ["docs/requirements/billing.md", "api/billing"],
-    ["docs/requirements/shared.md", "workspace"]
+    ["docs/requirements/shared.md", "workspace"],
+    ["docs/requirements/web.md", "web"]
   ]);
   const shared = listed.artifacts.find((entry) => entry.path === "docs/requirements/shared.md");
   assert.equal(shared.kind, "requirements");
@@ -178,8 +180,8 @@ test("clauses 5 and 10: a checkout lists the workspace's artifacts and its own r
   assert.equal(listed.truncated ?? false, false);
 
   const folder = ok(await webServer.call("get_artifact", { path: "docs/requirements" }));
-  assert.deepEqual(folder.artifacts.map((entry) => [entry.path, entry.scope.label]), [["docs/requirements/shared.md", "workspace"], ["docs/requirements/web.md", "web"]]);
-  refused(await webServer.call("get_artifact", { path: "docs/requirements/api.md" }), "artifact_not_found");
+  assert.deepEqual(folder.artifacts.map((entry) => [entry.path, entry.scope.label]), [["docs/requirements/api.md", "api"], ["docs/requirements/billing.md", "api/billing"], ["docs/requirements/shared.md", "workspace"], ["docs/requirements/web.md", "web"]]);
+  assert.equal(ok(await webServer.call("get_artifact", { path: "docs/requirements/api.md" })).scope.label, "api", "another repository's artifact is read, not changed");
 });
 
 test("clause 6: a path that two seen scopes hold needs a scope, which picks one", async (context) => {
@@ -529,44 +531,56 @@ test("clause 14: an update never creates a path that collides in letter case wit
   assert.equal(await text(path.join(place.store, "artifacts", "requirements", "Totals.md")), requirementFile("Totals, rewritten"));
 });
 
-test("clause 16: a created or moved artifact's location holds at most 120 characters, and a longer stored one stays usable", async (context) => {
+test("clause 16: a created or moved artifact's location holds at most 455 bytes and names of at most 200, so every file Prism keeps for it fits a store, and a longer stored one stays usable", async (context) => {
   const place = await workspace(context);
   const api = await checkout(place, "api");
   const prism = await server(context, place, api);
-  // "plans/" and "long/" take 11 characters of the location, so a 109-character name makes it 120.
-  const named = (length) => `docs/plans/long/${"x".repeat(length - 3)}.md`;
   const location = (file, scope = "") => `${scope}${file.replace(/^docs\//, "")}`;
+  // A path below docs/plans/<folder>/ whose workspace location holds length bytes, in folders of 99 characters each.
+  const named = (length, folder = "long") => {
+    let rest = length - `plans/${folder}/`.length - ".md".length;
+    const names = [];
+    for (; rest > 100; rest -= 100) names.push("x".repeat(99));
+    return `docs/plans/${folder}/${[...names, "x".repeat(rest)].join("/")}.md`;
+  };
   const tooLong = (response, expected) => {
     const error = refused(response, "artifact_path_too_long");
     assert.equal(error.data.location, expected);
-    assert.equal(error.data.limit, 120);
+    assert.equal(error.data.limit, 455);
+    assert.equal(error.data.nameLimit, 200);
     return error;
   };
-  const fits = await writeArtifact(prism, named(109), requirementFile("Fits"));
-  assert.equal(location(named(109)).length, 120);
-  assert.equal(await text(path.join(place.store, "artifacts", location(named(109)))), requirementFile("Fits"));
-  tooLong(await prism.call("update_artifact", { operations: [{ op: "write", path: named(110), content: requirementFile("Long"), expectedVersion: null }] }), location(named(110)));
+  // A comment's path, artifact-comments/<location>/<38-byte name>, holds 57 bytes more than the location, so a 455-byte location keeps it within the 512 bytes a store shares.
+  assert.equal(location(named(455)).length, 455);
+  const fits = await writeArtifact(prism, named(455), "# Fits\n");
+  assert.equal(await text(path.join(place.store, "artifacts", location(named(455)))), "# Fits\n");
+  tooLong(await prism.call("update_artifact", { operations: [{ op: "write", path: named(456), content: "# Long\n", expectedVersion: null }] }), location(named(456)));
+  // A single name holds at most 200 bytes, as store sync shares it, however short the whole location is.
+  const wide = `docs/plans/long/${"w".repeat(197)}.md`;
+  await writeArtifact(prism, wide, "# Wide\n");
+  const wider = `docs/plans/long/${"w".repeat(198)}.md`;
+  tooLong(await prism.call("update_artifact", { operations: [{ op: "write", path: wider, content: "# Wider\n", expectedVersion: null }] }), location(wider));
   // The limit holds for the location in the scope the artifact would take, whose folder adds to it.
-  tooLong(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/plans/long/other.md", content: requirementFile("Fits"), expectedVersion: null }, { op: "write", path: named(100), content: requirementFile("Long here"), expectedVersion: null, scope: "repository" }] }), location(named(100), "repositories/api/"));
+  tooLong(await prism.call("update_artifact", { operations: [{ op: "write", path: "docs/plans/long/other.md", content: "# Fits\n", expectedVersion: null }, { op: "write", path: named(440), content: "# Long here\n", expectedVersion: null, scope: "repository" }] }), location(named(440), "repositories/api/"));
   assert.equal(await exists(path.join(place.store, "artifacts", "plans", "long", "other.md")), false, "a refused update changes no file");
-  tooLong(await prism.call("update_artifact", { operations: [{ op: "move_scope", path: named(109), expectedVersion: fits.version, scope: "repository" }] }), location(named(109), "repositories/api/"));
-  await writeArtifact(prism, "docs/plans/deep/slice.md", requirementFile("Deep"), { scope: "repository" });
-  const inFolder = `docs/plans/deep/${"y".repeat(100)}.md`;
-  tooLong(await prism.call("update_artifact", { operations: [{ op: "write", path: inFolder, content: requirementFile("Deep file"), expectedVersion: null }] }), location(inFolder, "repositories/api/"));
-  assert.deepEqual(ok(await prism.call("get_artifact", {})).artifacts.map((entry) => entry.path), ["docs/plans/deep/slice.md", named(109)]);
+  tooLong(await prism.call("update_artifact", { operations: [{ op: "move_scope", path: named(455), expectedVersion: fits.version, scope: "repository" }] }), location(named(455), "repositories/api/"));
+  await writeArtifact(prism, "docs/plans/deep/slice.md", "# Deep\n", { scope: "repository" });
+  const inFolder = named(440, "deep");
+  tooLong(await prism.call("update_artifact", { operations: [{ op: "write", path: inFolder, content: "# Deep file\n", expectedVersion: null }] }), location(inFolder, "repositories/api/"));
+  assert.deepEqual(ok(await prism.call("get_artifact", {})).artifacts.map((entry) => entry.path), ["docs/plans/deep/slice.md", named(455), wide].sort());
 
   // A longer location that the store already holds, as another tool may have left it, is listed and used by its path.
-  const stored = named(130);
-  await writeFile(path.join(place.store, "artifacts", location(stored)), requirementFile("Stored long"));
+  const stored = named(500);
+  await mkdir(path.dirname(path.join(place.store, "artifacts", location(stored))), { recursive: true });
+  await writeFile(path.join(place.store, "artifacts", location(stored)), "# Stored long\n");
   const listed = ok(await prism.call("get_artifact", { path: "docs/plans/long" })).artifacts.map((entry) => entry.path);
-  assert.deepEqual(listed, [named(109), stored].sort());
+  assert.deepEqual(listed, [named(455), wide, stored].sort());
   const read = ok(await prism.call("get_artifact", { path: stored }));
-  assert.equal(read.content, requirementFile("Stored long"));
-  const written = ok(await prism.call("update_artifact", { operations: [{ op: "write", path: stored, content: requirementFile("Stored long, changed"), expectedVersion: read.version }] })).artifacts[0];
+  assert.equal(read.content, "# Stored long\n");
+  const written = ok(await prism.call("update_artifact", { operations: [{ op: "write", path: stored, content: "# Stored long, changed\n", expectedVersion: read.version }] })).artifacts[0];
   const edited = ok(await prism.call("update_artifact", { operations: [{ op: "edit", path: stored, expectedVersion: written.version, edits: [{ oldText: "changed", newText: "edited" }] }] })).artifacts[0];
-  assert.equal(await text(path.join(place.store, "artifacts", location(stored))), requirementFile("Stored long, edited"));
+  assert.equal(await text(path.join(place.store, "artifacts", location(stored))), "# Stored long, edited\n");
   ok(await prism.call("update_artifact", { operations: [{ op: "remove", path: stored, expectedVersion: edited.version }] }));
-  assert.equal(await exists(path.join(place.store, "artifacts", location(stored))), false);
 });
 
 test("clause 17: a write whose location is a folder of artifacts, lies below a stored file, or lies below another write of the update is refused with invalid_path before any file changes", async (context) => {

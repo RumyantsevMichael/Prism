@@ -6,6 +6,7 @@ import readline from "node:readline";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { closeWithServers } from "./fixtures/repository-checkouts.mjs";
 import { checkout, eventually, isolateGit, notes, ok, server, syncedWorkspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 
@@ -73,7 +74,7 @@ async function conflictDuringWait(context) {
 test("a cancelled wait is never written, so it leaves the saved version pending and the server's next result names it", async (context) => {
   const { place, onB, wait } = await conflictDuringWait(context);
   onB.send({ method: "notifications/cancelled", params: { requestId: wait, reason: "user pressed Esc" } });
-  await new Promise((resolve) => setTimeout(resolve, 1500));
+  await pause(1500, "a cancelled request must get no response, and a response that does not come leaves nothing to wait for");
   assert.equal(onB.messages.some((message) => message.id === wait), false, "a cancelled request gets no response");
   assert.equal((await pending(place.storeB)).length, 1, "the cancelled result cleared no pending notice");
   const named = notes(await onB.call("get_artifact", { path: "docs/plans" }));
@@ -110,7 +111,7 @@ test("any call that the host cancels before its result is written gets no respon
   for (const name of ["get_artifact", "list_reviewable_artifacts"]) {
     const cancelled = onB.request("tools/call", { name, arguments: { projectRoot: root, path: "docs/plans" } });
     onB.send({ method: "notifications/cancelled", params: { requestId: cancelled, reason: "user pressed Esc" } });
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await pause(1500, "a cancelled request must get no response, and a response that does not come leaves nothing to wait for");
     assert.equal(onB.messages.some((message) => message.id === cancelled), false, `a cancelled ${name} gets no response`);
     assert.equal((await pending(place.storeB)).length, 1, `the cancelled ${name} cleared no pending notice`);
   }

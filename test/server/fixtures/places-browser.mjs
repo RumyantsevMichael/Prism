@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { demoProject, launch, openPage, reviewUrl, ROOT, serveProject, useAppDirectory, waitForView } from "./kit-browser.mjs";
+import { repainted, WAIT_MS } from "./wait.mjs";
 
 export { reviewUrl, waitForView, ROOT };
 
@@ -22,7 +23,7 @@ export async function placesDemo(context, { seed = "seed.mjs", prepare = null } 
 
 export async function open(browser, base, ref, { width = 1440, height = 900, colorScheme = "light", query = "" } = {}) {
   const page = await openPage(browser, `${reviewUrl(base, ref)}${query}`, { viewport: { width, height }, colorScheme });
-  await waitForView(page).catch(() => {});
+  await waitForView(page);
   return page;
 }
 
@@ -64,6 +65,8 @@ export async function eventually(read, expected, { timeout = 10000 } = {}) {
  * so this waits for the place head's title instead of reading the page after a fixed pause.
  */
 export async function shownPlace(page) {
+  // The page takes keys and rail clicks once its first view has rendered, which on a slow runner comes well after the place head shows.
+  await waitForView(page);
   // It reads the title's text rather than the heading's role, which a hidden sidebar leaves out of the accessibility tree.
   const title = await page.waitForFunction(() => document.querySelector("#place-head .prism-place-head-title")?.textContent.trim() || null, null, { timeout: 15000 });
   return title.jsonValue();
@@ -86,14 +89,16 @@ export async function buttonNames(scope) {
 export const shownRef = (page) => page.evaluate(() => new URL(location.href).searchParams.get("artifact"));
 
 export async function settledOn(page, ref) {
-  await page.waitForFunction((ref) => new URL(location.href).searchParams.get("artifact") === ref && document.querySelector("#artifact")?.getAttribute("aria-busy") === "false", ref, { timeout: 10000 });
-  await page.waitForTimeout(200);
+  await page.waitForFunction((ref) => new URL(location.href).searchParams.get("artifact") === ref && document.querySelector("#artifact")?.getAttribute("aria-busy") === "false", ref, { timeout: WAIT_MS });
+  await repainted(page);
 }
 
 /** Chooses a place on the rail of `scope`, a page or the drawer, and waits until the rail marks it current. */
 export async function choosePlace(scope, name) {
+  // A drawer that is still sliding in moves its rail under the click, so the click waits for the page's animations to end.
+  await repainted(typeof scope.page === "function" ? scope.page() : scope);
   await placeButton(scope, name).click();
-  await rail(scope).getByRole("button", { name: new RegExp(`^${name}\\b`), pressed: true }).waitFor({ timeout: 10000 });
+  await rail(scope).getByRole("button", { name: new RegExp(`^${name}\\b`), pressed: true }).waitFor({ timeout: WAIT_MS });
 }
 
 /** The tabs of the strip as their refs, with * on the selected tab and (p) on the preview tab. */
@@ -101,9 +106,20 @@ export const tabs = (page) => page.evaluate(() => [...document.querySelectorAll(
 
 /**
  * Runs the places comparison of the demo app with the approved mockup and returns its exit status and report.
- * Every slice that changes a screen runs it for its scenes and parts at 390, 820, and 1440 pixels in both themes.
+ * Every slice that changes a screen runs it for its scenes and parts at 390, 820, and 1440 pixels in the light theme.
+ * The dark theme changes only colors, so it is compared only for the design values, and only at the widest width the scenes have.
  */
-export async function comparePlaces(context, { scenes, parts, widths = "1440,820,390", themes = "light,dark" }) {
+export async function comparePlaces(context, { scenes, parts, widths = "1440,820,390", themes = "light" }) {
+  const runs = [{ widths, themes, parts }];
+  const all = parts ?? "rail,head,sidebar,topbar,trail,geometry,tokens";
+  if (themes === "light" && all.split(",").includes("tokens")) runs.push({ widths: "1440", themes: "dark", parts: "tokens" });
+  const results = [];
+  for (const run of runs) results.push(await comparePlacesOnce(context, { scenes, ...run }));
+  const report = results.every((result) => result.report) ? { ...results[0].report, pairs: results.flatMap((result) => result.report.pairs) } : null;
+  return { status: Math.max(...results.map((result) => result.status ?? 2)), stdout: results.map((result) => result.stdout).join(""), stderr: results.map((result) => result.stderr).join(""), report, out: results[0].out };
+}
+
+async function comparePlacesOnce(context, { scenes, parts, widths, themes }) {
   const out = await mkdtemp(path.join(os.tmpdir(), "prism-places-pairs-"));
   context.after(() => rm(out, { recursive: true, force: true }));
   const args = [path.join(ROOT, "scripts/review-demo/places-compare.mjs"), "--out", out, "--scenes", scenes, "--widths", widths, "--themes", themes];

@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { CONFORMING, formatServer, PATHS, write } from "./fixtures/artifact-formats.mjs";
 import { storeProject, storeRead } from "./fixtures/artifact-formats-store.mjs";
-import { seenArtifactTexts } from "../../src/server/workflow/store-artifacts.mjs";
+import { seenArtifactTexts } from "../../dist/server/workflow/store-artifacts.mjs";
 
 // How the citation check names and reads the artifacts that work cites.
 

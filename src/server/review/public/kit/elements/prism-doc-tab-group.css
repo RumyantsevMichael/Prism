@@ -1,7 +1,8 @@
-/* prism-doc-tab-group: a group's head in the tab strip, a colored name that the group's tabs underline in the same color. */
+/* prism-doc-tab-group: a group's head in the tab strip, its name in the group's color on a pale wash of that color, while the group's tabs carry the same color along their top. */
 
 :host {
   --prism-doc-tab-group-color: var(--prism-color-group-1);
+  --prism-doc-tab-group-tint: var(--prism-color-group-1-tint);
   display: flex;
   flex: none;
   min-width: 0;
@@ -9,11 +10,11 @@
   height: 100%;
 }
 
-:host([tone="2"]) { --prism-doc-tab-group-color: var(--prism-color-group-2); }
-:host([tone="3"]) { --prism-doc-tab-group-color: var(--prism-color-group-3); }
-:host([tone="4"]) { --prism-doc-tab-group-color: var(--prism-color-group-4); }
-:host([tone="5"]) { --prism-doc-tab-group-color: var(--prism-color-group-5); }
-:host([tone="6"]) { --prism-doc-tab-group-color: var(--prism-color-group-6); }
+:host([tone="2"]) { --prism-doc-tab-group-color: var(--prism-color-group-2); --prism-doc-tab-group-tint: var(--prism-color-group-2-tint); }
+:host([tone="3"]) { --prism-doc-tab-group-color: var(--prism-color-group-3); --prism-doc-tab-group-tint: var(--prism-color-group-3-tint); }
+:host([tone="4"]) { --prism-doc-tab-group-color: var(--prism-color-group-4); --prism-doc-tab-group-tint: var(--prism-color-group-4-tint); }
+:host([tone="5"]) { --prism-doc-tab-group-color: var(--prism-color-group-5); --prism-doc-tab-group-tint: var(--prism-color-group-5-tint); }
+:host([tone="6"]) { --prism-doc-tab-group-color: var(--prism-color-group-6); --prism-doc-tab-group-tint: var(--prism-color-group-6-tint); }
 
 .group {
   display: flex;
@@ -21,24 +22,11 @@
   gap: var(--prism-space-1);
   width: 100%;
   min-width: 0;
-  padding: 0 var(--prism-space-1) 0 var(--prism-space-3);
-  border-inline-end: var(--prism-stroke) solid var(--prism-color-line);
-  box-shadow: inset 0 calc(-1 * var(--prism-stroke-strong)) 0 var(--prism-doc-tab-group-color);
-  color: var(--prism-doc-tab-group-color);
-  font-size: var(--prism-font-size-sm);
-  font-weight: var(--prism-font-weight-semibold);
+  padding: 0 var(--prism-space-2);
+  background: var(--prism-doc-tab-group-tint);
   white-space: nowrap;
   cursor: pointer;
   user-select: none;
-}
-
-/* A collapsed group has no tabs to underline, so its head carries no line and reads as one closed unit. */
-:host([collapsed]) .group {
-  box-shadow: none;
-}
-
-:host(:hover) .group {
-  background: var(--prism-color-hover);
 }
 
 :host([dragging]) .group {
@@ -47,6 +35,7 @@
   cursor: grabbing;
 }
 
+/* The group's name is text in the group's color, not a tab: it has no tab's surface, so it reads as the label of the tabs after it. */
 .head {
   display: flex;
   align-items: center;
@@ -55,14 +44,26 @@
   min-width: 0;
   height: var(--prism-control-height);
   border-radius: var(--prism-radius-xs);
+  color: var(--prism-doc-tab-group-color);
+  font-size: var(--prism-font-size-sm);
+  font-weight: var(--prism-font-weight-semibold);
 }
 
-.dot {
+/* Under the pointer the wash gains an outline in the group's color, so the head reads as the control it is. */
+:host(:hover) .group {
+  box-shadow: inset 0 0 0 var(--prism-stroke) var(--prism-doc-tab-group-color);
+}
+
+/* The start keeps a room as wide as the close button's at the end, as a tab's does, and who opened the group takes it at the small avatar size. */
+.lead {
+  display: grid;
   flex: none;
-  width: var(--prism-space-2);
-  height: var(--prism-space-2);
-  border-radius: var(--prism-radius-round);
-  background: var(--prism-doc-tab-group-color);
+  place-items: center;
+  width: var(--prism-doc-tab-slot);
+}
+
+::slotted([slot="opener"]) {
+  --prism-avatar-size: var(--prism-avatar-size-sm);
 }
 
 .name {

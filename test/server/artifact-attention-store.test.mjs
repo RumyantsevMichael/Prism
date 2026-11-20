@@ -43,10 +43,11 @@ test("clauses 17, 55: Attention lists each nonconforming store artifact by path 
 
 test("clause 55: Attention follows a store copy that changes and drops it once it conforms", async (context) => {
   const { place, web, attention } = await served(context);
-  const current = await storeRead(web.call, OLD);
+  // Every scope of the workspace is readable from a checkout, so the read names the workspace copy.
+  const current = await storeRead(web.call, OLD, { scope: "workspace" });
   const changed = { version: await storeFile(place, WORKSPACE_OLD, `${current.content}A later line.\n`) };
   assert.equal((await attention()).formats[0].count, 2, "a changed copy still counts");
-  await storeWrite(web.call, OLD, REQUIREMENT, { expectedVersion: changed.version });
+  await storeWrite(web.call, OLD, REQUIREMENT, { scope: "workspace", expectedVersion: changed.version });
   const fixed = (await attention()).formats[0];
   assert.deepEqual(fixed.artifacts.map((artifact) => [artifact.path, labelOf(artifact)]), [[OLD, "api"]], "a conforming copy is no longer counted");
 });

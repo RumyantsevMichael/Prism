@@ -1,13 +1,15 @@
 import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { readWorkflowConfig } from "../workflow/workflow-config.mjs";
-import { componentOf, listsComponents, readComponents } from "../workflow/components.mjs";
+import { componentOf, listComponents, listsComponents, readComponents } from "../workflow/components.mjs";
 import { NativeRepositoryIntelligence, RepositoryScan } from "./native-repository-intelligence.mjs";
 import { semanticError } from "./native-semantic-runtime.mjs";
-import type { ComponentRuntime, ComponentState, Diagnostic, IndexMetadata, NativeSource, Preparation, PreparedIndex, SearchResult, SourceSnapshot } from "./repository-unit-types.mjs";
+import { FUSION_OFFSET, fusionWeights } from "../../native-runtime/fusion.mjs";
+import type { ComponentRuntime, ComponentState, Diagnostic, IndexMetadata, NativeSource, Preparation, PrepareOptions, PreparedIndex, SearchResult, SourceSnapshot } from "./repository-unit-types.mjs";
 
 // A repository that declares components has one native index per component. Each component's source scans only that component's files,
-// and a call prepares and reads only the components that hold the paths it names, or every component that holds a file.
+// and a call prepares and reads only the components that hold the paths it names, or every component that holds a file; a scoped cross-file report
+// also reads the sibling components beside them, which it prepares with structure only.
 
 interface Component { name: string; identity: string; folder: string }
 export interface Declaration { repository: string; root: Component; declared: Component[]; components: Component[] }
@@ -23,6 +25,14 @@ export async function indexComponents(projectRoot: string): Promise<Declaration 
   try { config = await readWorkflowConfig(projectRoot); } catch { return null; }
   if (!listsComponents(config)) return null;
   return readComponents(config) as Declaration;
+}
+
+/** The identity of the project's root component, <repository>/<repository>, which names the one index of a repository without components. */
+export async function rootIdentity(projectRoot: string): Promise<string> {
+  let repository: string | null = null;
+  try { repository = listComponents(await readWorkflowConfig(projectRoot)).repository; } catch { /* An unreadable configuration names the default repository. */ }
+  repository ??= "root";
+  return `${repository}/${repository}`;
 }
 
 /** One source per component in component order: the root component first, then the declared components in declaration order. */
@@ -70,19 +80,42 @@ export async function selectionSnapshot(selected: ComponentSource[]) {
   return sha(lines.join(""));
 }
 
-/** Queues the selected components that are missing or out of date, waits at most the call's bound for them, and returns each one's preparation. */
-export function prepareComponents(runtime: ComponentRuntime, selected: ComponentSource[], waitMs?: number): Promise<Preparation[]> {
-  if (!selected.length) return Promise.resolve([]);
-  return runtime.prepareComponents(selected.map(entry => ({ source: entry.source, component: { name: entry.name, identity: entry.component, folder: entry.folder } })), waitMs);
+/**
+ * Queues the selected components that are missing or out of date, waits at most the call's bound for them, and returns each one's preparation.
+ * With `structure`, a component whose build published its structure answers from that structure-only index, as answeringPreparation describes.
+ * Each of `siblings` is prepared with structure only and queued after the other components, while the preparations keep the order of `selected`.
+ */
+export async function prepareComponents(runtime: ComponentRuntime, selected: ComponentSource[], waitMs?: number, { siblings = [], ...options }: PrepareOptions & { siblings?: ComponentSource[] } = {}): Promise<Preparation[]> {
+  if (!selected.length) return [];
+  const ordered = [...selected.filter(entry => !siblings.includes(entry)), ...selected.filter(entry => siblings.includes(entry))];
+  const prepared = await runtime.prepareComponents(ordered.map(entry => ({ source: entry.source, component: { name: entry.name, identity: entry.component, folder: entry.folder },
+    ...(siblings.includes(entry) ? { structureOnly: true } : {}) })), waitMs, options);
+  const preparations = selected.map(entry => prepared[ordered.indexOf(entry)]);
+  return options.structure ? preparations.map(answeringPreparation) : preparations;
 }
 
-/** How each selected component took part: included when its up-to-date index is ready, otherwise waiting, preparing, or failed. */
+/**
+ * A preparation without a complete index that waits, prepares, or failed after its build published a structure, as a ready preparation of that
+ * structure-only index, which stays stored after a failure such as a native limit; any other preparation as it is.
+ */
+export function answeringPreparation(preparation: Preparation): Preparation {
+  if (preparation.prepared || !preparation.structure || preparation.status === "ready") return preparation;
+  return { ...preparation, status: "ready", prepared: preparation.structure };
+}
+
+/**
+ * How each selected component took part: included when its up-to-date index is ready, otherwise waiting, preparing, or failed.
+ * A component included from a structure-only index carries `embeddings: "pending"`, and no other component carries `embeddings`.
+ * A waiting or preparing component carries the `waitingFor` of its preparation when it has one.
+ */
 export function componentStates(selected: ComponentSource[], preparations: Preparation[]): ComponentState[] {
   return selected.map((entry, index) => {
     const preparation = preparations[index];
     const status = preparation.status === "ready" && preparation.prepared ? "included" : preparation.status === "degraded" ? "failed" : preparation.status === "waiting" ? "waiting" : "preparing";
     const failure = status !== "failed" ? null : preparation.failure ?? { code: preparation.diagnostics[0]?.code ?? "preparation_failed", message: preparation.diagnostics[0]?.message ?? "The component's preparation failed." };
-    return { component: entry.component, folder: entry.folder, status, indexRevision: status === "included" ? preparation.prepared!.revision : null, failure };
+    return { component: entry.component, folder: entry.folder, status, indexRevision: status === "included" ? preparation.prepared!.revision : null, failure,
+      ...(status === "included" && preparation.prepared!.stage === "structure" ? { embeddings: "pending" as const } : {}),
+      ...((status === "waiting" || status === "preparing") && preparation.waitingFor ? { waitingFor: preparation.waitingFor } : {}) };
   });
 }
 
@@ -141,36 +174,68 @@ export interface ComponentSearch { component: string; search(): Promise<SearchRe
 
 /**
  * Searches each included component in component order and returns each one's answer and the results, each naming its component.
- * One component that answers keeps its index's order. Several merge by cosineSimilarity from highest to lowest, with ties in component order and
- * then in each index's order. A result without a similarity, such as a container that its index placed after its best member, sorts by the
- * similarity of the result it follows in its index, so it stays directly after that result; one that follows no such result comes after every
- * result that has one. The merged list keeps the first `limit` and numbers fusedRank from 1, while each result keeps the other scores its index computed.
+ * One component that answers keeps its index's order. Several rank together by reciprocal rank fusion, because only cosine similarity compares across indexes:
+ * a result's vector rank is its place among every result with a cosineSimilarity, from highest to lowest, ties in component order and then in index order;
+ * its lexical rank is its place among every result with a lexicalScore, by its lexical place inside its own index, then by its score's share of that index's
+ * highest score, then in component order. Its fused score adds `w / (60 + lexical rank)` and `1 / (60 + vector rank)` for the ranks it has, with the weights
+ * that rank one index. Results whose file, name, qualified name, or selector equals the trimmed query come first, then the rest by fused score, ties in
+ * component order and then in index order. A result with neither score, such as a container that its index placed after its best member, stays directly
+ * after the result it follows in its index; one that follows no such result comes after every other result. The merged list keeps the first `limit`
+ * and numbers fusedRank from 1, while each result keeps the other scores its index computed.
  */
-export async function searchComponents(included: ComponentSearch[], limit: number) {
+export async function searchComponents(included: ComponentSearch[], limit: number, query = "") {
   const answers: (SearchResult[] | null)[] = [];
   for (const entry of included) answers.push(await entry.search());
   const lists = included.flatMap((entry, index) => answers[index] ? [answers[index]!.map(result => ({ ...result, component: entry.component }))] : []);
   if (lists.length === 1) return { answers, results: lists[0].slice(0, limit) };
-  const keyed = lists.flatMap(list => {
-    let previous = -Infinity;
-    return list.map(result => ({ result, key: previous = result.cosineSimilarity ?? previous }));
-  });
+  type Result = typeof lists[number][number];
+  const scored = (result: Result) => result.cosineSimilarity != null || result.lexicalScore != null;
+  // Each scored result in component order, then index order, with the unscored results that follow it in its index.
+  const entries: { result: Result; order: number; followers: Result[]; lexical?: [number, number]; fused: number }[] = [];
+  const orphans: Result[] = [];
+  for (const list of lists) {
+    let last: typeof entries[number] | undefined;
+    for (const result of list) {
+      if (scored(result)) entries.push(last = { result, order: entries.length, followers: [], fused: 0 });
+      else if (last) last.followers.push(result);
+      else orphans.push(result);
+    }
+  }
+  const byScore = (score: (result: Result) => number) => (left: typeof entries[number], right: typeof entries[number]) => score(right.result) - score(left.result);
+  // Lexical places inside each index: by score from highest to lowest, ties in index order, with each score's share of that index's highest score.
+  for (const list of lists) {
+    const own = entries.filter(entry => list.includes(entry.result) && entry.result.lexicalScore != null).sort(byScore(result => result.lexicalScore!));
+    const top = own.length ? own[0].result.lexicalScore! : 0;
+    own.forEach((entry, place) => { entry.lexical = [place, top > 0 ? entry.result.lexicalScore! / top : 0]; });
+  }
+  const weights = fusionWeights(query);
   // Array sort is stable, so equal keys keep the order of the concatenation: component order, then each index's order.
-  const merged = keyed.sort((left, right) => left.key === right.key ? 0 : right.key > left.key ? 1 : -1);
-  return { answers, results: merged.slice(0, limit).map(({ result }, index) => ({ ...result, fusedRank: index + 1 })) };
+  const vector = entries.filter(entry => entry.result.cosineSimilarity != null).sort(byScore(result => result.cosineSimilarity!));
+  vector.forEach((entry, rank) => { entry.fused += weights.cosineSimilarity / (FUSION_OFFSET + rank + 1); });
+  const lexical = entries.filter(entry => entry.lexical).sort((left, right) => left.lexical![0] - right.lexical![0] || right.lexical![1] - left.lexical![1]);
+  lexical.forEach((entry, rank) => { entry.fused += weights.lexicalScore / (FUSION_OFFSET + rank + 1); });
+  const term = query.trim();
+  const exact = (result: Result) => [result.file, result.name, result.qualifiedName, result.selector].includes(term) ? 1 : 0;
+  const ranked = entries.sort((left, right) => exact(right.result) - exact(left.result) || right.fused - left.fused || left.order - right.order);
+  const merged = [...ranked.flatMap(entry => [entry.result, ...entry.followers]), ...orphans];
+  return { answers, results: merged.slice(0, limit).map((result, index) => ({ ...result, fusedRank: index + 1 })) };
 }
 
 /**
  * Reads the declaration and the selected components of a call, of the live project or, with `baseline`, of a retained baseline split into components,
  * and refuses an expected snapshot that differs from the selection's snapshot. `sources` holds every component's source, selected or not.
+ * With `siblings` and paths, `siblings` holds every other component that holds a file, `read` holds the selected and sibling components in component
+ * order, and the snapshot is `read`'s; otherwise `siblings` is empty and `read` is the selection.
  */
-export async function selectedComponents(projectRoot: string, declaration: Declaration, paths: string[] | undefined, expectedSnapshot?: string, baseline?: OpenSource) {
+export async function selectedComponents(projectRoot: string, declaration: Declaration, paths: string[] | undefined, expectedSnapshot?: string, baseline?: OpenSource, { siblings: withSiblings = false } = {}) {
   const root = await realpath(projectRoot);
   const sources = baseline ? await baselineSources(declaration, baseline) : componentSources(root, declaration);
   const selected = await selectComponents(declaration, sources, paths);
-  const snapshot = await selectionSnapshot(selected);
+  const siblings = withSiblings && paths?.length ? (await selectComponents(declaration, sources)).filter(entry => !selected.includes(entry)) : [];
+  const read = siblings.length ? sources.filter(entry => selected.includes(entry) || siblings.includes(entry)) : selected;
+  const snapshot = await selectionSnapshot(read);
   if (expectedSnapshot && expectedSnapshot !== snapshot) throw semanticError("stale_snapshot", "The expected repository snapshot has changed. Repeat the reuse search.");
-  return { root, sources, selected, snapshot };
+  return { root, sources, selected, siblings, read, snapshot };
 }
 
 /**

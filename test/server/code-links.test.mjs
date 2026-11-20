@@ -79,7 +79,7 @@ test("a run records its checkout, and the remote never keeps credentials", async
   const root = await project(context);
   git(root, "remote", "add", "origin", "https://user:token@example.com/o/r.git");
   const clean = await verify(root);
-  assert.deepEqual(clean.checkout, { repository: git(root, "rev-list", "--max-parents=0", "HEAD"), remote: "https://example.com/o/r.git", branch: "main", head: git(root, "rev-parse", "HEAD"), dirty: false });
+  assert.deepEqual(clean.checkout, { repository: git(root, "rev-list", "--max-parents=0", "HEAD"), remote: "https://example.com/o/r.git", branch: "main", head: git(root, "rev-parse", "HEAD"), dirty: false, host: os.hostname().split(".")[0] });
   assert.deepEqual(verificationBrief(clean).code, clean.checkout);
   await writeFile(path.join(root, "source.mjs"), "export const value = 2;\n");
   const changed = await verify(root);

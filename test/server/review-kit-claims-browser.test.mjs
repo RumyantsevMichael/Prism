@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { contrastFailures, launch, movingElements, openPage, serveProject, shownTooltip, skip, useAppDirectory } from "./fixtures/kit-browser.mjs";
+import { repainted } from "./fixtures/wait.mjs";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §2, §7, §8, §10.
 // Contract: docs/plans/review-app-ui-kit/slice.md clauses 52, 53, and 57.
@@ -35,7 +36,7 @@ async function mount(page, html, { width = "600px" } = {}) {
     document.body.prepend(region);
     window.scrollTo(0, 0);
   }, [html, width]);
-  await page.waitForTimeout(150);
+  await repainted(page);
 }
 
 // The computed value of a color token, in the form getComputedStyle reports colors.

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { spawn } from "node:child_process";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { chmod, mkdtemp, mkdir, readdir, readFile, realpath, rm, stat, utimes, writeFile } from "node:fs/promises";
@@ -118,8 +119,11 @@ async function shutdownApp(directory) {
   }
 }
 
+// The shared app starts within 5 s on a person's machine, and a session that waits longer serves the project itself, but a busy Windows runner can take longer to start it,
+// so a test that starts the real app waits 30 s for it unless it names its own wait or launches a stand-in.
 function pool(context, options) {
-  const value = createReviewServerPool(options);
+  const real = options?.app && options.app.startTimeoutMs === undefined && options.app.launch === undefined;
+  const value = createReviewServerPool(real ? { ...options, app: { ...options.app, startTimeoutMs: 30000 } } : options);
   defer(context, () => value.close());
   return value;
 }
@@ -189,7 +193,7 @@ test("concurrent starts from a lock whose owner is dead leave one discoverable a
     return child;
   };
   const urls = await Promise.all(["task-a", "task-b"].map((task) => pool(context, { app: { directory, launch } }).get(root, task).then((review) => review.reviewUrl([]))));
-  assert.ok(urls.every((url) => new URL(url).pathname.includes("/p/")), "both sessions use the shared app instead of falling back");
+  assert.ok(urls.every((url) => new URL(url).pathname.includes("/w/")), "both sessions use the shared app instead of falling back");
   await eventually(() => children.filter((child) => alive(child.pid)).length === 1, 8000);
   const discovery = await eventually(() => readDiscovery(directory), 8000);
   assert.ok(alive(discovery.pid));
@@ -327,7 +331,7 @@ test("presenting a project that no tab shows notifies the open tab instead of op
   assert.deepEqual(await shown.getSession(), before, "the tab's project and tabs stay as they were");
   assert.equal(events.filter((event) => event.name === "notice").length, 1);
   await hidden.reviewUrl(["docs/hidden.md"]);
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  await pause(200, "no notice may be sent, and a change that must not happen leaves nothing to wait for");
   assert.equal(events.filter((event) => event.name === "notice").length, 1, "reading a review URL sends no notice");
 });
 
@@ -422,13 +426,13 @@ test("a presentation refused while the first tab is still loading reaches that t
   assert.deepEqual(opened.map(withoutGrant), [granted.url]);
   const events = await viewerEvents(context, granted.url);
   const notice = await eventually(() => events.find((event) => event.name === "notice"));
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  await pause(200, "no second notice may arrive, and a change that must not happen leaves nothing to wait for");
   assert.deepEqual(events.filter((event) => event.name === "notice").map((event) => event.data.projectRoot), [second], "the tab gets the other project's notice and never its own");
   assert.equal(notice.data.url, refused.url);
   assert.equal(events[0].name, "session", "the kept notice follows the tab's first session event");
   const later = await viewerEvents(context, granted.url);
   await eventually(() => later.some((event) => event.name === "session"));
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  await pause(200, "no notice may be sent again, and a change that must not happen leaves nothing to wait for");
   assert.ok(!later.some((event) => event.name === "notice"), "a delivered notice is not sent again on a reload or reconnect");
 });
 
@@ -555,7 +559,7 @@ test("a pending notice expires", async (context) => {
   const granted = await present(first);
   assert.equal(granted.open, true);
   assert.equal((await present(second)).open, false, "the second presentation is kept as a pending notice");
-  await new Promise((resolve) => setTimeout(resolve, 400));
+  await pause(400, "the pending notice must expire, and that time is what this checks");
   assert.ok(await noNotice(context, granted.url), "a tab that connects after the notice expired gets none");
 });
 
@@ -568,17 +572,17 @@ test("the served review page carries the project switcher and the notice banner"
   assert.match(page, /id="project-menu"/);
   assert.match(page, /id="notice"/);
   const client = (await request(new URL("review.js", url))).body;
-  assert.match(client, /\.\/api\/projects/);
+  assert.match(client, /api\/workspaces/);
   // The page handles notices that reach it over the shared event stream.
   assert.match(client, /name === "notice"/);
 });
 
-test("addresses the app cannot open show the app's own page or a project, never a line of text", async (context) => {
+test("addresses the app cannot open show the app's own page or a workspace, never a line of text", async (context) => {
   const directory = await appDirectory(context);
   const root = await project(context, "routes");
   const url = await (await pool(context, { app: { directory } }).get(root, "task")).reviewUrl([]);
   const projectBase = new URL(url);
-  const viewer = projectBase.pathname.replace(/\/p\/[0-9a-f]{16}\/$/, "");
+  const viewer = projectBase.pathname.replace(/\/w\/[0-9a-f]{16}\/$/, "");
   const page = { Accept: "text/html" };
   const origin = `http://127.0.0.1:${projectBase.port}`;
 
@@ -595,33 +599,43 @@ test("addresses the app cannot open show the app's own page or a project, never 
   assert.equal((await request(`${origin}/styles/unavailable.css`)).status, 200);
   assert.equal((await request(`${origin}/review.js`)).status, 404);
   assert.equal((await request(`${origin}/kit/%2e%2e/review.html`)).status, 404);
-  assert.equal((await request(`${origin}/session/stale-credential/p/0123456789abcdef/api/index`)).status, 404, "a call from a stale page gets a plain refusal");
+  const staleCall = await request(`${origin}/session/stale-credential/p/0123456789abcdef/api/index`);
+  assert.equal(staleCall.status, 404, "a call from a stale page gets a plain refusal");
+  assert.equal(staleCall.headers["x-prism-link"], "expired", "the refusal tells the stale page that its link expired");
 
-  // The app's address opens the project used last, and an unknown project's page opens it with a notice.
+  // The app's address opens the workspace used last, and an unknown workspace's or checkout's page opens it with a notice.
   const home = await request(`${origin}${viewer}/`, { headers: page });
   assert.equal(home.status, 302);
   assert.equal(home.headers.location, projectBase.pathname);
   const missing = await request(`${origin}${viewer}/p/0123456789abcdef/review?artifact=docs%2Fgone.md`, { headers: page });
   assert.equal(missing.status, 302);
   assert.equal(missing.headers.location, `${projectBase.pathname}?missing=project`);
+  const gone = await request(`${origin}${viewer}/w/0123456789abcdef/`, { headers: page });
+  assert.equal(gone.status, 302);
+  assert.equal(gone.headers.location, `${projectBase.pathname}?missing=project`);
+  assert.equal((await request(`${origin}${viewer}/w/0123456789abcdef/api/index`)).status, 404, "a call for an unknown workspace is refused, not redirected");
   assert.equal((await request(`${origin}${viewer}/p/0123456789abcdef/api/index`)).status, 404, "a call for an unknown project is refused, not redirected");
 
-  // A page address that a project no longer has opens the project's start page.
+  // A page address that a workspace no longer has opens the workspace's start page.
   const old = await request(new URL("initiatives/old-page", url), { headers: page });
   assert.equal(old.status, 302);
   assert.equal(old.headers.location, url.replace(/\/$/, "") + "/");
   assert.equal((await request(new URL("api/no-such-route", url), { headers: page })).status, 404);
 });
 
-test("an app with no project yet shows the app's own page at its address", async (context) => {
+test("an app with no workspace yet shows the page that offers to add one at its address", async (context) => {
   const directory = await appDirectory(context);
   const app = await startReviewApp({ directory, idleMs: 60000 });
   defer(context, () => app.close());
   const answer = await request(app.viewerUrl, { headers: { Accept: "text/html" } });
-  assert.equal(answer.status, 404);
-  assert.match(answer.body, /data-reason="empty"/);
-  const unknown = await request(new URL("p/0123456789abcdef/", app.viewerUrl), { headers: { Accept: "text/html" } });
-  assert.match(unknown.body, /data-reason="empty"/);
+  assert.equal(answer.status, 200);
+  assert.match(answer.body, /<prism-rail id="rail" label="Places"/);
+  const viewer = new URL(app.viewerUrl).pathname.replace(/\/$/, "");
+  for (const unknown of ["p/0123456789abcdef/", "w/0123456789abcdef/"]) {
+    const redirected = await request(new URL(unknown, app.viewerUrl.endsWith("/") ? app.viewerUrl : `${app.viewerUrl}/`), { headers: { Accept: "text/html" } });
+    assert.equal(redirected.status, 302);
+    assert.equal(redirected.headers.location, `${viewer}/`);
+  }
 });
 
 test("reading the review URL without tabs leaves the session unchanged", async (context) => {
@@ -652,9 +666,8 @@ test("an MCP server lists its project in the app from start until it exits", asy
   // Two process starts under a loaded test run can take a while, so the bounds are generous; a pass returns as soon as the state holds.
   await eventually(async () => (await listed())?.live === true, 30000);
   const discovery = await readDiscovery(directory);
-  const id = createHash("sha256").update(root).digest("hex").slice(0, 16);
-  const page = JSON.parse((await request(`http://127.0.0.1:${discovery.port}/session/${discovery.viewerToken}/p/${id}/api/projects`)).body);
-  assert.equal(page.projects.find((entry) => entry.projectRoot === root)?.live, true, "the review page lists the project before any tool call");
+  const page = JSON.parse((await request(`http://127.0.0.1:${discovery.port}/session/${discovery.viewerToken}/api/workspaces`)).body);
+  assert.equal(page.workspaces.find((entry) => entry.checkouts.includes(root))?.live, true, "the review page lists the project's workspace before any tool call");
   child.stdin.end();
   await new Promise((resolve) => child.once("exit", resolve));
   await eventually(async () => (await listed())?.live === false, 30000);
@@ -683,6 +696,38 @@ test("an MCP server in a host that names no project starts the app at once and l
   await eventually(async () => (await listed())?.live === true, 30000);
 });
 
+// The server opens the browser through the platform opener on its PATH, so a stub opener records the URL; Windows opens through rundll32, which no PATH stub replaces.
+test("an MCP server in a host that names no project opens the review browser from its first Prism tool call", { skip: process.platform === "win32" }, async (context) => {
+  const directory = await appDirectory(context);
+  const root = await project(context, "codex-open");
+  defer(context, () => shutdownApp(directory));
+  const stubs = await mkdtemp(path.join(os.tmpdir(), "prism-test-opener-"));
+  defer(context, () => rm(stubs, { recursive: true, force: true }));
+  const openedLog = path.join(stubs, "opened.log");
+  for (const name of ["open", "xdg-open"]) {
+    await writeFile(path.join(stubs, name), `#!/bin/sh\nprintf '%s\\n' "$1" >> "${openedLog}"\n`);
+    await chmod(path.join(stubs, name), 0o755);
+  }
+  const env = isolatedEnv({ PRISM_REVIEW_APP_DIR: directory, DISPLAY: ":0", PRISM_NATIVE_ASSET_MANIFEST: fileURLToPath(new URL("./fixtures/native-manifest-unavailable.json", import.meta.url)) });
+  env.PATH = `${stubs}${path.delimiter}${env.PATH}`;
+  for (const name of ["PRISM_REVIEW_APP", "PRISM_REVIEW_BROWSER_ON_START", "CLAUDE_PROJECT_DIR", "CLAUDE_CODE_ENTRYPOINT", "CI"]) delete env[name];
+  const child = spawn(process.execPath, [SERVER_PATH], { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] });
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  defer(context, async () => { child.kill(); await exited; });
+  readline.createInterface({ input: child.stdout }).on("line", () => {});
+  const opened = async () => (await readFile(openedLog, "utf8").catch(() => "")).split("\n").filter(Boolean);
+  await eventually(async () => (await control(await readDiscovery(directory), "health")).proven, 30000);
+  await pause(300, "nothing can be awaited for a browser that never opens");
+  assert.deepEqual(await opened(), [], "the server opens nothing before a tool call names the project");
+  child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "get_roadmap", arguments: { projectRoot: root } } })}\n`);
+  await eventually(async () => (await opened()).length === 1, 30000);
+  const discovery = await readDiscovery(directory);
+  assert.equal(Number(new URL((await opened())[0]).port), discovery.port, "the browser opens on the shared app");
+  child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "get_roadmap", arguments: { projectRoot: root } } })}\n`);
+  await pause(500, "nothing can be awaited for a second window that never opens");
+  assert.equal((await opened()).length, 1, "a later tool call opens no second window");
+});
+
 test("a session whose shared app cannot start stops launching it", async (context) => {
   const directory = await appDirectory(context);
   const root = await project(context, "nolaunch");
@@ -703,14 +748,14 @@ test("a session that falls back after the app goes away stops renewing its lease
   let launches = 0;
   const launch = (options) => (launches += 1) === 1 ? launchReviewApp(options) : null;
   context.mock.timers.enable({ apis: ["setInterval"] });
-  const review = await pool(context, { app: { directory, launch, startTimeoutMs: 1000 } }).get(root, "task");
-  assert.ok(new URL(await review.reviewUrl([])).pathname.includes("/p/"));
+  const review = await pool(context, { app: { directory, launch, startTimeoutMs: 30000 } }).get(root, "task");
+  assert.ok(new URL(await review.reviewUrl([])).pathname.includes("/w/"));
   await shutdownApp(directory);
   await eventually(async () => !(await stat(path.join(directory, "review-app.lock")).catch(() => null)));
-  assert.ok(!new URL(await review.reviewUrl([])).pathname.includes("/p/"), "the session now serves its own review server");
+  assert.ok(!new URL(await review.reviewUrl([])).pathname.includes("/w/"), "the session now serves its own review server");
   const afterFallback = launches;
   context.mock.timers.tick(10 * 60 * 1000);
-  await new Promise((resolve) => setTimeout(resolve, 1500));
+  await pause(1500, "no app may launch, and a change that must not happen leaves nothing to wait for");
   assert.equal(launches, afterFallback, "no lease renewal launches an app for a project served by its own server");
 });
 
@@ -750,7 +795,7 @@ test("the review URL follows the app after it is replaced on a new port", async 
   await shutdownApp(directory);
   await eventually(async () => !(await stat(path.join(directory, "review-app.lock")).catch(() => null)));
   const after = new URL(await review.reviewUrl([]));
-  assert.ok(after.pathname.includes("/p/"), "the session is still served by the shared app");
+  assert.ok(after.pathname.includes("/w/"), "the session is still served by the shared app");
   assert.notEqual(after.href, before.href);
   assert.equal(JSON.parse((await request(new URL("api/index", after))).body).projectRoot, root);
 });
@@ -847,7 +892,7 @@ test("a newer session replaces an older review app and keeps its port and viewer
   await standIn.held;
   assert.deepEqual(standIn.shutdowns, [{ handoff: true }]);
   assert.equal(Number(url.port), standIn.port, "the successor serves on the same port");
-  assert.ok(url.pathname.startsWith(`/session/${standIn.viewerToken}/p/`), "an open tab keeps its viewer credential");
+  assert.ok(url.pathname.startsWith(`/session/${standIn.viewerToken}/w/`), "an open tab keeps its viewer credential");
   const discovery = await readDiscovery(directory);
   assert.ok(discovery.protocol >= 1);
   assert.equal(discovery.viewerToken, standIn.viewerToken);
@@ -910,7 +955,7 @@ test("a session start opens one browser while no review tab is connected and sen
     return JSON.parse(response.body).projects.find((entry) => entry.projectRoot === second)?.live;
   };
   await eventually(listed);
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  await pause(300, "no second window may open, and a change that must not happen leaves nothing to wait for");
   assert.equal(opened.length, 1, "a connected tab holds back a second window");
   assert.ok(!events.some((event) => event.name === "notice"), "a session start is not a presentation");
   assert.equal(JSON.stringify(events.filter((event) => event.name === "session").at(-1).data.openTabs), before);
@@ -946,7 +991,7 @@ test("a session serves its own review server when the shared app cannot start", 
   const url = new URL(await review.reviewUrl([]));
   const index = JSON.parse((await request(new URL("api/index", url))).body);
   assert.equal(index.projectRoot, root);
-  assert.ok(!url.pathname.includes("/p/"), "the fallback is a single-project session server");
+  assert.ok(!url.pathname.includes("/w/"), "the fallback is a single-project session server");
   assert.equal((await request(new URL("api/projects", url))).status, 404, "a session server has no project list, so its page keeps a plain label");
   assert.match(index.privateServer.reason, /not private to this user/, "the page learns that this session alone serves the project, and why");
   assert.match(review.privateServer().reason, /not private to this user/, "the agent's review links say so too");
@@ -972,7 +1017,7 @@ test("a session on the shared app is not marked private", async (context) => {
   const directory = await appDirectory(context);
   const root = await project(context, "shared-not-private");
   const review = await pool(context, { app: { directory } }).get(root, "task");
-  assert.ok(new URL(await review.reviewUrl([])).pathname.includes("/p/"));
+  assert.ok(new URL(await review.reviewUrl([])).pathname.includes("/w/"));
   assert.equal(review.privateServer(), null);
   const index = JSON.parse((await request(new URL("api/index", await review.reviewUrl([])))).body);
   assert.equal(index.privateServer, undefined);
@@ -1041,7 +1086,7 @@ test("prism review serves the review itself when the app is off or cannot start"
     const result = await standalone(context, { projectRoot: root, env, openBrowser: () => true });
     assert.ok(result.held, "the command keeps its own server running");
     const url = new URL(result.url);
-    assert.ok(!url.pathname.includes("/p/"), "the review comes from a single-project session server");
+    assert.ok(!url.pathname.includes("/w/"), "the review comes from a single-project session server");
     assert.equal(JSON.parse((await request(new URL("api/index", url))).body).projectRoot, root);
   }
   await assert.rejects(readDiscovery(directory), { code: "ENOENT" }, "the off switch starts no app");
@@ -1170,7 +1215,7 @@ test("a session falls back within the start deadline when a started app never an
   const review = await pool(context, { app: { directory, launch: () => null } }).get(root, "task");
   const url = new URL(await review.reviewUrl([]));
   assert.ok(Date.now() - started < 8000, "the fallback waits no longer than the start deadline");
-  assert.ok(!url.pathname.includes("/p/"));
+  assert.ok(!url.pathname.includes("/w/"));
   assert.equal(await review.reviewUrl([]), url.href, "the fallback sticks for the session, so the project keeps one URL");
 });
 
@@ -1180,7 +1225,7 @@ test("a session does not trust a state directory that others can read", { skip: 
   await chmod(directory, 0o755);
   const root = await project(context, "untrusted");
   const url = new URL(await (await pool(context, { app: { directory } }).get(root, "task")).reviewUrl([]));
-  assert.ok(!url.pathname.includes("/p/"));
+  assert.ok(!url.pathname.includes("/w/"));
   await assert.rejects(readFile(path.join(directory, "review-app.json")), { code: "ENOENT" }, "nothing is written to an untrusted directory");
 });
 
@@ -1198,7 +1243,7 @@ test("the project list keeps a gate count until a session registers the project 
   record.pending.push({ ...record.pending[0], id: "gate-00000001", question: "Another question?" });
   await writeFile(state, JSON.stringify(record));
   // The records themselves are shared for a second within the process, so the test waits that long to see the list read them again.
-  await new Promise((resolve) => setTimeout(resolve, 1100));
+  await pause(1100, "the records are kept for a second within the process, and that time is what this checks");
   assert.equal(await gates(), 1, "a list within the keep time answers the kept count without reading the records");
   await registerRecent(directory, gated);
   assert.equal(await gates(), 2, "a session that registers the project renews its count at once");
@@ -1276,11 +1321,11 @@ test("a session that fell back returns to the shared app once it answers", async
   const launch = (options) => (launches += 1) === 1 ? null : launchReviewApp(options);
   const review = await pool(context, { app: { directory, launch, startTimeoutMs: 500, retryMs: 0 } }).get(root, "task");
   const fallback = new URL(await review.reviewUrl([]));
-  assert.ok(!fallback.pathname.includes("/p/"), "the first start falls back to the session's own server");
+  assert.ok(!fallback.pathname.includes("/w/"), "the first start falls back to the session's own server");
   assert.ok(review.privateServer());
   const shared = await eventually(async () => {
     const url = new URL(await review.reviewUrl([]));
-    return url.pathname.includes("/p/") && url;
+    return url.pathname.includes("/w/") && url;
   }, 20000);
   assert.equal(review.privateServer(), null, "the agent's links no longer say the session alone serves the project");
   assert.equal(JSON.parse((await request(new URL("api/index", shared))).body).projectRoot, root);

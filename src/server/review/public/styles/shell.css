@@ -52,6 +52,13 @@ body {
   text-decoration: none;
 }
 
+/* Above 1100px the mark stands in the rail's column, centered over the places, as the Settings gear does under them. */
+.brand-col {
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
 .brand-mark {
   display: block;
   width: var(--prism-mark-size);
@@ -69,27 +76,13 @@ body {
   max-width: 32%;
 }
 
-.project-tile {
-  margin-inline-end: var(--prism-space-3);
-}
-
 .project-label {
   min-width: 0;
 }
 
-.project-workspace,
-.project-repository {
+.project-workspace {
   color: var(--prism-color-ink);
   font-weight: var(--prism-font-weight-semibold);
-}
-
-.project-separator {
-  margin: 0 var(--prism-space-2);
-  color: var(--prism-color-ink-muted);
-}
-
-.project-worktree {
-  color: var(--prism-color-ink-muted);
 }
 
 .topbar-search {
@@ -111,122 +104,31 @@ body {
   margin-inline-start: auto;
 }
 
-.topbar-presence,
+.topbar-agents,
 .topbar-attention {
   flex: none;
 }
 
-/* The DOM lists the stack first to last, and each avatar after the first tucks under the one before it. */
-.presence-stack {
-  display: inline-flex;
-  align-items: center;
-  margin-inline-end: var(--prism-space-3);
-  vertical-align: middle;
-}
-
-.presence-stack > * + * {
-  margin-inline-start: var(--prism-avatar-overlap);
-}
-
-.presence-more {
-  margin-inline-start: var(--prism-space-2);
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-2xs);
-  font-weight: var(--prism-font-weight-semibold);
-}
-
-/* Who's working: live claims, then claims that expired, each with its holder, activity, slice, and time left. */
-.presence-content {
+/* The agents menu: the launched sessions that need the person as rows, then the counts that lead to the Agents page, then the way to the whole page. */
+.agents-menu-body {
   display: grid;
+  gap: var(--prism-space-3);
+  min-width: 0;
+}
+
+.agents-menu-group {
+  display: flex;
+  align-items: center;
   gap: var(--prism-space-2);
-  min-width: 0;
-}
-
-.presence-group {
-  margin: var(--prism-space-3) 0 0;
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-2xs);
-  font-weight: var(--prism-font-weight-semibold);
-  letter-spacing: var(--prism-tracking-caps);
-  text-transform: uppercase;
-}
-
-.presence-list {
-  display: grid;
-  gap: var(--prism-space-1);
   margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.presence-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--prism-space-1) var(--prism-space-4);
-  min-width: 0;
-  padding: var(--prism-space-3) var(--prism-space-4);
-  border-radius: var(--prism-radius-md);
-}
-
-.presence-row > :first-child {
-  grid-row: 1 / span 2;
-  align-self: start;
-}
-
-.presence-holder {
-  grid-column: 2;
-  grid-row: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
   font-weight: var(--prism-font-weight-semibold);
 }
 
-.presence-kind {
-  margin-inline-start: var(--prism-space-2);
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-2xs);
-  font-weight: var(--prism-font-weight-medium);
-}
-
-.presence-time {
-  grid-column: 3;
-  grid-row: 1;
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-xs);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.presence-row.is-expired .presence-time {
-  color: var(--prism-color-ink);
-  font-weight: var(--prism-font-weight-semibold);
-}
-
-.presence-what {
-  grid-column: 2 / -1;
-  grid-row: 2;
+.agents-menu-foot {
+  display: flex;
   min-width: 0;
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-sm);
-  overflow-wrap: anywhere;
-}
-
-.presence-activity {
-  color: var(--prism-color-ink);
-  font-weight: var(--prism-font-weight-medium);
-}
-
-.presence-slice {
-  color: var(--prism-color-accent-text);
-}
-
-.presence-none,
-.presence-note {
-  margin: var(--prism-space-2) 0 0;
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-xs);
-  overflow-wrap: anywhere;
 }
 
 /* ---------- Banners across the window ---------- */
@@ -255,10 +157,11 @@ body {
 /* ---------- Body: the rail and the current place's sidebar on the canvas beside the islands ---------- */
 
 /* The rail stands at the window's start edge and sizes its own column; the sidebar's head lines up with the main island's tab strip and page bar. */
+/* The rail's column has its own even gutter, so the sidebar follows it directly; the islands keep the island gap between them. */
 .shell-body {
   position: relative;
   display: grid;
-  grid-template-columns: auto var(--prism-sidebar-width) minmax(0, 1fr);
+  grid-template-columns: auto var(--sidebar-width, var(--prism-sidebar-width)) minmax(0, 1fr);
   gap: var(--prism-island-gap);
   min-width: 0;
   min-height: 0;
@@ -266,7 +169,18 @@ body {
 }
 
 .shell-body.side-panel-open {
-  grid-template-columns: auto var(--prism-sidebar-width) minmax(0, 1fr) var(--side-panel-width, var(--prism-panel-width));
+  grid-template-columns: auto var(--sidebar-width, var(--prism-sidebar-width)) minmax(0, 1fr) var(--side-panel-width, var(--prism-panel-width));
+}
+
+/* The resize handles stand beside their panels, in the shell, each placed by both lines of its grid area, since an absolute item's missing line is the shell's edge, so a panel that scrolls or clips its contents never cuts one off or overflows because of it.
+   Each spans its panel's row and shows only while its panel stands beside the main island. */
+.shell-body > :is(.sidebar-resizer, .side-panel-resizer) {
+  grid-row: 1 / 2;
+}
+
+.shell-body > .sidebar-resizer,
+.shell-body:not(.side-panel-open) > .side-panel-resizer {
+  display: none;
 }
 
 .rail-dock {
@@ -277,14 +191,16 @@ body {
 }
 
 .sidebar {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--prism-space-2);
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 0 var(--prism-space-4) var(--prism-space-4);
+  padding: 0 var(--prism-space-3) var(--prism-space-4) var(--prism-space-2);
 }
+
 
 .nav {
   display: flex;
@@ -421,6 +337,16 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* A view being built lies over the page at the page's width, out of sight and out of the scrolling range, until it replaces the page whole. */
+.artifact-stage {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 100%;
+  overflow: clip;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* A record that is gone names where it was and what to do next. */
 .missing-path {
   margin: 0 auto var(--prism-space-5);
@@ -440,6 +366,27 @@ body {
 
 .welcome {
   margin: var(--prism-space-8) auto;
+}
+
+/* A welcome's actions wrap under each other on a narrow window. */
+.welcome-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--prism-space-3);
+  margin-top: var(--prism-space-5);
+}
+
+/* The Add workspace dialog: the address field, and what the store answered, such as that it holds no commit yet. */
+.workspace-add-form {
+  display: grid;
+  gap: var(--prism-space-4);
+  min-width: 0;
+}
+
+.workspace-add-note {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  overflow-wrap: anywhere;
 }
 
 /* ---------- The side panel island ---------- */
@@ -488,21 +435,6 @@ body {
   font-size: var(--prism-font-size-sm);
 }
 
-.side-resizer {
-  position: absolute;
-  top: var(--prism-space-6);
-  bottom: var(--prism-space-6);
-  left: 0;
-  z-index: var(--prism-layer-raised);
-  width: var(--prism-space-2);
-  cursor: col-resize;
-}
-
-.side-resizer:hover,
-.side-resizer:focus-visible {
-  background: var(--prism-color-accent-soft);
-}
-
 /* ---------- Status bar on the canvas ---------- */
 
 .statusbar {
@@ -522,9 +454,108 @@ body {
   min-width: 0;
 }
 
-.statusbar-appearance {
-  display: inline-flex;
+/* The Settings gear stands first, in the rail's column above 1100px, centered under the places. */
+.statusbar-settings {
+  display: grid;
+  place-items: center;
   flex: none;
+}
+
+/* Settings: its sections down the start edge, the chosen section's settings beside them. */
+.settings {
+  display: grid;
+  grid-template-columns: minmax(0, 11rem) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--prism-space-6);
+  min-width: 0;
+  min-height: calc(var(--prism-space-8) * 8);
+}
+
+.settings-body {
+  min-width: 0;
+}
+
+.settings-section[hidden] {
+  display: none;
+}
+
+.settings-section h3 {
+  margin: 0 0 var(--prism-space-4);
+  font-size: var(--prism-font-size-md);
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--prism-space-3) var(--prism-space-6);
+  min-width: 0;
+  padding: var(--prism-space-4) 0;
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.settings-row > div:first-child {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.settings-row strong {
+  display: block;
+  font-weight: var(--prism-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.settings-hint {
+  display: block;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.settings-section .about {
+  margin-bottom: var(--prism-space-4);
+}
+
+@media (max-width: 720px) {
+  .settings {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* About Prism: the mark beside the name and the running version. */
+.about {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-5);
+  min-width: 0;
+}
+
+.about-mark {
+  flex: none;
+  width: var(--prism-mark-size-lg);
+  height: var(--prism-mark-size-lg);
+}
+
+.about-text {
+  display: grid;
+  gap: var(--prism-space-1);
+  min-width: 0;
+}
+
+.about-name {
+  margin: 0;
+  font-size: var(--prism-font-size-lg);
+  font-weight: var(--prism-font-weight-bold);
+  letter-spacing: var(--prism-tracking-heading);
+}
+
+.about-version {
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 
 .indexing {
@@ -540,13 +571,16 @@ body {
   min-width: 0;
 }
 
-/* The store button's sync state follows the store's name after a gap, so the one control reads as name, then state. */
+/* The store shows its icon in the sync state's color and one short state; its name and where it lives are in its tooltip and its details. */
 .store-sync {
   display: inline-flex;
   align-items: center;
   min-width: 0;
-  margin-inline-start: var(--prism-space-4);
   white-space: nowrap;
+}
+
+#store-status:has(.store-sync:not([hidden])) #store-status-label {
+  display: none;
 }
 
 .store-sync[hidden] {
@@ -555,6 +589,7 @@ body {
 
 .status-dot {
   display: inline-block;
+  flex: none;
   width: var(--prism-dot-size);
   height: var(--prism-dot-size);
   margin-inline-end: var(--prism-space-3);
@@ -822,6 +857,14 @@ body {
   min-width: 0;
 }
 
+.palette-left-out {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--prism-space-2);
+  min-width: 0;
+  margin: 0 var(--prism-space-3) var(--prism-space-3);
+}
+
 .palette-kind {
   min-width: 0;
   overflow: hidden;
@@ -933,6 +976,63 @@ body {
   .shell.sidebar-collapsed .shell-body > .sidebar {
     display: none;
   }
+
+  /* The rail's column carries its own even gutter, so the sidebar and the main island follow it with no further gap. */
+  .shell-body,
+  .shell-body.side-panel-open {
+    column-gap: 0;
+  }
+
+  .shell-body > .sidebar {
+    margin-inline-end: var(--prism-island-gap);
+  }
+
+  .shell-body > .side {
+    margin-inline-start: var(--prism-island-gap);
+  }
+
+  /* A handle stands centered in the island gap between its panel and the main island: the gap ends the sidebar's column and starts the side panel's. */
+  .shell-body > .sidebar-resizer:not([hidden]) {
+    display: block;
+    grid-column: 2 / 3;
+    right: calc((var(--prism-island-gap) - var(--prism-space-2)) / 2);
+  }
+
+  .shell-body > .side-panel-resizer {
+    grid-column: -2 / -1;
+    left: calc((var(--prism-island-gap) - var(--prism-space-2)) / 2);
+  }
+
+  /* The top bar and the status bar start with the rail's column, so the mark, the places, and the gear share one vertical axis. */
+  .topbar,
+  .statusbar {
+    padding-inline-start: 0;
+  }
+
+  .brand-col,
+  .statusbar-settings {
+    width: var(--prism-rail-width);
+  }
+
+  .brand {
+    gap: var(--prism-space-2);
+  }
+
+  /* Hidden, the sidebar opens over the page beside the rail when a place is chosen there, on frosted glass, without moving the page. */
+  .shell.sidebar-collapsed.sidebar-flyout .shell-body > .sidebar {
+    position: absolute;
+    top: 0;
+    bottom: var(--prism-island-gap);
+    left: var(--prism-rail-width);
+    z-index: var(--prism-layer-drawer);
+    display: flex;
+    width: var(--sidebar-width, var(--prism-sidebar-width));
+    border: var(--prism-stroke) solid var(--prism-color-glass-edge);
+    border-radius: var(--prism-radius-island);
+    background: var(--prism-color-glass);
+    backdrop-filter: blur(var(--prism-blur-glass));
+    box-shadow: var(--prism-shadow-lift);
+  }
 }
 
 /* ---------- 1100px and below: the sidebar opens as a drawer, and the side panel floats over the main island ---------- */
@@ -958,14 +1058,8 @@ body {
     flex-basis: 160px;
   }
 
-  /* Who's working shows its avatars alone; its count still names it. */
-  .topbar-presence .presence-count {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
+  .shell-body {
+    --side-panel-floating-width: min(var(--side-panel-width, var(--prism-panel-width)), calc(100% - 2 * var(--prism-space-7)));
   }
 
   .shell-body > .side {
@@ -974,8 +1068,16 @@ body {
     right: var(--prism-island-gap);
     bottom: 0;
     z-index: var(--prism-layer-panel);
-    width: min(var(--side-panel-width, var(--prism-panel-width)), calc(100% - 2 * var(--prism-space-7)));
+    width: var(--side-panel-floating-width);
     box-shadow: var(--prism-shadow-dialog);
+  }
+
+  /* The floating panel lies over the main island with no gap beside it, so its handle stands on its edge, above it, placed in the same box as the panel. */
+  .shell-body > .side-panel-resizer {
+    grid-area: auto;
+    left: auto;
+    right: calc(var(--prism-island-gap) + var(--side-panel-floating-width) - var(--prism-space-2) / 2);
+    z-index: var(--prism-layer-panel);
   }
 }
 
@@ -1001,6 +1103,11 @@ body {
   .topbar-project {
     flex: 1 1 auto;
     max-width: none;
+  }
+
+  /* A long workspace name ends in an ellipsis, so the navigation button keeps its size. */
+  .topbar-navigation {
+    flex: none;
   }
 
   .topbar-search {

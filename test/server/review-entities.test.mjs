@@ -189,6 +189,7 @@ test("lists what waits on the user apart from agent-side state", async (context)
     assert.deepEqual([attention.data.watch[0].unresolved, attention.data.watch[0].blocking], [1, 1]);
     const index = (await get(`${review.baseUrl}/api/index`)).json();
     assert.deepEqual(index.navigation.attention, { needsYou: 5, gates: 1, answered: 0, watch: 2 });
+    assert.deepEqual((await get(`${review.baseUrl}/api/attention`)).json(), { gates: 1 }, "a page in a background tab reads the same count of waiting questions alone");
     const refs = index.navigation.index.map((entry) => `${entry.kind}:${entry.ref}`);
     for (const expected of ["initiative:initiative:reports", "initiative:initiative:orphan", "slice:slice:reports/download", "requirement:docs/requirements/reports.md", "decision:docs/ADRs/reporting/signed.md"]) assert.ok(refs.includes(expected), expected);
   } finally {
@@ -269,6 +270,7 @@ test("records a browser answer and lists it apart from open questions", async (c
     const index = (await get(`${review.baseUrl}/api/index`)).json();
     // Besides the notes, the fixture's ADR is a format item, since it keeps no Prism format.
     assert.deepEqual(index.navigation.attention, { needsYou: 4, gates: 0, answered: 1, watch: 2 });
+    assert.deepEqual((await get(`${review.baseUrl}/api/attention`)).json(), { gates: 0 });
   } finally {
     await review.close();
   }

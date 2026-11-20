@@ -15,7 +15,7 @@ const HEX = /(?<![&\w])#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3,4})(?![\w-])/gi;
 const COLOR_FUNCTION = /(?<![\w-])(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/gi;
 
 const isKit = (file) => /(?:^|\/)kit\//.test(file);
-const rawValueExempt = (file) => /(?:^|\/)kit\/(?:tokens\.css|plantuml-defaults\.js)$/.test(file);
+const rawValueExempt = (file) => /(?:^|\/)kit\/(?:tokens\.css|plantuml-defaults\.[jt]s)$/.test(file);
 
 // Replaces every character of a span with a space, keeping line breaks, so offsets and line numbers stay put.
 const blank = (text) => text.replace(/[^\n]/g, " ");
@@ -346,7 +346,7 @@ export async function checkKitUsage({ root, files }) {
     const name = file.split(path.sep).join("/");
     const source = await readFile(path.join(root, file), "utf8");
     if (/\.css$/i.test(name)) findings.push(...checkCss(name, source));
-    else if (/\.(?:m?js)$/i.test(name)) findings.push(...checkJs(name, source));
+    else if (/\.(?:m?[jt]s)$/i.test(name)) findings.push(...checkJs(name, source));
     else if (/\.html?$/i.test(name)) findings.push(...checkHtml(name, source));
   }
   return findings.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line));
@@ -364,7 +364,7 @@ async function listFiles(root, folder) {
   for (const entry of entries) {
     const relative = `${folder}/${entry.name}`;
     if (entry.isDirectory()) out.push(...await listFiles(root, relative));
-    else if (entry.isFile() && /\.(?:css|m?js|html?)$/i.test(entry.name)) out.push(relative);
+    else if (entry.isFile() && /\.(?:css|m?[jt]s|html?)$/i.test(entry.name)) out.push(relative);
   }
   return out.sort();
 }

@@ -29,20 +29,28 @@ When the selected browser is unavailable, Prism presents the URL and source arti
 The browser follows the operating system's light or dark setting and changes with it while the page is open.
 It shows compact density by default.
 The review app keeps the theme and density for you, so every project and every later session shows the same choice.
-Choose the theme and density from the **Appearance** button at the end of the status bar.
-Its menu offers the themes System, Light, and Dark, the densities Compact and Comfortable, and **Component catalog**.
+The **Settings** button, the gear at the start of the status bar, or Ctrl+, (Cmd+, on a Mac) opens Settings, and the same key closes it.
+**Appearance** offers the themes System, Light, and Dark and the densities Compact and Comfortable.
 A choice applies at once, and System follows the operating system again.
-**Component catalog** opens the review app's component catalog in a new tab, which shows every control of the interface with its options, states, and keys.
+**Layout** shows or hides the sidebar on windows wider than 1100 pixels and returns the sidebar to its default width.
+**Record store** says where the project's records live and opens the store's details.
+**Prism's own runs** chooses, once for this computer, the host and model of the runs that Prism starts on its own, such as a run that moves records to a new format.
+Its **Host** select offers **Any available host** and every host Prism supports, a host this computer lacks shown as unavailable with its reason, and its **Model** picker offers the models, efforts, and provider that the chosen host reports, as the models of an initiative's **Settings** do, or a model name typed as written.
+**Any available host** starts each run on the first host Prism finds with that host's default model, so its **Model** picker takes no choice.
+**Apply** stores the choice in `prism-runs.json` in the review app folder, readable only by you, and only a tab that Prism opened can apply it; a run already started keeps its own host and model.
+When the chosen host is no longer found, or the stored choice cannot be read, a run starts on the first host Prism finds with its default model and says why, and with no host found it does not start.
+**About Prism** names the version of Prism that runs the review app, and **Open the catalog** opens the review app's component catalog in a new tab, which shows every control of the interface with its options, states, and keys.
 The catalog's own toolbar changes its theme, density, and width for that tab only, and stores nothing.
 
-The top bar holds the Prism mark, the project switcher, the search button that opens the Jump palette, and **Who's working**.
-The status bar at the bottom shows where the project's records live, naming a shared store, their sync state, and the repository index.
+The top bar holds the Prism mark, the workspace switcher, the search button that opens the Jump palette, and the **Agents** button.
+The status bar at the bottom starts with **Settings**, then shows where the project's records live, naming a shared store, with their sync state, whose color the store icon takes, and ends with the repository index.
+Times in words, such as when a question was asked, how long ago the records synced, or how long a claim has left, count on while the page is open, and hovering one shows the exact date and time.
 The rail at the left edge switches between five places, and the sidebar beside it shows only the current place, under its title and a line that says what it holds.
 **Attention** shows what waits on you, and the rail's Attention button carries the number of recorded questions that wait for an answer.
 Its sidebar lists **Everything**, then under **By kind** **Questions**, **Review findings**, **Failed verifications**, **Blocked work**, **Ready to ship**, **Problems**, and **Format findings**, each with its count, also at 0, then under **By work** the three initiatives with the most items and a row such as `2 more` that shows the rest below it, and under **Answered** **Answered in the last 7 days**.
 **Work** lists each initiative that has an initiative record and is neither shipped nor superseded, with its slices, under the groups **In progress**, **Blocked**, **Designed, not started**, and **Not on the roadmap**, each with its count, and leaves out an empty group.
 An initiative is **Blocked** when one of its slices is blocked and none is in progress or claimed, and it keeps the roadmap's order inside its group; initiatives that are not on the roadmap go by title.
-**Roadmap** switches the Roadmap page between **Board**, **List**, and **Graph** under **View**, marking the view the page shows, and lists **Now**, **Next**, **Later**, and **Parked** under **Lanes**, each with its count of open initiatives; choosing it on the rail also opens the Roadmap page.
+**Roadmap** starts with **Whole roadmap**, which opens the Roadmap page, and lists **Now**, **Next**, **Later**, and **Parked** under **Lanes**, each with its count of open initiatives; choosing it on the rail also opens the Roadmap page.
 A lane opens the board with that lane's heading scrolled into view, also again while the board is open, and its address, such as `review?artifact=roadmap&lane=parked`, does the same in a new window.
 **Knowledge** starts with a search field, such as `Search 11 records`, that counts the requirements files, decisions, glossary terms, and diagrams.
 Below it, **Start from** holds **Touched by my work** and **Changed this week**, and **Browse by kind** holds **Requirements**, **Decisions**, **Glossary**, and **Diagrams**, each with its count.
@@ -55,12 +63,19 @@ The page and its count follow edits to the slice's design and new passing verifi
 **Changed this week** lists the requirements files, decisions, glossary, and diagrams changed in the last 7 days, read from the repository's Git history: files Git reports modified, added, or untracked come first as `Not committed`, then those a commit changed, newest first, with the commit's time and author, a renamed file counting as changed.
 A merge commit counts the files it changed against its first parent, so a branch merged this week counts at the merge's time and author even when its own commits are older.
 When the project is not a Git repository, has no commit yet, or Git cannot be run, the page says `Change history is unavailable:` with the reason, lists the records it could not date, and the sidebar shows no count for **Changed this week**.
-**Requirements** lists every requirements file in one table with the columns **Title**, **Status**, **Created**, and **Used by**, under a heading per record store scope that holds them, such as `Scope payments`, or one heading for the checkout in a project without a store, and the line under the page's title says how many of them break their format, such as `3 of 9 break their format`.
+**Diagrams** lists every PlantUML file of the plans and decisions folders by the name after `@startuml`, or by its file name, with what it draws, such as `Sequence`, `Class`, or `Code view`, and what it belongs to as a link: the initiative and slice whose folder holds it, the initiative, or the decision beside it.
+**Requirements**, **Decisions**, **Glossary**, and **Diagrams** each show one table with a filter and a **Group by** choice above it, and the review app keeps each page's grouping among your preferences.
+In a workspace whose store holds more than one scope, each of these pages also groups by **Scope**, which it does until you choose another grouping, and a row names its scope in a chip only while the page groups some other way.
+**Requirements** lists each requirements file with how many requirements it holds, its status, the date it was approved or created, and one link for each slice that builds it with the requirements that slice builds, such as `req 1, 2`, and groups by **Status**, **Area**, the subfolder that holds the file, **Initiative**, or **None**.
+**Decisions** lists each decision with what it supersedes or what superseded it, read from its `Supersedes:` line, its status, its date, and what it applies to: the requirements files its `Requirements` section links and the initiatives whose slice designs link it, and groups by **Area**, **Status**, **Initiative**, or **None**.
+**Diagrams** groups by **Belongs to**, **Kind**, or **None**.
+**Glossary** lists each term with its meaning, one glossary per scope in a workspace, and a term that another scope's glossary also defines shows that scope in a chip with `also defines it`; it groups by **Scope** or **None**.
+The filter keeps the rows whose title, status, or links hold every word you type, and Escape clears it.
+On **Requirements** and **Decisions**, the line under the page's title also says how many of the listed files break their format, such as `3 of 9 break their format`.
 A requirements file, ADR, or glossary that breaks its Prism format, as `check_artifacts` reports it, carries a `Breaks its format` badge on each row that names it: in the Knowledge lists and search, in **Touched by my work** and **Changed this week**, among a slice's requirements, in the Jump palette, and on the format findings page.
 Hovering the badge names the rules the file breaks, such as `requirements.header, requirements.sections`.
 The file's own page shows **This file breaks its format** above the document, with each broken rule, its message, and its line.
 A file that keeps its format shows neither.
-**Diagrams** lists every PlantUML file of the plans and decisions folders by the name after `@startuml`, or by its file name, with what it belongs to: the initiative and slice whose folder holds it, the initiative, or the decision beside it.
 Typing two or more characters in the search replaces the groups with the matching requirements, decisions, glossary terms, and diagrams, grouped by kind and at most 20 of each, titles that hold the text first.
 A record matches when every word you type occurs in its title or its text, ignoring case, and a glossary term opens the Glossary.
 Clearing the field or pressing Esc in it brings the groups back.
@@ -68,6 +83,7 @@ Clearing the field or pressing Esc in it brings the groups back.
 It says `Nothing has shipped yet.` while there is none.
 Choosing any other place leaves the open page as it is, and the place stays while you change tabs, follow links, use the palette, or go back.
 The browser remembers the current place, so a reload or a new window shows it again, and an address with `place=work`, or another place's name, chooses that place.
+An address that opens a store artifact or a code file and names no place opens Knowledge, whose sidebar holds the scope filter.
 The page bar's trail starts with the place of the open page, and choosing that crumb makes the place current without leaving the page.
 An initiative's row shows its state as a round glyph and its shipped leaf slices out of all, such as `0/4`.
 Expanded, it lists at most five of its unfinished slices, each with a triangle in the color of its phase, its holder, and `Blocked` when it is blocked: the slice you have open first, then those in progress or claimed, then blocked ones, then the rest.
@@ -77,7 +93,10 @@ An initiative expands when you expand it, when its page or one of its slices' pa
 Type in **Filter work** to keep only the initiatives and slices whose titles hold the text, ignoring case, each matching slice under its initiative; clear the field, or press Escape in it, to see every group again.
 Below the groups, a note says that shipped work moves to History and that emerging and unplanned items stay on the Roadmap.
 Every row is a link, so a middle-click or a Shift click opens the page in a new browser tab or window, and the browser's context menu can copy its address; a crumb of the page bar works the same way.
-Above 1100 pixels, press `[` or use the sidebar button at the top of the rail to hide the sidebar and keep the rail, and again to show it; the review app keeps the choice for every project and later session, and choosing a place shows the sidebar again.
+The sidebar's head names the place, and hovering its title says what the place holds.
+Above 1100 pixels, press `[` or use the button at the end of the sidebar's head to hide the sidebar and keep the rail, and press `[` again to show it; the review app keeps the choice for every project and later session.
+While the sidebar is hidden, choosing a place on the rail opens its sidebar over the page without moving the page, and choosing a page in it, Escape, or a click outside it hides it again; the button in its head, now **Keep the sidebar open**, shows the sidebar again for good.
+Drag the sidebar's edge to make it from 200 to 480 pixels wide, or focus the edge and use the arrow keys; a double click on the edge returns it to its default width, and the review app keeps the width for you.
 At a window width of 1100 pixels or less the rail and the sidebar are hidden, and the Navigation button at the left of the top bar opens a drawer that holds the rail and the current place's sidebar; choosing a place in it switches the sidebar, and choosing a page opens it and closes the drawer.
 The bell at the right of the top bar then keeps the Attention count and opens the Attention page.
 If you widen the window past that width while the drawer is open, the drawer closes and the rail and the sidebar return; if you narrow it while the sidebar has the focus, the focus moves to the Navigation button.
@@ -85,13 +104,15 @@ If you widen the window past that width while the drawer is open, the drawer clo
 The top of the main area holds a tab for each open page.
 A link opens in the preview tab, whose title is italic, and the next link replaces it.
 Ctrl-click or Cmd-click a link, double-click or middle-click a link in a page, press Ctrl+Enter or Cmd+Enter in the Jump palette, or choose Open as tab in the side panel to open a tab that stays open.
-Double-click the preview tab or choose its Keep button to keep it open.
+Double-click the preview tab, or press Ctrl+Enter or Cmd+Enter while it has the focus, to keep it open.
 A new tab opens right after the selected tab.
 Close a tab with its close button or a middle click, and when you close the last tab the page says that nothing is open.
-Tabs that an agent presents carry the agent mark and stay open until you close them, and a presentation of several artifacts opens a tab for each of them and shows the first.
+Tabs that an agent presents carry the agent mark before their title and stay open until you close them, and a presentation of several artifacts opens a tab for each of them and shows the first.
+An agent can present tabs as a named group, whose head shows the agent before the group's name: the avatar of the claim that agent held when it presented the group, whose hover text names the holder, the harness and model, the activity, and the time left, or else an agent avatar named by its harness and model.
+Tabs, buttons, menus, and other controls do not select their text when you click, double-click, or drag on them, while documents, code, figures, messages, and fields stay selectable.
 The open tabs belong to the session, so every browser window of the session shows the same tabs, and a reload or a later visit restores them.
 When tabs do not fit, the strip scrolls sideways and keeps the selected tab in view, and a long title ends with an ellipsis whose full text shows on hover or focus.
-With the focus on a tab, the arrow keys, Home, and End move between tabs, Enter opens one, and Tab reaches that tab's Keep and close buttons.
+With the focus on a tab, the arrow keys, Home, and End move between tabs, Enter opens one, and Tab reaches that tab's close button.
 
 The page bar below the tabs holds Back and Forward and the trail of the page's place, initiative, and slice by title.
 Back and Forward, Alt+Left and Alt+Right, and the browser's own buttons move through the pages you visited in that browser tab, and the address names the selected tab.
@@ -101,8 +122,15 @@ A tab whose file was moved or deleted, or whose initiative or slice no longer ex
 The tab and its page return to normal on their own when the target comes back, for example after a checkout.
 When Prism moves a record from its legacy location into `.prism/`, a tab on that record follows it to the new path.
 
-**Who's working** shows up to three avatars of the agents that hold a live claim on a slice, and how many are working.
-Its popover lists every live claim and then every claim that expired, with the holder, the harness the agent runs in when its claim records one (otherwise Agent), the activity, the slice, and the time left.
+The **Agents** button shows up to three avatars of the agents at work and how many work, such as `4 working`, counting the launched sessions that run or wait for you and the live claims that no launched session holds.
+While launched sessions failed or wait for you, it adds a red badge such as `1 failed` and an amber badge such as `1 waits`, and a screen reader also hears how many claims expired.
+In a window 600 pixels wide or less the button shows two avatars and one small count of the launched sessions that need you on its corner, red while one failed and amber otherwise, and no words.
+Opening it shows the **Agents** menu.
+Its **Needs you** group, left out while nothing needs you, lists each launched session that failed or waits for you with its initiative, its harness, its model, what it works on, its state, and how long it ran.
+A waiting session offers **Answer**, which opens Attention with the question it waits on selected and its answer form shown, and a failed one offers **Open**, which opens [the Agents page](#the-agents-page) with its details shown.
+Below that, **Launched on this computer**, **Other sessions**, and **Expired claims** say how many there are, also at 0, and each opens the Agents page showing only those; **Open Agents** opens the whole page.
+The menu lists no claim, so every claim shows on the Agents page.
+Wherever the browser shows a claim, on a slice, an initiative, the roadmap, the sidebar, or the Agents page, it names the harness the agent runs in and the model of the session's main agent as `<harness> · <model>`, such as `Codex · gpt-5.5`, when the claim records them, and `Agent` and no model otherwise.
 The sidebar shows a claimed slice's holder at the end of its row.
 Claims are read-only in the browser.
 
@@ -110,7 +138,7 @@ A banner appears when the review server stops responding, and it clears when the
 When the server stays silent for about 15 seconds, the banner says that the review app stopped and the page is no longer live, and actions that need the server say so instead of failing silently.
 A restarted app uses a new link, so ask the agent to open the review browser to get one, or run `./bin/prism review` from a Prism checkout.
 Opening an old link after a restart, or the app's port without a link, shows a page that says the link no longer works; it cannot list your projects, because the link is what keeps other users of the computer from reading them.
-The app's own address opens the project an agent used last, and a link to a project the app no longer lists opens that project too, with a notice to choose another from the project menu.
+The app's own address opens the workspace an agent session used most recently, and a link to a workspace or checkout the app no longer lists opens that workspace too, with a notice to choose another from the workspace switcher; with no workspace yet, it opens the page that offers to add one.
 The page keeps checking and recovers on its own when the same app or its upgraded successor answers.
 A check that gets no answer within 8 seconds counts as no answer, so a server that is too busy to answer shows the banner instead of a page that silently stops changing.
 
@@ -131,6 +159,7 @@ Approving the correctness review of a finished initiative lets the agent ship it
 The approval of a requirement or ADR takes the same answers, and its card names the file, its scope, its recorded status, and the whole status that approving records, wrapped onto further lines when it is long.
 Approving writes that status into the file's `Status:` line, and for `Approved` the day you answer into its `Approved:` line, as [Statuses change only at gates](shared-records.md#statuses-change-only-at-gates) describes.
 A decision takes one of its options, a note in your own words, or both.
+To answer in your own words after choosing an option, choose that option again, or press **Clear choice** beside **Your answer**.
 An action request needs only Mark as done, with an optional note.
 The button that sends your answer stays disabled until the answer is complete, and the text beside it says what is missing.
 While a question waits, the tab title starts with the number of waiting questions and the tab icon shows a dot, so a background tab shows it too.
@@ -167,7 +196,7 @@ See [Upgrading to managed records](upgrading-to-managed-records.md#answering-in-
 
 Every change that the review page makes is an action: answering a question, changing an initiative setting, commenting on a file in the record store, rebuilding an index, or launching, stopping, or resuming a launched session.
 The page sends each action with the version of the record it showed you, so when an agent or another tab changed that record in the meantime, Prism refuses your action and changes nothing.
-Apart from a rebuild, which starts Prism's own indexer, and the launched-session actions of [Launched sessions](#launched-sessions), an action changes only Prism's records, and it never runs a command, changes a project file, or writes to Git.
+Apart from a rebuild, which starts Prism's own indexer, and the launched-session actions of [Launched sessions](#launched-sessions) on [the Agents page](#the-agents-page), an action changes only Prism's records, and it never runs a command, changes a project file, or writes to Git.
 Answering the approval of a requirement or ADR also needs a tab that can make changes, and Prism records nothing when the file changed since the approval was asked.
 When more than one pending approval holds the same id, as a copied status record or a scope move that stopped halfway can leave, Prism lists each one, names every file and scope that holds the id, and refuses an answer to any of them, so the agent asks again for the file it means.
 A comment needs a tab that can make changes and a Git `user.name` in the checkout, and Prism stores nothing when the file changed since the page showed it; the page then shows the current file and keeps your comment unsent.
@@ -195,12 +224,21 @@ An initiative has these settings, each with its default and the moment an agent 
 
 | Setting | Values | Default | Takes effect |
 | --- | --- | --- | --- |
+| Host | Each host Prism supports, Claude Code and Codex | None stored, shown as the first host found on this computer | For launches started after the change; a running or resumed session keeps the host it started on. |
 | Autonomy | `conservative`, `broad`, `full` | `conservative` | Decides which later gates wait for you; a gate already open keeps waiting for you. |
-| Commit | `off`, `on` | `on` with `full` autonomy, otherwise `off` | For child sessions started after the change. |
-| Push | `off`, `on` | `off` | For child sessions started after the change. |
+| Commit | `off`, `on` | `on` with `full` autonomy, otherwise `off` | For agents started after the change. |
+| Push | `off`, `on` | `off` | For agents started after the change. |
 | Continuation | `auto`, `stepwise` | `auto` | When the slice in progress finishes. |
-| Review | `marked`, `recommended`, `all` | `marked` | Sets the review mark of slices whose design is not yet accepted. |
-| Models | `host defaults`, or a delivery, review, and security review model with an optional examples model | `host defaults` | For child sessions started after the change. |
+| Review | `marked`, `recommended`, `all` | `marked` | Sets the review mark of slices whose design is not yet accepted; a slice whose design is already accepted keeps its review. |
+| Models | For each host, a provider and the model and effort of the coordinator, design and implementation, code review, security review, and design gate summary agents | The host's own default for each | The coordinator's for launches started after the change, and each agent's for agents started after it. |
+
+Choosing a host that is not found on this computer is refused with its reason, such as `Claude Code was not found: no claude executable on PATH.`
+A change to Models names one host and keeps the choices of every other host.
+It takes only a provider, model, or effort that the host reports, its default, or a model name you typed, which Prism cannot check; a value the host does not offer is refused with a reason such as `Claude Code on this computer does not offer the model claude-opus-3.`
+While the host cannot report its options, Models takes only the host's defaults and typed model names.
+An initiative's earlier Models value keeps its meaning: `host defaults` reads as the host's default for every choice, and named delivery, review, security review, and examples models read as typed models of the design and implementation, code review, security review, and design gate summary agents of every host.
+A named model that is no model name, such as `Claude Opus 4.1`, is kept as an earlier model name, and that agent runs with the host's default model instead, because Prism never passes the name to a host.
+A Models change that still holds it is refused with a reason such as `Prism kept the earlier model name Claude Opus 4.1, which Claude Code cannot take as a model.`, and choosing another model, the host's default, or a model name you type replaces it.
 
 Turning autonomy to `full`, commit on, or push on asks you to confirm first, because it lets agents act further without you.
 
@@ -208,14 +246,25 @@ Every setting can change at any time, including after work on the initiative sta
 Once an initiative ships, its state is history, so every action on the initiative, its slices, and its questions shows as unavailable with the reason `The initiative shipped on <date>, so its state is history.`, and Prism refuses one sent anyway and changes nothing.
 Index actions are not part of an initiative, so shipping one leaves them available.
 
-### Initiative settings card
+### Initiative settings
 
-The initiative page ends with an **Initiative settings** card, and on every slice page of the initiative the card opens from **Details and settings** at the end of the page bar, below the slice's details.
-An initiative whose record cannot be read and that the roadmap does not list has no settings, so its page shows no card.
+**Settings** at the top of the initiative page opens the **Settings of <initiative>** dialog, and on every slice page of the initiative an **Initiative settings** card opens from **Details and settings** at the end of the page bar, below the slice's details.
+An initiative whose record cannot be read and that the roadmap does not list has no settings, so its page offers none.
 On a slice page the card names the initiative above its title, because the settings belong to the whole initiative and a change there applies to every slice.
 Each setting shows its options as a button group, the sentence on when a change takes effect, and for an on or off setting what the picked option does.
-Picking an option applies it at once, except for Models, whose model names you type and then send with **Apply** or Enter; **Reset** drops what you typed.
-Choosing **Custom** for Models shows the delivery, review, security review, and examples model fields, and **Apply** stays disabled with a hint such as `Fill in Delivery model.` until every required name is filled in.
+**Host** is one select of every host Prism supports, as found on this computer; a host this computer lacks shows as `<host>: unavailable` and cannot be chosen, and its reason, such as `Codex was not found: no codex executable on PATH.`, shows below the select.
+**Models** follows the host that the select shows, and switching the host shows the choices kept for that host, so switching back shows the first host's choices as they were.
+It shows a **Provider** picker when the host reports providers, as Codex does, and then one picker for the **Coordinator** and one for each kind of agent: **Design and implementation**, **Code review**, **Security review**, and **Design gate summary**.
+Each picker shows the chosen model and effort, such as **Fable 5.2 · High effort**, or **Host default** and **Host default effort** for the host's own choice.
+While the review app asks the host for its options, each picker reads **Reading <host>’s models…**; a host that does not answer shows its reason, such as `Claude Code did not report its run options: it gave no answer within 20 seconds.`, and its pickers still offer the host's default and a model name you type.
+A model picker opens a list you can filter, with **Host default**, the models the host reports with their descriptions, and **Other model…** last, and below the list the effort levels of the chosen model, which change when you choose another model.
+A host or provider that reports no models says so, such as `Codex reported no models.`, and offers only the host's default and **Other model…**.
+**Other model…** shows a **Model name** field: Enter takes a name of letters, digits, and `. _ - : / @ [ ] +` that starts with a letter or digit, and the picker then says `Prism cannot check a model you typed; Claude Code receives it as written.`
+A choice the host does not offer, such as a saved model this computer's host no longer lists or an effort the newly chosen model does not take, shows as **Not offered** with its reason until you choose a value the host offers.
+An earlier model name that Prism kept shows as not offered in the same way, and **Apply** sends it back as it was, so the change is refused until you choose another model for that agent.
+In the dialog, the options you pick wait for **Apply**, which counts them, such as **Apply 2 changes**, and applies them one by one; it stops at a change that is refused or that you do not confirm, and closes once all of them applied.
+**Cancel**, Esc, or **Close** closes the dialog and drops the changes you have not applied.
+On a slice page's card, picking an option applies it at once.
 A change that needs your confirmation opens a dialog that says what it lets agents do, with **Confirm** and **Cancel**; Esc or **Cancel** leaves the setting as it was.
 Every control works with Tab, Enter, and Space.
 When an agent or another tab changed the setting after the page showed it, the page refuses your change, shows the current value, and says `Someone changed this since you opened it; it now shows the current value.`
@@ -236,10 +285,30 @@ Prism also launches a session of its own for each [format migration run](workflo
 
 ### Launch an initiative
 
-The initiative page's **Initiative settings** card ends with **Launch with Claude Code** and **Launch with Codex** under **Launched session**; a slice page offers no launch.
-A launch action is unavailable with a reason such as `Claude Code was not found: no claude executable on PATH.` while its host's executable, `claude` or `codex`, is not on the review app's `PATH`, and with `A launched session of <initiative> is running on this machine.` while a launched session of the initiative runs on this computer.
+**Launch** at the top of the initiative page opens the run configuration, a dialog named **Launch <initiative>**; a slice page offers no launch.
+It shows the latest run when there is one, then **Host**, **How the run works** with **Autonomy**, **Commit**, **Push**, **Continuation**, and **Review**, and **Models** with the coordinator and each kind of agent, each set to the initiative's current value as **Settings** shows it.
+Each option says what it does when you point at it, and the chosen option's effect shows under its group.
+Opening the dialog starts nothing.
+Changing **Host** shows the choices kept for that host and renames the launch button, such as **Launch with Codex**, and a host this computer lacks shows as unavailable with its reason and cannot be chosen.
+**Cancel**, Escape, and the close button discard the dialog's changes and launch nothing.
+**Launch with <host>** saves every changed choice as the initiative's settings, asking you in the page first for a risky one such as **Push** on, and then starts the session, so the initiative's history records the settings before the launch.
+While a choice is not offered, the button is disabled and the dialog names the field and its reason, such as `Code review: Claude Code on this computer does not offer the model claude-opus-3.`, until you choose a value the host offers.
+A refused or declined launch, such as `You declined the launch.`, shows its message in the dialog and keeps it open, with the settings already saved.
+With no host stored, the launch runs the first host found on this computer.
+The launch is unavailable, and the dialog still shows the settings with its launch button disabled, with `No host that Prism supports was found on this computer. Prism supports Claude Code and Codex.` while neither `claude` nor `codex` is on the review app's `PATH`, with a reason such as `Codex was not found: no codex executable on PATH.` while the initiative's host is missing, and with `A launched session of <initiative> is running on this machine.` while a launched session of the initiative runs on this computer.
+It is also unavailable with `This initiative's saved settings cannot be read, so Prism cannot tell which host, models, and efforts to launch with.` while the initiative's coordination state cannot be read, so nothing starts with another host or other choices than the ones you saved.
+Before it asks you anything, the launch checks the provider and every model and effort that **Models** keeps for the host against what the host on this computer reports, and refuses the first one the host does not offer with its field and reason, such as `Coordinator: Claude Code on this computer does not offer the model claude-opus-3.` or `Design and implementation: Prism kept the earlier model name Claude Opus 4.1, which Claude Code cannot take as a model.`; a launch whose choices are all host defaults asks the host nothing.
+When the host cannot report its options, the launch is refused with the field that needed them and the host's reason, such as `Coordinator: Claude Code did not report its run options: it gave no answer within 20 seconds.`, so you can retry once the host answers instead of replacing a choice it may still offer.
+The session runs with the coordinator's model and effort: Claude Code receives them as `--model <model>` and `--effort <effort>`, and Codex starts its thread with the model and provider and its turn with the effort, and each is left out for the host's default.
+A model name you typed reaches the host only as that model, and the session's prompt stays `/prism:orchestrate <initiative>`.
+A resume runs with the provider, model, and effort that the session was launched with, not with the settings at the time of the resume.
 Checkouts whose records live in the same place, such as two checkouts of one shared store, count as one initiative here, so only one launched session of an initiative runs on this computer at a time.
 Like every action, a launch needs a tab that can make changes.
+
+The initiative page also shows how the initiative's latest launched session on this computer stands.
+While that session failed, is blocked, waits for you, or runs, the page head shows `Last run failed`, `Last run blocked`, `Waiting for you`, or `Running` beside **Launch**, and pressing it opens the run configuration; in a tab that cannot make changes the state stands beside **Open in Agents**, which opens the Agents page.
+At the top of the run configuration, **Latest run** names the session's host and state, with its reason, such as `Claude Code reported an error:` and the host's own message or `Codex ended with exit code 1.`, and **Open in Agents** opens the Agents page.
+The page reads this every few seconds, so a session that fails moments after it starts shows there without a reload.
 
 Before anything starts, Prism asks you in a dialog of the operating system, outside the browser, so a script that drives the page cannot launch on its own.
 The dialog says `Start a <host> session on this computer that runs Prism's orchestrate skill for the initiative <initiative> in <checkout>? Further launches in the next 30 minutes will start without asking.`, offers **Launch** and **Cancel**, and Cancel is its default answer.
@@ -268,16 +337,55 @@ The host's own permission handling and the project's own host settings apply: Pr
 A session keeps running when the review app exits, idles out, restarts, or is replaced by a newer release, because a supervisor process of its own starts and watches the host.
 Each launched session keeps its record in `launches/<launch id>/` in the review app folder, readable only by you, and Prism removes it 14 days after the session's last run ended.
 The host's session id stays in that record on this computer: no shared record, history entry, or log holds it, and only this computer's page shows it, in the command that continues the session in a terminal.
+Each run also keeps the model its host reports as soon as the host names it, from Claude Code's first `init` event or from the result of Codex's thread start or resume, and a launched session names the model of its latest run; a run whose host names no model, or a value longer than 128 characters or holding a control character, keeps none.
 
-### The Launched sessions place
+### How the review app reads a host's models
 
-Open **Launched sessions** from the Jump palette, where its detail reads `Headless sessions on this computer`, or at the address `review?artifact=launches`.
-It lists every launched session on this computer whose checkout shares this checkout's records, the most recently launched first.
-Each session shows its initiative's title, which opens the initiative page, or `Format migration <run id>` for a format migration run's session, the host, when it was launched, its running time, which counts every second while a run runs, its state, the reason for the state, how its last run ended, and its **Stop** and **Resume** actions.
-**Runs** shows how many times the session ran when it ran more than once.
-While no run runs and the host reported its session id, the session also shows the command that continues it in a terminal, `claude --resume <session id>` or `codex resume <thread id>`, with the folder to run it in, and **Copy** copies the command.
-The place reads the list again every 5 seconds and after each action you apply there.
-Without a launched session it says `Nothing launched on this computer yet. Launch an initiative from its page.`.
+The review app offers only the models, providers, and effort levels that a host on this computer reports, so it asks the host itself, and only for a tab that can make changes.
+Claude Code is asked as `claude -p --verbose --no-session-persistence --settings {"disableAllHooks":true} --strict-mcp-config --mcp-config {"mcpServers":{}} --input-format stream-json --output-format stream-json` with one `initialize` request and no prompt.
+Codex is asked through `codex app-server` for its providers and its visible models, without opening a thread.
+Either way, the host runs in the checkout's folder without the variables of an agent session, starts no model turn, so it spends no usage, keeps no session in its history, and runs none of your hooks or MCP servers.
+The review app closes the host's input once it has the answer, and ends a host that still runs 5 seconds later.
+A host that gives no answer within 20 seconds is ended and reported as `<host> did not report its run options: it gave no answer within 20 seconds.`; set `PRISM_RUN_OPTIONS_TIMEOUT_MS` for the review app to wait from 200 to 60000 milliseconds instead.
+A host that sends more than 4 MiB, or lists more than 1000 models or 100 providers, is reported as failed with that reason, and the review app shows at most 100 characters of each name, 300 of each description, and 16 effort levels for a model.
+A host's answer is kept for 10 minutes per checkout, and per provider for Codex, while an answer that failed is asked for again next time.
+The review app leaves out every option that it does not know or that changes how the host grants permissions, so those stay at the host's own values.
+
+### The Agents page
+
+The Agents page lists every agent working on this workspace and every session launched on this computer, one row each.
+Open **Agents** from the top bar's **Agents** menu or the Jump palette, or at the address `review?artifact=agents`; the old address `review?artifact=launches` opens it too.
+Its lead reads `Every agent working on this workspace, and every session launched on this computer.`.
+It lists every launched session on this computer whose checkout shares this checkout's records, and every live or expired claim on the workspace's slices that no launched session here holds.
+A launched session holds the claims its own agent takes, so its slice shows in its row rather than in a row of its own.
+
+**Show** narrows the table: **All**, **Needs you**, **This computer**, **Other sessions**, and **Expired**, each with its count.
+**This computer** shows every launched session, and the addresses `agents:needs-you`, `agents:this-computer`, `agents:other`, and `agents:expired` open the page with that choice made.
+
+The table's columns are **Agent**, **Host · model**, **Working on**, **State**, and **Time**, and a last column holds a row's one action.
+Its groups come in this order, each with its count, and a group without agents is left out:
+
+| Group | What it lists |
+| --- | --- |
+| Needs you | Launched sessions that failed, then those that wait for your answer, the latest launched first. |
+| Launched on this computer | Every other launched session, the latest launched first. |
+| Other sessions | Agents that hold a live claim, the claim that lapses first first. |
+| Claims that expired | Claims whose lease passed, the latest to lapse first. |
+
+A launched session's name is its initiative's title, which opens the initiative page, or `Format migration <run id>` for a format migration run's session, and under it the row says when it started, how its last run ended, and how many runs it had when more than one.
+A claim's name is the claim's label, such as `Dana on studio-mac`, which opens the slice it works on.
+**Host · model** names the harness and the model as `<harness> · <model>`, the harness alone without a model, and `Agent` when nothing names them.
+**Working on** says `Ended <time> ago: <reason>` for a failed session, and otherwise the activity and the slice, such as `design · Retention policy`, or the session's reason.
+**Time** is how long a launched session has run, which counts every second while it runs, `<n> min left` for a live claim, and `expired <time> ago` for an expired one.
+A session that waits offers **Answer**, which opens Attention with the question it waits on selected and its answer form shown; a running session offers **Stop**; any other session offers **Open**, which unfolds its details under its row.
+A claim offers no action.
+
+The details hold the session's reason, the command that continues it in a terminal while no run runs and the host reported its session id, `claude --resume <session id>` or `codex resume <thread id>`, with the folder to run it in and **Copy**, which copies the command, and the session's own actions, such as **Resume**.
+The page reads the list again every 5 seconds and after each action you apply there, and moves a claim to **Claims that expired** once its lease passes.
+In a tab that cannot make changes the page says so, **Stop** stays unavailable, and the details offer no action, while **Answer** still opens the question.
+With no agent and no launched session it says `No agent works on this workspace, and nothing was launched on this computer.`.
+
+A launched session's state is one of these:
 
 | State | Meaning |
 | --- | --- |
@@ -310,29 +418,51 @@ Only the review page launches, stops, or resumes a session: no agent tool and no
 
 ## Roadmap, initiatives, and slices
 
-The roadmap shows initiatives as a board, a list, or a dependency graph, chosen under **View** in the Roadmap place's sidebar, which is the only place to switch them.
-The review app keeps the chosen view, the archive toggle, and the collapsed lanes, so every later roadmap opens the way you left it.
-The board stacks one full-width lane per band in priority order, an empty band on one line, and each card shows its priority rank within its band and its state.
+The roadmap shows initiatives as a board, a list, or a dependency graph, chosen under **View** in the toolbar above them.
+Beside it, **Group by** groups the board and the list by **Band** or by **Status**, and "Show shipped and superseded" adds the archived initiatives.
+The review app keeps the chosen view, the grouping, the archive toggle, and the collapsed lanes, so every later roadmap opens the way you left it; a lane link always shows the board grouped by band.
+The board stacks one full-width lane per band in priority order, or per status in the order work moves through them, with an empty group on one line.
+A card shows its priority rank within its band, or its band when grouped by status, its state, and one bar segment per slice in the slice's status color with the count of done slices.
+At its end, a **needs** icon and an **unblocks** icon count the initiatives it depends on and those that depend on it; hovering or focusing one marks those initiatives on the board, dims the others, and names them in its tooltip, and pressing it keeps them marked.
+The list shows the same groups with each initiative's dependencies as links under its title.
 Click a lane's arrow to collapse it.
-Shipped and superseded initiatives appear only with "Show shipped and superseded".
+Next to the counts at the top, a link names how many open roadmap questions there are and opens Attention showing only them, where they are answered; the Roadmap page itself lists none.
 A superseded initiative's page says below its title when it was superseded and by which initiative, linked, and the decision's reason.
 
-An initiative page shows its slices as a board, a list, or a graph.
+An initiative page names its lane and its rank there above its title, such as `Initiative · Now · #1`, and under the title its state and intent.
+Its run totals, **Launch**, and **Settings** sit at the end of its head.
+A bar shows one segment per leaf slice in its status's color, done first and not started last, with a count such as `0 of 4 done · 2 in progress · 1 blocked`.
+Below it a fold, open until you close it, shows the rationale, the initiatives it needs and unblocks by title, its requirements with one chip per file that lists their numbers, and its records.
+An initiative page shows its slices as a board, a list, or a graph, and keeps the view you choose as a preference.
 The board has one column per slice status, and the card of an active slice also shows its activity, workers, and review lanes.
 A slice whose design waits for your answer at its design gate shows as in design review until the agent accepts the design, even though its record still says not started.
 The list shows the slice tree, and the graph orders leaf slices by execution order.
 A slice that records a [component](workflow.md#components) carries a small label with its `<repository>/<component>` identity in the slice tree, on its board card, and on its slice page, and a slice without one, such as a split scope or a slice accepted before components existed, has no label.
-Below them, the page lists the unstarted leaves that can be designed next, leaving out those in design review.
-A slice page shows the slice's diagrams, its design from `slice.md`, the verification run, the review ledger, and every file in the slice folder.
+Beside the view choice, a line lists the unstarted leaves that can be designed next, leaving out those in design review, and those that can start once their prerequisites finish.
+A slice page shows the slice's design views, its design from `slice.md`, the verification run, the review ledger, its [verified files](#a-slices-files-after-verification), and every file in the slice folder.
 It is the page to read at a design gate.
-Under its title a tag names the slice's phase with its gate or status, such as `Design · design gate open`, beside its requirements, and below the lifecycle a strip shows who holds the slice, since when, when the holder last renewed the claim, and the time left, with the exact times on hover or focus.
-The Review ledger tab counts the open findings and the Files tab the slice folder's files.
-The review ledger's findings board has a `DEFERRED` column after `VERIFIED` for findings that you accepted with a follow-up at the review loop decision, and a deferred finding's details name its decision gate, its follow-up, and the wave that deferred it.
-The review summary counts deferred findings apart from unresolved ones, and the slice's review card lists each deferred finding with its severity, title, decision gate, and follow-up.
+Under its title a tag line names the slice's phase with its gate or status, such as `Design · design gate open`, beside its requirements, and ends with who holds the slice, the activity, and the time left, with the exact times on hover or focus.
+The tabs are Design, Views, Verification, Review, Files, and Change map.
+The Views tab counts the views, the Review tab the open findings, and the Files tab the slice folder's files.
+The Change map tab is last and marked Deprecated, because the Files tab and the verified result replace it; it stays until existing slices no longer need it.
+The Review tab holds the slice's review ledger, which the review record's own page shows too.
+Its summary line names the current wave and whether it is open or accepted, counts the unresolved findings, those that block shipping until verified, the deferred ones, and open conflicts, and shows each reviewer with the result of their lane.
+The wave's run totals end the line, and choosing them shows the full table.
+Below, filters show the findings of one reviewer, of the severities you keep pressed, or raised in one wave.
+The findings are grouped by status in the order work moves, `OPEN`, `IN PROGRESS`, `REOPENED`, `FIXED`, `VERIFIED`, and `DEFERRED`, each most severe first with its severity's bars, and a line names the statuses that have no findings.
+Choosing a finding shows it beside the list, or under it in a narrow window, with where it was raised, its contract clause, its evidence, what closes it, the implementer's evidence, and its history; the ledger opens on the most severe unresolved finding.
+A deferred finding is one you accepted with a follow-up at the review loop decision, and its row and details name its decision gate, its follow-up, and the wave that deferred it.
+Folds below hold the waves, with their reviewers, what each compared, its findings, its run totals, and a button that filters the list to the findings it raised, then the assessments, any conflicts, the operation history, and the record's details.
 On Attention, the review loop decision shows its summary with the findings of each wave as a table.
 **Details and settings** at the end of the page bar shows the slice's outcome, slug, parent, children, dependencies, and active work, and the initiative's settings.
 
-Every PlantUML file directly in the slice folder gets a tab above the design, with `code.puml` first when it exists.
+The Views tab shows each view that the `## Views` section of the slice's `slice.md` declares, in the declared order, as one card named by the question the view answers.
+The line above the question names the view's kind and file, such as `Sequence view · flow.puml`.
+The line under it reads `This view explains §1 and §2 of the contract in <contract>; where the view and the contract differ, the contract decides.`
+Each `§n` opens the Design tab at that clause and highlights it, or opens the contract's page at that clause when this page does not list it, and the contract opens the design that holds the contract.
+A diagram or wireframe view is drawn, with the zoom, source, and Maximize controls of a diagram card, and an API view shows its JSON source, which scrolls after about sixteen lines and has a Copy button.
+Open shows the view on its own page.
+A scope whose design planned slices shows its own views first, then each planned slice that declares views under the slice's title, with Open slice beside it, and one line names the planned slices that declare no views.
 A diagram sits on a sheet that follows the light or dark theme.
 
 The design is `slice.md` itself, with Prism's checks placed in it.
@@ -365,6 +495,7 @@ An evidence link, such as a receipt or a baseline snapshot, opens the evidence d
 The graph mode shows the same changes as before, change, and after nodes, and a node jumps to its card.
 
 Each review wave card, slice page, and initiative page shows run totals from the recorded runs: runs, wall time, elapsed and summed active time, token categories, and tool calls.
+On an initiative page the head sums them up, such as `3 h 55 min active · ≈ 19.9M tokens`, and opens the whole table.
 Every measure carries a visible coverage mark, such as `exact`, `approximate`, `partial`, or `unavailable`.
 An unavailable measure shows `—`, never `0`, and a scope without recorded runs says "No run recorded yet."
 A split parent's slice page shows its own totals and its totals with descendants.
@@ -387,6 +518,7 @@ Take current intent from Approved requirements, Accepted ADRs, the glossary, and
 Prism stores diagrams as PlantUML `.puml` source files, and the browser renders them without creating image files.
 Markdown links open the linked file or heading in the review.
 A link to a missing file or a target outside the project is marked as missing, and an external link opens in a new browser tab.
+A store artifact's links resolve by its place in the store; see [Every scope in one view](#every-scope-in-one-view).
 A document with three or more headings gets a contents list that marks the current section.
 In a wide window the contents stay beside the text while it scrolls, and a list longer than the window scrolls on its own and keeps the current section in view.
 In a window 1100 pixels wide or narrower the contents sit above the text and fold open from their header.
@@ -399,6 +531,7 @@ An open preview stays while the pointer crosses other links on its way to the pr
 An initiative preview shows its state, band, intent, and progress, and a slice preview shows its status and outcome.
 A link to a document section previews that section.
 A link to a PlantUML file previews the diagram drawn small enough to fit.
+A declared design view opened on its own page, or in the side panel, takes its question as its title with its kind above it, and the same line with its clause links under the title.
 A file's preview has a Show in side panel button, and Alt+click on a link does the same: the whole file opens in a panel beside the current page, at the linked heading or lines.
 The panel draws a PlantUML file, and the diagrams a document links, as its page does, fitted to the panel's width, with the same zoom and source controls.
 The side panel holds one file at a time, so opening another replaces it, and a link inside the panel opens its target in the panel.
@@ -410,8 +543,12 @@ A maximized document keeps its Restore button in view while it scrolls, in its c
 
 In a project whose `.prism/workflow.md` names a record store, a requirement, ADR, plan file, glossary, or roadmap view opens with a Review card above its content.
 The card names the file's scope, `workspace`, the repository, or `<repository>/<component>`, and says whether a person accepted the file and whether it changed since.
-A file is accepted when a person approves it, when the design of the slices whose folder holds it is accepted, or when its initiative ships.
-Below that, the card shows the lines that changed since the accepted version, with the line numbers of both versions, or the whole file as added when no version was accepted yet.
+A file is accepted when a person approves it, when the design of the slices whose folder holds it is accepted, when its initiative ships, or when it moves in from the checkout with a status that a person already moved on, such as `Approved`.
+When the file changed since the accepted version, or no version was accepted yet, a line above the file's text says so, and **Show changes** names how many blocks changed.
+It marks the changes on the rendered text: an added block has a green bar and fill, a removed block comes back where it stood with a red bar and struck text, and a changed block has an amber bar with the words it gained marked green and the words it lost struck in red.
+A file that no version was accepted for shows every block as added.
+While the changes show, **Source lines** shows the lines that changed instead, with the line numbers of both versions, and **Rendered** goes back to the rendered text; **Hide changes** shows the file as it is.
+The changes stay shown, in the way you chose, while comments arrive and the file changes.
 It then lists the comments on the file, oldest first, each with its author's Git name, the host it came from, the line it names, and its time, and marks a comment made on an earlier version of the file.
 Comments that a record store sync brings from other machines appear the next time the page checks the file, and comments from this machine's tabs appear at once.
 The page checks again 1.5 seconds after its last check ended, never while one still runs, and the review app reads only the comment files that the page lists and those that changed since its last read, so a file with many comments keeps the page responsive.
@@ -424,6 +561,7 @@ The list is closed when the page opens, and it stays open or closed as you left 
 To comment, enter that line number, with or without spaces around it, and your comment of at most 4000 characters, then select Comment.
 A file takes at most 1000 comments: once it holds 1000, Prism refuses a further comment with `comment_limit` and stores nothing, and a file whose comment folder holds more than 1000 files, as a sync from elsewhere could bring, shows no comments at all.
 The comment goes to the record store as a file of its own, so it reaches every checkout that sees the file and every machine that syncs the store, and the file itself does not change.
+On a workspace's page you can comment on the files of every scope, also another repository's, and the comment names its author by the Git name of the store's clone on this machine.
 Agents read the comments with the file through `get_artifact`.
 A file's comments belong to it: when an agent moves the file to another scope its comments move with it, and when an agent removes the file its comments are removed with it, so a new file at the same path starts without them.
 A comment you are still typing stays in the form when the file moves to another scope, and Comment then sends it to the file in its new scope.
@@ -440,6 +578,10 @@ It finds places, initiatives, slices, requirements, decisions, glossary terms, a
 A slice's result shows who holds a claim on it, and beside the results a preview shows the active result.
 A query of three or more characters also searches the text of Prism artifacts, never source files, and every word must occur in a matching file.
 Opening a text match scrolls to and highlights the first occurrence.
+On a workspace's page the text search covers the store artifacts of every scope, each match with its scope label, whichever checkout the page reads through.
+It also searches the code of each component whose index is ready in a checkout on this machine, and lists those matches as **Code in indexed components**, each with its component.
+Under **Left out of this search** it names every other component the workspace knows, with why: `no checkout here` for a repository without a checkout on this machine, `no ready index` for a component whose index is not built, and `search failed` for one whose search failed.
+The components a workspace knows are those of each checkout on this machine, those that each code clone's branches declare, and those that hold a component scope folder in the store, plus each repository's root component.
 When the match is not visible in the rendered view, try the Raw view.
 On an initiative or slice page, the palette also lists the page's settings as entries such as `Push: Off`, and choosing one moves the focus to that setting's control.
 In the palette, the arrow keys move through the results, Enter opens one, and Esc closes the palette.
@@ -450,27 +592,132 @@ The index item at the right of the status bar shows the open project's native in
 Its panel lists each index target of the checkout, the root component first and then each declared component, with its indexing state and a **Rebuild** button that rebuilds only that component's index.
 While a component's index is being built, its row says `An index build is already running.` in place of the button.
 In a repository with components, the item combines every component's index and names the component being built.
+On a workspace's page the panel lists the components of every repository with a checkout on this machine, by repository name, and offers no rebuild for a repository without one, because a rebuild runs in a checkout.
 A long component identity ends in an ellipsis, and its tooltip names it whole.
 See [Watch an index build in the review browser](repository-intelligence.md#watch-an-index-build-in-the-review-browser) for what each state means.
 
-## Several projects
+## Workspaces
 
-All Prism sessions of one user share one review app on one local port, and each project has its own page there.
-The project switcher names the project as `repository/branch`, falls back to the worktree folder without a branch, and shows a detached checkout by its commit.
-A checkout of a workspace shows the workspace's name first, as `workspace · repository/branch`; see [Name the workspace](shared-records.md#name-the-workspace).
-Checkouts whose records live in one shared store form one workspace, with the name kept in its store, or until one is set named after the store's folder or, for a remote store, after its repository, with one count of open questions and each checkout listed under it as `repository / branch`, because their roadmap, initiatives, and questions are the same, whichever repository each checkout belongs to.
-Choose the workspace's name to open its records through the checkout already open, else one an agent session is using, else the one you used last.
-Every checkout of a workspace shows the same roadmap, initiatives, and questions, so choose a checkout only for its own source files and index.
-Every other recent project is listed under its repository, even a repository with one checkout, with its open questions.
+All Prism sessions of one user share one review app on one local port, and the app shows workspaces.
+A workspace is one record store with every checkout and repository on this machine that shares it, and a project that keeps its records itself is a workspace of one.
+Every spelling of one store, such as its HTTPS and SSH URLs, names one workspace.
+Each workspace has its own page at `w/<id>/` below the app's address, whichever checkout opened it.
+The switcher in the top bar lists workspaces only, named by the workspace name kept in the store, else after the store's last path segment, or, for a project without a store, after its folder; see [Name the workspace](shared-records.md#name-the-workspace).
+Under each workspace's name it lists its repositories and how many of their checkouts this machine has, and its tooltip names the store and each checkout's folder, as information rather than places to open.
+Each entry marks a workspace that an agent session is using now and counts its open questions, and the switcher keeps the entries in name order, so they never move while you look.
 The switcher's counts of open questions follow a question that an agent recorded or answered within about 15 seconds, and one answered in the browser within about 5 seconds.
-The switcher marks the projects an agent session is using now, and lists workspaces first and then repositories, each in name order, so entries never move while you look.
+The switcher's button shows the workspace's name first, as `workspace · repository/branch`, naming the checkout whose source files and index the page shows: the checkout that presented a review last.
+An older link to a checkout's page, which has `p/<id>/` in its address, opens the same page of the checkout's workspace, and an artifact it names by the checkout's path opens by its place in the store.
+Open tabs name each store artifact by its place in the store, so a tab opened from one checkout stays the same artifact from every other checkout of the workspace.
+The app's own address opens the workspace an agent session used most recently, else the workspace used most recently.
+With no workspace yet, it shows a page that offers to add one, and opens the first workspace as soon as you add it or a Prism session or `prism review` in a project adds it.
 When an agent presents a review for another project while a tab that can make changes is open, that tab shows a notice with a link instead of a second tab opening.
+
+### Every scope in one view
+
+A workspace's page shows the artifacts of every scope its store holds together: the workspace, each repository, and each repository's components, also the repositories with no checkout on this machine.
+Knowledge's **Scopes** section, below its search field, shows one chip for each scope by its label, `workspace`, the repository, or `<repository>/<component>`, with its count of artifacts, while the store holds more than one scope.
+**Browse by kind** counts and lists the artifacts of every scope, and the Jump palette finds each of them.
+Each store artifact's page names its scope in a label beside its heading and in its Review card, and shows its place in the store, such as `repositories/api/requirements/billing.md`.
+The page names a store artifact by that place, `store:<location>`, in its tabs, links, and address, never by a checkout's path, so one link opens the same file from every checkout and from a workspace with no checkout.
+A link or tab that still names a checkout's path opens the store artifact at that path.
+
+The scope chips are the scope filter: select one or more scopes to show only their artifacts in the counts of **Browse by kind**, Knowledge's search, the library pages, and the Jump palette, select a chosen chip again to drop it, and select **All scopes** to show every scope again.
+While the filter narrows, the section reads, for example, `Scopes · 2 of 4`, and a library page counts its rows as `2 of 5 requirements files` and says `Narrowed to api and web.` with a **Show all scopes** link that shows every scope again.
+The filter stays in the page's address as `scopes=<label>,<label>`, so it survives a reload and a shared link, and it never changes the workspace the page shows.
+
+A relative Markdown link in a store artifact opens the artifact it names, looked for first beside the artifact's place in the store, and then at the path the link names from the file's checkout path, as a checkout of its repository on this machine configures its folders, or as Prism's default folders do without one, in the file's own scope or else the workspace scope.
+A link whose path falls outside every artifact folder names a code file of the artifact's repository, or, for a workspace artifact, of the checkout the page reads through.
+It opens that file from a checkout of the repository on this machine that offers it for review, in a tab named `code:<repository>:<path>`.
+A file that no registered checkout offers opens from the repository's code clone, while its code content is on, at the remote's default branch, the branch that the remote's `HEAD` named at the clone's last fetch; the tab shows that branch's label, and a checkout that offers the file always wins over the clone.
+A link to a secret by its file name, such as `.env` or a private key, never opens from the clone.
+A checkout never offers a symbolic link whose target is inside a `.git` folder or outside the checkout, so such a file neither lists nor opens from the checkout.
+A binary file or a file over 512 KiB still shows as a link, and opening it says that the file is not shown because it is binary or over 512 KiB, rather than that it was moved or deleted.
+When no checkout of that repository is registered on this machine and its code clone does not hold the file, the link keeps its text and shows **not available on this machine** beside it, and the page's heading counts such links apart.
+A link that names no artifact and no file keeps its text and shows **link not found** beside it, and the page's heading counts such links.
+An image, a link inside a fenced code block of backticks or tildes, and a link inside inline code are not links.
+The Jump palette lists each store artifact once, names its scope in its row, and finds only the artifacts of the scopes the filter shows.
+
+A store that holds no artifacts yet, because no Prism session moved a checkout's files into it, shows a note in Knowledge's sidebar that names its repositories and says that each keeps its artifacts in its checkouts until a Prism session there moves them into the store.
+
+### Code content
+
+The **Code** page under **Knowledge** shows one repository of the workspace at a time, which the repository menu at the start of its toolbar picks.
+Its **Repositories** button opens a dialog that lists each repository with its code content state: **Off**, **On**, or **Unreachable**.
+Choose **Turn code content on** there for a repository to have Prism keep a clone of its code on this machine, also when this machine has no checkout of it.
+Prism clones the first remote that the store's registration of the repository lists, with the machine's Git configuration and credential helpers and without asking for a password on a terminal, into `code/` of its state directory, one clone per remote.
+The clone is bare and blobless: it holds every branch of the remote with its commits and folders, and it fetches a file's contents only when someone opens the file, so it uses little disk.
+A repository whose registration lists no remote cannot take code content.
+Only a tab that can make changes turns code content on or off; see [Which tabs can make changes](#which-tabs-can-make-changes).
+Which repositories have code content on survives a restart of the app.
+
+While a page of the workspace is open, each fetch of the workspace also fetches every repository with code content on, bringing new branches and dropping branches that left the remote.
+When a repository's remote cannot be reached, the Repositories dialog shows it as **Unreachable** with Git's reason, and the clone keeps what it fetched last; when the first clone fails, Prism keeps no folder and tries the clone again at the next fetch.
+For a repository with code content on, the Code page shows a tree of the files and folders of every branch together, beside the file you open.
+**Compare with** names one branch, at first the remote's default branch, and the tree marks each file that another branch adds, changes, or removes against it, such as **New on 1** or **Differs on 2**, and each folder with the number of branches that change something in it; hover a mark to see the branches.
+A file or folder that every branch holds the same way carries no mark, and a file only another branch holds still shows in the tree.
+**Branch** picks which version of the open file the viewer shows, with line numbers, the branch it is read from, and how it stands against Compare with, such as **New on this branch** or **Differs from main**.
+When the branch in Branch lacks the open file, the viewer shows the version of a branch that holds it and says so.
+It shows no secret, binary file, or file over 512 KiB, and it never names the Git host's address.
+Choose **Turn code content off** to delete the repository's clone from this machine.
+Removing an added workspace that leaves the switcher also turns code content off for each of its repositories and deletes each clone that no other workspace on this machine still uses.
+Code clones never show a password prompt or a credential dialog, because a teammate can change the remote they fetch from; they sign in only through a credential helper or SSH key that answers without asking.
+
+### A slice's files after verification
+
+The **Files** tab of a slice page lists, under **Verified files**, every file that the slice's latest passing verification run recorded: each file whose content differs from the slice's start content, and its frozen tests.
+Each run records only a fingerprint of each file, its Git blob hash, and never its content.
+While the repository's code content is on, the page reads each file at the verified commit when a branch of the repository holds that commit.
+After a squash merge or force push removes the verified commit, the page reads the files at the commit of the default branch that Prism recorded when the initiative shipped.
+Each file is marked **same as verified** when its content at that commit is the content the run tested, and **changed after verification** when it differs, as for a file the run tested with an uncommitted change.
+When neither commit is in the repository's code clone, or the repository's code content is off or unreachable, each file is **not available** and the card says why; a slice without a passing run has no verified files yet.
+
+Work on a slice that exists only on the machine that holds it, unpushed or uncommitted, shows only as its presence under **Work in progress**, such as `in progress in feature-x on vm, not pushed`, named from the slice's latest verification run and its live claim, and never as its content.
+The review app shows no content of a commit that no branch of a code clone holds.
+
+### Add a workspace from its store
+
+Choose **Add workspace…** in the switcher, or **Add a workspace** on the page without one, and give the store's address: an HTTPS or SSH URL, a `host:path` address such as `git@github.com:acme/store.git`, or the absolute path of a folder.
+Only a tab that can make changes adds or removes a workspace; see [Which tabs can make changes](#which-tabs-can-make-changes).
+Prism clones only the store, into `stores/` of its state directory, with the machine's Git configuration and credential helpers, and never asks for a password on a terminal.
+A store that this machine already keeps, because a checkout here names it, is added without cloning.
+An address that carries credentials is refused before Git runs: a user name, password, or token in an HTTP or HTTPS URL, any user name in a `git://` URL, a password in SSH user information, or a query or fragment, which can carry a token.
+An SSH login name such as the `git` of `git@github.com:acme/store.git` is no credential and is accepted, because SSH signs in with the machine's keys.
+Credentials come from the machine's Git configuration, such as a credential helper or SSH keys.
+When the clone fails, the dialog shows Git's reason without any user name, password, or token, and Prism keeps no folder and no workspace.
+Prism also refuses, and leaves as it is, a folder at the clone's place in `stores/` that is no clone of that store.
+A store with no commit yet is added only after you confirm it with **Add empty store**.
+When the store turns out to be one this machine already keeps under another address, such as an SSH host alias, the address joins that workspace instead, which Prism tells by the store's first commit.
+A plain `http://` or `git://` address always stays a workspace of its own with its own clone: it never joins the workspace of an encrypted address such as HTTPS or SSH, and an encrypted address never joins it.
+An added workspace stays in the switcher across restarts of the app until you remove it.
+Until a checkout of one of its repositories is registered with the app, its page reads the records from the store's clone on this machine, and the switcher's button shows the workspace's name alone.
+An answer, comment, or approval that you give on that page is committed in the store's clone and pushed to the store, as an agent's record write is.
+Those commits carry the clone's Git identity from the machine's Git configuration, or `Prism <prism@localhost>` when Git names none, and each change's history entry names you and this machine's review app.
+
+### Keep a workspace in sync
+
+While a page of a workspace whose store is a Git remote is open, the app fetches the store's upstream when the first page opens and then every 60 seconds, merges it into the store's clone on this machine, and pushes the clone's own record changes.
+When no page of the workspace is open, the app fetches nothing, and reading the page starts no fetch of its own.
+After a fetch fails, the next one waits twice as long as the wait before it, up to 15 minutes, until a fetch succeeds, so a store that cannot be reached costs at most one Git process every 15 minutes.
+A checkout whose `.prism/workflow.md` turns Store sync off is never synced by the app.
+The sync item in the status bar shows when the workspace last synced, such as **Synced 2 min ago**.
+When the store cannot be reached, it shows **Store unreachable** with the time of the last fetch that succeeded, and its tooltip and details name the store and Git's reason, without any user name, password, or token.
+The page keeps showing the copy it last synced meanwhile, and its details list when the next fetch is due.
+
+### Remove a workspace
+
+Choose **Remove** for the open workspace in the switcher.
+Removing never changes the store itself.
+Prism deletes the store's clone on this machine only when no checkout here names the store and the clone holds no commit, changed file, or saved conflict copy that is not pushed; otherwise it keeps the clone and says which checkout names the store or that the clone holds changes that are not pushed.
+A folder store is your own folder, which Prism never deletes.
+A removed workspace that still has registered checkouts stays in the switcher, no longer marked as added.
 
 The app starts with the MCP server of the first Prism session, outlives that session, and exits after 30 minutes with no session and no open viewer.
 A session of a newer Prism release replaces an app of an older release on the same port, and open review pages reload into the new version.
 A session never replaces a newer app.
 
 A new session opens the review browser on its project when no review tab of any project that can make changes is open.
+Codex does not name the project when a session starts, so a Codex session opens the review browser at its first Prism tool call.
 Starting several sessions at once opens at most one window.
 Cloud, CI, print-mode, and display-less sessions open nothing.
 Add `- Review browser on start: off` under `## Interaction` in `.prism/workflow.md` to turn this off for a project, or set `PRISM_REVIEW_BROWSER_ON_START=off` to turn it off for every project you work on.
@@ -482,7 +729,8 @@ Each fallback also adds a line with the time, project, and reason to `fallbacks.
 A shared app that is still running but slow to answer, for example on a busy machine, counts as busy rather than gone: a session waits up to 30 seconds more for it and never starts a second app beside it.
 A session that fell back tries the shared app again at most once a minute while the review is in use, and its new review links lead to the shared app once it answers, while tabs already open on the session's own server keep working.
 
-`prism review` opens the project in the shared review app and returns.
+`prism review` opens the project's workspace in the shared review app and returns.
+`prism review --workspaces` opens the app's own address, from any folder, with a tab that can make changes when no such tab is open.
 It opens the system browser only when no review tab that can make changes is open, and such a tab shows the project or a notice with a link to it instead.
 When the shared app cannot start or `PRISM_REVIEW_APP=off` is set, `prism review` serves the review itself until you stop it with `Ctrl-C`.
 
@@ -490,7 +738,9 @@ When the shared app cannot start or `PRISM_REVIEW_APP=off` is set, `prism review
 
 Every Prism process writes to one log file, `logs/prism.log` in the state directory above, so the review app, each session's MCP server, and their index builds leave one record.
 Each line is a JSON object with the time, level, event, process name and id, and the event's own fields.
-The log records each process start and stop, index builds with their phases, durations, and failures, review app requests that fail or take more than two seconds, MCP tool calls that fail, and uncaught errors.
+The log records each process start and stop, index builds with their phases, durations, and failures, review app requests that fail or take more than two seconds, apart from a page's event stream, which stays open while the page does, MCP tool calls that fail, and uncaught errors.
+A tool call that Prism refuses with a reason you can act on, such as an invalid argument, is information named `request_refused` with that reason's code, if it has one, not a warning.
+Each record store sync that commits, merges, or pushes records is information named `store_synced`, a sync that fails is a warning named `store_sync_failed` with its reason, once until the reason changes, and a sync with nothing to share leaves no line.
 It also records each time a process stops answering for more than a second, with what it was doing at the time, such as the index phase of the component being built.
 Past 5 MiB the file moves to `prism.log.1`, replacing the older one.
 Set `PRISM_LOG_LEVEL` to `debug`, `info` (the default), `warn`, `error`, or `off`, and set `PRISM_LOG_DIR` to write the log to another folder.

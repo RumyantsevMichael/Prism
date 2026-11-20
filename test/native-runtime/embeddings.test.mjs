@@ -21,7 +21,9 @@ test("cold builds share exact model inputs without merging source candidates", a
   }, value => progress.push(value));
   assert.deepEqual(batches.map(batch => batch.length), [8, 2]);
   assert.deepEqual(counts, { newEmbeddings: 10, reusedEmbeddings: 10 });
-  assert.deepEqual(progress.at(-1), { phase: "embedding", current: 10, total: 10 });
+  const { vectors, ...last } = progress.at(-1);
+  assert.deepEqual(last, { phase: "embedding", current: 10, total: 10 });
+  assert.equal(vectors.length, 2);
   assert.deepEqual(chunks.map(({ id, file, text, sourceStart, sourceEnd }) => ({ id, file, text, sourceStart, sourceEnd })), identities);
   for (let index = 0; index < 10; index++) {
     assert.equal(chunks[index].embeddingKey, chunks[index + 10].embeddingKey);

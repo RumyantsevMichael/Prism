@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { demoProject, launch, skip, useAppDirectory } from "./fixtures/kit-browser.mjs";
+import { pause, WAIT_MS } from "./fixtures/wait.mjs";
 
 // A browser opens at most six HTTP/1.1 connections to one host, and the review app serves every project from one host.
 // These tests open many review tabs of two projects in one browser and check that they share one event stream, that its events still reach every tab,
@@ -47,14 +48,22 @@ async function openTab(context, url) {
   const page = await context.newPage();
   page.errors = [];
   page.on("pageerror", (error) => page.errors.push(error.message));
-  await page.goto(url, { waitUntil: "commit", timeout: 10000 });
-  await page.waitForFunction(() => document.querySelector("#artifact")?.getAttribute("aria-busy") === "false", null, { timeout: 10000 });
+  await page.goto(url, { waitUntil: "commit", timeout: WAIT_MS });
+  await page.waitForFunction(() => document.querySelector("#artifact")?.getAttribute("aria-busy") === "false", null, { timeout: WAIT_MS });
   return page;
 }
 
+// A browser window shows only its front tab, and a hidden tab makes no checks. A headless browser shows every tab, so eight tabs would all check their
+// project every 1.5 s; the test hides each tab once it opens a later one, as a window does.
+const shown = (page, visible) => page.evaluate((value) => {
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => value ? "visible" : "hidden" });
+  Object.defineProperty(document, "hidden", { configurable: true, get: () => !value });
+  document.dispatchEvent(new Event("visibilitychange"));
+}, visible);
+
 const tabValues = (page) => page.evaluate(() => [...document.querySelectorAll("#open-tabs prism-doc-tab")].map((tab) => tab.getAttribute("value")));
 
-async function eventually(check, timeout = 5000) {
+async function eventually(check, timeout = WAIT_MS) {
   const until = Date.now() + timeout;
   for (;;) {
     if (await check()) return true;
@@ -69,17 +78,20 @@ test("eight tabs of two projects share one event stream, and the last tab still 
   const browserContext = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const opened = streamCounter(browserContext);
   const pages = [];
-  for (let index = 0; index < 8; index += 1) pages.push(await openTab(browserContext, index === 0 ? granted : index % 3 === 2 ? billingUrl : portalUrl));
+  for (let index = 0; index < 8; index += 1) {
+    await (pages.at(-1) && shown(pages.at(-1), false));
+    pages.push(await openTab(browserContext, index === 0 ? granted : index % 3 === 2 ? billingUrl : portalUrl));
+  }
   assert.equal(opened.shared, 1, "only the first tab opened the shared stream");
   assert.equal(opened.own, 0, "no tab opened a stream of its own");
 
   const last = pages.at(-1);
   await last.bringToFront();
   await last.getByRole("navigation", { name: "Places" }).getByRole("button", { name: /^Knowledge/ }).click();
-  const started = Date.now();
+  // A tab whose requests queue behind six open streams never navigates, however long it waits, so arriving at all is the check.
   await last.locator("#sidebar").getByRole("treeitem", { name: /^Glossary/ }).click();
-  await last.waitForFunction(() => /Glossary/.test(document.querySelector("#artifact h1")?.textContent ?? ""), null, { timeout: 5000 });
-  assert.ok(Date.now() - started < 5000, `the eighth tab navigated in ${Date.now() - started} ms`);
+  await last.waitForFunction(() => /Glossary/.test(document.querySelector("#artifact h1")?.textContent ?? ""), null, { timeout: WAIT_MS });
+  assert.match(await last.locator("#artifact h1").first().textContent(), /Glossary/, "the eighth tab navigated to the glossary");
 
   // A billing tab follows the stream through the portal tab that holds it.
   const billingTab = pages[2];
@@ -105,7 +117,7 @@ test("a tab that holds a write session counts as a connected tab although anothe
   assert.equal(await reader.evaluate(() => sessionStorage.getItem("prism-write-session")), null, "the write session stays in the tab that took it");
   assert.notEqual(await writer.evaluate(() => sessionStorage.getItem("prism-write-session")), null);
   // A browser opens at most once per open lease, so the check waits for the lease of the first open to pass.
-  await new Promise((resolve) => setTimeout(resolve, 10500));
+  await pause(10500, "a browser opens at most once per open lease, and that lease's time is what this waits out");
   assert.equal((await client.present(portal, { tabs: [], open: true })).open, false, "the writable tab is connected, so no new window opens");
   await writer.close();
   assert.ok(await eventually(async () => (await client.present(portal, { tabs: [], open: true })).open === true), "once the writable tab closed, a presentation opens a window again");

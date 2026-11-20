@@ -8,12 +8,14 @@ import type { FreshnessRecord, GitFingerprint, ProgressRecord } from "./index-pr
 import type { Diagnostic, Progress, PublishedUnit } from "./repository-unit-types.mjs";
 
 export type IndexingState = "none" | "unavailable" | "preparing" | "failed" | "interrupted" | "ready";
-interface IndexSummary { builtAt: string; coverage: Record<string, unknown> | null; diagnostics: number; component?: string }
+// `stage` is "structure" while the index holds no embeddings yet; a pointer without `stage` names a complete index.
+interface IndexSummary { builtAt: string; stage: "structure" | "complete"; coverage: Record<string, unknown> | null; diagnostics: number; component?: string }
 type ComponentIndexingState = Exclude<IndexingState, "none" | "unavailable">;
 export interface IndexingStatus { state: IndexingState; progress: (Progress & { component?: string }) | null; startedAt: string | null; endedAt: string | null; diagnostics: Diagnostic[]; index: IndexSummary | null; stale: boolean | null;
   components?: { component: string; state: ComponentIndexingState }[] }
-interface Pointer { snapshot?: string; revision?: string; coverage?: Record<string, unknown>; diagnostics?: Diagnostic[]; builtAt?: string }
-export interface PublishedUnitsView { snapshot: string; revision: string; builtAt: string; units: PublishedUnit[]; edges: [string, string][] }
+interface Pointer { snapshot?: string; revision?: string; stage?: string; coverage?: Record<string, unknown>; diagnostics?: Diagnostic[]; builtAt?: string }
+// `stage` is "structure" when an answering index holds no embeddings yet, as a structure-only index published while its build embeds.
+export interface PublishedUnitsView { snapshot: string; revision: string; builtAt: string; stage: "structure" | "complete"; units: PublishedUnit[]; edges: [string, string][] }
 interface Options { fingerprint?: () => Promise<GitFingerprint | null>; now?: number; availability?: () => Promise<{ supported: boolean; published: boolean }> }
 
 // A preparing record that missed this many heartbeats belongs to a process that stopped or hung.
@@ -49,7 +51,8 @@ async function readStorages(storages: string[], now: number): Promise<StorageSta
   return { pointer, active, ended };
 }
 
-const summary = (pointer: StorageState["pointer"]) => pointer ? { builtAt: pointer.builtAt, coverage: pointer.coverage ?? null, diagnostics: pointer.diagnostics?.length ?? 0 } : null;
+const stageOf = (pointer: Pointer) => pointer.stage === "structure" ? "structure" as const : "complete" as const;
+const summary = (pointer: StorageState["pointer"]) => pointer ? { builtAt: pointer.builtAt, stage: stageOf(pointer), coverage: pointer.coverage ?? null, diagnostics: pointer.diagnostics?.length ?? 0 } : null;
 const endedState = (record: ProgressRecord): ComponentIndexingState => record.state === "failed" ? "failed" : "interrupted";
 
 // The Git state recorded with an index, unless it was recorded for another snapshot, such as a retained baseline's index, which says nothing about this one.
@@ -135,7 +138,7 @@ async function readUnits(storages: string[]): Promise<PublishedUnitsView | null>
   if (!newest || !revision || !/^[a-f\d]{64}$/.test(revision)) return null;
   const sidecar = await readJson<{ schemaVersion?: number; snapshot?: string; revision?: string; units?: PublishedUnit[]; edges?: [string, string][] }>(path.join(newest.storage, unitsFile(revision)));
   if (sidecar?.schemaVersion !== 1 || sidecar.revision !== revision || sidecar.snapshot !== newest.pointer.snapshot || !Array.isArray(sidecar.units) || !Array.isArray(sidecar.edges)) return null;
-  return { snapshot: newest.pointer.snapshot!, revision, builtAt: newest.pointer.builtAt, units: sidecar.units, edges: sidecar.edges };
+  return { snapshot: newest.pointer.snapshot!, revision, builtAt: newest.pointer.builtAt, stage: stageOf(newest.pointer), units: sidecar.units, edges: sidecar.edges };
 }
 
 // Reads the units of the most recently published index from its small sidecar, never the full index, and never starts or changes a build.
@@ -155,5 +158,6 @@ export async function readPublishedUnits(projectRoot: string, directories: strin
   if (!views.length) return null;
   return { snapshot: sha(views.map(({ component, view }) => `${component} ${view.snapshot}\n`).join("")), revision: sha(views.map(({ component, view }) => `${component} ${view.revision}\n`).join("")),
     builtAt: views.map(({ view }) => view.builtAt).sort((left, right) => time(right) - time(left))[0],
+    stage: views.some(({ view }) => view.stage === "structure") ? "structure" : "complete",
     units: views.flatMap(({ view }) => view.units), edges: views.flatMap(({ view }) => view.edges) };
 }

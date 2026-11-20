@@ -3,6 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { skip } from "./fixtures/kit-browser.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { prepareTouched } from "./fixtures/places-touched.mjs";
 import { choosePlace, item, open, placesDemo, settledOn, sidebar, SLICE } from "./fixtures/places-browser.mjs";
 
@@ -39,7 +40,7 @@ test("clause 55: Touched by my work and its count redraw when the slice's record
   assert.equal(changes, 2);
   const marker = await page.evaluate(() => { const node = document.querySelector("#artifact .knowledge-table"); node.dataset.unchanged = "yes"; return Boolean(node); });
   assert.ok(marker);
-  await new Promise((resolve) => setTimeout(resolve, 4000));
+  await pause(4000, "an unchanged answer must not redraw the page over several polls, and a change that must not happen leaves nothing to wait for");
   assert.equal(await page.locator("#artifact .knowledge-table[data-unchanged=yes]").count(), 1, "an unchanged answer does not redraw the page");
   await addChange(root);
   assert.equal(await until(() => changesCount(page), 3), 3, "the page shows the added record");

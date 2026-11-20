@@ -5,9 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { cloneOf, repository } from "./fixtures/repository-checkouts.mjs";
-import { cancelRecordSyncs } from "../../src/server/workflow/record-store-sync.mjs";
-import { forgetMigrations, recordStoreOf } from "../../src/server/workflow/record-store.mjs";
-import { checkRepositoryName } from "../../src/server/workflow/repository-names.mjs";
+import { cancelRecordSyncs } from "../../dist/server/workflow/record-store-sync.mjs";
+import { forgetMigrations, recordStoreOf } from "../../dist/server/workflow/record-store.mjs";
+import { checkRepositoryName } from "../../dist/server/workflow/repository-names.mjs";
 
 // A registration that a synced check has written but not yet confirmed is pending to every check that sees the store folder, whatever its own sync setting.
 const environment = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-registration-pending-env-")));
@@ -128,4 +128,16 @@ test("a confirming sync never commits the registration lock it runs under", asyn
   assert.ok(!pushed.includes("repositories.lock"), "the confirming sync pushed the registration lock to the store's remote");
   assert.ok(!pushed.some((file) => file.startsWith(".prism-sync/")), "the pending marker stays out of the store's commits");
   assert.equal(await exists(path.join(value.base, ".prism-sync", "registering", "api.json")), false, "the confirmed registration is no longer pending");
+});
+
+// A confirming sync can wait longer than the five seconds a check is trusted, as one waiting on a slow machine for the store's sync lock does.
+test("an operation during its own checkout's confirming sync waits for that check instead of refusing on its own pending registration", async (context) => {
+  const value = await store(context);
+  const synced = await cloneOf(value.api, value.parent, "api-synced", { remote: "https://github.com/acme/api.git", store: "../store", repository: "api", sync: "on" });
+  git(value.base, "config", "remote.origin.uploadpack", "sleep 7; git-upload-pack");
+  const first = outcome(recordStoreOf(synced));
+  await pause(5500);
+  const second = await outcome(recordStoreOf(synced));
+  assert.equal(second.repository, "api", `the later operation shares the running check: ${JSON.stringify(second)}`);
+  assert.equal((await first).repository, "api");
 });

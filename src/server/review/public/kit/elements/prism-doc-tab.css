@@ -16,7 +16,7 @@
   gap: var(--prism-space-1);
   width: 100%;
   min-width: 0;
-  padding: 0 var(--prism-space-2) 0 var(--prism-space-4);
+  padding: 0 var(--prism-space-2);
   border-inline-end: var(--prism-stroke) solid var(--prism-color-line);
   font-size: var(--prism-font-size-sm);
   font-weight: var(--prism-font-weight-medium);
@@ -39,7 +39,7 @@
   cursor: grabbing;
 }
 
-/* A tab in a group carries the group's color as a line along its bottom, so the group reads as one run of tabs after its head. */
+/* A tab in a group carries the group's color as a line along its top, and only the group's last tab ends with a separator, so the group reads as one run of tabs after its head. */
 :host([group-tone]) {
   --prism-doc-tab-group-color: var(--prism-color-group-1);
 }
@@ -51,7 +51,12 @@
 :host([group-tone="6"]) { --prism-doc-tab-group-color: var(--prism-color-group-6); }
 
 :host([group-tone]) .tab {
-  box-shadow: inset 0 calc(-1 * var(--prism-stroke-strong)) 0 var(--prism-doc-tab-group-color);
+  border-inline-end-color: transparent;
+  box-shadow: inset 0 var(--prism-stroke-strong) 0 var(--prism-doc-tab-group-color);
+}
+
+:host([group-tone][group-end]) .tab {
+  border-inline-end-color: var(--prism-color-line);
 }
 
 /* The selected tab is the page's own surface with an accent edge on top, and it covers the strip's bottom line. */
@@ -61,8 +66,9 @@
   box-shadow: inset 0 var(--prism-stroke-strong) 0 var(--prism-color-accent);
 }
 
+/* The selected tab of a group keeps the group's color along its top, so the group's line runs unbroken. */
 :host([selected][group-tone]) .tab {
-  box-shadow: inset 0 var(--prism-stroke-strong) 0 var(--prism-color-accent), inset 0 calc(-1 * var(--prism-stroke-strong)) 0 var(--prism-doc-tab-group-color);
+  box-shadow: inset 0 var(--prism-stroke-strong) 0 var(--prism-doc-tab-group-color);
 }
 
 .select {
@@ -85,6 +91,14 @@
   font-style: italic;
 }
 
+/* The start keeps a room as wide as the close button's at the end, so the title sits centered between them; the agent mark takes that room. */
+.lead {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--prism-doc-tab-slot);
+}
+
 .mark {
   color: var(--prism-color-accent-text);
 }
@@ -104,7 +118,6 @@
   white-space: nowrap;
 }
 
-.keep,
 .close {
   flex: none;
 }
@@ -128,5 +141,5 @@
 }
 
 :host([dragging][group-tone]) .tab {
-  box-shadow: var(--prism-shadow-lift), inset 0 calc(-1 * var(--prism-stroke-strong)) 0 var(--prism-doc-tab-group-color);
+  box-shadow: var(--prism-shadow-lift), inset 0 var(--prism-stroke-strong) 0 var(--prism-doc-tab-group-color);
 }

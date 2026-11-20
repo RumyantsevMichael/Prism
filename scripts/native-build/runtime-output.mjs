@@ -35,11 +35,15 @@ export async function generateRuntime(root, { check = false } = {}) {
     for (const source of await files(sourceRoot, true)) {
       const relative = path.relative(sourceRoot, source);
       // npm reads the package files, its configuration, and the local stub packages at install time; none of them is runtime output.
-      if (["package.json", "package-lock.json", ".npmrc"].includes(relative) || relative.startsWith(`stubs${path.sep}`) || relative.endsWith("-types.mts")) continue;
-      if (relative.endsWith(".mts") && !relative.endsWith(".d.mts")) {
-        const output = await transform(await readFile(source, "utf8"), { loader: "ts", format: "esm", target: "node22", minify: false, legalComments: "inline" });
-        const generated = `// Generated from ${path.relative(root, source).split(path.sep).join("/")} by scripts/native-build/compile.mjs.\n` + output.code;
-        expected.set(relative.replace(/\.mts$/, ".mjs"), { bytes: Buffer.from(generated), mode: (await stat(source)).mode });
+      if (["package.json", "package-lock.json", ".npmrc"].includes(relative) || relative.startsWith(`stubs${path.sep}`) || /-types\.m?ts$/.test(relative)) continue;
+      const typescript = /(?<!\.d)\.(m?)ts$/.exec(relative);
+      if (typescript) {
+        // Node modules (.mts) target the supported Node release; review app modules (.ts) ship to the browser untranspiled, as their JavaScript did.
+        const output = await transform(await readFile(source, "utf8"), { loader: "ts", format: "esm", target: typescript[1] ? "node22" : "esnext", minify: false, legalComments: "inline" });
+        const header = `// Generated from ${path.relative(root, source).split(path.sep).join("/")} by scripts/native-build/compile.mjs.\n`;
+        // A hashbang must stay the first line of an executable module.
+        const hashbang = /^#!.*\n/.exec(output.code)?.[0] ?? "";
+        expected.set(relative.replace(/\.(m?)ts$/, ".$1js"), { bytes: Buffer.from(hashbang + header + output.code.slice(hashbang.length)), mode: (await stat(source)).mode });
       } else if (!/\.(?:mts|ts|map)$/.test(relative)) {
         expected.set(relative, { bytes: await readFile(source), mode: (await stat(source)).mode });
       }

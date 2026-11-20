@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { access, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 import {
   appendRecord, ensureRecords, forgetMigrations, isManagedRecordFile, keyOfPath, listInitiatives, listRecordEntries,
   listSliceRecords, readRecord, recordPath, removeInitiativeRecords, sameRecord, sliceDocumentFolder, takeMigrationReports, writeRecord
@@ -81,20 +83,38 @@ test("reads find legacy records where they are, and the first write moves them a
   await put(root, "docs/roadmap.json", "roadmap bytes");
   await put(root, "docs/plans/reports/state.json", "state bytes");
   await put(root, "docs/plans/reports/download/change-map.json", "map bytes");
-  takeMigrationReports();
+  const roots = new Set([root]);
+  await takeMigrationReports(roots);
   assert.equal((await readRecord(root, { kind: "roadmap" })).bytes.toString(), "roadmap bytes");
   assert.equal((await readRecord(root, { kind: "change-map", initiative: "reports", slice: "download" })).bytes.toString(), "map bytes");
   assert.deepEqual(await listInitiatives(root), ["reports"]);
   assert.deepEqual(await listSliceRecords(root, "reports"), ["download"]);
   assert.deepEqual(await readdir(path.join(root, ".prism")), ["workflow.md"], "reads create no files");
-  assert.deepEqual(takeMigrationReports(), []);
+  assert.deepEqual(await takeMigrationReports(roots), []);
   await writeRecord(root, { kind: "state", initiative: "other" }, "{}\n");
   assert.equal(await exists(path.join(root, "docs/roadmap.json")), false);
   assert.equal(await readFile(path.join(root, ".prism/initiatives/reports/slices/download/change-map.json"), "utf8"), "map bytes");
-  const [report, ...rest] = takeMigrationReports();
+  const [report, ...rest] = await takeMigrationReports(roots);
   assert.deepEqual(rest, []);
   assert.deepEqual(report.moved.map((move) => move.from).sort(), ["docs/plans/reports/download/change-map.json", "docs/plans/reports/state.json", "docs/roadmap.json"]);
-  assert.deepEqual(takeMigrationReports(), [], "a move is reported once");
+  assert.deepEqual(await takeMigrationReports(roots), [], "a move is reported once");
+});
+
+test("a move into the project's .prism outside a tool call is reported by the checkout's next tool call, in any process, once, with nothing beside it in the checkout", async (context) => {
+  const root = await project(context);
+  const other = await project(context);
+  await put(root, "docs/plans/reports/state.json", "state bytes");
+  await takeMigrationReports(new Set([root, other]));
+  // The shared review app runs in a process of its own, so the move there is made by another process, whose memory no tool call of this one reads.
+  const script = `const { outsideToolCall, writeRecord } = await import(${JSON.stringify(new URL("../../dist/server/workflow/record-store.mjs", import.meta.url).href)});
+await outsideToolCall(() => writeRecord(${JSON.stringify(root)}, { kind: "state", initiative: "other" }, "{}\\n"));`;
+  await promisify(execFile)(process.execPath, ["--input-type=module", "-e", script]);
+  assert.equal(await readFile(path.join(root, ".prism/initiatives/reports/state.json"), "utf8"), "state bytes");
+  assert.deepEqual((await readdir(path.join(root, ".prism"), { recursive: true })).filter((file) => !/^(?:initiatives\b|workflow\.md$|\.gitignore$|\.gitattributes$)/.test(file)), [], "a note in .prism would change the checkout");
+  assert.deepEqual(await takeMigrationReports(new Set([other])), [], "another checkout's tool call does not take the report");
+  const reports = await takeMigrationReports(new Set([root]));
+  assert.deepEqual(reports.map((report) => [report.root, report.store, report.moved.map((move) => move.from)]), [[root, undefined, ["docs/plans/reports/state.json"]]]);
+  assert.deepEqual(await takeMigrationReports(new Set([root])), [], "a move is reported once");
 });
 
 test("removes a legacy copy that matches the record already in .prism", async (context) => {

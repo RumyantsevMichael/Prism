@@ -39,9 +39,11 @@ const git = (cwd, ...args) => execFileSync("git", args, { cwd, stdio: "pipe" }).
 const exists = (target) => access(target).then(() => true, () => false);
 const remoteConfig = (store, sync) => `## Paths\n- Plans (scratch): docs/plans/\n\n## Workspace\n- Store: ${store}\n- Repository: project\n${sync === undefined ? "" : `- Store sync: ${sync}\n`}`;
 const create = (projectRoot, slug = "reports") => updateInitiative({ projectRoot, initiative: slug, expectedRevision: null, operations: [{ op: "create", slug, title: "Reports", requirements: ["r.md#1"] }] });
-// The clone path the contract defines, computed independently of Prism: SHA-256 of the normalized remote, first 16 hex characters, under the app folder.
-const cloneId = (normalized) => createHash("sha256").update(normalized).digest("hex").slice(0, 16);
-const clonePath = (normalized) => path.join(appFolder, "stores", cloneId(normalized));
+// The clone path the contract defines, computed independently of Prism: SHA-256 of the store identity, first 16 hex characters, under the app folder.
+// Prism 0.16 and 0.20 named a clone by the SHA-256 of its normalized URL instead, which legacyId gives.
+const cloneId = (key) => createHash("sha256").update(key).digest("hex").slice(0, 16);
+const clonePath = (identity) => path.join(appFolder, "stores", cloneId(identity));
+const legacyId = (url) => cloneId(url.replace(/\.git$/, ""));
 const leftovers = async (target) => (await readdir(path.dirname(target)).catch(() => [])).filter((name) => name.startsWith(`.${path.basename(target)}.`));
 
 async function folder(context) {
@@ -72,7 +74,7 @@ function bareRemote(parent, name = "remote.git", { empty = false } = {}) {
     git(seed, "push", "-q", "-u", "origin", "main");
   }
   const url = pathToFileURL(remote).href;
-  return { remote, url, clone: clonePath(url.replace(/\.git$/, "")) };
+  return { remote, url, clone: clonePath(`file:${remote}`) };
 }
 
 function fetchText(url) {
@@ -157,7 +159,7 @@ test("a remote store needs no plugin data directory, so a host that gives none s
 test("a clone Prism 0.16 kept under plugin data moves to the app folder with its unpushed commit", async (context) => {
   const parent = await folder(context);
   const { url, clone } = bareRemote(parent);
-  const legacy = path.join(data, "stores", path.basename(clone));
+  const legacy = path.join(data, "stores", legacyId(url));
   await mkdir(path.dirname(legacy), { recursive: true });
   git(parent, "clone", "-q", url, legacy);
   await writeFile(path.join(legacy, "local.txt"), "not pushed\n");
@@ -177,7 +179,7 @@ test("a clone Prism 0.16 kept under plugin data moves to the app folder with its
 test("a folder under plugin data with another origin is not moved", async (context) => {
   const parent = await folder(context);
   const { url, clone } = bareRemote(parent);
-  const legacy = path.join(data, "stores", path.basename(clone));
+  const legacy = path.join(data, "stores", legacyId(url));
   await mkdir(legacy, { recursive: true });
   git(legacy, "init", "-q");
   git(legacy, "remote", "add", "origin", pathToFileURL(path.join(parent, "other.git")).href);
@@ -341,7 +343,7 @@ for (const [label, config, attributes] of [
 test("an unreachable remote is unavailable, leaves no folder, and a later access succeeds once the remote exists", async (context) => {
   const parent = await folder(context);
   const url = pathToFileURL(path.join(parent, "late.git")).href;
-  const clone = clonePath(url.replace(/\.git$/, ""));
+  const clone = clonePath(`file:${path.join(parent, "late.git")}`);
   const root = await project(parent, "project", remoteConfig(url));
   await assert.rejects(listInitiatives(root), (error) => error.code === "store_unavailable" && error.message.includes(url) && /Git could not clone it/.test(error.message));
   assert.equal(await exists(clone), false);
@@ -476,7 +478,7 @@ test("a remote with user information never puts it in a message, status, or reco
   await writeFile(gitconfig, `[url "${pathToFileURL(remote).href}"]\n\tinsteadOf = ${secret}\n`);
   context.after(() => writeFile(gitconfig, ""));
   const root = await project(parent, "project", remoteConfig(secret));
-  const clone = clonePath("https://example.invalid/team/store");
+  const clone = clonePath("example.invalid/team/store");
   const created = await create(root);
   assert.equal((await recordStoreOf(root)).base, clone);
   assert.equal((await syncRecordStore(clone)).state, "ok");

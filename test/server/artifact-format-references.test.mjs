@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { ARTIFACT_FORMATS, inspectArtifact } from "../../src/server/workflow/artifact-formats.mjs";
+import { ARTIFACT_FORMATS, inspectArtifact } from "../../dist/server/workflow/artifact-formats.mjs";
 
 // Each format reference states the version, rule ids, and defaults of its format in code, and its example conforms to it.
 
@@ -42,7 +42,7 @@ for (const format of ARTIFACT_FORMATS) {
 test("the four examples, written at their example paths, conform with no unknown value", async (context) => {
   const { mkdtemp, mkdir, rm, writeFile, realpath } = await import("node:fs/promises");
   const os = await import("node:os");
-  const { checkArtifacts } = await import("../../src/server/workflow/artifact-check.mjs");
+  const { checkArtifacts } = await import("../../dist/server/workflow/artifact-check.mjs");
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "prism-format-examples-")));
   context.after(() => rm(root, { recursive: true, force: true }));
   const files = [];

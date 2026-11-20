@@ -122,7 +122,7 @@ test("ideation adds the roadmap entry that the removed roadmap skill used to add
 
 test("keeps common terms aligned with the workflow", async () => {
   const workflow = await skill("workflow");
-  for (const term of ["Contract", "Assumption probe", "Frozen tests", "Staged tests", "Contract scope", "Slice plan", "Split evidence", "Design proposal", "Design diagrams", "Review mark", "Child status", "Design gate", "Accepted design", "Verification run", "Implementation review", "Review probe", "Feature file", "Step definition", "Executable contract", "`recovery.md`", "Pause checkpoint"]) {
+  for (const term of ["Contract", "Assumption probe", "Frozen tests", "Staged tests", "Contract scope", "Slice plan", "Split evidence", "Design proposal", "View", "Review mark", "Child status", "Design gate", "Accepted design", "Verification run", "Implementation review", "Review probe", "Feature file", "Step definition", "Executable contract", "`recovery.md`", "Pause checkpoint"]) {
     assert.ok(workflow.includes(`| ${term} |`), term);
   }
   for (const retired of ["Design audit", "Change map", "Context plan", "Red checkpoint", "Atomic slice", "Resolution exchange", "Review base", "Implementation step"]) {

@@ -23,6 +23,40 @@ body {
   box-sizing: border-box;
 }
 
+/* Every scrolling area shows a thin scrollbar in the theme's line color on a clear track, so a scrollbar sits on any surface it crosses.
+   The color inherits, so each element that sets a theme sets it again for its subtree. */
+:root,
+[data-theme] {
+  scrollbar-color: var(--prism-color-line-strong) transparent;
+}
+
+* {
+  scrollbar-width: thin;
+}
+
+/* A browser without the standard scrollbar properties takes the same look from its own scrollbar parts. */
+@supports not (scrollbar-color: auto) {
+  ::-webkit-scrollbar {
+    width: calc(var(--prism-space-2) * 2);
+    height: calc(var(--prism-space-2) * 2);
+  }
+
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    border: var(--prism-space-1) solid transparent;
+    border-radius: var(--prism-radius-round);
+    background: var(--prism-color-line-strong) padding-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--prism-color-ink-faint);
+  }
+}
+
 button,
 input {
   color: inherit;
@@ -116,6 +150,20 @@ prism-option {
 :where(prism-tabs, prism-menu, prism-field, prism-choice) ::before,
 :where(prism-tabs, prism-menu, prism-field, prism-choice) ::after {
   box-sizing: border-box;
+}
+
+/* ---------- Text that is not for copying: controls, navigation, and marks ----------
+   A press, a double click, or a drag on a control, a navigation item, or a status mark does not select its text, as in a desktop application;
+   records, documents, code, identifiers, figures, messages, and fields stay selectable. Shadow content takes its host's value. */
+
+:where(prism-button, prism-tab, prism-tabs, prism-doc-tab, prism-doc-tab-group, prism-doc-tabs, prism-menu, prism-menu-group, prism-menu-item,
+  prism-rail, prism-rail-item, prism-segmented, prism-choice-option, prism-listbox, prism-list-item, prism-tree-item, prism-inbox-item,
+  prism-count-link, prism-breadcrumbs, prism-contents, prism-stepper, prism-step, prism-chip, prism-badge, prism-status, prism-phase,
+  prism-severity, prism-slice-bar, prism-meter, prism-spinner, prism-avatar, prism-icon, prism-kbd, prism-tooltip, prism-resizer,
+  prism-maximize, prism-agent-summary),
+.prism-disclosure-toggle {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* ---------- Kit buttons and tabs: the element is the control's box ---------- */
@@ -334,7 +382,7 @@ prism-menu-group[layout="segmented"] prism-menu-item {
   flex: 1 1 0;
 }
 
-/* ---------- prism-segmented: a few views or modes as one switch; the chosen segment stands on the surface ---------- */
+/* ---------- prism-segmented: a few views or modes as one switch; the chosen segment stands on the surface inside the control line, so the choice reaches 3:1 ---------- */
 prism-segmented {
   display: inline-flex;
   align-self: flex-start;
@@ -354,7 +402,7 @@ prism-segmented {
   min-width: 0;
   height: calc(var(--prism-control-height) - 2 * var(--prism-space-1) - 2 * var(--prism-stroke));
   padding: 0 var(--prism-space-4);
-  border: 0;
+  border: var(--prism-stroke) solid transparent;
   border-radius: var(--prism-radius-xs);
   background: none;
   color: var(--prism-color-ink-muted);
@@ -362,6 +410,15 @@ prism-segmented {
   font-size: var(--prism-font-size-sm);
   font-weight: var(--prism-font-weight-medium);
   cursor: pointer;
+}
+
+/* With wrap, a choice of several segments that no longer fit on one line goes on to the next line rather than shortening each segment's words; only a segment too long for a line of its own shortens. */
+prism-segmented[wrap] {
+  flex-wrap: wrap;
+}
+
+prism-segmented[wrap] > .prism-segment {
+  max-width: 100%;
 }
 
 .prism-segment-text {
@@ -376,6 +433,7 @@ prism-segmented {
 }
 
 .prism-segment[aria-checked="true"] {
+  border-color: var(--prism-color-line-control);
   background: var(--prism-color-surface);
   color: var(--prism-color-ink);
   box-shadow: var(--prism-shadow-lift);
@@ -467,11 +525,14 @@ prism-field {
   text-overflow: ellipsis;
 }
 
+/* A text area grows with its text from three lines up to a limit, then scrolls; a browser without field-sizing gets the same from the element's script. */
 textarea.prism-field-control {
   min-height: calc(3 * var(--prism-control-height));
+  max-height: calc(14 * var(--prism-control-height));
   padding: var(--prism-space-3) var(--prism-space-4);
   line-height: var(--prism-line-height);
   resize: vertical;
+  field-sizing: content;
 }
 
 select.prism-field-control {
@@ -960,6 +1021,12 @@ prism-tree-item[selected] > .prism-tree-row > .prism-tree-start,
   font-weight: var(--prism-font-weight-medium);
 }
 
+/* A warning flag names a difference to look at, such as a file that another branch changes, in the warning tone. */
+.prism-tree-flag.is-warning {
+  color: var(--prism-color-warning);
+  font-weight: var(--prism-font-weight-medium);
+}
+
 /* ---------- Kit classes around a tree: a group heading with its count, and a closing note ---------- */
 
 /* A group's heading is a level 3 heading that reads as a quiet caption above its rows, in the tree's own size and weight, with its count at the end.
@@ -980,6 +1047,15 @@ prism-tree-item[selected] > .prism-tree-row > .prism-tree-start,
   letter-spacing: calc(var(--prism-tracking-caps) * 0.72);
   line-height: calc(var(--prism-font-size-md) * var(--prism-line-height));
   text-transform: none;
+}
+
+/* A heading after other rows has room above it and little below, so it reads as part of the rows it names; one that opens its panel, or follows a filter field, starts close. */
+.prism-group-heading:not(:first-child) {
+  margin-top: var(--prism-space-5);
+}
+
+prism-field + .prism-group-heading {
+  margin-top: var(--prism-space-2);
 }
 
 .prism-group-heading > span {
@@ -1052,12 +1128,12 @@ prism-tree[rail] .prism-tree-end > :not(prism-badge) {
 
 /* ---------- prism-rail: the icon rail of places at the window's start edge ---------- */
 
-/* The rail is as wide as a place button and the room for its accent bar; it draws no border and no fill of its own, so the canvas shows through. */
+/* The rail is one place button with an even gutter on both sides; it draws no border and no fill of its own, so the canvas shows through. */
 prism-rail {
   display: flex;
   flex-direction: column;
   flex: none;
-  width: calc(var(--prism-control-height) + var(--prism-space-5));
+  width: var(--prism-rail-width);
   height: 100%;
   min-height: 0;
 }
@@ -1190,19 +1266,67 @@ prism-rail-item[size="sm"] .prism-rail-badge {
   right: calc(-1 * var(--prism-space-2));
 }
 
-/* ---------- prism-place-head: a place's title on the tab strip's line and its subtitle on the page bar's line ---------- */
+/* ---------- prism-resizer: the handle on a panel's edge that sets its width ---------- */
+
+/* The handle stands on its panel's edge across the panel's height, and a thin line shows it on hover, focus, and while it drags; the panel positions it. */
+prism-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: calc(var(--prism-space-2) / -2);
+  z-index: var(--prism-layer-raised);
+  display: block;
+  width: var(--prism-space-2);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+prism-resizer[hidden] {
+  display: none;
+}
+
+prism-resizer[edge="start"] {
+  right: auto;
+  left: calc(var(--prism-space-2) / -2);
+}
+
+prism-resizer::after {
+  content: "";
+  position: absolute;
+  top: var(--prism-space-6);
+  bottom: var(--prism-space-6);
+  left: calc(50% - var(--prism-stroke));
+  width: var(--prism-stroke-strong);
+  border-radius: var(--prism-radius-round);
+  background: transparent;
+  transition: background-color var(--prism-duration-fast) var(--prism-easing-standard);
+}
+
+prism-resizer:hover::after,
+prism-resizer:focus-visible::after,
+prism-resizer[dragging]::after {
+  background: var(--prism-color-accent);
+}
+
+prism-resizer:focus-visible {
+  outline: none;
+}
+
+/* ---------- prism-place-head: a place's title and the controls at its end, on one line level with the tab strip ---------- */
 
 prism-place-head {
-  display: grid;
-  grid-template-rows: calc(var(--prism-stroke) + var(--prism-subtab-height)) var(--prism-pagebar-height);
-  grid-template-columns: minmax(0, 1fr);
+  display: flex;
   align-items: center;
-  flex: 0 1 auto;
+  gap: var(--prism-space-3);
+  flex: none;
   min-width: 0;
-  padding: 0 var(--prism-space-3);
+  max-width: 100%;
+  height: calc(var(--prism-stroke) + var(--prism-subtab-height));
+  padding: 0 0 0 var(--prism-space-3);
 }
 
 .prism-place-head-title {
+  flex: 1 1 auto;
   min-width: 0;
   margin: 0;
   overflow: hidden;
@@ -1213,16 +1337,14 @@ prism-place-head {
   white-space: nowrap;
 }
 
-.prism-place-head-subtitle {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--prism-color-ink-muted);
-  font-size: var(--prism-font-size-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.prism-place-head-end {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--prism-space-2);
+  flex: none;
 }
 
-.prism-place-head-subtitle[hidden] {
+.prism-place-head-end[hidden] {
   display: none;
 }
 
@@ -1357,6 +1479,16 @@ prism-list-item[active] {
 .prism-list-icon[hidden],
 .prism-list-detail[hidden] {
   display: none;
+}
+
+/* A disabled option shows quieter and takes no hover. */
+prism-list-item[disabled] {
+  color: var(--prism-color-ink-faint);
+  cursor: default;
+}
+
+prism-list-item[disabled]:hover {
+  background: transparent;
 }
 
 /* A first-current listbox shows its first option as the one Enter chooses until the keys move. */
@@ -1591,6 +1723,17 @@ prism-list-item mark {
   border-top: var(--prism-stroke) solid var(--prism-color-line);
 }
 
+/* A footer note stands at the start of the footer and takes the room its actions leave, so they wrap below it on a narrow window. */
+.prism-dialog-foot > [slot="footer-note"] {
+  flex: 1 1 calc(var(--prism-list-width) * 0.75);
+  align-self: center;
+  min-width: 0;
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
 .prism-dialog-frame {
   display: contents;
 }
@@ -1792,6 +1935,174 @@ prism-popover:focus-visible {
   margin-bottom: 0;
 }
 
+/* ---------- prism-picker: a label, one field-like button with the value and its detail, a hint or error, and a popover to choose in ---------- */
+
+prism-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+prism-picker [hidden] {
+  display: none !important;
+}
+
+.prism-picker-label {
+  min-width: 0;
+  color: var(--prism-color-ink);
+  font-size: var(--prism-font-size-md);
+  font-weight: var(--prism-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+/* The button reads as a field, in the field's box: the value and its detail start at the left and shorten, and the chevron ends it. */
+.prism-picker-button {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  height: var(--prism-control-height);
+  padding: 0 var(--prism-space-3) 0 var(--prism-space-4);
+  text-align: start;
+  cursor: pointer;
+}
+
+.prism-picker-button:hover:not(:disabled) {
+  background: var(--prism-color-hover);
+}
+
+.prism-picker-button:focus-visible {
+  outline: none;
+  border-color: var(--prism-color-accent);
+  box-shadow: 0 0 0 var(--prism-stroke) var(--prism-color-accent);
+}
+
+.prism-picker-button:disabled {
+  cursor: default;
+}
+
+.prism-picker-button > .prism-picker-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-picker-button > :is(prism-spinner, prism-icon) {
+  flex: none;
+}
+
+.prism-picker-chevron {
+  color: var(--prism-color-ink-muted);
+}
+
+.prism-picker-display {
+  font-weight: var(--prism-font-weight-semibold);
+}
+
+.prism-picker-separator,
+.prism-picker-detail {
+  color: var(--prism-color-ink-muted);
+}
+
+.prism-picker-hint,
+.prism-picker-error {
+  min-width: 0;
+  margin: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.prism-picker-error {
+  color: var(--prism-color-danger);
+  font-weight: var(--prism-font-weight-medium);
+}
+
+/* The popover: the filter, the options in a list that scrolls on its own, then the empty text or the extra controls. */
+.prism-picker-popover .prism-popover-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--prism-space-3);
+}
+
+.prism-picker-options {
+  max-height: calc(10 * var(--prism-control-height));
+}
+
+.prism-picker-empty,
+.prism-picker-extra {
+  min-width: 0;
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-sm);
+}
+
+.prism-picker-empty > *,
+.prism-picker-extra > * {
+  margin: 0;
+}
+
+.prism-picker-extra {
+  display: grid;
+  gap: var(--prism-space-2);
+  color: var(--prism-color-ink);
+}
+
+/* ---------- Run choices: one prism-picker per run choice, a choice of its own purpose across the width and the agents two to a row ---------- */
+
+.prism-run-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--prism-space-6) var(--prism-space-5);
+  min-width: 0;
+}
+
+.prism-run-choices > [data-wide],
+.prism-run-choices-note {
+  grid-column: 1 / -1;
+}
+
+.prism-run-choices-note {
+  margin: 0;
+  color: var(--prism-color-danger);
+  font-size: var(--prism-font-size-sm);
+  font-weight: var(--prism-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.prism-run-choices-note[hidden] {
+  display: none;
+}
+
+/* Below a run choice's models: the host's note, a typed name, and the effort of the chosen model. */
+.prism-run-choice-effort-head {
+  margin-top: var(--prism-space-2);
+  color: var(--prism-color-ink-muted);
+  font-size: var(--prism-font-size-xs);
+  font-weight: var(--prism-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.prism-run-choice-efforts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--prism-space-2);
+  min-width: 0;
+}
+
+.prism-run-choice-none,
+.prism-run-choice-levels {
+  color: var(--prism-color-ink-muted);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .prism-run-choices {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* ---------- prism-disclosure: a quiet toggle and the content it shows ---------- */
 
 prism-disclosure {
@@ -1963,6 +2274,13 @@ prism-toast[tone="danger"] .prism-toast-icon { color: var(--prism-color-danger);
 
 .prism-toast-message {
   min-width: 0;
+}
+
+/* ---------- prism-time: a time in words that keeps itself current ---------- */
+
+prism-time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* ---------- prism-claim: an agent avatar, the holder, the activity with its phase facet, and the time left ---------- */
@@ -2546,6 +2864,47 @@ prism-doc img {
   border-radius: var(--prism-radius-md);
 }
 
+/* A block marked by data-diff shows a change against an earlier version: added in the added color, removed in the removed color with its text struck, and changed in the warning color with the words it gained and lost marked inside. */
+prism-doc > [data-diff] {
+  padding-inline-start: var(--prism-space-4);
+  border-inline-start: var(--prism-stroke-strong) solid var(--diff-edge);
+  border-radius: 0 var(--prism-radius-xs) var(--prism-radius-xs) 0;
+  background: var(--diff-fill);
+}
+
+prism-doc > [data-diff="added"] {
+  --diff-edge: var(--prism-color-diff-added);
+  --diff-fill: var(--prism-color-diff-added-soft);
+}
+
+prism-doc > [data-diff="removed"] {
+  --diff-edge: var(--prism-color-diff-removed);
+  --diff-fill: var(--prism-color-diff-removed-soft);
+  text-decoration: line-through;
+}
+
+prism-doc > [data-diff="changed"] {
+  --diff-edge: var(--prism-color-warning);
+  --diff-fill: transparent;
+}
+
+prism-doc > :is(table, pre)[data-diff] {
+  padding-inline-start: 0;
+  border-inline-start-width: var(--prism-stroke-strong);
+}
+
+prism-doc ins.prism-doc-ins {
+  background: var(--prism-color-diff-added-soft);
+  color: var(--prism-color-diff-added);
+  text-decoration: none;
+}
+
+prism-doc del.prism-doc-del {
+  background: var(--prism-color-diff-removed-soft);
+  color: var(--prism-color-diff-removed);
+  text-decoration: line-through;
+}
+
 /* ---------- prism-maximize: the icon button that maximizes a region and restores it ---------- */
 
 prism-maximize {
@@ -2843,6 +3202,24 @@ prism-lib-table {
   align-self: flex-start;
 }
 
+/* A title with a detail line under it, such as a record's path or how many requirements it holds; the detail keeps the quiet weight of a cell. */
+.prism-lib-title > .prism-lib-title-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--prism-space-1);
+  font-weight: var(--prism-font-weight-regular);
+}
+
+.prism-lib-title-text > a {
+  font-weight: var(--prism-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.prism-lib-title-text > .prism-lib-cell {
+  max-width: 100%;
+}
+
 .prism-lib-cell {
   min-width: 0;
   color: var(--prism-color-ink-muted);
@@ -2891,6 +3268,29 @@ prism-lib-table {
   white-space: nowrap;
 }
 
+/* A row's details, which the row unfolds under its cells, such as a launched session's terminal command and actions; they span every column. */
+.prism-lib-details {
+  display: grid;
+  gap: var(--prism-space-2);
+  grid-column: 1 / -1;
+  min-width: 0;
+  padding: var(--prism-space-3) 0 var(--prism-space-2);
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.prism-lib-details > p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A row, a group head, a line, or details that the page hides stay hidden, whatever display their class gives them. */
+.prism-lib-row[hidden],
+.prism-lib-group[hidden],
+.prism-lib-nothing[hidden],
+.prism-lib-details[hidden] {
+  display: none;
+}
+
 /* A group without records says so in one quiet line. */
 .prism-lib-nothing {
   margin: 0;
@@ -2920,6 +3320,10 @@ prism-lib-table {
 
   .prism-lib-row > .prism-lib-cell {
     flex: 0 1 auto;
+  }
+
+  .prism-lib-row > .prism-lib-details {
+    flex: 1 0 100%;
   }
 
   .prism-lib-group {
@@ -2953,6 +3357,10 @@ prism-lib-table {
 
   .prism-lib-row > .prism-lib-cell {
     flex: 0 1 auto;
+  }
+
+  .prism-lib-row > .prism-lib-details {
+    flex: 1 0 100%;
   }
 
   .prism-lib-group {
@@ -3120,6 +3528,60 @@ prism-row[wrap] .prism-row-title {
   }
 }
 
+/* ---------- prism-count-link: a link to a filtered page with a glyph, a label, and a count; a .prism-count-links list stacks them with a line between ---------- */
+
+.prism-count-links {
+  display: grid;
+  min-width: 0;
+}
+
+prism-count-link {
+  display: block;
+  min-width: 0;
+}
+
+.prism-count-links > prism-count-link + prism-count-link {
+  border-top: var(--prism-stroke) solid var(--prism-color-line);
+}
+
+.prism-count-link-anchor {
+  display: flex;
+  align-items: center;
+  gap: var(--prism-space-3);
+  min-width: 0;
+  min-height: var(--prism-row-height);
+  padding: var(--prism-space-2) var(--prism-space-3);
+  border-radius: var(--prism-radius-md);
+  color: var(--prism-color-ink);
+  text-decoration: none;
+}
+
+.prism-count-link-anchor:hover {
+  background: var(--prism-color-hover);
+}
+
+.prism-count-link-anchor:focus-visible {
+  outline: var(--prism-stroke-strong) solid var(--prism-color-focus);
+  outline-offset: calc(-1 * var(--prism-stroke-strong));
+}
+
+.prism-count-link-glyph {
+  flex: none;
+  color: var(--prism-color-ink-muted);
+}
+
+.prism-count-link-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prism-count-link-count {
+  flex: none;
+}
+
 /* ---------- prism-inbox: two-line items to pick one from, the picked one raised on the surface ---------- */
 
 :where(prism-inbox, prism-inbox-item),
@@ -3241,4 +3703,27 @@ prism-inbox-item[unread] > .prism-inbox-end::before {
   height: var(--prism-space-3);
   border-radius: var(--prism-radius-round);
   background: var(--prism-color-accent);
+}
+
+/* ---------- prism-canvas: a drawing on a dotted grid that scales with its zoom and scrolls with it ---------- */
+
+prism-canvas {
+  --prism-canvas-step: 1;
+  --prism-canvas-x: 0px;
+  --prism-canvas-y: 0px;
+  --prism-canvas-tile: calc(var(--prism-canvas-grid) * var(--prism-canvas-step));
+  display: block;
+  min-width: 0;
+  overflow: auto;
+  background-image: radial-gradient(circle at center, var(--prism-color-canvas-dot) var(--prism-canvas-dot), transparent calc(var(--prism-canvas-dot) + var(--prism-stroke)));
+  background-position: calc(var(--prism-canvas-x) - var(--prism-canvas-tile) / 2) calc(var(--prism-canvas-y) - var(--prism-canvas-tile) / 2);
+  background-size: var(--prism-canvas-tile) var(--prism-canvas-tile);
+  /* The grid belongs to the drawing, so it moves with the scrolled content rather than staying under the frame. */
+  background-attachment: local;
+}
+
+/* A canvas the page pans by dragging takes the pointer as a canvas does: a grab cursor, and no text selection. */
+prism-canvas[pannable] {
+  cursor: grab;
+  user-select: none;
 }

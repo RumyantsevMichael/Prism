@@ -5,7 +5,7 @@
       "a required field follows the field it depends on, and the hint names the first empty one": 9,
       "every connected tab of the project receives an applied action as it happens": 2,
       "Attention lists the newest applied actions across initiatives and the checkout's index, with their authors": 6,
-      "an applied action reaches the tabs of every checkout of the workspace, and an index rebuild only its own checkout's": 10,
+      "an applied action reaches the tabs of every checkout of the workspace": 9,
       "the page loads the generic action view": 1
     },
     "test/server/review-action-equal-models.test.mjs": {
@@ -214,7 +214,7 @@
       "clause 38: controls that receive many items or long names stay inside their containers at a narrow width": 1
     },
     "test/server/review-kit-everywhere-browser.test.mjs": {
-      "clause 62: the layout check passes every page, overlay, and the catalog at a phone and a laptop width in both themes": 2,
+      "clause 62: the layout check passes every page, overlay, and the catalog at a phone and a laptop width in the light theme": 2,
       "clauses 7, 8: a further theme given the dark theme's values renders every page exactly as the dark theme does, shadow controls included": 1,
       "clause 7: a theme that flattens the islands gives every island no gap, no radius, and no shadow": 4,
       "clauses 9, 21, 24: comfortable density makes every kit control of the page taller, and reduced motion stills the page": 7,
@@ -247,7 +247,7 @@
     },
     "test/server/review-layout-check.test.mjs": {
       "clause 60: a catalog entry that escapes its container, cuts off a control, or scrolls the page is named with its width and theme": 10,
-      "clause 60: the shipped catalog passes the layout check at a phone and a wide width in both themes": 1,
+      "clause 60: the shipped catalog passes the layout check at a phone and a wide width in the light theme": 1,
       "clause 61: the layout check command prints each catalog problem with its entry, viewport, width, and theme, and fails": 8
     },
     "test/server/review-markdown.test.mjs": {
@@ -333,7 +333,7 @@
       "clause 76: the page bar moves back and forward through visited pages, from its buttons, Alt+arrows, and the browser, and shows a breadcrumb trail": 13,
       "clause 77: above 1100px the sidebar sits beside the page, and at 1100px and below it opens as a drawer from Navigation": 7,
       "clause 78: the command palette opens on Ctrl+K and Meta+K, drives kinded results from its field, previews the active result, and returns focus on Escape": 12,
-      "clauses 66, 67, 68: the sidebar and Who's working show every claim read-only, live ones breathing in the top bar": 11,
+      "clauses 66, 67, 68: the sidebar, the agents button, and the Agents page show every claim read-only, live ones breathing in the top bar": 11,
       "clauses 20, 21, 22: the shell's text and fields reach WCAG AA, glass overlays included, and its surfaces follow the theme": 6,
       "clause 69: the shell names Prism's records by title and kind, never by file name or path": 2,
       "clauses 36, 77, 78: with long names the shell stays inside a phone and a laptop window, and its menus, popovers, and dialogs stay inside the window": 4
@@ -369,7 +369,7 @@
       "every review app stylesheet's braces balance": 4
     },
     "test/server/review-tabs-browser.test.mjs": {
-      "a link opens in the one italic preview tab that the next link replaces, and Ctrl-click, a double click, and Keep keep a tab": 11,
+      "a link opens in the one italic preview tab that the next link replaces, and Ctrl-click, a double click, and Ctrl+Enter keep a tab": 11,
       "Ctrl+Enter in the palette, a double or middle click on a content link, a Ctrl-click on a crumb, and Open as tab open kept tabs": 6,
       "a tab closes from its close button or a middle click, and closing the last one shows that nothing is open": 9,
       "a tab whose file is gone is dimmed and struck through, says so, and its page offers Close tab": 5,
@@ -412,6 +412,9 @@
   "replaced": {
     "test/server/review-shell-browser.test.mjs": {
       "clause 75: the shell is a top bar, one sidebar of trees, the main island with its strip of open documents above its page bar, and a status bar on a canvas": "test/server/review-places-shell-browser.test.mjs"
+    },
+    "test/server/review-appearance-browser.test.mjs": {
+      "clause 25: the status bar ends with an Appearance button whose menu offers the theme, the density, and the catalog": "test/server/review-places-settings-browser.test.mjs"
     }
   }
 }

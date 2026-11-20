@@ -4,6 +4,7 @@ import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { FILES, fakeRuntime, manifestPath, project, settled } from "./fixtures/component-indexes.mjs";
+import { pause } from "./fixtures/wait.mjs";
 
 // Acceptance tests of the initiative-settings-actions contract, clauses 31-33: an index target's rebuild and state are its own component's.
 process.env.PLUGIN_DATA ||= mkdtempSync(path.join(os.tmpdir(), "prism-component-rebuild-data-"));
@@ -92,7 +93,7 @@ test("clause 32: an invalid declaration prepares nothing for a component's rebui
   const { root, storage } = await project(t, { components: ["## Components", "- net: packages/net", "- app: packages/net/app", ""].join("\n") });
   const { runtime, control } = await fakeRuntime(storage);
   await rebuild(root, runtime, NET);
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await pause(50, "no build may start, and a build that does not start leaves nothing to wait for");
   assert.deepEqual(control.builds, []);
 });
 

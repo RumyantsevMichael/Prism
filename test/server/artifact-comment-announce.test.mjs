@@ -70,7 +70,7 @@ test("one comment with another checkout's tab open opens about one comment file 
   const env = { ...process.env, PRISM_REVIEW_APP_DIR: directory };
   const opened = [];
   const openBrowser = (url) => { opened.push(url); return true; };
-  const baseOf = (url) => /^(.*\/p\/[0-9a-f]{16})/.exec(new URL(url).href)[1];
+  const baseOf = (url) => /^(.*\/[pw]\/[0-9a-f]{16})/.exec(new URL(url).href)[1];
   const apiBase = baseOf((await startStandaloneReview({ projectRoot: api, env, openBrowser })).url);
   const headers = await writeHeaders(apiBase, opened.at(-1));
   const webBase = baseOf((await startStandaloneReview({ projectRoot: web, env, openBrowser })).url);

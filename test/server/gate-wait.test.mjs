@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { isolatedEnv } from "./fixtures/isolated-env.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -92,8 +93,10 @@ test("returns the browser answer and sends progress while it waits", async (cont
   const mcp = server(context, root, "claude-code");
   await mcp.ready;
   wait(mcp, 2, root, gateId);
-  await delay(700);
-  assert.ok(mcp.messages.filter((message) => message.method === "notifications/progress" && message.params.progressToken === "wait-2").length >= 2);
+  // The heartbeat is 200 ms, but a busy Windows runner can take far longer to reach the first one, so the test waits for two beats rather than for a fixed time.
+  const beats = () => mcp.messages.filter((message) => message.method === "notifications/progress" && message.params.progressToken === "wait-2").length;
+  for (const deadline = Date.now() + 20000; beats() < 2 && Date.now() < deadline; await delay(50));
+  assert.ok(beats() >= 2, `the wait sent ${beats()} progress notifications`);
   assert.equal(mcp.messages.some((message) => message.id === 2), false);
   await answerUserGate({ projectRoot: root, initiative: INITIATIVE, id: gateId, choice: "fresh-login", note: "Downloads are sensitive." });
   const answered = await mcp.response(2);
@@ -119,7 +122,7 @@ test("ends when the gate is resolved, missing, timed out, or cancelled", async (
   const { revision } = await readCoordinationState({ projectRoot: root, initiative: INITIATIVE });
   await updateCoordinationState({ projectRoot: root, initiative: INITIATIVE, expectedRevision: revision, changes: { gateOperations: [{ op: "resolve", id: gateId, reason: "Answered in the conversation." }] } });
   assert.equal((await mcp.response(5)).result.structuredContent.status, "resolved");
-  await delay(1200);
+  await pause(1200, "the other wait must not answer, and a response that does not come leaves nothing to wait for");
   assert.equal(mcp.messages.some((message) => message.id === 4), false);
 });
 

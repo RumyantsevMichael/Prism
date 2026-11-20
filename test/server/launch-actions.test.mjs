@@ -7,6 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { INITIATIVE, LAUNCH_ID, launchFixture, waitFor } from "./fixtures/launched-sessions.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { actionOf, apply, get, listing, pageSession, startActionReview } from "./fixtures/review-actions.mjs";
 
 // Launch, stop, and resume as review app actions: listed on the initiative and on each launched session, confirmed outside
@@ -17,8 +18,8 @@ process.env.PLUGIN_DATA = privateData;
 delete process.env.CLAUDE_PLUGIN_DATA;
 test.after(() => rm(privateData, { recursive: true, force: true }));
 const posixOnly = process.platform === "win32" ? "the stub hosts and dialogs are POSIX scripts" : false;
-const SETTINGS = ["initiative.autonomy", "initiative.commit", "initiative.push", "initiative.continuation", "initiative.review", "initiative.models"];
-const effect = (label) => `Starts a headless ${label} session on this computer that runs the orchestrate skill for this initiative; you confirm it outside the browser unless you confirmed in the last 30 minutes.`;
+const SETTINGS = ["initiative.host", "initiative.autonomy", "initiative.commit", "initiative.push", "initiative.continuation", "initiative.review", "initiative.models"];
+const EFFECT = "Starts a headless session of this initiative's host on this computer with its settings; you confirm it outside the browser unless you confirmed in the last 30 minutes.";
 
 async function setup(t, options = {}) {
   const fixture = await launchFixture(t, { dialog: { code: 0 }, ...options });
@@ -34,7 +35,17 @@ async function setup(t, options = {}) {
   return { ...fixture, review, base, headers, launches, launchView, settled };
 }
 
-const launch = (s, host = "claude-code", initiative = INITIATIVE) => apply(s.base, { action: `launch.${host}`, target: `initiative:${initiative}`, input: {}, revision: null }, s.headers);
+// The initiative's host setting, written as an agent writes it, so the one launch action runs that host.
+async function useHost(root, host, initiative = INITIATIVE) {
+  const { readCoordinationState, updateCoordinationState } = await import("../../dist/server/workflow/state.mjs");
+  const read = await readCoordinationState({ projectRoot: root, initiative });
+  if (read.state?.settings?.host === host) return;
+  await updateCoordinationState({ projectRoot: root, initiative, expectedRevision: read.exists ? read.revision : null, changes: { settings: { host } } });
+}
+const launch = async (s, host = "claude-code", initiative = INITIATIVE) => {
+  await useHost(s.root, host, initiative);
+  return apply(s.base, { action: "launch.run", target: `initiative:${initiative}`, input: {}, revision: null }, s.headers);
+};
 const history = async (root, initiative = INITIATIVE) => {
   const { readCoordinationState } = await import("../../dist/server/workflow/state.mjs");
   return (await readCoordinationState({ projectRoot: root, initiative })).state?.history ?? [];
@@ -59,24 +70,23 @@ const answer = async (s, gateId, note = "Thirty days.") => {
   return apply(s.base, { action: "gate.answer", target: `gate:${INITIATIVE}/${gateId}`, input: { note }, revision: read.revision }, s.headers);
 };
 
-test("an initiative lists one launch action per host after its settings, and a slice lists none", { skip: posixOnly }, async (t) => {
+test("an initiative lists one launch action after its settings, and a slice lists none", { skip: posixOnly }, async (t) => {
   const s = await setup(t);
   const listed = await listing(s.base, `initiative:${INITIATIVE}`, s.headers);
   assert.equal(listed.status, 200);
-  assert.deepEqual(listed.json.actions.map((action) => action.id), [...SETTINGS, "launch.claude-code", "launch.codex"]);
-  for (const [id, label] of [["launch.claude-code", "Claude Code"], ["launch.codex", "Codex"]]) {
-    assert.deepEqual(actionOf(listed, id), { id, label: `Launch with ${label}`, group: "Launched session", target: `initiative:${INITIATIVE}`, value: null, fields: [], effect: effect(label), context: null, recommended: null, available: true, reason: null, confirm: null, revision: null });
-  }
+  assert.deepEqual(listed.json.actions.map((action) => action.id), [...SETTINGS, "launch.run"]);
+  assert.deepEqual(actionOf(listed, "launch.run"), { id: "launch.run", label: "Launch", group: "Launched session", target: `initiative:${INITIATIVE}`, value: null, fields: [], effect: EFFECT, context: null, recommended: null, available: true, reason: null, confirm: null, revision: null });
   const slice = await listing(s.base, `slice:${INITIATIVE}/${INITIATIVE}`, s.headers);
   assert.deepEqual(slice.json.actions.map((action) => action.id), SETTINGS);
 });
 
-test("a launch action is unavailable with the reason while its host is missing", { skip: posixOnly }, async (t) => {
+test("the launch action is unavailable with the reason while the initiative's host is missing", { skip: posixOnly }, async (t) => {
   const s = await setup(t, { hosts: ["codex"] });
+  assert.equal(actionOf(await listing(s.base, `initiative:${INITIATIVE}`, s.headers), "launch.run").available, true, "with no host chosen the launch runs the host that is found");
+  await useHost(s.root, "claude-code");
   const listed = await listing(s.base, `initiative:${INITIATIVE}`, s.headers);
-  assert.equal(actionOf(listed, "launch.claude-code").available, false);
-  assert.equal(actionOf(listed, "launch.claude-code").reason, "Claude Code was not found: no claude executable on PATH.");
-  assert.equal(actionOf(listed, "launch.codex").available, true);
+  assert.equal(actionOf(listed, "launch.run").available, false);
+  assert.equal(actionOf(listed, "launch.run").reason, "Claude Code was not found: no claude executable on PATH.");
   const refused = await launch(s, "claude-code");
   assert.equal(refused.status, 409);
   assert.equal(refused.json.code, "action_unavailable");
@@ -89,10 +99,10 @@ test("a confirmed launch starts the session, records it in the initiative's hist
   assert.equal(result.status, 200, result.text);
   assert.match(result.json.launch.id, LAUNCH_ID);
   assert.equal(result.json.launch.state, "running");
-  assert.equal(result.json.applied.action, "launch.claude-code");
+  assert.equal(result.json.applied.action, "launch.run");
   assert.equal(result.json.applied.target, `initiative:${INITIATIVE}`);
   assert.equal(result.json.applied.before, null);
-  assert.deepEqual(result.json.applied.after, { launch: result.json.launch.id, host: "claude-code" });
+  assert.deepEqual(result.json.applied.after, { launch: result.json.launch.id, host: "claude-code", coordinator: { provider: null, model: null, effort: null } });
   assert.equal(result.json.applied.via, "review-app");
   assert.equal(s.dialogs().length, 1, "the first launch asks outside the page");
   assert.ok(s.dialogs()[0].argv.includes("--default-cancel"));
@@ -108,7 +118,7 @@ test("a confirmed launch starts the session, records it in the initiative's hist
 
 test("a launch takes no input, and a declined confirmation starts nothing and records nothing", { skip: posixOnly }, async (t) => {
   const s = await setup(t, { dialog: { code: 1 } });
-  const withText = await apply(s.base, { action: "launch.claude-code", target: `initiative:${INITIATIVE}`, input: { prompt: "rm -rf ~" }, revision: null }, s.headers);
+  const withText = await apply(s.base, { action: "launch.run", target: `initiative:${INITIATIVE}`, input: { prompt: "rm -rf ~" }, revision: null }, s.headers);
   assert.equal(withText.status, 400);
   assert.equal(withText.json.code, "invalid_input");
   assert.equal(s.dialogs().length, 0);
@@ -123,20 +133,21 @@ test("a launch takes no input, and a declined confirmation starts nothing and re
 
 test("a tab without a write session cannot launch, and asks nothing", { skip: posixOnly }, async (t) => {
   const s = await setup(t);
-  const refused = await apply(s.base, { action: "launch.claude-code", target: `initiative:${INITIATIVE}`, input: {}, revision: null });
+  const refused = await apply(s.base, { action: "launch.run", target: `initiative:${INITIATIVE}`, input: {}, revision: null });
   assert.equal(refused.status, 403);
   assert.equal(refused.json.code, "write_forbidden");
   assert.equal(s.dialogs().length, 0);
   assert.equal(s.runs().length, 0);
 });
 
-test("while an initiative's session runs, both launch actions are unavailable with the reason", { skip: posixOnly }, async (t) => {
+test("while an initiative's session runs, the launch action is unavailable with the reason on every host", { skip: posixOnly }, async (t) => {
   const s = await setup(t, { plans: { claude: [{ hold: "forever" }] } });
   assert.equal((await launch(s)).status, 200);
-  const listed = await listing(s.base, `initiative:${INITIATIVE}`, s.headers);
-  for (const id of ["launch.claude-code", "launch.codex"]) {
-    assert.equal(actionOf(listed, id).available, false);
-    assert.equal(actionOf(listed, id).reason, `A launched session of ${INITIATIVE} is running on this machine.`);
+  for (const host of ["claude-code", "codex"]) {
+    await useHost(s.root, host);
+    const listed = await listing(s.base, `initiative:${INITIATIVE}`, s.headers);
+    assert.equal(actionOf(listed, "launch.run").available, false);
+    assert.equal(actionOf(listed, "launch.run").reason, `A launched session of ${INITIATIVE} is running on this machine.`);
   }
   const again = await launch(s, "codex");
   assert.equal(again.status, 409);
@@ -157,7 +168,7 @@ test("a launched session's page lists stop and resume, and a stop is recorded an
   assert.equal(stopped.json.launch.state, "stopped");
   assert.equal(stopped.json.applied.target, `launch:${id}`);
   assert.equal(stopped.json.applied.after, "stopped");
-  assert.deepEqual((await history(s.root)).map((entry) => entry.action), ["launch.claude-code", "launch.stop"]);
+  assert.deepEqual((await history(s.root)).map((entry) => entry.action), ["launch.run", "launch.stop"]);
   const after = await listing(s.base, `launch:${id}`, s.headers);
   assert.equal(actionOf(after, "launch.stop").available, false);
   assert.equal(actionOf(after, "launch.stop").reason, "The session is not running.");
@@ -181,7 +192,7 @@ test("a session whose initiative shipped while it runs stays stoppable, records 
   assert.equal(stopped.status, 200, stopped.text);
   assert.equal(stopped.json.launch.state, "stopped");
   assert.ok(stopped.json.applied && Array.isArray(stopped.json.actions));
-  assert.deepEqual((await history(s.root)).map((entry) => entry.action), ["launch.claude-code"]);
+  assert.deepEqual((await history(s.root)).map((entry) => entry.action), ["launch.run"]);
   const after = await listing(s.base, `launch:${id}`, s.headers);
   assert.equal(actionOf(after, "launch.resume").available, false);
   assert.equal(actionOf(after, "launch.resume").reason, `The initiative shipped on ${at.slice(0, 10)}, so its state is history.`);
@@ -245,7 +256,7 @@ test("an answer given while the session runs reaches it there, and resumes it on
   assert.deepEqual(answered.json.launch, { id, resumed: false, reason: "The session is running and receives the answer there." });
   await waitFor(() => s.runs("claude").length === 2, { what: "the one resume after the run ended" });
   await s.settled(id, ["finished"]);
-  await new Promise((resolve) => setTimeout(resolve, 800));
+  await pause(800, "no second resume may follow, and a change that must not happen leaves nothing to wait for");
   assert.equal(s.runs("claude").length, 2, "one answer causes at most one resume");
 });
 
@@ -274,7 +285,7 @@ test("an answer that arrives from another machine through the store waits for a 
   assert.equal(view.answerWaits, true);
   assert.equal(view.state, "finished");
   assert.equal(view.reason, "An answer given on another machine waits; resume this session here to continue.");
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  await pause(500, "no resume may follow, and a change that must not happen leaves nothing to wait for");
   assert.equal(s.runs("claude").length, 1, "nothing resumes on an answer from another machine");
 });
 
@@ -298,7 +309,7 @@ test("the launch list is readable without a write session", { skip: posixOnly },
   assert.equal(read.status, 200);
   const [view] = read.json.launches;
   assert.equal(view.id, id);
-  assert.deepEqual(Object.keys(view).sort(), ["answerWaits", "checkout", "exit", "host", "hostLabel", "id", "initiative", "launchedAt", "reason", "resumeCommand", "runningMs", "runs", "state"]);
+  assert.deepEqual(Object.keys(view).sort(), ["answerWaits", "checkout", "endedAt", "exit", "holder", "host", "hostLabel", "id", "initiative", "launchedAt", "model", "reason", "resumeCommand", "runningMs", "runs", "state", "waitingGate"]);
 });
 
 test("no Prism tool lets an agent launch, resume, or stop a session", async (t) => {

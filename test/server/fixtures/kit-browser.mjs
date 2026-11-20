@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CHROMIUM_OPTIONS } from "../../../scripts/review-demo/layout-audit.mjs";
 import { defer } from "./teardown.mjs";
+import { repainted, WAIT_MS } from "./wait.mjs";
 
 export const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
@@ -110,12 +111,12 @@ export async function settle(page) {
   await page.waitForLoadState("load");
   await page.evaluate(() => document.fonts.ready);
   await page.waitForFunction(() => document.querySelector("#artifact")?.getAttribute("aria-busy") !== "true", null, { timeout: 10000 }).catch(() => {});
-  await page.waitForTimeout(400);
+  await repainted(page);
 }
 
 export async function waitForView(page) {
-  await page.waitForFunction(() => document.querySelector("#artifact")?.getAttribute("aria-busy") === "false", null, { timeout: 10000 });
-  await page.waitForTimeout(200);
+  await page.waitForFunction(() => document.querySelector("#artifact")?.getAttribute("aria-busy") === "false", null, { timeout: WAIT_MS });
+  await repainted(page);
 }
 
 export function reviewUrl(base, ref) {
@@ -126,11 +127,11 @@ export function reviewUrl(base, ref) {
  * Writes a claim record for a slice of a project, as a Prism server writes one: live for `minutesLeft`, or lapsed `minutesLeft` minutes ago when it is negative.
  * Write it before the project's review server starts, since the server caches what it read.
  */
-export async function writeClaim(projectRoot, initiative, slug, { label = "Claude on build-2", host = null, activity = "implementation", minutesLeft = 41, minutesClaimed = 20 } = {}) {
+export async function writeClaim(projectRoot, initiative, slug, { label = "Claude on build-2", host = null, model = null, holder = null, activity = "implementation", minutesLeft = 41, minutesClaimed = 20 } = {}) {
   const { mkdir, writeFile } = await import("node:fs/promises");
   const now = Date.now();
   const at = (minutes) => new Date(now + minutes * 60000).toISOString();
-  const claim = { schemaVersion: 1, slug, holder: `session-${slug.replace(/[^a-z0-9]/g, "").padEnd(16, "0").slice(0, 16)}`, label, ...(host ? { host } : {}), activity, claimedAt: at(-minutesClaimed), renewedAt: at(minutesLeft - 30), expiresAt: at(minutesLeft), nonce: "0123456789abcdef01234567" };
+  const claim = { schemaVersion: 1, slug, holder: holder ?? `session-${slug.replace(/[^a-z0-9]/g, "").padEnd(16, "0").slice(0, 16)}`, label, ...(host ? { host } : {}), ...(model ? { model } : {}), activity, claimedAt: at(-minutesClaimed), renewedAt: at(minutesLeft - 30), expiresAt: at(minutesLeft), nonce: "0123456789abcdef01234567" };
   const folder = path.join(projectRoot, ".prism", "initiatives", initiative, "claims");
   await mkdir(folder, { recursive: true });
   await writeFile(path.join(folder, `${slug}.json`), `${JSON.stringify(claim, null, 2)}\n`);
@@ -205,6 +206,13 @@ const disabled = (element) => {
   }
   return false;
 };
+// Whether one of the element's border sides or its fill reaches 3:1 against what surrounds it.
+const bounded = (node) => {
+  const style = getComputedStyle(node);
+  const around = parentOf(node) ?? document.documentElement;
+  const sides = ["Top", "Right", "Bottom", "Left"].filter((side) => parseFloat(style["border" + side + "Width"]) > 0 && style["border" + side + "Style"] !== "none" && rgba(style["border" + side + "Color"])[3] > 0);
+  return worst(rgba(style.backgroundColor), around) >= 3 || sides.some((side) => worst(rgba(style["border" + side + "Color"]), around) >= 3);
+};
 const FIELD_OR_CHOICE = "input:not([type=hidden]):not([type=button]):not([type=submit]):not([type=reset]), select, textarea, [role=textbox], [role=searchbox], [role=combobox], [role=radio], [role=checkbox], [role=switch], [data-indicator]";
 `;
 
@@ -240,11 +248,10 @@ export function boundaryFailures(page, selector = "body") {
       for (const scope of document.querySelectorAll(selector)) {
         for (const node of walk(scope)) {
           if (node.nodeType !== Node.ELEMENT_NODE || !node.matches(FIELD_OR_CHOICE) || node.closest("svg") || !visible(node) || disabled(node)) continue;
-          const style = getComputedStyle(node);
-          const around = parentOf(node) ?? document.documentElement;
-          const sides = ["Top", "Right", "Bottom", "Left"].filter((side) => parseFloat(style["border" + side + "Width"]) > 0 && style["border" + side + "Style"] !== "none" && rgba(style["border" + side + "Color"])[3] > 0);
-          const passes = worst(rgba(style.backgroundColor), around) >= 3 || sides.some((side) => worst(rgba(style["border" + side + "Color"]), around) >= 3);
-          if (!passes) failures.push(describe(node));
+          // An option of a segmented switch that is not chosen is told apart by its text inside the switch's own boundary, as WCAG 1.4.11 allows, so the switch's boundary stands for it.
+          const group = node.getAttribute("role") === "radio" && node.getAttribute("aria-checked") !== "true" ? node.closest("[role=radiogroup]") : null;
+          if (group?.tagName === "PRISM-SEGMENTED" && bounded(group)) continue;
+          if (!bounded(node)) failures.push(describe(node));
         }
       }
       return [...new Set(failures)];
@@ -325,6 +332,15 @@ export function movingElements(page, selector = "body") {
 export function escapes(page, selector = "body") {
   return page.evaluate(([code, selector]) => {
     const read = new Function("selector", `${code}
+      // Text cut with an ellipsis can end an inline parent's box before the text inside it, which the clipping ancestor hides, so that is no escape.
+      const cutByEllipsis = (node, box) => {
+        if (getComputedStyle(parentOf(node)).display !== "inline") return false;
+        for (let clip = parentOf(node); clip && clip !== document.body; clip = parentOf(clip)) {
+          const style = getComputedStyle(clip);
+          if (style.overflowX !== "visible") return style.textOverflow === "ellipsis" && box.right <= clip.getBoundingClientRect().right + 2;
+        }
+        return false;
+      };
       const out = [];
       const root = document.documentElement;
       if (root.scrollWidth > root.clientWidth + 1) out.push("the window scrolls horizontally");
@@ -337,7 +353,11 @@ export function escapes(page, selector = "body") {
           if (!parent || parent === document.body || getComputedStyle(parent).overflowX !== "visible") continue;
           const box = node.getBoundingClientRect();
           const limit = parent.getBoundingClientRect();
-          if (box.width && box.right > limit.right + 2 && box.left < limit.right) out.push(describe(node) + " overflows " + describe(parent));
+          if (!box.width || box.right <= limit.right + 2 || box.left >= limit.right || cutByEllipsis(node, box)) continue;
+          // A failure names the text, both right edges, and the custom element around it, so a failure seen only in CI can be read from its log.
+          let host = node;
+          while (host.parentElement && !host.localName.includes("-")) host = host.parentElement;
+          out.push(describe(node) + " overflows " + describe(parent) + " (" + JSON.stringify(node.textContent.trim().slice(0, 60)) + " ends at " + Math.round(box.right) + " past " + Math.round(limit.right) + ", displays " + style.display + " in " + getComputedStyle(parent).display + ", in " + host.outerHTML.slice(0, 900) + ")");
         }
       }
       return [...new Set(out)];

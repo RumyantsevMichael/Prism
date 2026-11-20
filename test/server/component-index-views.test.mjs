@@ -4,6 +4,7 @@ import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { FILES, fakeRuntime, manifestPath, project, settled } from "./fixtures/component-indexes.mjs";
+import { pause } from "./fixtures/wait.mjs";
 
 // Acceptance tests of components.md §20-§22 for the component-indexes contract, clauses 1 and 25-29 for background preparation and the review browser.
 process.env.PLUGIN_DATA ||= mkdtempSync(path.join(os.tmpdir(), "prism-component-views-data-"));
@@ -17,7 +18,8 @@ const { gitFingerprint } = await import("../../dist/server/repository-intelligen
 const ROOT_FILES = [".prism/workflow.md", "README.md"];
 const NET_FILES = ["packages/net/retry.ts", "packages/net/timeout.ts"];
 const APP_FILES = ["packages/app/client.ts"];
-const search = (root, runtime, input = {}, waitMs = 2000) => searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...input }, { runtime, waitMs });
+// A search answers as soon as its components are ready, so the default bound only tells a slow runner from a build that never finishes.
+const search = (root, runtime, input = {}, waitMs = 30000) => searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...input }, { runtime, waitMs });
 const available = async () => true;
 const changed = (file) => `${FILES[file]}// changed\n`;
 
@@ -39,7 +41,7 @@ test("clause 25: background preparation and rebuild prepare nothing for an inval
   const { runtime, control } = await fakeRuntime(storage);
   await startBackgroundPreparation(root, { runtime, available });
   await startIndexRebuild(root, { runtime, available });
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await pause(50, "no build may start, and a build that does not start leaves nothing to wait for");
   assert.deepEqual(control.builds, []);
 });
 

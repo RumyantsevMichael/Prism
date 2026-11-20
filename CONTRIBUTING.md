@@ -18,7 +18,7 @@ A change to Markdown changes agent behavior at task time.
 skills/
   <name>/SKILL.md    # one directory per skill; the directory name is the skill name
 src/                 # editable server, native helper, and hook sources
-  server/            # mcp.mjs, cli.mjs, review-app.mjs, plugin-root.mjs, and one directory per domain
+  server/            # the mcp, cli, review-app, and plugin-root modules, and one directory per domain
     workflow/        # coordination state, artifact storage, decision history
     review/          # review server, review ledger, browser assets in public/
     conservation/    # change map and conservation analysis
@@ -28,6 +28,7 @@ src/                 # editable server, native helper, and hook sources
   hooks/             # session hook entry points
 dist/                # generated runtime and browser assets, same layout as src/; built, not committed
 test/                # server and native helper tests
+docs/                # user guide, feature files, and the Skill Definition Markdown standard
 vendor/plantuml/     # pinned MIT PlantUML browser runtime
 bin/                 # MCP and standalone review launchers
 .claude-mcp.json     # Claude MCP server definition
@@ -41,6 +42,15 @@ Putting a shared component inside either manifest directory breaks one or both p
 Do not name the Claude MCP definition `.mcp.json`.
 Claude Code also reads a root `.mcp.json` as project config when a session runs in this repository.
 That project server has no `${CLAUDE_PLUGIN_ROOT}` value, so it fails to start.
+
+### Requirements, ADRs, and plans
+
+Prism's own requirements, ADRs, plans, and roadmap view live in the record store that `.prism/workflow.md` names, not in this repository.
+Agents read and change them with the `get_artifact` and `update_artifact` tools, by their path in the project such as `docs/ADRs/orchestration/components.md`, and the review browser shows them.
+Do not add files under `docs/requirements/`, `docs/ADRs/`, or `docs/plans/` by hand: the next Prism tool call moves them into the store.
+Two kinds of files stay in the repository because tests read them:
+- `docs/plans/review-app-places/kept-tests.json` is a frozen test of an accepted design, and frozen tests stay in the checkout.
+- The approved UI mockups that the comparison scripts and their tests read live in `scripts/review-demo/mockups/`, and the store keeps the copy each design gate approved.
 
 ## Local development
 
@@ -118,9 +128,9 @@ npx playwright install chromium
 PRISM_REQUIRE_BROWSER=1 npm test
 ```
 
-CI splits the server tests into four shards on Linux and four on Windows, each on its own runner, so the browser tests do not hold one runner for half an hour.
+CI splits the server tests into four shards on Linux and eight on Windows, each on its own runner, so the browser and Git tests do not hold one runner for half an hour or more.
 A Windows shard runs two test files at a time with `--test-concurrency=2`, because three browser test files at once on one Windows runner fail with `net::ERR_NO_BUFFER_SPACE`.
-`scripts/test-shard.mjs` balances the shards by the file durations in `test/server/durations.json`, and the `validate` and `windows` checks pass only when every shard passed.
+`scripts/test-shard.mjs` balances the shards by recorded file durations, from `test/server/durations.win32.json` on Windows and `test/server/durations.json` elsewhere, and the `validate` and `windows` checks pass only when every shard passed.
 When Validate fails on main, the `Report main failures` workflow comments on the open issue labelled `ci-main-failure` with each failed test and its error, and opens that issue when none is open.
 Close that issue once main is stable again.
 A test file that the durations do not list counts as a median file, so a new file needs no update to run.
@@ -131,11 +141,25 @@ PRISM_REQUIRE_BROWSER=1 node scripts/test-shard.mjs --shard 2/4 -- --test-timeou
 node scripts/test-shard.mjs --shard 2/4 --list
 ```
 
-When a shard runs much longer than the others, record the durations again with a full run and commit the rewritten file:
+When a shard runs much longer than the others, record the durations again with a full run on that system and commit the rewritten file.
+The run writes the table of the system it runs on: run the first command on Linux, and the second on Windows, with the concurrency that CI uses there.
 
 ```bash
 PRISM_REQUIRE_BROWSER=1 node scripts/test-shard.mjs --record
+PRISM_REQUIRE_BROWSER=1 node scripts/test-shard.mjs --record -- --test-concurrency=2
 ```
+
+### Waiting in tests
+
+A test waits for the event or state it checks, never for a fixed time, because a CI runner, a Windows one above all, can be several times slower than a developer machine and uneven from one run to the next.
+`test/server/fixtures/wait.mjs` holds the helpers:
+
+- `settled(read, expected)` reads until the value is the expected one, or a predicate accepts it, and returns the last reading after a generous ceiling, so the test's own assertion reports a real failure.
+- `repainted(page)` waits for the page's fonts, its finite animations, and two drawn frames, after the test mounts or changes markup.
+- `pause(ms, reason)` is the only fixed pause, for a check that something does not happen or a time the test itself is about, and its reason says why nothing can be awaited.
+
+Prefer an event the code already gives, such as a locator's `waitFor`, a response, or a pushed event, and add one to the code where that is cheap.
+`npm run check:test-waits` fails on `waitForTimeout` and on a fixed sleep directly followed by an assertion, and the `checks` job runs it.
 
 ### Review app design values
 
@@ -148,15 +172,15 @@ To change a shade, change it in both themes when both need it, and keep the cont
 The fonts, Geist and Geist Mono under the SIL Open Font License, ship in `kit/fonts/` and load from the review app, never from another host.
 The review app stores the user's theme and density in `review-preferences.json` in the review app folder, so the choice survives a restart on another port.
 
-The kit's elements live in `src/server/review/public/kit/elements/`, one `prism-<name>.js` per element, and `kit/kit.js` lists them in `KIT_ELEMENTS` and defines them.
+The kit's elements live in `src/server/review/public/kit/elements/`, one `prism-<name>.ts` per element, and `kit/kit.ts` lists them in `KIT_ELEMENTS` and defines them.
 An element that renders in shadow DOM names its stylesheets in a static `styles` list, such as `prism-button.css` beside it, and the kit fetches each one once and adopts it in every shadow root.
 An element that renders in light DOM is styled in `kit/kit.css`.
 The review page loads `kit/tokens.css`, `kit/kit.css`, and then one stylesheet per area under `styles/`: `shell.css` for the shell and its panels, `actions.css` for action lists such as Initiative settings, `workflow-views.css` for the workflow screens, and `record-views.css` for records, documents, and diagrams.
 A screen's own rules go in its area stylesheet, read only tokens, and lay out kit elements rather than restyle them.
 Each element class also carries a static `tag` and a static `catalog` of its purpose, options, states, and keys.
-The component catalog at `<review URL>/kit/catalog` shows one entry per element from that `catalog`, with a live specimen per state from `SPECIMENS` in `kit/catalog.js`, plus long text and an unbroken name.
+The component catalog at `<review URL>/kit/catalog` shows one entry per element from that `catalog`, with a live specimen per state from `SPECIMENS` in `kit/catalog.ts`, plus long text and an unbroken name.
 To add an element, add its file, list it in `KIT_ELEMENTS`, and add its specimens to `SPECIMENS`.
-The review page's **Appearance** button, at the end of the status bar, links to the catalog.
+The **About Prism** section of the review page's **Settings**, which the gear at the start of the status bar opens, links to the catalog.
 
 The kit guard names each raw design value and each control styled or written around the kit:
 
@@ -165,7 +189,7 @@ node scripts/review-kit/kit-guard.mjs
 ```
 
 It checks every stylesheet, script, and page under `src/server/review/public/` and prints `<file>:<line>: <rule> <value>` for each finding.
-The `raw-value` rule names a color, size, layer, or time literal outside `kit/tokens.css` and `kit/plantuml-defaults.js`.
+The `raw-value` rule names a color, size, layer, or time literal outside `kit/tokens.css` and `kit/plantuml-defaults.ts`.
 The `control-style` rule names a stylesheet selector outside `kit/` that styles a native control, a control role, a `prism-` element, or a class named like a control.
 The `native-control` rule names a native control, a control role, or a `title` attribute written in a script or page outside `kit/`, also when a script sets the role or the title from code.
 Every screen is on the kit, so the guard finds nothing, and `test/server/review-kit-everywhere.test.mjs` fails on any new finding.
@@ -202,7 +226,12 @@ It fails on content that escapes its container, a page that scrolls the whole wi
 It also checks the component catalog of the empty project at each viewport and theme, and prints each catalog problem as `catalog <entry>: <problem> at <viewport> (<width>px), <theme>`.
 `--catalog <url>` checks only the catalog at that URL.
 `--viewports`, `--themes`, and `--screenshots <directory>` widen the run or keep screenshots for a visual pass.
-Playwright is not a repository dependency, so the check uses an installed copy and is not part of CI.
+Playwright is not a repository dependency, so the check uses an installed copy.
+Run it with `--themes light,dark` before you finish a UI change.
+
+CI runs the layout check and the places comparison in the light theme only, and compares only the places' colors in the dark theme, at 1440 pixels.
+The dark theme changes only colors and shadows, which `test/server/review-kit-tokens.test.mjs` holds, so its layout is the light theme's, and the contrast tests check its colors.
+The person or agent who changes a screen still checks it in both themes, as the [verify-ui skill](.claude/skills/verify-ui/SKILL.md) describes.
 
 A change to a screen that the UI kit mockup shows is done only when the rendered screen matches the mockup, so compare them side by side:
 
@@ -210,12 +239,12 @@ A change to a screen that the UI kit mockup shows is done only when the rendered
 node scripts/review-demo/mockup-compare.mjs --out /tmp/mockup-compare
 ```
 
-It puts the demo app into the state of each mockup scene (Attention with a gate and the Appearance menu, the roadmap with Who's working, a slice with its diagram beside it, the command palette, and the navigation drawer) and writes one picture per scene, width, theme, and density, the mockup on the left and the app on the right, with an `index.html` that shows them in pairs.
+It puts the demo app into the state of each mockup scene (Attention with a gate and Settings open, a slice with its diagram beside it, the command palette, the navigation drawer, and, beside the approved pictures of their mockups in `scripts/review-demo/mockups/agent-activity/`, the roadmap with the agents menu open, the closed phone top bar, and the Agents page) and writes one picture per scene, width, theme, and density, the mockup on the left and the app on the right, with an `index.html` that shows them in pairs.
 `--scenes`, `--widths`, `--themes`, and `--densities` narrow the run.
 Read every pair: the layout check finds broken layouts, but only this comparison shows a screen that works and still looks nothing like the design.
 Differences that come from the demo's data, or from mockup content that is deliberately out of scope, are expected; name them in the pull request.
 
-The places mockup in `docs/plans/review-app-places/mockup/mockup.html` has its own comparison, which measures each scene instead of only picturing it:
+The places mockup in `scripts/review-demo/mockups/review-app-places/mockup.html` has its own comparison, which measures each scene instead of only picturing it:
 
 ```bash
 node scripts/review-demo/places-compare.mjs --out /tmp/places-compare
@@ -227,18 +256,21 @@ An outline reads the rail, the place head, the sidebar's groups with their fixed
 A geometry value that differs by more than 2 pixels is a difference, and so is any other value that differs, except that the app may leave out a sidebar group that the mockup marks `data-optional`.
 `--scenes`, `--widths`, `--themes`, and `--parts` narrow the run to comma-separated values, `--mockup <file>` reads another mockup, and `--app-mockup <file>` renders that mockup in place of the app, so the comparison can check itself.
 It exits 0 when no pair differs, 1 when one does, after printing each difference, and 2 with a message for a missing `--out`, an unknown scene, part, width, or theme, an unreadable mockup, or no Playwright.
-A slice that changes a screen that a scene shows is done only when its frozen tests run this comparison for its scenes and parts at 390, 820, and 1440 pixels in both themes, it passes, and the implementer has looked at every pair it wrote and names in the pull request each difference that the outline does not measure.
+A slice that changes a screen that a scene shows is done only when its frozen tests run this comparison for its scenes and parts at 390, 820, and 1440 pixels, it passes, and the implementer has run it in both themes, looked at every pair it wrote, and names in the pull request each difference that the outline does not measure.
 
 With both manifests present the CLI validates the marketplace one.
 To validate `plugin.json` in isolation, copy the plugin into a scratch directory without `marketplace.json` and validate that.
 
 ## Native semantic runtime
 
-The new native subsystem uses strict TypeScript in `.mts` files.
-Older server modules remain JavaScript, and newer modules such as the conservation store also use `.mts`.
+Server, hook, and native runtime modules use strict TypeScript in `.mts` files, which the build compiles to `.mjs` files of the same name under `dist/`.
+Review app browser modules use strict TypeScript in `.ts` files, which the build compiles to `.js` files of the same name, with no syntax lowered.
+Every module under `src/` is TypeScript, apart from installed packages and the stubs that stand in for them, and `test/server/typescript-sources.test.mjs` fails on a new JavaScript source.
+The build checks that every TypeScript module type-checks before it writes anything, with the settings in `tsconfig.native.json`.
+Tests and scripts import the built module under `dist/`, never a source under `src/`, because a TypeScript source has no runnable file there, and the same test fails on an import from `src/`.
 Shared source unit, index, and worker message types live in `src/server/repository-intelligence/repository-unit-types.mts`.
 Edit runtime sources under `src/`, then regenerate the complete runtime tree under `dist/`.
-The build compiles TypeScript and copies handwritten JavaScript, browser assets, and runtime registries.
+The build compiles TypeScript and copies the remaining JavaScript, browser assets, and runtime registries.
 `dist/` is ignored, so commit only the sources.
 CI builds `dist/` in every job that runs the plugin, and each release package ships the generated JavaScript, so users do not need a TypeScript compiler.
 

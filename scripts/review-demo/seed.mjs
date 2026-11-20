@@ -1,6 +1,9 @@
 // Build a demo project whose JSON artifacts come from the real Prism MCP tools, for trying the review browser views.
-// Usage: node scripts/review-demo/seed.mjs [project-directory]
+// Usage: node scripts/review-demo/seed.mjs [project-directory] [--agents <review app folder>]
+// With --agents it also writes agents at work: claims with their harnesses and models, and sessions launched on this computer,
+// whose records it keeps in the launches folder of that review app folder, for the Agents page.
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { ROOT, prepareProject, startTools } from "./project.mjs";
@@ -8,7 +11,11 @@ import { appendRecord } from "../../dist/server/workflow/record-store.mjs";
 import { runRecord, segment } from "../../test/server/fixtures/run-records.mjs";
 
 const examples = JSON.parse(await readFile(path.join(ROOT, "test/server/fixtures/change-map.json"), "utf8"));
-const { realRoot, dataDir, write } = await prepareProject(process.argv[2], "prism-review-demo-");
+const args = process.argv.slice(2);
+const agentsAt = args.indexOf("--agents");
+const agentsFolder = agentsAt >= 0 ? path.resolve(args[agentsAt + 1] ?? "") : null;
+if (agentsAt >= 0) args.splice(agentsAt, 2);
+const { realRoot, dataDir, write } = await prepareProject(args[0], "prism-review-demo-");
 // The project is a Git repository, as a real one is, so the review browser lists its source files.
 execFileSync("git", ["init", "--quiet"], { cwd: realRoot, stdio: "ignore" });
 
@@ -29,7 +36,7 @@ await write("docs/requirements/reports.md", "# Activity reports\n\nStatus: Appro
 await write("docs/requirements/search.md", "# Search indexing\n\nStatus: Draft\nCreated: 2026-10-01\nApproved: n/a\n\n## Problem\n\nActivity cannot be found by its text.\n\n## Goals\n\n- Find activity by any word in it.\n\n## Non-goals\n\n- Searching attachments.\n\n## Design questions\n\n- n/a\n\n<a id=\"1\"></a>\n## 1. Index activity\n\nPattern: Ubiquitous\n\nDisposition: Active\n\nRequirement: The system shall index activity for full-text search.\n\nRationale: Search reads the index rather than every record.\n\nRelated: n/a\n");
 await write("docs/requirements/audit-log.md", "# Audit log\n\nStatus: Approved\nCreated: 2026-08-01\nApproved: 2026-08-02\n\n## Problem\n\nAdministrative actions leave no trace.\n\n## Goals\n\n- Review every administrative action later.\n\n## Non-goals\n\n- Recording read-only actions.\n\n## Design questions\n\n- n/a\n\n<a id=\"1\"></a>\n## 1. Record administrative actions\n\nPattern: Ubiquitous\n\nDisposition: Active\n\nRequirement: The system shall record every administrative action.\n\nRationale: Compliance reviews read the record of who changed what.\n\nRelated: n/a\n");
 await write("docs/ADRs/retries/total-retry-deadline.md", "# Bound retries by a total deadline\n\nStatus: Proposed\nCreated: 2026-09-20\n\n## Requirements\n\n- [retries.md\u00a71](../../requirements/retries.md#1)\n\n## Problem\n\nRetries without a bound can hold a connection forever.\n\n## Decision\n\nEvery retry sequence MUST stop when its total deadline elapses.\n\n## Rationale\n\nA total deadline bounds the time a request holds a connection.\n\n## Alternatives\n\nA fixed number of retries was rejected because retries vary in length.\n\n## Consequences\n\nA slow retry leaves less time for the rest of the sequence.\n\n## Mechanism\n\nThe client starts a deadline timer with the first request.\n\n## Decision Log\n\nn/a\n");
-await write("docs/ADRs/reporting/signed-exports.md", "# Sign exported reports\n\nStatus: Accepted\nCreated: 2026-09-11\n\n## Requirements\n\n- [reports.md\u00a71](../../requirements/reports.md#1)\n\n## Problem\n\nA reader cannot tell whether an exported report was changed.\n\n## Decision\n\nExported reports MUST carry a detached signature.\n\n## Rationale\n\nA detached signature leaves the report readable by any tool.\n\n## Alternatives\n\nAn embedded signature was rejected because it changes the report's layout.\n\n## Consequences\n\nEvery export also writes a signature file.\n\n## Mechanism\n\nThe export signs the report's bytes with the service key.\n\n## Decision Log\n\nn/a\n");
+await write("docs/ADRs/reporting/signed-exports.md", "# Sign exported reports\n\nStatus: Accepted\nCreated: 2026-09-11\nSupersedes: [Export reports as CSV only](csv-only-exports.md)\n\n## Requirements\n\n- [reports.md\u00a71](../../requirements/reports.md#1)\n- [reports.md\u00a72](../../requirements/reports.md#2)\n\n## Problem\n\nA reader cannot tell whether an exported report was changed.\n\n## Decision\n\nExported reports MUST carry a detached signature.\n\n## Rationale\n\nA detached signature leaves the report readable by any tool.\n\n## Alternatives\n\nAn embedded signature was rejected because it changes the report's layout.\n\n## Consequences\n\nEvery export also writes a signature file.\n\n## Mechanism\n\nThe export signs the report's bytes with the service key.\n\n## Decision Log\n\nn/a\n");
 await write("docs/ADRs/reporting/csv-only-exports.md", "# Export reports as CSV only\n\nStatus: Superseded by [Sign exported reports](signed-exports.md)\nCreated: 2026-07-01\n\n## Requirements\n\nn/a\n\n## Problem\n\nReports needed one format that every tool reads.\n\n## Decision\n\nReports were CSV only.\n\n## Rationale\n\nCSV opens in every spreadsheet.\n\n## Alternatives\n\nPDF was rejected because it cannot be filtered.\n\n## Consequences\n\nReport signatures replaced this decision.\n\n## Mechanism\n\nThe export wrote one CSV file.\n\n## Decision Log\n\nn/a\n");
 await write("docs/Glossary.md", "# Glossary\n\nTerms used by the payments API team.\n\n<a id=\"retry-deadline\"></a>\n## Retry deadline\n\nThe total time a request may spend across all retry attempts.\n\nSource: [retries.md\u00a71](requirements/retries.md#1)\n\n<a id=\"attempt-timeout\"></a>\n## Attempt timeout\n\nThe time one attempt may take before it counts as failed.\n\nSource: [retries.md\u00a72](requirements/retries.md#2)\n\n<a id=\"signed-report\"></a>\n## Signed report\n\nAn exported activity report with a detached signature.\n\nSource: [reports.md\u00a71](requirements/reports.md#1)\n");
 // An old note that predates the formats and that no initiative cites shows a format finding on Attention.
@@ -38,8 +45,8 @@ await write("docs/requirements/old-notes.md", "# Old notes\n\nThe client retries
 const unprobed = { kind: "unfrozen", settledBy: "timeout-retries", assumption: "the HTTP client reports a dropped connection apart from a timeout" };
 await write("docs/plans/retry-hardening/slice.md", `# Harden request retries\n\n## Assumptions\n- Unprobed: ${unprobed.assumption}; until timeout retries land, an unknown error is final.\n`);
 await write("docs/plans/retry-hardening/retry-observability/slice.md", "# Observe retry behavior\n\n## Assumptions\n- Unprobed: the metrics backend accepts one series per retry outcome; the dashboard waits for the metrics slice.\n");
-await write("docs/plans/activity-reports/slice.md", "# Export activity reports\n\n## Assumptions\n- Unprobed: the identity service returns report permissions in one call; downloads wait for authorization.\n");
-await write(`${slice}/slice.md`, "# Retry timed-out requests until a total deadline\n\n## Context\n\nThe existing strategy owns timeout retries, and a total deadline bounds every retry sequence.\nConnection retries stay out of scope until their own slice.\n");
+await write("docs/plans/activity-reports/slice.md", "# Export activity reports\n\n## Assumptions\n- Unprobed: the identity service returns report permissions in one call; downloads wait for authorization.\n\nThe exports follow [the signing decision](../../ADRs/reporting/signed-exports.md).\n");
+await write(`${slice}/slice.md`, "# Retry timed-out requests until a total deadline\n\n## Context\n\nThe existing strategy owns timeout retries, and a total deadline bounds every retry sequence.\nConnection retries stay out of scope until their own slice.\nThe design follows [the deadline decision](../../../ADRs/retries/total-retry-deadline.md).\n\n## Contract\n\n1. A timed-out request retries until the total deadline elapses.\n2. No attempt starts after the total deadline elapses.\n\n## Views\n\n- `timeout-retries.puml` code (§1, §2): Which class owns timeout retries?\n");
 await write(`${slice}/timeout-retries.puml`, "@startuml\nclass RequestRetryStrategy\n@enduml\n");
 
 const { call, close } = startTools(realRoot, dataDir);
@@ -141,7 +148,11 @@ try {
   ] });
 
   const state = await call("update_coordination_state", { projectRoot: realRoot, initiative: "retry-hardening", expectedRevision: null, changes: {
-    settings: { autonomy: "broad", agentFlow: "multi", commit: "on", push: "off", continuation: "stepwise", models: "host defaults" },
+    // The models are kept per host, so switching the Settings host shows each host's own choices.
+    settings: { autonomy: "broad", agentFlow: "multi", commit: "on", push: "off", continuation: "stepwise", host: "claude-code", models: {
+      "claude-code": { coordinator: { model: "fable", effort: "high" }, codeReview: { model: "opus", effort: "high" }, securityReview: { model: "opus", effort: "max" }, gateSummary: { model: "haiku", effort: "low" } },
+      codex: { provider: "openai", coordinator: { model: "gpt-5.5", effort: "medium" } }
+    } },
     activeOperations: [{ op: "start", entry: { slice: "timeout-retries", activity: "review", label: "Design audit", workers: ["independent", "security"], workspace: realRoot, reviewLanes: [{ id: "main", reviewer: "independent" }, { id: "security", reviewer: "security" }] } }]
   } });
   // User gates are recorded exactly as the orchestrator records a question before asking it.
@@ -153,7 +164,7 @@ try {
       { op: "ask", kind: "decision", slice: "connection-retries", question: "The design deletes the only handler that retries dropped connections (finding F2). Approve requirement 2 for this slice now, or drop connection retries until their slice starts?", context: "The connection slice replaces the old socket wrapper. That wrapper also held `retryOnDrop`, the only code that reconnects after a dropped connection, and the new design has no replacement because requirement 2 (retries) is still Draft.\n\nIf retries are dropped, a client that loses Wi-Fi for five seconds sees **Connection lost** and must reload, where today it reconnects silently.", artifacts: [reviewPath, "docs/requirements/retries.md"], recommended: { reason: "Approve requirement 2 now: users rely on silent reconnects today, and adding them back later means reopening this slice's contract." } }
     ]
   } });
-  await call("update_coordination_state", { projectRoot: realRoot, initiative: "activity-reports", expectedRevision: null, changes: {
+  const reportsState = await call("update_coordination_state", { projectRoot: realRoot, initiative: "activity-reports", expectedRevision: null, changes: {
     settings: { autonomy: "conservative", agentFlow: "multi" },
     gateOperations: [{ op: "ask", kind: "decision", slice: "authorize", question: "Should a report download require a fresh login, or is an active session enough?", context: "Reports hold invoice totals and customer addresses. The requirement says downloads need an authorized user but not how recent the sign-in must be.\n\nExample: a user signs in on Monday, leaves the tab open, and downloads a report on Friday.", artifacts: ["docs/requirements/reports.md"], options: [{ id: "fresh-login", label: "Require a fresh login", consequence: "The Friday download asks for the password again; the slice adds a re-authentication step." }, { id: "active-session", label: "Accept the active session", consequence: "The Friday download works at once; the slice reuses the existing session check." }], recommended: { option: "fresh-login", reason: "Reports carry customer data, and a re-authentication step costs one prompt per download." } }]
   } });
@@ -165,8 +176,48 @@ try {
     await applyAction({ projectRoot: realRoot, target, action: id, input: { value }, revision: action.revision });
   }
 
+  if (agentsFolder) await seedAgents(reportsState.openedGates?.[0]?.id ?? null);
+
   // The printed command keeps a real Claude Code or Codex off the review app's PATH, since the demo holds a nonconforming file whose format migration run Prism would launch.
   process.stdout.write(`Demo project: ${realRoot}\nPrivate evidence: ${dataDir}\n\nStart the review browser with:\n  cd ${realRoot} && PATH="$(node ${path.join(ROOT, "scripts/hostless-path.mjs")})" PLUGIN_DATA=${dataDir} ${path.join(ROOT, "bin/prism")} review\n`);
 } finally {
   close();
+}
+
+// Agents at work for the Agents page: claims of other sessions, live and expired, with the harness and model each records, written as a Prism server
+// writes them, and sessions launched on this computer whose runs have ended, so nothing in the demo runs or can be stopped.
+async function seedAgents(waitedGate) {
+  const { createLaunchFolder, prepareLaunchesDirectory, storeLocation, writeGateRecord, writeLaunchRecord } = await import("../../dist/server/session/launch-records.mjs");
+  const env = { ...process.env, PRISM_REVIEW_APP_DIR: agentsFolder };
+  const now = Date.now();
+  const at = (minutes) => new Date(now + minutes * 60000).toISOString();
+  const holderOf = (session) => `session-${createHash("sha256").update(session).digest("hex").slice(0, 16)}`;
+  const claim = (initiative, slug, { label, host = null, model = null, activity = "implementation", minutesLeft, holder = null }) => write(`.prism/initiatives/${initiative}/claims/${slug}.json`, `${JSON.stringify({
+    schemaVersion: 1, slug, holder: holder ?? `session-${createHash("sha256").update(`${initiative}/${slug}`).digest("hex").slice(0, 16)}`, label, ...(host ? { host } : {}), ...(model ? { model } : {}),
+    activity, claimedAt: at(minutesLeft - 60), renewedAt: at(minutesLeft - 30), expiresAt: at(minutesLeft), nonce: "0123456789abcdef01234567"
+  }, null, 2)}\n`);
+  await claim("activity-reports", "download", { label: "Dana on studio-mac", host: "Codex", model: "gpt-5.5", activity: "design", minutesLeft: 22 });
+  await claim("retry-hardening", "timeout-retries", { label: "Michael on mbp", host: "Claude Code", minutesLeft: 30 });
+  await claim("retry-hardening", "retry-metrics", { label: "Sam on ci-runner-04", host: "Claude Code", model: "claude-sonnet-5-5", minutesLeft: 17 });
+  await claim("retry-hardening", "retry-dashboard", { label: "Claude on vm", minutesLeft: 9 });
+  await claim("retry-hardening", "connection-retries", { label: "Michael on work-mac", host: "Claude Code", model: "claude-opus-5", activity: "design", minutesLeft: -120 });
+
+  await prepareLaunchesDirectory(env);
+  const store = await storeLocation(realRoot);
+  const ended = ({ minutesAgo, ran, model, exit = { code: 0, signal: null }, ...rest }) => ({
+    number: 1, cause: "launch", token: createHash("sha256").update(`${minutesAgo}/${model}`).digest("hex").slice(0, 32), supervisorPid: 0, hostPid: 0,
+    startedAt: at(-minutesAgo - ran), heartbeatAt: at(-minutesAgo), outputAt: at(-minutesAgo), model, endedAt: at(-minutesAgo), exit,
+    refusals: [], refusalCount: 0, hostError: null, stderr: null, stopGraceMs: 10000, stopRequestedAt: null, ...rest
+  });
+  const launch = async (number, initiative, host, hostSessionId, run, gates = null) => {
+    const id = `launch-${createHash("sha256").update(`demo-${number}`).digest("hex").slice(0, 16)}`;
+    const folder = await createLaunchFolder(env, id);
+    await writeLaunchRecord(folder, { id, initiative, host, checkout: realRoot, store, createdAt: run.startedAt, hostSessionId, runs: [run] });
+    if (gates) await writeGateRecord(folder, gates);
+  };
+  await launch(1, "search-indexing", "codex", "019a2f4e-5b1c-7d20-9e8f-3a4b5c6d7e8f", ended({ minutesAgo: 4, ran: 0.15, model: "gpt-5.5-codex", exit: { code: 1, signal: null }, hostError: "the model is not offered for this account." }));
+  const waiting = "6b1f0c3e-2d4a-4e5b-8c7d-9e0f1a2b3c4d";
+  await launch(2, "activity-reports", "claude-code", waiting, ended({ minutesAgo: 2, ran: 41, model: "claude-fable-5-2" }), waitedGate ? { marks: [{ gate: waitedGate, at: at(-2) }], answers: [] } : null);
+  await claim("activity-reports", "authorize", { label: "Claude on this computer", host: "Claude Code", model: "claude-fable-5-2", activity: "design", minutesLeft: 26, holder: holderOf(waiting) });
+  await launch(3, "retry-hardening", "claude-code", "a7c9e1f3-5b7d-4f9a-8c2e-4d6f8a0b2c4e", ended({ minutesAgo: 6, ran: 12, model: "claude-opus-5-5", refusals: [{ tool: "Bash", reason: "Denied by auto mode." }], refusalCount: 1 }));
 }

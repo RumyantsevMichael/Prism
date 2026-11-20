@@ -200,10 +200,28 @@ function statementLines(unit: SourceUnit, file: InputFile) {
   return body.filter(line => indentOf(line) === indent && !closing(line) && /[\p{L}\p{N}]/u.test(line)).map(line => ({ text: shorten(line) }));
 }
 
-export function planFragments(units: SourceUnit[], files: Map<string, InputFile>, options: PlanOptions): Fragment[] {
-  const { countTokens, limit = 512, boundaries = wordBoundaries, isCandidate, isStructured } = options;
+// Fragments depend only on their own file's content and units, so a build may reuse a file's fragments from an earlier build of the same units.
+// `get` answers the fragments of each candidate unit of a file, by unit id, when the same units were planned before, and `set` keeps a file's newly planned ones.
+export interface FragmentCache { get(file: string, units: SourceUnit[]): Map<string, Fragment[]> | undefined; set(file: string, units: SourceUnit[], planned: Map<string, Fragment[]>): void }
+
+export function planFragments(units: SourceUnit[], files: Map<string, InputFile>, options: PlanOptions & { cache?: FragmentCache }): Fragment[] {
   const byId = new Map(units.map(unit => [unit.id, unit]));
-  const candidates = units.filter(isCandidate);
+  const candidates = units.filter(options.isCandidate);
+  // A unit's container is always in its own file, so each file is planned on its own, and the fragments keep the order of the candidates.
+  const byFile = new Map<string, SourceUnit[]>();
+  for (const unit of candidates) byFile.set(unit.file, [...(byFile.get(unit.file) || []), unit]);
+  const planned = new Map<string, Fragment[]>();
+  for (const [file, list] of byFile) {
+    const reused = options.cache?.get(file, list);
+    const result = reused ?? planFile(list, byId, files, options);
+    if (!reused) options.cache?.set(file, list, result);
+    for (const [id, fragments] of result) planned.set(id, fragments);
+  }
+  return candidates.flatMap(unit => planned.get(unit.id) ?? []);
+}
+
+function planFile(candidates: SourceUnit[], byId: Map<string, SourceUnit>, files: Map<string, InputFile>, options: PlanOptions): Map<string, Fragment[]> {
+  const { countTokens, limit = 512, boundaries = wordBoundaries, isStructured } = options;
   const children = new Map<string, SourceUnit[]>();
   for (const unit of candidates) if (unit.containerId && byId.has(unit.containerId)) children.set(unit.containerId, [...(children.get(unit.containerId) || []), unit]);
   // A file without complete structure keeps its full text, because its symbols may not cover it.
@@ -218,8 +236,10 @@ export function planFragments(units: SourceUnit[], files: Map<string, InputFile>
     outlines.set(unit.id, result.fragment);
     for (const id of result.included) shown.add(id);
   }
-  const fragments: Fragment[] = [];
+  const planned = new Map<string, Fragment[]>();
   for (const unit of candidates) {
+    const fragments: Fragment[] = [];
+    planned.set(unit.id, fragments);
     const file = files.get(unit.file)!, span = spanOf(unit, file);
     const tokens = countTokens(file.content.slice(span.start, span.end)) - countTokens("");
     if (outlines.has(unit.id)) { fragments.push({ ...outlines.get(unit.id)!, tokens, parts: 0 }); continue; }
@@ -231,5 +251,5 @@ export function planFragments(units: SourceUnit[], files: Map<string, InputFile>
     const summary = statements.length >= 2 ? [outline(unit, file, statements, labels, countTokens, limit, `${unit.id}:outline`).fragment] : [];
     for (const piece of [...summary, ...pieces]) fragments.push({ ...piece, tokens, parts: pieces.length });
   }
-  return fragments;
+  return planned;
 }

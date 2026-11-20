@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { demoProject, launch, openPage, reviewUrl, serveProject, skip, useAppDirectory, waitForView, writeClaim } from "./fixtures/kit-browser.mjs";
+import { pause } from "./fixtures/wait.mjs";
 
 // A link preview stays open while the pointer crosses a neighboring link on its way to the preview, so its button can be reached.
 // A Markdown heading's fold toggle stays inside the box that holds the document, at every width.
@@ -37,7 +38,7 @@ test("a link preview survives the pointer crossing the next link on its way to t
   const steps = 12;
   for (let step = 1; step <= steps; step += 1) {
     await page.mouse.move(pair.x + ((target.x + target.width / 2 - pair.x) * step) / steps, pair.y + ((target.y + target.height / 2 - pair.y) * step) / steps);
-    await page.waitForTimeout(40);
+    await pause(40, "the pointer travels at a person's pace, which the preview's hover intent reads");
   }
   assert.equal(await preview.isVisible(), true, "the preview is still open when the pointer reaches it");
   await button.click();
@@ -101,21 +102,20 @@ for (const width of [360, 768, 1280]) {
   });
 }
 
-test("Who's working and the sidebar name the harness a claim records, and say Agent for a claim that names none", { skip }, async (context) => {
+test("The Agents page and the sidebar name the harness a claim records, and say Agent for a claim that names none", { skip }, async (context) => {
   await useAppDirectory(context);
   const root = await demoProject(context);
   await writeClaim(root, "retry-hardening", "timeout-retries", { label: "Prism Test on build-2", host: "Codex", minutesLeft: 41 });
   await writeClaim(root, "retry-hardening", "retry-metrics", { label: "Prism Test on ci", minutesLeft: 30 });
   const { base } = await serveProject(context, root);
   const browser = await launch(context);
-  const page = await openPage(browser, reviewUrl(base, "attention"), { viewport: { width: 1280, height: 800 } });
+  const page = await openPage(browser, reviewUrl(base, "agents:other"), { viewport: { width: 1280, height: 800 } });
   await waitForView(page);
-  await page.locator("#presence-button").click();
-  const rows = page.locator("#presence .presence-row");
-  await rows.first().waitFor();
-  const kinds = await rows.evaluateAll((items) => Object.fromEntries(items.map((row) => [row.querySelector(".presence-name").textContent, row.querySelector(".presence-kind").textContent])));
-  assert.deepEqual(kinds, { "Prism Test on build-2": "Codex", "Prism Test on ci": "Agent" });
-  await page.keyboard.press("Escape");
+  const rows = page.locator('#artifact [data-agent^="claim:retry-hardening/"]');
+  await rows.nth(1).waitFor();
+  const kinds = await rows.evaluateAll((items) => Object.fromEntries(items.map((row) => [row.querySelector(".prism-lib-title-text > :first-child").textContent.trim(), row.children[1].textContent.trim()])));
+  assert.equal(kinds["Prism Test on build-2"], "Codex");
+  assert.equal(kinds["Prism Test on ci"], "Agent");
   await page.getByRole("navigation", { name: "Places" }).getByRole("button", { name: /^Work/ }).click();
   await page.locator("#sidebar prism-claim").first().waitFor({ state: "attached" });
   const tips = await page.evaluate(() => [...document.querySelectorAll("#sidebar prism-claim")].map((claim) => claim.getAttribute("tip") ?? ""));

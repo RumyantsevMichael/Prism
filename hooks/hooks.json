@@ -6,28 +6,33 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-session-facts.mjs\"",
+            "statusMessage": "Prism: recording session facts",
             "timeout": 5,
             "additionalContextLimit": 512
           },
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-session-trace.mjs\"",
+            "statusMessage": "Prism: recording the session trace",
             "timeout": 5
           },
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/deliver-gate-answers.mjs\"",
+            "statusMessage": "Prism: delivering answers to open questions",
             "timeout": 5,
             "additionalContextLimit": 4000
           },
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/keep-orchestrator-role.mjs\"",
+            "statusMessage": "Prism: keeping the orchestrator role",
             "timeout": 5
           },
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/offer-prism.mjs\"",
+            "statusMessage": "Prism: checking project setup",
             "timeout": 5,
             "additionalContextLimit": 1500
           }
@@ -40,18 +45,21 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-session-facts.mjs\"",
+            "statusMessage": "Prism: recording session facts",
             "timeout": 5,
             "additionalContextLimit": 512
           },
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/deliver-gate-answers.mjs\"",
+            "statusMessage": "Prism: delivering answers to open questions",
             "timeout": 5,
             "additionalContextLimit": 4000
           },
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/keep-orchestrator-role.mjs\"",
+            "statusMessage": "Prism: keeping the orchestrator role",
             "timeout": 5
           }
         ]
@@ -63,6 +71,7 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/wait-for-gate-answers.mjs\"",
+            "statusMessage": "Prism: waiting for answers to open questions",
             "timeout": 3600
           }
         ]
@@ -74,11 +83,13 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-session-facts.mjs\"",
+            "statusMessage": "Prism: recording session facts",
             "timeout": 5
           },
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-session-trace.mjs\"",
+            "statusMessage": "Prism: recording the session trace",
             "timeout": 5
           }
         ]
@@ -89,6 +100,7 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/keep-orchestrator-role.mjs\"",
+            "statusMessage": "Prism: keeping the orchestrator role",
             "timeout": 5
           }
         ]
@@ -99,6 +111,7 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-call-agent.mjs\"",
+            "statusMessage": "Prism: recording which agent calls Prism",
             "timeout": 5
           }
         ]
@@ -110,6 +123,7 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-session-trace.mjs\"",
+            "statusMessage": "Prism: recording the session trace",
             "timeout": 5
           }
         ]
@@ -121,6 +135,7 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-session-trace.mjs\"",
+            "statusMessage": "Prism: recording the session trace",
             "timeout": 5
           }
         ]
@@ -132,6 +147,7 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-session-trace.mjs\"",
+            "statusMessage": "Prism: recording the session trace",
             "timeout": 5
           }
         ]
@@ -143,6 +159,7 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-session-trace.mjs\"",
+            "statusMessage": "Prism: recording the session trace",
             "timeout": 5
           }
         ]
@@ -154,6 +171,7 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-session-trace.mjs\"",
+            "statusMessage": "Prism: recording the session trace",
             "timeout": 5
           }
         ]
@@ -165,11 +183,13 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/record-session-trace.mjs\"",
+            "statusMessage": "Prism: recording the session trace",
             "timeout": 3
           },
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/hooks/keep-orchestrator-role.mjs\"",
+            "statusMessage": "Prism: keeping the orchestrator role",
             "timeout": 3
           }
         ]

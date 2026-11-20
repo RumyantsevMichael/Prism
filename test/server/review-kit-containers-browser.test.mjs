@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { boundaryFailures, contrastFailures, escapes, focusRing, launch, movingElements, openPage, ROOT, serveProject, shownTooltip, skip, useAppDirectory } from "./fixtures/kit-browser.mjs";
+import { repainted, pause, settled } from "./fixtures/wait.mjs";
 
 // Requirements: docs/requirements/review-app-ui-kit.md §2, §7, §8, §9, §10.
 // Contract: docs/plans/review-app-ui-kit/slice.md clauses 21, 22, 41 to 51, and 54 to 57.
@@ -39,7 +40,7 @@ async function mount(page, html, { width = "600px" } = {}) {
     document.body.prepend(region);
     window.scrollTo(0, 0);
   }, [html, width]);
-  await page.waitForTimeout(150);
+  await repainted(page);
 }
 
 // The focused element through shadow roots: an item's value, or else the id of its nearest kit host.
@@ -200,8 +201,7 @@ test("clauses 38, 42: a tree with long, unbroken, and many labels stays inside a
   const item = page.locator('prism-tree-item[value="v1"]');
   assert.equal(await item.evaluate((element) => element.hasAttribute("shortened")), true);
   await item.hover();
-  await page.waitForTimeout(700);
-  assert.equal(await shownTooltip(page), LONG);
+  assert.equal(await settled(() => shownTooltip(page), LONG), LONG);
 });
 
 test("clause 44: a listbox driven from a field keeps focus in the field and moves its active option", { skip }, async (context) => {
@@ -272,7 +272,7 @@ test("a leaf with a glyph beside a parent keeps the twisty's room, so sibling la
         <prism-tree-item label="Second slice" value="second"><prism-icon slot="start" name="clock"></prism-icon></prism-tree-item>
       </prism-tree-item>
     </prism-tree>`);
-  await page.waitForTimeout(50);
+  await repainted(page);
   const left = (value, part) => page.evaluate(([value, part]) => document.querySelector(`#initiatives prism-tree-item[value="${value}"] > .prism-tree-row > ${part}`).getBoundingClientRect().left, [value, part]);
   assert.equal(await left("single", ".prism-tree-label"), await left("multi", ".prism-tree-label"), "a single-slice initiative's label lines up with a multi-slice initiative's");
   assert.equal(await left("single", ".prism-tree-start"), await left("multi", ".prism-tree-start"), "and so does its glyph");
@@ -282,12 +282,12 @@ test("a leaf with a glyph beside a parent keeps the twisty's room, so sibling la
   // A branching tree, one group of a longer list, keeps the room for its top leaves although it holds no parent itself.
   await mount(page, `<prism-tree id="one" label="In progress" branching><prism-tree-item label="One slice" value="alone"><prism-icon slot="start" name="clock"></prism-icon></prism-tree-item></prism-tree>
     <prism-tree id="initiatives" label="Initiatives"><prism-tree-item label="Single-slice initiative" value="single"><prism-icon slot="start" name="clock"></prism-icon></prism-tree-item><prism-tree-item label="Multi-slice initiative" value="multi" expanded><prism-icon slot="start" name="clock"></prism-icon><prism-tree-item label="First slice" value="first"><prism-icon slot="start" name="clock"></prism-icon></prism-tree-item></prism-tree-item></prism-tree>`);
-  await page.waitForTimeout(50);
+  await repainted(page);
   const alone = await page.evaluate(() => document.querySelector('#one prism-tree-item[value="alone"] > .prism-tree-row > .prism-tree-label').getBoundingClientRect().left);
   assert.equal(alone, await left("multi", ".prism-tree-label"), "a branching group's leaf lines up with another group's parent");
   // When the only parent loses its children, its siblings start with their glyphs again.
   await page.evaluate(() => document.querySelectorAll('#initiatives prism-tree-item[value="multi"] prism-tree-item').forEach((item) => item.remove()));
-  await page.waitForTimeout(50);
+  await repainted(page);
   assert.equal(await page.evaluate(() => document.querySelector('#initiatives prism-tree-item[value="single"] > .prism-tree-row > .prism-tree-twisty').classList.contains("is-gone")), true);
 });
 
@@ -364,7 +364,7 @@ test("clause 45: a dialog opens modally over a blurred scrim, keeps focus inside
 test("clause 46: a popover opens from its button as a named non-modal dialog, closes with Escape or a click outside, and stays inside the window", { skip }, async (context) => {
   const { page } = await catalog(context, "", { viewport: { width: 1280, height: 800 } });
   await mount(page, `<div class="end"><prism-button id="who">3 working</prism-button></div>
-    <prism-popover id="pop" for="who" heading="Who's working"><p>Claude on build-2 · Agent · implementation · 41 min left</p><prism-button id="inside">Inside</prism-button></prism-popover><prism-button id="other">Other</prism-button>`, { width: "1200px" });
+    <prism-popover id="pop" for="who" heading="Agents"><p>Claude on build-2 · Agent · implementation · 41 min left</p><prism-button id="inside">Inside</prism-button></prism-popover><prism-button id="other">Other</prism-button>`, { width: "1200px" });
   // The page's style policy refuses inline style attributes, so the right-edge layout goes through the CSSOM.
   await page.evaluate(() => { const end = document.querySelector("#fixture .end"); end.style.setProperty("display", "flex"); end.style.setProperty("justify-content", "flex-end"); });
   const button = page.locator("#fixture").getByRole("button", { name: "3 working" });
@@ -373,25 +373,25 @@ test("clause 46: a popover opens from its button as a named non-modal dialog, cl
   assert.equal(await button.getAttribute("aria-expanded"), "false");
   await button.focus();
   await page.keyboard.press("Enter");
-  const popover = page.getByRole("dialog", { name: "Who's working" });
+  const popover = page.getByRole("dialog", { name: "Agents" });
   assert.equal(await popover.count(), 1);
   assert.equal(await button.getAttribute("aria-expanded"), "true");
   assert.notEqual(await popover.getAttribute("aria-modal"), "true", "a popover is not modal");
   const inside = await popover.evaluate((element) => { const box = element.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight; });
   assert.equal(inside, true, "the popover stays inside the window");
   await page.keyboard.press("Escape");
-  assert.equal(await page.getByRole("dialog", { name: "Who's working" }).count(), 0);
+  assert.equal(await page.getByRole("dialog", { name: "Agents" }).count(), 0);
   assert.equal(await page.evaluate(() => document.activeElement?.id), "who", "Escape returns focus to the button");
   await button.click();
   await page.mouse.click(5, 790);
-  assert.equal(await page.getByRole("dialog", { name: "Who's working" }).count(), 0, "a click outside closes it");
+  assert.equal(await page.getByRole("dialog", { name: "Agents" }).count(), 0, "a click outside closes it");
   await button.click();
   await button.click();
-  assert.equal(await page.getByRole("dialog", { name: "Who's working" }).count(), 0, "its button toggles it");
+  assert.equal(await page.getByRole("dialog", { name: "Agents" }).count(), 0, "its button toggles it");
   const phone = await openPage(page.context().browser(), page.url(), { viewport: { width: 390, height: 800 } });
-  await mount(phone, `<prism-button id="who">3 working</prism-button><prism-popover for="who" heading="Who's working"><p>Text</p></prism-popover>`, { width: "360px" });
+  await mount(phone, `<prism-button id="who">3 working</prism-button><prism-popover for="who" heading="Agents"><p>Text</p></prism-popover>`, { width: "360px" });
   await phone.locator("#fixture").getByRole("button", { name: "3 working" }).click();
-  const width = await phone.getByRole("dialog", { name: "Who's working" }).evaluate((element) => [element.getBoundingClientRect().width, innerWidth]);
+  const width = await phone.getByRole("dialog", { name: "Agents" }).evaluate((element) => [element.getBoundingClientRect().width, innerWidth]);
   assert.ok(Math.abs(width[0] - width[1]) <= 1, "at 720px and below a popover spans the window");
 });
 
@@ -479,7 +479,7 @@ test("clause 56: menus, popovers, tooltips, dialogs, and the toast are frosted g
   assert.equal(field, expected.control, "a field on glass draws its boundary in --prism-color-glass-control");
   await page.keyboard.press("Escape");
   await page.locator("#fixture prism-chip").hover();
-  await page.waitForTimeout(700);
+  await settled(() => shownTooltip(page));
   check(await surface("tooltip"), "the tooltip");
   await page.evaluate(() => document.getElementById("d").show());
   check(await surface("dialog", "Dialog"), "the dialog");
@@ -529,12 +529,12 @@ test("clauses 48, 49: empty states, banners, and toasts carry their roles and me
   const text = await page.locator("prism-toast").innerText();
   assert.match(text, /Second message/);
   assert.doesNotMatch(text, /Answer sent/, "a new message replaces the shown one");
-  await page.waitForTimeout(3500);
+  await pause(3500, "the toast's own display time is what this checks");
   assert.match(await page.locator("prism-toast").innerText(), /Second message/, "the toast still shows after three and a half seconds");
   await page.waitForFunction(() => !document.querySelector("prism-toast").innerText.includes("Second message"), null, { timeout: 15000 });
   const still = await openPage(page.context().browser(), page.url(), { reducedMotion: "reduce" });
   await still.evaluate(() => document.querySelector("prism-toast").show("Calm message"));
-  await still.waitForTimeout(3500);
+  await pause(3500, "the toast's own display time is what this checks");
   assert.match(await still.locator("prism-toast").innerText(), /Calm message/, "under reduced motion the toast stays as long");
 });
 

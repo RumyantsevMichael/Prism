@@ -1,7 +1,9 @@
 export const textField = { type: "string", minLength: 1, maxLength: 8192 };
 export const hashField = { type: "string", pattern: "^[a-f0-9]{64}$" };
-export const objectSchema = (properties: Record<string, unknown>, required = Object.keys(properties)) => ({ type: "object", properties, required, additionalProperties: false });
-export const arraySchema = (items: unknown, maxItems = 100) => ({ type: "array", items, maxItems });
+import type { Schema } from "../workflow/artifact-schema.mjs";
+
+export const objectSchema = (properties: Record<string, Schema>, required = Object.keys(properties)): Schema => ({ type: "object", properties, required, additionalProperties: false });
+export const arraySchema = (items: Schema, maxItems = 100): Schema => ({ type: "array", items, maxItems });
 export const selectorSchema = { oneOf: [textField,
   objectSchema({ type: { enum: ["symbol", "heading", "text", "json-pointer", "yaml-key"] }, value: textField }),
   objectSchema({ type: { const: "span" }, start: { type: "integer", minimum: 0 }, end: { type: "integer", minimum: 1 }, sourceHash: hashField })

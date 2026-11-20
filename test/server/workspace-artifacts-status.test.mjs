@@ -9,6 +9,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { deliverGateAnswers } from "../../dist/hooks/deliver-gate-answers.mjs";
 import { createInitiative } from "./fixtures/repository-checkouts.mjs";
+import { pause } from "./fixtures/wait.mjs";
 import { adrFile, answerGate, artifactConfig, browserRequest, checkout, cloneOf, closeServers, commitFiles, eventually, git, isolateGit, notes, ok, READ_ONLY, refused, remoteFile, requirementFile, reviewBrowser, server, syncedWorkspace, text, today, version, workspace, writeArtifact } from "./fixtures/workspace-artifacts.mjs";
 import { launch, openPage, skip as noBrowser } from "./fixtures/kit-browser.mjs";
 
@@ -440,7 +441,7 @@ test("clause 34: a tab that watches Attention keeps an approval under Recent cha
   await watcher.waitForFunction((file) => document.querySelector("[data-recent-changes]")?.textContent.includes(file), FILE, { timeout: 10000 }).catch(() => {});
   for (let sample = 0; sample < 6; sample += 1) {
     samples.push((await recent()).includes(FILE));
-    await watcher.waitForTimeout(500);
+    await pause(500, "the change list must stay shown over time, which only sampling over time can check");
   }
   await watcher.reload();
   await watcher.waitForFunction((file) => document.querySelector("[data-recent-changes]")?.textContent.includes(file), FILE, { timeout: 10000 }).catch(() => {});
@@ -500,7 +501,7 @@ test("clause 37: waiting on an artifact's approval gate returns the person's ans
   const gate = asked.artifacts[0].gate;
   const review = await reviewBrowser(context, api);
   const waiting = prism.call("wait_for_user_gate", { artifact: FILE, gateIds: [gate], maxWaitMinutes: 1 });
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await pause(1000, "lets the wait start before the answer, so the answer ends a running wait");
   assert.equal((await answer(review, { artifact: FILE, scope: "workspace", id: gate, choice: "approve", note: "Looks right." })).status, 200);
   const result = ok(await waiting);
   assert.match(JSON.stringify(result), /answered/);

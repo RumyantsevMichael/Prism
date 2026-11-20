@@ -49,8 +49,8 @@ async function fixture() {
   git(project, "init", "-q");
   git(project, "add", ".");
   git(project, "commit", "-q", "-m", "init");
-  // The clone path Prism promises, computed here independently: SHA-256 of the remote without .git, first 16 hex characters.
-  const id = createHash("sha256").update(url.replace(/\.git$/, "")).digest("hex").slice(0, 16);
+  // The clone path Prism promises, computed here independently: the first 16 hex characters of the SHA-256 of the store identity, which for a file:// store is file: and the folder's real path.
+  const id = createHash("sha256").update(`file:${await realpath(path.join(work, "store.git"))}`).digest("hex").slice(0, 16);
   return { project, id };
 }
 
@@ -328,7 +328,7 @@ async function codexTurn() {
 // Capacity needs Codex's effective settings, which the server reads from a Codex app server within a short bound.
 // The same read is repeated here with that bound and with a long one and the times are logged, so the log shows how close the read comes to its bound and, when capacity is unavailable, whether the read was too slow or failed.
 async function configReadDiagnosis(project, environment) {
-  const { inspectCodexEffectiveConfig } = await import(pathToFileURL(path.join(checkout, "src/server/session/host-adapters/codex-config.mjs")).href);
+  const { inspectCodexEffectiveConfig } = await import(pathToFileURL(path.join(checkout, "dist/server/session/host-adapters/codex-config.mjs")).href);
   const attempt = async (timeoutMs) => {
     const started = Date.now();
     const result = timeoutMs ? await inspectCodexEffectiveConfig({ cwd: project, environment, timeoutMs }) : await inspectCodexEffectiveConfig({ cwd: project, environment });

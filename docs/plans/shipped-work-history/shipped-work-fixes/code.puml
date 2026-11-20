@@ -1,8 +1,0 @@
-@startuml
-title shipped-work-fixes - code
-component "roadmap.mjs\nadd_initiative, update_initiative\nwith corrects" as Roadmap
-component "initiative.mjs\nreadInitiative" as Initiative
-component "shipped-history.mjs\nshippedHistory laterFixes" as History
-Roadmap --> Initiative : corrected slices exist
-History --> Roadmap : entries that correct it
-@enduml

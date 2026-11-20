@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { FILES, entry, fakeRuntime, manifestPath, project, settled } from "./fixtures/component-indexes.mjs";
+import { FILES, entry, fakeRuntime, manifestPath, project, settled, oncePrepared } from "./fixtures/component-indexes.mjs";
+import { READY_WAIT_MS } from "./fixtures/wait.mjs";
 
 // Acceptance tests of components.md §20-§22 and §26 for the component-indexes contract, clauses 22-24.
 process.env.PLUGIN_DATA ||= mkdtempSync(path.join(os.tmpdir(), "prism-component-baselines-data-"));
@@ -16,7 +17,11 @@ const { conservationStore } = await import("../../dist/server/conservation/conse
 const ROOT_FILES = [".prism/workflow.md", "README.md"];
 const NET_FILES = ["packages/net/retry.ts", "packages/net/timeout.ts"];
 const APP_FILES = ["packages/app/client.ts"];
-const search = (root, runtime, input = {}, waitMs = 2000) => searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...input }, { runtime, waitMs });
+// Without a wait of its own, a search repeats until no component prepares, since one call waits at most 10 seconds.
+const search = (root, runtime, input = {}, waitMs) => {
+  const once = () => searchRepositoryConcepts({ projectRoot: root, query: "retry the request", ...input }, { runtime, waitMs: waitMs ?? READY_WAIT_MS });
+  return waitMs === undefined ? oncePrepared(once) : once();
+};
 const capture = async (root) => (await conservationStore.capture(root)).snapshotId;
 const functions = (analysis) => analysis.units.filter((unit) => unit.kind === "function").map((unit) => unit.name).sort();
 
