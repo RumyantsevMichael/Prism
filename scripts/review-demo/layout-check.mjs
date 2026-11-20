@@ -1,3 +1,5 @@
+// A real Claude Code or Codex stays off PATH, since Prism launches a session by itself for each format migration run of a demo project.
+import "../hostless-path.mjs";
 // Check the review browser layout on every page of the demo, edge-case, and empty projects at several window sizes, and the component catalog at each of them.
 // The check fails on content that escapes its container, a page that scrolls the whole window, a control cut off by its container, and browser errors.
 // Usage: node scripts/review-demo/layout-check.mjs [--viewports phone,tablet,laptop,wide] [--themes light,dark] [--part k/n] [--screenshots directory] [--catalog url]

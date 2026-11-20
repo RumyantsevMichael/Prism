@@ -1,3 +1,5 @@
+// A real Claude Code or Codex stays off PATH, since Prism launches a session by itself for each format migration run of a demo project.
+import "../hostless-path.mjs";
 // Compare the demo review app with the approved places mockup, scene by scene, and fail on any difference in structure, geometry, or design values.
 // Each scene of the mockup is rendered in a window of the scene's width, the demo app is put into the same state at the same width and theme, and both are read into an outline that the comparison holds side by side.
 // Usage: node scripts/review-demo/places-compare.mjs --out <directory> [--scenes work,attention,...] [--widths 1440,820,390] [--themes light,dark] [--parts rail,head,sidebar,topbar,trail,geometry,tokens] [--mockup <file>] [--app-mockup <file>]
