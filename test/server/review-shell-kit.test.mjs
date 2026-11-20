@@ -11,19 +11,19 @@ const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const PUBLIC = "src/server/review/public";
 const FILES = [
   "review.html",
-  "review.js",
-  "views/side-panel.js",
-  "views/palette.js",
-  "views/connection.js",
-  "views/record-store.js",
-  "views/indexing.js",
-  "views/missing-tab.js",
-  "views/attention-signal.js",
-  "views/entities.js",
-  "views/registry.js",
-  "views/page-bar.js",
-  "views/claim-index.js",
-  "views/agents-menu.js",
+  "review.ts",
+  "views/side-panel.ts",
+  "views/palette.ts",
+  "views/connection.ts",
+  "views/record-store.ts",
+  "views/indexing.ts",
+  "views/missing-tab.ts",
+  "views/attention-signal.ts",
+  "views/entities.ts",
+  "views/registry.ts",
+  "views/page-bar.ts",
+  "views/claim-index.ts",
+  "views/agents-menu.ts",
   "styles/shell.css"
 ];
 
