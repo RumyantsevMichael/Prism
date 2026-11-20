@@ -2773,6 +2773,8 @@ function viewContext(path, state) {
     },
     openEvidence: (id, label) => openEvidence(id, label, viewContext(path, state)),
     actionApi,
+    // The tab's write session header, which a view's own write routes, such as the Agents page's archive, send.
+    writeHeaders,
     // Names one of Prism's records by title and kind, or a repository file by its path, as the page bar and the palette do.
     describe,
     recordTitle: (recordPath) => (navigation.index ?? []).find((entry) => entry.ref === recordPath)?.label ?? null,
