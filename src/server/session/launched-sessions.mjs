@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { realpath } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { withFileLock } from "../workflow/artifact-store.mjs";
@@ -12,6 +12,11 @@ import { hostAvailability, hostDefinition, hostEnvironment, resolveHost, validHo
 import {
   LAUNCH_ID_PATTERN,
   LaunchError,
+  archivedNow,
+  launchEnded,
+  readArchiveMark,
+  removeArchiveMark,
+  writeArchiveMark,
   SUPERVISION_LOST,
   createLaunchFolder,
   expired,
@@ -63,9 +68,9 @@ async function initiativeExists(projectRoot, initiative) {
 }
 
 // Serializes every start and resume of this machine's launches, so two requests never both pass the running check.
-async function withLaunchLock(env, action) {
+async function withLaunchLock(env, action, timeoutMs = LOCK_TIMEOUT_MS) {
   await prepareLaunchesDirectory(env);
-  return withFileLock(path.join(launchesDirectory(env), "launches"), action, (code, message) => refuse(code === "lock_timeout" ? "launch_failed" : code, message), { timeoutMs: LOCK_TIMEOUT_MS });
+  return withFileLock(path.join(launchesDirectory(env), "launches"), action, (code, message) => refuse(code === "lock_timeout" ? "launch_failed" : code, message), { timeoutMs });
 }
 
 async function otherRunning(env, { initiative, store, except = null }) {
@@ -371,12 +376,11 @@ export async function stopLaunch({ id, env = process.env }) {
   }
 }
 
-/** Every launched session of this machine whose checkout shares the record store of projectRoot, the most recently launched first. */
-export async function listLaunches({ projectRoot, env = process.env, now = Date.now() }) {
-  const at = typeof now === "number" ? now : Date.parse(now);
+// The record store of the page's checkout and the launch view of a record as that checkout reads its initiative's pending gates,
+// each initiative's coordination state read once.
+async function pageViewer(projectRoot, at) {
   const checkout = await realpath(projectRoot);
   const store = await storeLocation(checkout);
-  // Each initiative's pending gates as this page's checkout reads its coordination state, read once per list.
   const pendingOf = new Map();
   const pending = (initiative) => {
     if (!pendingOf.has(initiative)) {
@@ -385,6 +389,15 @@ export async function listLaunches({ projectRoot, env = process.env, now = Date.
     return pendingOf.get(initiative);
   };
   const viewOf = async (folder, record) => launchView(record, { now: at, gates: gateFacts(await readGateRecord(folder), await pending(record.initiative)) });
+  return { checkout, store, viewOf };
+}
+
+const byLaunch = (left, right) => (right.launchedAt ?? "").localeCompare(left.launchedAt ?? "") || right.id.localeCompare(left.id);
+
+/** Every launched session of this machine whose checkout shares the record store of projectRoot, the most recently launched first. */
+export async function listLaunches({ projectRoot, env = process.env, now = Date.now() }) {
+  const at = typeof now === "number" ? now : Date.parse(now);
+  const { store, viewOf } = await pageViewer(projectRoot, at);
   const launches = [];
   const candidates = [];
   for (const { folder, record } of await listLaunchRecords(env)) {
@@ -411,5 +424,100 @@ export async function listLaunches({ projectRoot, env = process.env, now = Date.
   for (const { folder, record } of kept) {
     if (record.store === store && record.runs.length) launches.push(await viewOf(folder, record));
   }
-  return { launches: launches.sort((left, right) => (right.launchedAt ?? "").localeCompare(left.launchedAt ?? "") || right.id.localeCompare(left.id)) };
+  return { launches: launches.sort(byLaunch) };
+}
+
+// Archiving: a mark beside the record of an ended launched session, written and removed only under the launch lock, so no resume
+// starts between the state check and the write. A mark whose session ran or waited again is stale, and a listing removes it.
+const STALE_MARK_LOCK_MS = 2000;
+const notEnded = () => refuse("launch_not_ended", "Only a finished, failed, stopped, or blocked session can be archived.");
+const sameMark = (left, right) => Boolean(left && right) && left.archivedAt === right.archivedAt && left.runs === right.runs;
+
+// The launch that the page lists, as listLaunches lists it for the checkout: { folder, record, view }, or null. The caller holds the launch lock.
+async function pageLaunch(env, id, viewer, at) {
+  if (typeof id !== "string" || !LAUNCH_ID_PATTERN.test(id)) return null;
+  const folder = launchFolder(env, id);
+  const info = await lstat(folder).catch(() => null);
+  if (!info?.isDirectory() || info.isSymbolicLink()) return null;
+  const record = await readLaunchRecord(folder);
+  if (!record || record.id !== id || record.store !== viewer.store || !record.runs.length || expired(record, at)) return null;
+  return { folder, record, view: await viewer.viewOf(folder, record) };
+}
+
+async function archiveLocked(found, at) {
+  const mark = await readArchiveMark(found.folder);
+  if (archivedNow(mark, found.record, found.view.state)) return false;
+  await writeArchiveMark(found.folder, { archivedAt: new Date(at).toISOString(), runs: found.record.runs.length });
+  return true;
+}
+
+/** Archives a launched session that the page lists and that ended: { archived: [id] }, or { archived: [] } when it is already archived. */
+export async function archiveLaunch({ projectRoot, id, env = process.env }) {
+  const viewer = await pageViewer(projectRoot, Date.now());
+  return withLaunchLock(env, async () => {
+    const at = Date.now();
+    const found = await pageLaunch(env, id, viewer, at);
+    if (!found) throw unknownLaunch(id);
+    if (!launchEnded(found.view.state)) throw notEnded();
+    return { archived: (await archiveLocked(found, at)) ? [id] : [] };
+  });
+}
+
+/** Removes the archive mark of a launched session that the page lists: { unarchived: [id] }, or { unarchived: [] } when it was not archived. */
+export async function unarchiveLaunch({ projectRoot, id, env = process.env }) {
+  const viewer = await pageViewer(projectRoot, Date.now());
+  return withLaunchLock(env, async () => {
+    const found = await pageLaunch(env, id, viewer, Date.now());
+    if (!found) throw unknownLaunch(id);
+    const mark = await readArchiveMark(found.folder);
+    if (!mark) return { unarchived: [] };
+    await removeArchiveMark(found.folder);
+    return { unarchived: archivedNow(mark, found.record, found.view.state) ? [id] : [] };
+  });
+}
+
+/**
+ * Archives every launched session that the page lists, that ended, and that is not archived: { archived: [ids] }, failed ones first and
+ * then the latest launched first, the order the agents list gives them.
+ */
+export async function archiveEndedLaunches({ projectRoot, env = process.env }) {
+  const viewer = await pageViewer(projectRoot, Date.now());
+  return withLaunchLock(env, async () => {
+    const at = Date.now();
+    const found = [];
+    for (const { record } of await listLaunchRecords(env)) {
+      const launch = record ? await pageLaunch(env, record.id, viewer, at) : null;
+      if (launch && launchEnded(launch.view.state)) found.push(launch);
+    }
+    found.sort((left, right) => (left.view.state === "failed" ? 0 : 1) - (right.view.state === "failed" ? 0 : 1) || byLaunch(left.view, right.view));
+    const archived = [];
+    for (const launch of found) if (await archiveLocked(launch, at)) archived.push(launch.record.id);
+    return { archived };
+  });
+}
+
+/**
+ * The ids of the listed launch views that are archived now. A mark whose session ran or waited again, or ran again and ended, is removed
+ * under the launch lock unless it changed meanwhile; when the lock stays busy it waits for the next read.
+ */
+export async function archivedLaunches({ launches, env = process.env }) {
+  const archived = new Set();
+  const stale = [];
+  for (const view of Array.isArray(launches) ? launches : []) {
+    if (typeof view?.id !== "string" || !LAUNCH_ID_PATTERN.test(view.id)) continue;
+    const folder = launchFolder(env, view.id);
+    const mark = await readArchiveMark(folder);
+    if (!mark) continue;
+    const record = await readLaunchRecord(folder);
+    // A record that changed since the view was read is judged by the next read.
+    if (!record || record.runs.length !== view.runs) continue;
+    if (archivedNow(mark, record, view.state)) archived.add(view.id);
+    else stale.push({ folder, mark });
+  }
+  if (stale.length) {
+    await withLaunchLock(env, async () => {
+      for (const { folder, mark } of stale) if (sameMark(await readArchiveMark(folder), mark)) await removeArchiveMark(folder);
+    }, STALE_MARK_LOCK_MS).catch(() => {});
+  }
+  return archived;
 }

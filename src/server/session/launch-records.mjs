@@ -339,6 +339,50 @@ export function expired(record, now = Date.now()) {
   return Number.isFinite(end) && now - end > RETENTION_MS;
 }
 
+// The archive mark of a launched session, kept beside its record on this machine only and written only under the launch lock:
+// { archivedAt, runs }, the time of the archive and the record's run count then.
+const ARCHIVE_FILE = "archive.json";
+const ENDED_STATES = new Set(["finished", "failed", "stopped", "blocked"]);
+
+/** Whether a launch view's state is one that can be archived: finished, failed, stopped, or blocked. */
+export function launchEnded(state) {
+  return ENDED_STATES.has(state);
+}
+
+/** The archive mark of a launch folder, { archivedAt, runs }, or null when it is absent or malformed. */
+export async function readArchiveMark(folder) {
+  try {
+    const info = await lstat(path.join(folder, ARCHIVE_FILE));
+    if (!info.isFile() || info.size > 4096) return null;
+    const value = JSON.parse(await readFile(path.join(folder, ARCHIVE_FILE), "utf8"));
+    if (!value || typeof value !== "object" || typeof value.archivedAt !== "string" || !Number.isFinite(Date.parse(value.archivedAt))) return null;
+    if (!Number.isSafeInteger(value.runs) || value.runs < 1) return null;
+    return { archivedAt: value.archivedAt, runs: value.runs };
+  } catch {
+    return null;
+  }
+}
+
+/** Writes the archive mark of a launch folder, private to the user; the caller holds the launch lock. */
+export async function writeArchiveMark(folder, { archivedAt, runs }) {
+  const file = path.join(folder, ARCHIVE_FILE);
+  await writeAtomically(file, `${JSON.stringify({ archivedAt, runs }, null, 2)}\n`, { mode: 0o600 });
+  if (process.platform !== "win32") await chmod(file, 0o600);
+}
+
+/** Removes the archive mark of a launch folder, and only that file; the caller holds the launch lock. */
+export async function removeArchiveMark(folder) {
+  await rm(path.join(folder, ARCHIVE_FILE), { force: true });
+}
+
+/**
+ * Whether a launched session is archived now: its mark exists, its record holds as many runs as the mark names, and its state is
+ * finished, failed, stopped, or blocked. A session that ran or waited again is not, whatever its mark says.
+ */
+export function archivedNow(mark, record, state) {
+  return Boolean(mark) && Array.isArray(record?.runs) && record.runs.length === mark.runs && launchEnded(state);
+}
+
 export async function removeLaunchFolder(folder) {
   await rm(folder, { recursive: true, force: true });
 }
