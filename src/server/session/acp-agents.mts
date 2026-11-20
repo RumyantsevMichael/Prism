@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { reviewAppDirectory } from "../review/review-app-discovery.mjs";
@@ -43,14 +43,43 @@ export interface AcpHostDefinition { host: string; label: string; executable: st
 /**
  * The declaration file: the one PRISM_ACP_AGENTS names, and otherwise acp-agents.json in the person's Prism configuration folder.
  * A process under Node's test runner without PRISM_ACP_AGENTS reads a temporary folder of its own instead, as the review app folder does,
- * so no test reads the person's own declarations.
+ * so no test reads the person's own declarations, and it reads that folder only while it is this user's own and private.
  */
 export function declarationFile(env: NodeJS.ProcessEnv = process.env) {
   if (env.PRISM_ACP_AGENTS) return path.resolve(env.PRISM_ACP_AGENTS);
-  if (env.NODE_TEST_CONTEXT) return path.join(os.tmpdir(), `prism-test-config-${process.getuid?.() ?? "user"}`, "acp-agents.json");
+  if (env.NODE_TEST_CONTEXT) return path.join(testConfigFolder(), "acp-agents.json");
   if (process.platform === "win32") return path.join(env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "Prism", "acp-agents.json");
   if (process.platform === "darwin") return path.join(os.homedir(), "Library", "Application Support", "Prism", "acp-agents.json");
   return path.join(env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "prism", "acp-agents.json");
+}
+
+const testConfigFolder = () => path.join(os.tmpdir(), `prism-test-config-${process.getuid?.() ?? "user"}`);
+
+// The temporary folder that a process under Node's test runner reads in place of the person's own, when no variable names one.
+// Its name is predictable and the temporary directory is shared, so another local user could create it first and plant a command.
+const sharedTestFolder = (env: NodeJS.ProcessEnv, kind: "declarations" | "installs") => {
+  if (!env.NODE_TEST_CONTEXT) return null;
+  if (kind === "declarations") return env.PRISM_ACP_AGENTS ? null : testConfigFolder();
+  return env.PRISM_REVIEW_APP_DIR ? null : reviewAppDirectory(env);
+};
+
+/**
+ * Why a shared test folder cannot be trusted, or null when it is missing or a real folder of this user that no one else can write.
+ * Windows gives each user a temporary directory of their own, so it needs no check there.
+ */
+function untrustedFolder(folder: string | null): string | null {
+  const uid = process.getuid?.();
+  if (folder === null || uid === undefined) return null;
+  let stats;
+  try {
+    stats = lstatSync(folder);
+  } catch (error: any) {
+    return error?.code === "ENOENT" ? null : `${folder} cannot be checked`;
+  }
+  if (!stats.isDirectory()) return `${folder} is not a folder`;
+  if (stats.uid !== uid) return `${folder} belongs to another user`;
+  if ((stats.mode & 0o022) !== 0) return `${folder} can be changed by other users`;
+  return null;
 }
 
 /** The folder that holds every registry install. */
@@ -102,6 +131,8 @@ function declaredAgent(entry: unknown, position: number): AcpAgent {
 export function readDeclarations(env: NodeJS.ProcessEnv = process.env): { file: string; state: "missing" | "read" | "unreadable"; reason: string | null; agents: AcpAgent[] } {
   const file = declarationFile(env);
   const unreadable = (why: string) => ({ file, state: "unreadable" as const, reason: `Prism cannot read ${file}: ${why}.`, agents: [] });
+  const untrusted = untrustedFolder(sharedTestFolder(env, "declarations"));
+  if (untrusted) return unreadable(untrusted);
   let text: string;
   try {
     if (statSync(file).size > MAX_FILE_BYTES) return unreadable(`it is larger than ${MAX_FILE_BYTES / 1024 / 1024} MiB`);
@@ -162,6 +193,7 @@ function installedAgent(folder: string, id: string): AcpAgent | null {
 /** Every registry install as read now, in the order of its install time. */
 export function readInstalls(env: NodeJS.ProcessEnv = process.env): AcpAgent[] {
   const base = agentsFolder(env);
+  if (untrustedFolder(sharedTestFolder(env, "installs"))) return [];
   let names: string[];
   try {
     names = readdirSync(base, { withFileTypes: true }).filter((entry) => entry.isDirectory() && ACP_ID_PATTERN.test(entry.name)).map((entry) => entry.name);

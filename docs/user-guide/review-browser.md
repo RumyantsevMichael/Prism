@@ -308,7 +308,8 @@ Each entry takes these fields:
 | `resumeCommand` | Optional: at most 500 characters holding `{session}`, the terminal command that continues a session. |
 
 Prism takes an agent's command, arguments, and environment only from this file or an install record, and the review page cannot name any of them.
-An entry that breaks a rule, repeats an earlier entry's `id`, or takes the `id` of an installed agent is no host.
+An entry that breaks a rule or takes the `id` of an installed agent is no host.
+An entry that repeats an earlier entry's `id` is left out, and the earlier entry counts for that `id`.
 The ids `claude-acp` and `codex-acp` are no hosts either, because Prism runs Claude Code and Codex through its own integrations.
 A missing file declares no agent, and a file that cannot be read or parsed declares none.
 An agent whose command is not found shows its reason, such as `Gemini CLI was not found: no gemini executable on PATH.`
