@@ -167,15 +167,16 @@ const LAUNCHED_FROM = new Set(["starting", "waiting-for-host"]);
 /**
  * The host, coordinator choice, and access of a format migration run's session on this machine: { host, coordinator, model, access, reason },
  * with coordinator { provider, model, effort, typed } and model its model. The host and model are the computer's choice for Prism's own runs,
- * as prismRunLaunch reads it for the checkout; without a supported host found there, the first available host of Claude Code and Codex,
- * in that order, with its own default model, and when no host is available, host is null and reason says why for each host.
+ * as prismRunLaunch reads it for the checkout, with its reason when the chosen host is not found or the choice cannot be read, which the run keeps;
+ * without a supported host found there, the first available host of Claude Code and Codex, in that order, with its own default model,
+ * and when no host is available, host is null and reason says why for each host.
  * The access is read-only: the session reads artifact text that others wrote, so it gets Prism's tools, file reads, and `git log`, and nothing that writes or runs.
  * This is the only choice of a run's host, model, and access.
  */
 export async function migrationRunHost(env: NodeJS.ProcessEnv = process.env, { checkout = null }: { checkout?: string | null } = {}) {
   const { prismRunLaunch } = await import("../session/prism-runs.mjs");
   const chosen = await prismRunLaunch({ checkout, env });
-  if (chosen) return { host: chosen.host, coordinator: chosen.coordinator, model: chosen.coordinator.model, access: "read-only", reason: null };
+  if (chosen) return { host: chosen.host, coordinator: chosen.coordinator, model: chosen.coordinator.model, access: "read-only", reason: typeof chosen.reason === "string" && chosen.reason ? chosen.reason : null };
   const { hostAvailability, HOST_DEFAULT_COORDINATOR } = await import("../session/launch-hosts.mjs");
   const hosts = await hostAvailability({ env });
   const found = hosts.find((entry: any) => entry.available);
@@ -211,7 +212,8 @@ async function failOpenRun(root: any, id: any, reason: any, { launch = null }: a
 
 /**
  * Launch a run's session on this machine at once, without asking anyone, on the host that migrationRunHost chooses, with the migrate-artifact prompt alone:
- * the run becomes running with launch { id, host } once the host started, or waiting-for-host with the reason when no host is available.
+ * the run becomes running with launch { id, host } once the host started, with the reason why it runs on another host than the one chosen for Prism's runs,
+ * or waiting-for-host with the reason when no host is available.
  * A session of the run that already runs here starts no second one. `status` is the status that a started launch records, running for a new run;
  * a continuation keeps continuing. Returns the run's record, or null for an unknown run.
  */
@@ -230,7 +232,7 @@ export async function launchMigrationRun(projectRoot: any, id: any, { env = proc
     if (typeof error?.code === "string") return failOpenRun(root, id, `${LAUNCH_ENDED}${error.message}`);
     throw error;
   }
-  return recordLaunch(root, id, { launch: { id: started.launch.id, host: choice.host }, status, from });
+  return recordLaunch(root, id, { launch: { id: started.launch.id, host: choice.host }, status, reason: choice.reason, from });
 }
 
 /** The launcher that a Prism server sets: it launches each run Prism starts as launchMigrationRun does. */

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CONFORMING, PATHS, REQUIREMENT } from "./fixtures/artifact-formats.mjs";
-import { readRun, runCheckout, runFor, waitFor } from "./fixtures/format-migration-runs.mjs";
+import { entryFor, readRun, runCheckout, runFor, waitFor } from "./fixtures/format-migration-runs.mjs";
 
 // A format migration run launches on the host and model that this computer chose for Prism's own runs, still read-only,
 // and on the first available host with its default model when the chosen host is not found.
@@ -48,11 +48,32 @@ test("a run launches Claude Code with --model of the choice and only its read-on
   assert.equal(started.argv[started.argv.indexOf("--tools") + 1], "Read,Grep,Glob,Bash");
 });
 
-test("a chosen host that is not found leaves the run on the first available host with its default model", { skip: posixOnly }, async (context) => {
+test("a chosen host that is not found leaves the run on the first available host with its default model, and the run says why", { skip: posixOnly }, async (context) => {
   const { call, hosts } = await runCheckout(context, BROKEN, { hosts: ["claude"] });
   await choose(hosts, { host: "codex", model: "gpt-5.5" });
   const run = await runFor(call, PATHS.requirements);
   assert.equal((await running(call, run)).launch.host, "claude-code");
   const [started] = await waitFor(() => hosts.runs("claude").length ? hosts.runs("claude") : null, { what: "the Claude Code stub to start" });
   assert.equal(started.argv.includes("--model"), false, "the host uses its own default model");
+  const entry = await entryFor(call, PATHS.requirements);
+  assert.equal(entry.migration.status, "running");
+  assert.match(entry.migration.reason, /^Codex, chosen for Prism's own runs, was not found: .+\. Claude Code runs it with its default model\.$/);
+});
+
+test("a choice that cannot be read leaves the run on the first available host, and the run says why", { skip: posixOnly }, async (context) => {
+  const { call, hosts } = await runCheckout(context, BROKEN, { hosts: ["claude"] });
+  const { mkdir, writeFile } = await import("node:fs/promises");
+  await mkdir(hosts.app, { recursive: true });
+  await writeFile((await import("node:path")).join(hosts.app, "prism-runs.json"), "{ not json", { mode: 0o600 });
+  const run = await runFor(call, PATHS.requirements);
+  assert.equal((await running(call, run)).launch.host, "claude-code");
+  assert.equal((await entryFor(call, PATHS.requirements)).migration.reason, "The choice for Prism's own runs could not be read, so the first available host runs it with its default model.");
+});
+
+test("a run on the chosen host records no reason", { skip: posixOnly }, async (context) => {
+  const { call, hosts } = await runCheckout(context, BROKEN, { hosts: ["claude"] });
+  await choose(hosts, { host: "claude-code" });
+  const run = await runFor(call, PATHS.requirements);
+  await running(call, run);
+  assert.equal((await entryFor(call, PATHS.requirements)).migration.reason, null);
 });
