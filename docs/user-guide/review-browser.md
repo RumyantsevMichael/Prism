@@ -267,9 +267,17 @@ It works on the initiative as an agent you started in a terminal would, and you 
 
 ### Launch an initiative
 
-**Launch** at the top of the initiative page opens **Launch an orchestration** with one **Launch**, which starts a session of the initiative's **Host** setting with its other settings; a slice page offers no launch.
+**Launch** at the top of the initiative page opens the run configuration, a dialog named **Launch <initiative>**; a slice page offers no launch.
+It shows the latest run when there is one, then **Host**, **How the run works** with **Autonomy**, **Commit**, **Push**, **Continuation**, and **Review**, and **Models** with the coordinator and each kind of agent, each set to the initiative's current value as **Settings** shows it.
+Each option says what it does when you point at it, and the chosen option's effect shows under its group.
+Opening the dialog starts nothing.
+Changing **Host** shows the choices kept for that host and renames the launch button, such as **Launch with Codex**, and a host this computer lacks shows as unavailable with its reason and cannot be chosen.
+**Cancel**, Escape, and the close button discard the dialog's changes and launch nothing.
+**Launch with <host>** saves every changed choice as the initiative's settings, asking you in the page first for a risky one such as **Push** on, and then starts the session, so the initiative's history records the settings before the launch.
+While a choice is not offered, the button is disabled and the dialog names the field and its reason, such as `Code review: Claude Code on this computer does not offer the model claude-opus-3.`, until you choose a value the host offers.
+A refused or declined launch, such as `You declined the launch.`, shows its message in the dialog and keeps it open, with the settings already saved.
 With no host stored, the launch runs the first host found on this computer.
-The launch is unavailable with `No host that Prism supports was found on this computer. Prism supports Claude Code and Codex.` while neither `claude` nor `codex` is on the review app's `PATH`, with a reason such as `Codex was not found: no codex executable on PATH.` while the initiative's host is missing, and with `A launched session of <initiative> is running on this machine.` while a launched session of the initiative runs on this computer.
+The launch is unavailable, and the dialog still shows the settings with its launch button disabled, with `No host that Prism supports was found on this computer. Prism supports Claude Code and Codex.` while neither `claude` nor `codex` is on the review app's `PATH`, with a reason such as `Codex was not found: no codex executable on PATH.` while the initiative's host is missing, and with `A launched session of <initiative> is running on this machine.` while a launched session of the initiative runs on this computer.
 It is also unavailable with `This initiative's saved settings cannot be read, so Prism cannot tell which host, models, and efforts to launch with.` while the initiative's coordination state cannot be read, so nothing starts with another host or other choices than the ones you saved.
 Before it asks you anything, the launch checks the provider and every model and effort that **Models** keeps for the host against what the host on this computer reports, and refuses the first one the host does not offer with its field and reason, such as `Coordinator: Claude Code on this computer does not offer the model claude-opus-3.` or `Design and implementation: Prism kept the earlier model name Claude Opus 4.1, which Claude Code cannot take as a model.`; a launch whose choices are all host defaults asks the host nothing.
 When the host cannot report its options, the launch is refused with the field that needed them and the host's reason, such as `Coordinator: Claude Code did not report its run options: it gave no answer within 20 seconds.`, so you can retry once the host answers instead of replacing a choice it may still offer.
@@ -280,8 +288,8 @@ Checkouts whose records live in the same place, such as two checkouts of one sha
 Like every action, a launch needs a tab that can make changes.
 
 The initiative page also shows how the initiative's latest launched session on this computer stands.
-While that session failed, is blocked, waits for you, or runs, the page head shows `Last run failed`, `Last run blocked`, `Waiting for you`, or `Running` beside **Launch**, and pressing it opens **Launch an orchestration**, or **Launched sessions** in a tab that cannot make changes.
-At the top of **Launch an orchestration**, **Latest run** names the session's host and state, with its reason, such as `Claude Code reported an error:` and the host's own message or `Codex ended with exit code 1.`, and **Open in Launched sessions** opens its row.
+While that session failed, is blocked, waits for you, or runs, the page head shows `Last run failed`, `Last run blocked`, `Waiting for you`, or `Running` beside **Launch**, and pressing it opens the run configuration, or **Launched sessions** in a tab that cannot make changes.
+At the top of the run configuration, **Latest run** names the session's host and state, with its reason, such as `Claude Code reported an error:` and the host's own message or `Codex ended with exit code 1.`, and **Open in Launched sessions** opens its row.
 The page reads this every few seconds, so a session that fails moments after it starts shows there without a reload.
 
 Before anything starts, Prism asks you in a dialog of the operating system, outside the browser, so a script that drives the page cannot launch on its own.

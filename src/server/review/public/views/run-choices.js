@@ -120,9 +120,9 @@ function setText(element, text) {
 /**
  * The run choices of one action: section is the element to place, and update({ fields, input, host, hostLabel, writable, disabled })
  * draws the pickers for the shown host's input. choose(name, value) is called with a field's new value, a provider string or null, or a run choice.
- * read(query) resolves to { status, json } of api/run-options.
+ * read(query) resolves to { status, json } of api/run-options, and changed(), when given, is called after the pickers were drawn again.
  */
-export function createRunChoices({ read, choose }) {
+export function createRunChoices({ read, choose, changed = null }) {
   const section = make("div", "prism-run-choices", { "data-run-choices": "" });
   const note = make("p", "prism-run-choices-note", { role: "status" });
   note.hidden = true;
@@ -140,7 +140,7 @@ export function createRunChoices({ read, choose }) {
       "filter-label": field.kind === "run-choice" ? "Filter models" : `Filter ${field.label.toLowerCase()}s`,
       "data-run-field": field.name
     });
-    const state = { field, element, key: null, ticket: 0, report: null, reportKey: null, reportHost: null, items: [], itemsKey: null, choice: null };
+    const state = { field, element, key: null, ticket: 0, report: null, reportKey: null, reportHost: null, items: [], itemsKey: null, choice: null, hold: null, reading: false };
     if (field.kind === "run-choice") {
       const extra = make("div", "prism-run-choice-extra", { slot: "extra" });
       state.none = make("p", "prism-run-choice-none");
@@ -260,6 +260,9 @@ export function createRunChoices({ read, choose }) {
     const unavailable = report?.state === "unavailable";
     setAttr(element, "busy", busy);
     setAttr(element, "disabled", !busy && (disabled || !writable || !host || unavailable));
+    // A choice that waits for its host's report, and the reason of one the report does not offer, hold what applies the choices.
+    state.reading = Boolean(state.key) && !fresh;
+    state.hold = null;
     if (field.kind === "run-option") {
       const option = optionIn(report, field.option);
       const value = typeof input[field.name] === "string" ? input[field.name] : null;
@@ -272,6 +275,7 @@ export function createRunChoices({ read, choose }) {
       setAttr(element, "hint", field.hint ?? null);
       if (fresh) {
         const reason = option?.chosen?.state === "not-offered" ? option.chosen.reason : null;
+        state.hold = reason;
         setAttr(element, "invalid", Boolean(reason));
         setAttr(element, "error", reason ? `Not offered: ${reason}` : null);
       }
@@ -296,11 +300,13 @@ export function createRunChoices({ read, choose }) {
     drawEfforts(state, efforts?.values?.length ? efforts.values : [HOST_DEFAULT], choice.earlier === undefined ? choice.effort : null);
     if (!writable) setAttr(element, "hint", field.hint ?? null);
     if (choice.earlier !== undefined) {
+      state.hold = earlierReason(hostLabel, choice.earlier);
       setAttr(element, "invalid", true);
       setAttr(element, "error", `Not offered: ${earlierReason(hostLabel, choice.earlier)}`);
       setAttr(element, "hint", field.hint ?? null);
     } else if (fresh || !writable) {
       const reason = [models, efforts].map((option) => option?.chosen).find((chosen) => chosen?.state === "not-offered")?.reason ?? null;
+      if (fresh) state.hold = reason;
       setAttr(element, "invalid", Boolean(reason));
       setAttr(element, "error", reason ? `Not offered: ${reason}` : null);
       setAttr(element, "hint", models?.chosen?.state === "typed" ? models.chosen.reason : field.hint ?? null);
@@ -357,11 +363,20 @@ export function createRunChoices({ read, choose }) {
     const reasons = [...new Set([...pickers.values()].filter((state) => state.reportHost === view.host && state.reportKey === state.key).map((state) => state.report?.reason).filter(Boolean))];
     setText(note, reasons.join(" "));
     note.hidden = !reasons.length;
+    changed?.();
   }
 
   return {
     section,
     update,
+    /** What holds the shown choices: reading while a shown picker waits for its host's report, and each shown choice that is not offered as { label, reason }. */
+    held() {
+      const shown = [...pickers.values()].filter((state) => state.element.parentNode === section && !state.element.hasAttribute("disabled"));
+      return {
+        reading: shown.some((state) => state.reading),
+        reasons: shown.filter((state) => state.hold).map((state) => ({ label: state.field.label, reason: state.hold }))
+      };
+    },
     /** Closes every open popover, and makes the next update read the host again while the pickers keep showing what they read. */
     reset() {
       for (const state of pickers.values()) {

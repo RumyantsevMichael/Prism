@@ -85,12 +85,17 @@ test("the place says nothing was launched yet, and the command palette lists it"
   assert.match(await page.locator("#artifact").innerText(), /Nothing launched on this computer yet\. Launch an initiative from its page\./);
 });
 
-test("the initiative page offers the one launch action of the initiative's host with its effect", { skip: skipHere, timeout: 60000 }, async (t) => {
+test("the initiative page's Launch opens its run configuration, whose one launch names the initiative's host", { skip: skipHere, timeout: 60000 }, async (t) => {
   const s = await place(t, {});
   const page = await openPage(s.browser, reviewUrl(s.base, `initiative:${INITIATIVE}`));
   await waitForView(page);
-  assert.equal(await page.getByText("Starts a headless session of this initiative's host on this computer with its settings", { exact: false }).count() >= 1, true);
-  assert.equal(await page.getByText(/Launch with/).count(), 0, "no launch names a host of its own");
+  await page.locator("#artifact [data-page-end]").getByRole("button", { name: "Launch", exact: true }).click();
+  const launcher = page.getByRole("dialog", { name: "Launch Export reports" });
+  await launcher.waitFor();
+  const button = launcher.getByRole("button", { name: /^Launch with / });
+  assert.equal(await settled(() => button.count(), 1), 1, "one launch, of the shown host");
+  assert.equal(await button.innerText(), "Launch with Claude Code");
+  assert.deepEqual(page.errors, []);
 });
 
 test("the initiative page shows how its latest launched run ended, a failed one with the host's error, and links to the place", { skip: skipHere, timeout: 60000 }, async (t) => {
@@ -103,7 +108,7 @@ test("the initiative page shows how its latest launched run ended, a failed one 
   await latest.waitFor();
   assert.match(await latest.innerText(), /Last run failed/, "the page head says the latest run failed without opening anything");
   await latest.click();
-  const launcher = page.getByRole("dialog", { name: "Launch an orchestration" });
+  const launcher = page.getByRole("dialog", { name: "Launch Export reports" });
   await launcher.waitFor();
   const run = launcher.locator("[data-launch-latest]");
   await run.waitFor();

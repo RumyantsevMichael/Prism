@@ -132,7 +132,7 @@ function groupedTabsOf(items, label = "Tab groups") {
 const SPECIMENS = {
   "prism-button": {
     default: `<prism-button>Apply</prism-button>`,
-    primary: `<prism-button variant="primary">Accept the design</prism-button>`,
+    primary: `<prism-button variant="primary">Accept the design</prism-button><prism-button variant="primary" text="Launch with Claude Code"><prism-icon name="play" size="xs"></prism-icon></prism-button>`,
     ghost: `<prism-button variant="ghost"><prism-icon name="copy" size="sm"></prism-icon>Copy link</prism-button>`,
     danger: `<prism-button variant="danger">Request changes</prism-button>`,
     small: `<prism-button size="sm">Small</prism-button><prism-button size="sm" variant="primary">Small primary</prism-button>`,
@@ -422,7 +422,7 @@ const SPECIMENS = {
     "unbroken-name": `<prism-listbox label="Unbroken option"><prism-list-item value="a">${UNBROKEN}</prism-list-item></prism-listbox>`
   },
   "prism-dialog": {
-    closed: opener("Open the record store", `<prism-dialog heading="Record store"><p>Records live in a shared store.</p><prism-field type="text" label="Filter" name="filter"></prism-field><prism-button slot="footer" variant="primary">Copy location</prism-button></prism-dialog>`),
+    closed: opener("Open the record store", `<prism-dialog heading="Record store"><p>Records live in a shared store.</p><prism-field type="text" label="Filter" name="filter"></prism-field><span slot="footer-note">Copying puts the location on the clipboard.</span><prism-button slot="footer" variant="primary">Copy location</prism-button></prism-dialog>`),
     center: opener("Open a small dialog", `<prism-dialog heading="Switch project" size="sm"><p>Pick the project this page shows.</p></prism-dialog>`),
     start: opener("Open the navigation drawer", `<prism-dialog heading="Navigation" placement="start" bare><prism-tree label="Drawer places"><prism-tree-item label="Attention" value="attention" selected></prism-tree-item><prism-tree-item label="Roadmap" value="roadmap"></prism-tree-item></prism-tree></prism-dialog>`),
     flush: opener("Open the places drawer", `<prism-dialog heading="Navigation" placement="start" bare flush><prism-rail label="Drawer places">${railPlaces()}</prism-rail></prism-dialog>`),

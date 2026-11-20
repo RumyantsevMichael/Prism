@@ -8,7 +8,7 @@ const FORWARDED = ["aria-haspopup", "aria-expanded", "aria-controls", "aria-desc
 export class PrismButton extends Base {
   static tag = "prism-button";
   static styles = ["prism-button.css"];
-  static observedAttributes = ["disabled", "pressed", "label", ...FORWARDED];
+  static observedAttributes = ["disabled", "pressed", "label", "text", ...FORWARDED];
   static catalog = {
     purpose: "A button that runs one action: one native button around its text and icons, in a variant and a size.",
     options: [
@@ -18,6 +18,7 @@ export class PrismButton extends Base {
       { name: "disabled", values: ["boolean"], default: "false", description: "The button sends no click and leaves the Tab order." },
       { name: "pressed", values: ["boolean", "false"], default: "", description: "Makes it a toggle and exposes the state as aria-pressed." },
       { name: "label", values: ["text"], default: "", description: "The accessible name of a button that shows only an icon." },
+      { name: "text", values: ["text"], default: "", description: "A caption drawn inside the native button after the button's children, such as its icon, for a caption the page changes, as a launch that names its host does; the caption is the native button's own text." },
       { name: "tip", values: ["text"], default: "", description: "A short description the kit tooltip shows on hover and keyboard focus." },
       { name: "shrink", values: ["boolean"], default: "false", description: "Lays the content out in a row where icons, avatars, and badges keep their size and only the span of text shortens to an ellipsis, so a trailing icon stays inside a narrow button." },
       { name: "slot=\"badge\"", values: ["children"], default: "", description: "A prism-badge on the button's top end corner, such as a count on an icon button." }
@@ -28,8 +29,9 @@ export class PrismButton extends Base {
 
   constructor() {
     super();
-    this.root = shadow(this, PrismButton.styles, `<button type="button" part="control"><span class="content" part="content"><slot></slot></span></button><span class="badge" part="badge" hidden><slot name="badge"></slot></span>`, { delegatesFocus: true });
+    this.root = shadow(this, PrismButton.styles, `<button type="button" part="control"><span class="content" part="content"><slot></slot><span class="text" part="text" hidden></span></span></button><span class="badge" part="badge" hidden><slot name="badge"></slot></span>`, { delegatesFocus: true });
     this.control = this.root.querySelector("button");
+    this.caption = this.root.querySelector(".text");
     const badge = this.root.querySelector(".badge");
     const badgeSlot = badge.querySelector("slot");
     badgeSlot.addEventListener("slotchange", () => {
@@ -86,6 +88,9 @@ export class PrismButton extends Base {
     control.disabled = this.hasAttribute("disabled");
     setAttribute(control, "aria-pressed", this.hasAttribute("pressed") ? String(this.pressed) : null);
     setAttribute(control, "aria-label", this.getAttribute("label") || null);
+    const text = this.getAttribute("text") ?? "";
+    if (this.caption.textContent !== text) this.caption.textContent = text;
+    this.caption.hidden = !text;
     for (const name of FORWARDED) setAttribute(control, name, this.getAttribute(name));
   }
 }

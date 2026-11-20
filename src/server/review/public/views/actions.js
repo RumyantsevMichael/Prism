@@ -182,13 +182,15 @@ function fieldHtml(action, field, input, { disabled, key, layout }) {
   return `<div class="action-choice">${group}${consequence}</div>`;
 }
 
-function actionHtml(action, entry, { writable, renderMarkdown, heading, submitLabel, batch, layoutOf }) {
+function actionHtml(action, entry, { writable, renderMarkdown, heading, submitLabel, batch, layoutOf, named = false }) {
   const { key, draft, error, sending } = entry;
   const layout = layoutOf(entry.target, action);
   const state = actionFormState(action, draft);
   const id = `action-${entry.id}`;
   const disabled = !writable || sending;
   const head = heading ? heading(action) : { label: escapeHtml(action.label), detail: "" };
+  // A row that its section's heading already names, as Models under Models, shows only its effect.
+  const label = named ? "" : `<span class="action-label" id="${id}-label">${head.label}</span>`;
   const choice = action.fields.find((field) => field.kind !== "text");
   let control;
   if (!action.available) {
@@ -208,7 +210,7 @@ function actionHtml(action, entry, { writable, renderMarkdown, heading, submitLa
     control = `${contextHtml(action, renderMarkdown)}${guidanceHtml(action, choice)}${fields ? `<div class="action-fields">${fields}</div>` : ""}${slot}${submit}`;
   }
   return `<div class="action-row${action.available ? "" : " is-unavailable"}" data-action-key="${escapeHtml(key)}" aria-busy="${Boolean(sending)}">
-    <div class="action-meta"><span class="action-label" id="${id}-label">${head.label}</span>${head.detail ? `<span class="action-detail">${head.detail}</span>` : ""}<p class="action-effect" id="${id}-effect">${escapeHtml(action.effect)}</p></div>
+    <div class="action-meta">${label}${head.detail ? `<span class="action-detail">${head.detail}</span>` : ""}<p class="action-effect" id="${id}-effect">${escapeHtml(action.effect)}</p></div>
     <div class="action-control">${control}<p class="action-error" role="alert"${error ? "" : " hidden"}>${escapeHtml(error ?? "")}</p></div>
   </div>`;
 }
@@ -248,8 +250,9 @@ const lastListings = new WeakMap();
  * and confirm to true only after the person confirms. drafts keeps unsent input per action across re-renders.
  * keepStaleDrafts keeps the person's input when the record changed under it, for input such as a comment that stays meaningful against the current record.
  * notice false leaves out the read-only notice, for a page that shows many lists and says it once for all of them.
+ * sections, [{ heading, actions }], heads the rows of the action ids each lists with its heading, in the list's order.
  */
-export function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, notice = true, onRender = null, keepStaleDrafts = false, groups = null, batch = false }) {
+export function createActionList({ root, targets, api, drafts = {}, renderMarkdown = null, heading = null, submitLabel = null, emptyText = "Nothing can be changed here.", palette = false, compact = false, notice = true, onRender = null, keepStaleDrafts = false, groups = null, batch = false, sections = null }) {
   if (!lastListings.has(api)) lastListings.set(api, new Map());
   const known = lastListings.get(api);
   const listings = new Map(targets.filter((target) => known.has(target)).map((target) => [target, known.get(target)]));
@@ -353,7 +356,9 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
       if (!controller) {
         controller = createRunChoices({
           read: (query) => (reader ? reader.read(query) : Promise.resolve({ status: 0, json: { message: "This page cannot read the host's run options." } })),
-          choose: (name, value) => setRunValue(key, name, value)
+          choose: (name, value) => setRunValue(key, name, value),
+          // A report that arrives changes what holds the choices, which the list's owner reads on each render.
+          changed: () => onRender?.()
         });
         runChoices.set(key, controller);
       }
@@ -380,7 +385,15 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
     if (!items.length) return `<p class="empty-note">${escapeHtml(emptyText)}</p>`;
     const options = { writable: writable(), renderMarkdown, heading, submitLabel, batch, layoutOf };
     const readOnly = writable() || !notice ? "" : readOnlyNotice();
-    return `${readOnly}<div class="action-list${compact ? " is-compact" : ""}">${items.map(({ target, action }) => actionHtml(action, entryOf(target, action), options)).join("")}</div>`;
+    let section = null;
+    const rows = items.map(({ target, action }) => {
+      const own = sections?.find((candidate) => candidate.actions.includes(action.id)) ?? null;
+      const head = own && own !== section ? `<h3 class="action-section">${escapeHtml(own.heading)}</h3>` : "";
+      section = own;
+      const named = Boolean(own) && own.actions.length === 1 && own.heading === action.label;
+      return `${head}${actionHtml(action, entryOf(target, action), { ...options, named })}`;
+    });
+    return `${readOnly}<div class="action-list${compact ? " is-compact" : ""}">${rows.join("")}</div>`;
   }
 
   // A re-render keeps the focused control and the cursor in a text field, so a refresh never takes the person's place.
@@ -595,11 +608,66 @@ export function createActionList({ root, targets, api, drafts = {}, renderMarkdo
   const pending = () => actionsOf().map(({ target, action }) => ({ target, action, entry: entryOf(target, action) }))
     .filter(({ action, entry }) => action.available && entry.draft && actionFormState(action, entry.draft).ready);
 
+  // An action of the shown targets by its id, also one of a group the list does not draw, such as a launch after the settings.
+  const listedAction = (id) => {
+    for (const target of wanted) {
+      const action = (listings.get(target)?.actions ?? []).find((candidate) => candidate.id === id);
+      if (action) return { target, action };
+    }
+    return null;
+  };
+
   const panel = {
     root,
     palette,
     /** The number of changes a batch list holds. */
     changes: () => pending().length,
+    /** Whether this tab may apply the list's actions. */
+    writable: () => writable(),
+    /** An action of the listing by its id, drawn or not, or null while the listing is not read. */
+    action: (id) => listedAction(id)?.action ?? null,
+    /** The input an action of the list shows, with the person's unsent changes, or null. */
+    input(id) {
+      const item = listedAction(id);
+      return item ? actionFormState(item.action, drafts[keyOf(item.target, item.action)] ?? null).input : null;
+    },
+    /** What holds the list's run choices: reading while a shown choice waits for its host, and each choice not offered as { label, reason }. */
+    held() {
+      const held = { reading: false, reasons: [] };
+      for (const controller of runChoices.values()) {
+        if (!controller.section.isConnected || !root.contains(controller.section)) continue;
+        const own = controller.held();
+        held.reading ||= own.reading;
+        held.reasons.push(...own.reasons);
+      }
+      return held;
+    },
+    /**
+     * Applies an action of the listing that takes no input, such as the launch that follows a batch list's changes: { ok, message },
+     * with the refusal's message when it did not apply. Its result's listing replaces the list's.
+     */
+    async follow(id) {
+      const item = listedAction(id);
+      if (!item) return { ok: false, message: "This action is not listed here." };
+      const { target, action } = item;
+      if (!action.available) return { ok: false, message: action.reason ?? "" };
+      let answer;
+      try {
+        answer = await api.apply({ action: action.id, target: action.target ?? target, input: requestInput(action, currentInput(action)), revision: action.revision });
+      } catch (error) {
+        answer = { status: 0, json: { message: error.message } };
+      }
+      const result = answer.json ?? {};
+      if (answer.status === 200) {
+        if (result.actions) listings.set(target, { ...listings.get(target), actions: result.actions });
+        if (result.applied) api.toast(`${action.label}: done. ${action.effect}`);
+        render();
+        return { ok: true, message: null };
+      }
+      if (result.code === "write_forbidden") for (const name of wanted) if (listings.has(name)) listings.set(name, { ...listings.get(name), writable: false });
+      void refresh();
+      return { ok: false, message: result.message ?? `${action.label} did not apply.` };
+    },
     /**
      * Applies a batch list's changes one by one in the list's order, and stops at the first one that is refused or not confirmed; true when all applied.
      * Each change is read from the listing that the change before it returned, since settings that share a record share its revision.

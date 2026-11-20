@@ -62,7 +62,7 @@ test("the initiative page heads with its lane and rank, its state and intent, it
   assert.deepEqual(page.errors, []);
 });
 
-test("the run totals and Launch open popovers, and Launch offers the one launch of the initiative's host", { skip, timeout: 60000 }, async (context) => {
+test("the run totals open a popover, and Launch opens the run configuration of the initiative's host in place of a launch menu", { skip, timeout: 60000 }, async (context) => {
   const { base, browser } = await placesDemo(context);
   const page = await open(browser, base, INITIATIVE);
   const end = page.locator("#artifact [data-page-end]");
@@ -72,39 +72,37 @@ test("the run totals and Launch open popovers, and Launch offers the one launch 
   assert.match(await totals.innerText(), /This initiative/, "the popover holds the run totals table");
   await page.keyboard.press("Escape");
   await end.getByRole("button", { name: "Launch", exact: true }).click();
-  const launcher = page.getByRole("dialog", { name: "Launch an orchestration" });
+  const launcher = page.getByRole("dialog", { name: "Launch Harden request retries" });
   await launcher.waitFor();
-  const text = await launcher.innerText();
-  assert.match(text, /Launch/);
-  assert.doesNotMatch(text, /Launch with/, "no launch names a host of its own");
-  assert.equal(await launcher.getByRole("button", { name: "Launch", exact: true }).count(), 1, "the one launch is pressed as Launch");
+  assert.equal(await page.getByRole("dialog", { name: "Launch an orchestration" }).count(), 0, "no launch menu remains");
+  assert.match(await launcher.innerText(), /These are this initiative's settings; change any of them before the run starts\./);
+  assert.equal(await launcher.locator("prism-button[data-launch-confirm]").count(), 1, "the dialog has one launch, of the shown host");
+  await page.keyboard.press("Escape");
+  await launcher.waitFor({ state: "hidden" });
   assert.deepEqual(page.errors, []);
 });
 
-test("a long reason or error under a launch never squeezes the host's name in the narrow Launch popover", { skip, timeout: 60000 }, async (context) => {
+test("a long reason that holds the launch wraps inside the run configuration and never widens it", { skip, timeout: 60000 }, async (context) => {
   const { base, browser } = await placesDemo(context);
   const page = await open(browser, base, INITIATIVE);
-  await page.setViewportSize({ width: 1400, height: 900 });
-  await page.locator("#artifact [data-page-end]").getByRole("button", { name: "Launch", exact: true }).click();
-  const launcher = page.getByRole("dialog", { name: "Launch an orchestration" });
-  await launcher.waitFor();
-  // Reasons and errors come from the machine, such as a refused confirmation or a session already running, and can be any length.
-  const long = "This computer cannot show a confirmation outside the browser: no graphical display (DISPLAY or WAYLAND_DISPLAY) is set for the review app.";
-  const widths = await launcher.evaluate((root, text) => [...root.querySelectorAll(".action-row")].map((row) => {
-    const note = row.querySelector(".action-reason") ?? row.querySelector(".action-error");
-    note.hidden = false;
-    note.textContent = text;
-    const label = row.querySelector(".action-label");
-    const probe = document.createElement("span");
-    probe.style.cssText = "position:absolute;visibility:hidden;white-space:nowrap";
-    probe.textContent = label.textContent.split(/\s+/).reduce((a, b) => (a.length >= b.length ? a : b));
-    label.append(probe);
-    const longestWord = probe.getBoundingClientRect().width;
-    probe.remove();
-    return { label: label.textContent, width: label.getBoundingClientRect().width, longestWord };
-  }), long);
-  assert.equal(widths.length, 1, "the one launch is listed");
-  for (const { label, width, longestWord } of widths) assert.ok(width >= longestWord, `"${label}" keeps whole words (${width}px for a ${longestWord}px word)`);
+  for (const width of [390, 1400]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.locator("#artifact [data-page-end]").getByRole("button", { name: "Launch", exact: true }).click();
+    const launcher = page.getByRole("dialog", { name: "Launch Harden request retries" });
+    await launcher.waitFor();
+    // Reasons come from the machine, such as a refused confirmation or a session already running, and can be any length.
+    const long = "This computer cannot show a confirmation outside the browser: no graphical display (DISPLAY or WAYLAND_DISPLAY) is set for the review app, and /an/unbroken/path/that/names/no/word/breaks/anywhere/in/it.";
+    const sizes = await launcher.evaluate((root, text) => {
+      const banner = root.querySelector("[data-launch-error]");
+      banner.querySelector("[data-launch-lines]").textContent = text;
+      banner.hidden = false;
+      const surface = root.closest("dialog") ?? root;
+      return { banner: banner.getBoundingClientRect().right, surface: surface.getBoundingClientRect().right, window: innerWidth };
+    }, long);
+    assert.ok(sizes.banner <= sizes.surface + 1 && sizes.surface <= sizes.window, `the reason stays inside the dialog at ${width} pixels: ${JSON.stringify(sizes)}`);
+    await page.keyboard.press("Escape");
+    await launcher.waitFor({ state: "hidden" });
+  }
   assert.deepEqual(page.errors, []);
 });
 
