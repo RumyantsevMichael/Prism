@@ -183,8 +183,15 @@ process.stdin.on("error", () => {});
 
 async function temporary(context, prefix) {
   const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), prefix)));
-  context.after(() => rm(directory, { recursive: true, force: true }));
+  // A request the test's page sent may still be writing a launch folder when the test ends, so the removal retries a folder that
+  // gained an entry while it was being emptied.
+  context.after(() => rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   return directory;
+}
+
+async function settledEnd(pids, timeout = 5000) {
+  const deadline = Date.now() + timeout;
+  while (pids.some(alive) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
 }
 
 // The executables that a launch resolves on PATH; a test PATH keeps no folder that holds one, so no real host can start.
@@ -292,6 +299,9 @@ process.exit(JSON.parse(fs.readFileSync(${JSON.stringify(dialogFile)}, "utf8")).
     }
     for (const run of runs()) ended.push(run.pid, ...run.children.map((child) => child.pid));
     for (const pid of ended) if (pid !== process.pid && alive(pid)) try { process.kill(pid, "SIGKILL"); } catch {}
+    // A killed supervisor may still be writing its launch folder for a moment, so the folders are removed only once every
+    // process has ended, or after 5 seconds.
+    return settledEnd(ended.filter((pid) => pid !== process.pid));
   };
   return { root, gateIds, app, bin, log, env, setPlans, runs, inputs, closed, alive, dialogs, setDialog, useAsProcessEnv };
 }
