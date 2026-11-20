@@ -25,7 +25,7 @@ import { asWorkspaceView, entityContext, entityExists, forgetWorkspace, loadAtte
 import { shippedCommit, sliceFiles } from "./slice-files.mjs";
 import { TouchedError, touchedRecords } from "./touched-records.mjs";
 import { applyAction, componentIndexingStatus, listActions, listActionTargets, parseTarget } from "../workflow/actions.mjs";
-import { listLaunches } from "../session/launched-sessions.mjs";
+import { archiveEndedLaunches, archiveLaunch, listLaunches, unarchiveLaunch } from "../session/launched-sessions.mjs";
 import { readRunOptions, runOptionsQuery } from "../session/run-options.mjs";
 import { listAgents } from "./agents.mjs";
 import { readWorkspaceIdentity } from "./workspace-identity.mjs";
@@ -964,6 +964,45 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
   const canWrite = (token: string) => Boolean(writeSessions?.valid(token));
   const writableRequest = (request: any) => canWrite(request.headers["x-prism-write"]);
 
+  // Archives one ended launched session, or every ended one the page lists, or unarchives one: behind the same page-origin and
+  // write-session checks as an applied action, before anything is read or written. The mark stays on this machine and records no history.
+  async function archiveRoute(request: any, response: any, archiving: boolean) {
+    if (!fromPage(request)) {
+      sendJson(response, 403, { code: "origin_refused", message: "A change must come from the review page as JSON." });
+      return;
+    }
+    if (!writableRequest(request)) {
+      sendJson(response, 403, { code: "write_forbidden", message: READ_ONLY_NOTICE });
+      return;
+    }
+    const invalid = () => sendJson(response, 400, { code: "invalid_request", message: archiving ? "The request must be a JSON object that names a launch, or sets ended to true." : "The request must be a JSON object that names a launch." });
+    let body: any;
+    try {
+      body = await readJson(request);
+    } catch {
+      invalid();
+      return;
+    }
+    const keys = body && typeof body === "object" && !Array.isArray(body) ? Object.keys(body) : null;
+    const names = keys?.length === 1 && keys[0] === "launch" && typeof body.launch === "string";
+    const ended = archiving && keys?.length === 1 && keys[0] === "ended" && body.ended === true;
+    if (!names && !ended) {
+      invalid();
+      return;
+    }
+    try {
+      const env = process.env;
+      const result = ended ? await archiveEndedLaunches({ projectRoot, env })
+        : archiving ? await archiveLaunch({ projectRoot, id: body.launch, env })
+          : await unarchiveLaunch({ projectRoot, id: body.launch, env });
+      sendJson(response, 200, result);
+    } catch (error) {
+      if (error?.code === "unknown_launch") sendJson(response, 404, { code: error.code, message: error.message });
+      else if (error?.code === "launch_not_ended") sendJson(response, 409, { code: error.code, message: error.message });
+      else throw error;
+    }
+  }
+
   function sessionSnapshot() {
     const snapshot = { openTabs: [...session.openTabs], activeTab: session.activeTab, previewTab: session.previewTab, agentTabs: [...session.agentTabs], groups: copyGroups(session.groups), activeSource: session.activeSource, revision: session.revision };
     return instance ? { ...snapshot, instance, ...(appVersion ? { appVersion } : {}) } : snapshot;
@@ -1562,6 +1601,8 @@ export function createProjectReview({ projectRoot, baseUrl, instance = null, app
     } else if (route === "/api/agents" && request.method === "GET") {
       // Every agent once: this computer's launched sessions and the workspace's claims that none of them holds; reading needs no write session.
       sendJson(response, 200, await listAgents({ projectRoot, env: process.env }));
+    } else if ((route === "/api/agents/archive" || route === "/api/agents/unarchive") && request.method === "POST") {
+      await archiveRoute(request, response, route === "/api/agents/archive");
     } else if (route === "/api/actions/targets" && request.method === "GET") {
       try {
         sendJson(response, 200, await listActionTargets({ projectRoot, kind: url.searchParams.get("kind"), checkouts: await checkoutRoots() }));

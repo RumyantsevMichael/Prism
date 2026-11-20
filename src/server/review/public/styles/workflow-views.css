@@ -1686,15 +1686,19 @@ a.inspect-tile:focus-visible {
   display: none;
 }
 
+/* Show takes the start of the line and Archive all ended its end, and the button wraps under Show when the line is too narrow for both. */
 .agents-toolbar {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--prism-space-3);
   min-width: 0;
 }
 
-/* The agent and what it works on take the room; the state, the time, and the one action keep a share each, so every row's cells line up. */
+/* The agent and what it works on take the room; the state, the time, and the actions keep a share each, so every row's cells line up and two buttons fit. */
 .agents-table {
-  --prism-lib-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) minmax(0, 1.8fr) minmax(0, 0.8fr) minmax(0, 0.6fr) minmax(0, 0.5fr);
+  --prism-lib-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) minmax(0, 1.8fr) minmax(0, 0.8fr) minmax(0, 0.6fr) minmax(0, 0.9fr);
 }
 
 .agents-time {
@@ -1703,7 +1707,9 @@ a.inspect-tile:focus-visible {
 
 .agents-action {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
+  gap: var(--prism-space-1);
 }
 
 .agents-details {

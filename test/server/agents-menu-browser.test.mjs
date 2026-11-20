@@ -82,7 +82,7 @@ test("§14 with nothing to show the button says 0 working and carries no marks",
   const dialog = menu(page);
   await dialog.waitFor();
   assert.equal(await dialog.getByText("Needs you", { exact: false }).count(), 0, "no Needs you group without sessions that need the person");
-  assert.match(await visibleText(dialog), /Launched on this computer\s*0/);
+  assert.match(await visibleText(dialog), /Launched from Prism\s*0/);
 });
 
 test("§3 §15 on a phone the button shows its avatars and one count of what needs the person, and the workspace name stays whole", { skip: skipHere, timeout: 120000 }, async (t) => {
@@ -138,7 +138,7 @@ test("§16 §17 §19 the menu lists what needs the person as rows, counts the re
   const whole = await visibleText(dialog);
   for (const name of ["Dana on studio-mac", "Claude on vm", "Michael on work-mac", "Search"]) assert.equal(whole.includes(name), false, `${name} is counted, not listed`);
   const counts = await dialog.getByRole("link").evaluateAll((links) => links.map((link) => link.innerText.replace(/\s+/g, " ").trim()));
-  assert.deepEqual(counts, ["Launched on this computer 3", "Other sessions 2", "Expired claims 1"]);
+  assert.deepEqual(counts, ["Launched from Prism 3", "Started outside Prism 2", "Expired claims 1"]);
   assert.equal(await dialog.getByRole("button", { name: "Open Agents", exact: true }).count(), 1);
   assert.deepEqual(page.errors, []);
 });
@@ -146,7 +146,7 @@ test("§16 §17 §19 the menu lists what needs the person as rows, counts the re
 test("§17 each count opens its group on the Agents page, and Open Agents opens every group", { skip: skipHere, timeout: 120000 }, async (t) => {
   const s = await busy(t);
   const page = await s.open();
-  for (const [name, ref] of [["Launched on this computer", "agents:this-computer"], ["Other sessions", "agents:other"], ["Expired claims", "agents:expired"]]) {
+  for (const [name, ref] of [["Launched from Prism", "agents:this-computer"], ["Started outside Prism", "agents:other"], ["Expired claims", "agents:expired"]]) {
     await agentsButton(page).click();
     await menu(page).waitFor();
     await menu(page).getByRole("link", { name: new RegExp(`^${name}`) }).click();

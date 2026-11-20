@@ -62,7 +62,7 @@ export function forgetWorkspace() {
 export const SECTION_REFS = Object.freeze(["attention", "roadmap", "requirements", "decisions", "glossary", "code", "agents"]);
 const SECTION_LABELS: Readonly<Record<string, any>> = Object.freeze({ attention: "Attention", roadmap: "Roadmap", requirements: "Requirements", decisions: "Decisions", glossary: "Glossary", code: "Code", agents: "Agents" });
 // The Agents page's Show choices that an address can make: agents:<group>.
-export const AGENT_GROUP_PAGES = Object.freeze(["needs-you", "this-computer", "other", "expired"]);
+export const AGENT_GROUP_PAGES = Object.freeze(["needs-you", "this-computer", "other", "expired", "archived"]);
 
 // A record is read where it lives: under .prism, or beside its Markdown until the first write moves it there.
 async function recordFile(root: string, key: any) {
